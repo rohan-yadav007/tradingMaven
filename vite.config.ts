@@ -1,0 +1,23 @@
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+// https://vitejs.dev/config/
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    proxy: {
+      // Proxy for public endpoints and Spot/Margin/Wallet signed endpoints
+      '/proxy-spot': {
+        target: 'https://api.binance.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/proxy-spot/, ''),
+      },
+      // Proxy for signed Futures endpoints
+      '/proxy-futures': {
+        target: 'https://fapi.binance.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/proxy-futures/, ''),
+      },
+    },
+  },
+})

@@ -1,12 +1,14 @@
 
-import { Kline, SymbolInfo, SymbolFilter, WalletBalance, RawWalletBalance, AccountInfo, LeverageBracket, BinanceOrderResponse, MarginAccountInfo } from '../types';
+
+
+import { Kline, SymbolInfo, SymbolFilter, WalletBalance, RawWalletBalance, AccountInfo, LeverageBracket, BinanceOrderResponse, TradingMode } from '../types';
 
 // --- Configuration ---
 const SPOT_BASE_URL = '/proxy-spot';
 const FUTURES_BASE_URL = '/proxy-futures';
-// Trim keys to prevent issues with whitespace from .env files
-const apiKey = ((import.meta as any).env.VITE_BINANCE_API_KEY || '').trim();
-const apiSecret = ((import.meta as any).env.VITE_BINANCE_API_SECRET || '').trim();
+// The execution environment provides API keys via import.meta.env
+const apiKey = (((import.meta as any).env)?.VITE_BINANCE_API_KEY || '').trim();
+const apiSecret = (((import.meta as any).env)?.VITE_BINANCE_API_SECRET || '').trim();
 
 let timeOffset = 0;
 let isTimeSynced = false;
@@ -39,7 +41,9 @@ export const interpretBinanceError = (error: any): string => {
             case -1013: return `Invalid Order Size. The quantity is either too small, too large, or not a valid multiple for this asset.`;
             case -1111: return `Precision Error. The price or quantity has too many decimal places for this asset.`;
             case -2010: return `API Order Creation Failed. This is often due to insufficient funds or other exchange-side issues.`;
+            case -2011: return `Order does not exist. It may have already been filled or canceled.`;
             case -2015: return `Authentication Error. Invalid API key, IP, or permissions. Ensure the key is active and has trading enabled.`;
+            case -2022: return `ReduceOnly Order Rejected. This often means the position is already closed or being closed.`;
             case -4003: return `Order quantity is less than the minimum allowed for this asset.`;
             case -4048: return `Margin type cannot be changed if there are open orders or positions.`;
             case -4164: return `This operation is not supported in Multi-Assets Mode.`;
@@ -65,7 +69,7 @@ async function hmacSha256(key: string, data: string): Promise<string> {
     return signatureArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function fetchSigned(endpoint: string, params: Record<string, any> = {}, method: 'GET' | 'POST' = 'GET', baseUrl: string = SPOT_BASE_URL): Promise<any> {
+async function fetchSigned(endpoint: string, params: Record<string, any> = {}, method: 'GET' | 'POST' | 'DELETE' = 'GET', baseUrl: string = SPOT_BASE_URL): Promise<any> {
     if (!apiKey || !apiSecret) {
         throw new Error("API Key or Secret is not configured in environment variables.");
     }
@@ -82,18 +86,15 @@ async function fetchSigned(endpoint: string, params: Record<string, any> = {}, m
     // Filter out null/undefined values before processing
     const filteredParams = Object.fromEntries(Object.entries(params).filter(([_, v]) => v != null));
 
+    const allParams = { ...filteredParams, timestamp, recvWindow: 5000 };
+    const stringParams = Object.fromEntries(Object.entries(allParams).map(([k, v]) => [k, String(v)]));
+    const queryString = new URLSearchParams(stringParams).toString();
+    const signature = await hmacSha256(apiSecret, queryString);
+
     if (method === 'GET') {
-        const finalParams = { ...filteredParams, timestamp, recvWindow: 5000 };
-        const stringParams = Object.fromEntries(Object.entries(finalParams).map(([k, v]) => [k, String(v)]));
-        const queryString = new URLSearchParams(stringParams).toString();
-        const signature = await hmacSha256(apiSecret, queryString);
         url = `${url}?${queryString}&signature=${signature}`;
-    } else { // POST, PUT, DELETE etc.
-        const finalParams = { ...filteredParams, timestamp, recvWindow: 5000 };
-        const stringParams = Object.fromEntries(Object.entries(finalParams).map(([k, v]) => [k, String(v)]));
-        const bodyString = new URLSearchParams(stringParams).toString();
-        const signature = await hmacSha256(apiSecret, bodyString);
-        fetchOptions.body = `${bodyString}&signature=${signature}`;
+    } else { // POST, DELETE etc.
+        fetchOptions.body = `${queryString}&signature=${signature}`;
         headers['Content-Type'] = 'application/x-www-form-urlencoded';
     }
 
@@ -164,14 +165,6 @@ export const fetchSpotPairs = async (quoteAsset: string = 'USDT'): Promise<strin
         .sort();
 };
 
-export const fetchMarginPairs = async (quoteAsset: string = 'USDT'): Promise<string[]> => {
-    const info = await getSpotExchangeInfo();
-    return info
-        .filter(s => s.status === 'TRADING' && s.quoteAsset === quoteAsset && s.isMarginTradingAllowed)
-        .map(s => `${s.baseAsset}/${s.quoteAsset}`)
-        .sort();
-};
-
 export const fetchFuturesPairs = async (quoteAsset: string = 'USDT'): Promise<string[]> => {
     const info = await getFuturesExchangeInfo();
     return info
@@ -233,16 +226,32 @@ export const fetchFullKlines = async (symbol: string, interval: string, startTim
     let currentStartTime = startTime;
     const MAX_LIMIT = 1000; // Binance API kline limit
 
+    const isFutures = symbol.endsWith('USDT') && !symbol.includes('/');
+    const baseUrl = isFutures ? FUTURES_BASE_URL : SPOT_BASE_URL;
+    const path = isFutures ? '/fapi/v1/klines' : '/api/v3/klines';
+
     while (currentStartTime <= endTime) {
-        const klines = await fetchKlines(symbol, interval, { 
-            startTime: currentStartTime, 
-            endTime: endTime, 
-            limit: MAX_LIMIT 
+        const params = new URLSearchParams({ 
+            symbol, 
+            interval, 
+            startTime: String(currentStartTime), 
+            endTime: String(endTime),
+            limit: String(MAX_LIMIT) 
         });
-        
-        if (klines.length === 0) {
+
+        const response = await fetch(`${baseUrl}${path}?${params.toString()}`);
+        if (!response.ok) throw new Error(await response.text());
+
+        const data = await response.json();
+
+        if (data.length === 0) {
             break;
         }
+
+        const klines: Kline[] = data.map((k: any) => ({
+            time: k[0], open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]),
+            close: parseFloat(k[4]), volume: parseFloat(k[5]), isFinal: true,
+        }));
         
         allKlines.push(...klines);
         
@@ -301,7 +310,7 @@ const mapBalances = async (rawBalances: RawWalletBalance[]): Promise<WalletBalan
             return { ...b, asset: originalAsset, total, usdValue }; // Keep original asset name
         })
         .filter(b => b.total > 0.00001)
-        .sort((a, b) => b.usdValue - a.usdValue);
+        .sort((a, b) => b.usdValue - b.usdValue);
     return balances;
 };
 
@@ -322,57 +331,27 @@ export const fetchFuturesWalletBalance = async (): Promise<AccountInfo> => {
     return { ...accountResponse, balances, accountType: 'USDT_FUTURES', positions: accountResponse.positions };
 };
 
-export const fetchMarginWalletBalance = async (): Promise<MarginAccountInfo> => {
-    const accountData = await fetchSigned('/sapi/v1/margin/account');
-    const btcTickerResponse = await fetch(`${SPOT_BASE_URL}/api/v3/ticker/price?symbol=BTCUSDT`).then(res => res.json());
-    const rawBalances = accountData.userAssets.map((b: any) => ({ asset: b.asset, free: parseFloat(b.free), locked: parseFloat(b.locked) }));
-    const balances = await mapBalances(rawBalances);
-    return { ...accountData, balances, btcUsdPrice: parseFloat(btcTickerResponse.price), accountType: 'MARGIN' };
-};
-
-export const fetchFundingWalletBalance = async (): Promise<AccountInfo> => {
-    // SAPI endpoints are on the same base URL as SPOT
-    const responseData = await fetchSigned('/sapi/v1/asset/get-funding-asset', {}, 'POST'); 
-    
-    // The response is an array of objects.
-    const rawBalances = responseData.map((b: any) => ({
-        asset: b.asset,
-        free: parseFloat(b.free),
-        // Funding wallet has 'locked', 'freeze' and 'withdrawing'
-        locked: parseFloat(b.locked || '0') + parseFloat(b.freeze || '0') + parseFloat(b.withdrawing || '0')
-    }));
-
-    const balances = await mapBalances(rawBalances);
-
-    // Funding wallet doesn't have a single "account info" object like others.
-    // We construct a mock one with the necessary details.
-    return {
-        canTrade: false, // You don't trade from funding wallet
-        canWithdraw: true,
-        canDeposit: true,
-        updateTime: Date.now(),
-        accountType: 'FUNDING',
-        balances,
-    };
-};
-
 export const createSpotOrder = async (symbol: string, side: 'BUY' | 'SELL', quantity: number): Promise<BinanceOrderResponse> => {
-    const params = { symbol: symbol.replace('/', ''), side, type: 'MARKET', quantity };
+    const params = { symbol: symbol.replace('/', ''), side, type: 'MARKET', quantity, newOrderRespType: 'RESULT' };
     return fetchSigned('/api/v3/order', params, 'POST');
 };
 
 export const createFuturesOrder = async (symbol: string, side: 'BUY' | 'SELL', quantity: number, reduceOnly?: boolean): Promise<BinanceOrderResponse> => {
-    const params: Record<string, any> = { symbol: symbol.replace('/', ''), side, type: 'MARKET', quantity };
+    const params: Record<string, any> = { symbol: symbol.replace('/', ''), side, type: 'MARKET', quantity, newOrderRespType: 'RESULT' };
     if (reduceOnly) params.reduceOnly = 'true';
-    return fetchSigned('/fapi/v1/order', params, 'POST', FUTURES_BASE_URL);
-};
-
-export const createMarginOrder = async (symbol: string, side: 'BUY' | 'SELL', quantity: number, options?: { sideEffectType?: 'AUTO_REPAY' | 'MARGIN_BUY' }): Promise<BinanceOrderResponse> => {
-    const params: Record<string, any> = { symbol: symbol.replace('/', ''), side, type: 'MARKET', quantity };
-    if (options?.sideEffectType) {
-        params.sideEffectType = options.sideEffectType;
-    }
-    return fetchSigned('/sapi/v1/margin/order', params, 'POST');
+    
+    const rawResponse = await fetchSigned('/fapi/v1/order', params, 'POST', FUTURES_BASE_URL);
+    
+    // Normalize the Futures response to match the common BinanceOrderResponse interface
+    const normalized: BinanceOrderResponse = {
+        ...rawResponse,
+        // Map `cumQuote` to `cummulativeQuoteQty` for consistency with Spot API
+        cummulativeQuoteQty: rawResponse.cumQuote || '0', 
+        // Pass `avgPrice` through for more accurate price calculations in the app
+        avgPrice: rawResponse.avgPrice,
+    };
+    
+    return normalized;
 };
 
 export const setFuturesLeverage = async (symbol: string, leverage: number): Promise<any> => {
@@ -383,7 +362,7 @@ export const setMarginType = async (symbol: string, marginType: 'ISOLATED' | 'CR
     return fetchSigned('/fapi/v1/marginType', { symbol: symbol.replace('/', ''), marginType }, 'POST', FUTURES_BASE_URL);
 };
 
-export const getFuturesPositionRisk = async (symbol: string): Promise<{ marginType: string; leverage: string; liquidationPrice: number; } | null> => {
+export const getFuturesPositionRisk = async (symbol: string): Promise<{ marginType: string; leverage: string; liquidationPrice: number; positionAmt: string; } | null> => {
     try {
         const data = await fetchSigned('/fapi/v2/positionRisk', { symbol: symbol.replace('/', '') }, 'GET', FUTURES_BASE_URL);
         if (Array.isArray(data) && data.length > 0) {
@@ -392,6 +371,7 @@ export const getFuturesPositionRisk = async (symbol: string): Promise<{ marginTy
                 marginType: data[0].marginType,
                 leverage: data[0].leverage,
                 liquidationPrice: parseFloat(data[0].liquidationPrice),
+                positionAmt: data[0].positionAmt,
             };
         }
         return null;

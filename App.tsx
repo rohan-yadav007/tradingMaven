@@ -1,12 +1,13 @@
 
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { ChartComponent } from './components/ChartComponent';
 import { TradingLog } from './components/TradingLog';
 import { RunningBots } from './components/RunningBots';
-import { TradingMode, Agent, TradeSignal, Position, Trade, WalletBalance, Kline, SymbolInfo, LiveTicker, AccountInfo, RunningBot, BotConfig, BotStatus, BinanceOrderResponse, AgentParams, BacktestResult, OptimizationResultItem, RiskMode, LogType } from './types';
-import { AGENTS, TRADING_PAIRS } from './constants';
+import { TradingMode, Agent, TradeSignal, Position, Trade, WalletBalance, Kline, SymbolInfo, LiveTicker, AccountInfo, RunningBot, BotConfig, BotStatus, BinanceOrderResponse, AgentParams, BacktestResult, RiskMode, LogType } from './types';
+import * as constants from './constants';
 import * as binanceService from './services/binanceService';
 import { historyService } from './services/historyService';
 import { botManagerService, BotHandlers } from './services/botManagerService';
@@ -25,7 +26,7 @@ const App: React.FC = () => {
     const [executionMode, setExecutionMode] = useState<'live' | 'paper'>('paper');
     const [tradingMode, setTradingMode] = useState<TradingMode>(TradingMode.Spot);
     const [walletViewMode, setWalletViewMode] = useState<TradingMode>(TradingMode.Spot);
-    const [allPairs, setAllPairs] = useState<string[]>(TRADING_PAIRS); // Init with fallback
+    const [allPairs, setAllPairs] = useState<string[]>(constants.TRADING_PAIRS); // Init with fallback
     const [selectedPair, setSelectedPair] = useState('BTC/USDT');
     const [leverage, setLeverage] = useState(10);
     const [marginType, setMarginType] = useState<'ISOLATED' | 'CROSSED'>('ISOLATED');
@@ -33,7 +34,7 @@ const App: React.FC = () => {
     const [isMultiAssetMode, setIsMultiAssetMode] = useState(false);
     const [multiAssetModeError, setMultiAssetModeError] = useState<string | null>(null);
     const [chartTimeFrame, setChartTimeFrame] = useState('3m');
-    const [selectedAgent, setSelectedAgent] = useState<Agent>(AGENTS[0]);
+    const [selectedAgent, setSelectedAgent] = useState<Agent>(constants.AGENTS[0]);
     const [agentParams, setAgentParams] = useState<AgentParams>({});
     
     // New Risk Management State
@@ -42,12 +43,12 @@ const App: React.FC = () => {
     const [stopLossValue, setStopLossValue] = useState(2); // e.g., 2%
     const [takeProfitMode, setTakeProfitMode] = useState<RiskMode>(RiskMode.Percent);
     const [takeProfitValue, setTakeProfitValue] = useState(4); // e.g., 4%
-    const [isStopLossLocked, setIsStopLossLocked] = useState(true);
-    const [isTakeProfitLocked, setIsTakeProfitLocked] = useState(true);
+    const [isStopLossLocked, setIsStopLossLocked] = useState(false);
+    const [isTakeProfitLocked, setIsTakeProfitLocked] = useState(false);
+    const [isCooldownEnabled, setIsCooldownEnabled] = useState(true);
 
     // Backtesting State (now fully self-contained in BacktestingPanel, but results are lifted)
     const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
-    const [optimizationResults, setOptimizationResults] = useState<OptimizationResultItem[] | null>(null);
     
     // Bot State
     const [runningBots, setRunningBots] = useState<RunningBot[]>([]);
@@ -70,9 +71,6 @@ const App: React.FC = () => {
     const [tradeHistory, setTradeHistory] = useState<Trade[]>([]);
     const [lastHistoryDate, setLastHistoryDate] = useState<Date | null>(null);
     const [closingPositionIds, setClosingPositionIds] = useState<Set<number>>(new Set());
-    
-    // Refs for UI WebSockets
-    const priceWsRef = useRef<WebSocket | null>(null);
     
     // Ref for bot handlers to prevent stale closures
     const botHandlersRef = useRef<BotHandlers | null>(null);
@@ -110,7 +108,7 @@ const App: React.FC = () => {
     useEffect(() => {
         const fetchPairs = async () => {
             if (!isApiConnected) {
-                setAllPairs(TRADING_PAIRS);
+                setAllPairs(constants.TRADING_PAIRS);
                 return;
             }
 
@@ -119,13 +117,10 @@ const App: React.FC = () => {
                 case TradingMode.Spot:
                     pairFetcher = binanceService.fetchSpotPairs;
                     break;
-                case TradingMode.Margin:
-                    pairFetcher = binanceService.fetchMarginPairs;
-                    break;
                 case TradingMode.USDSM_Futures:
                     pairFetcher = binanceService.fetchFuturesPairs;
                     break;
-                default: // Funding
+                default:
                     pairFetcher = binanceService.fetchSpotPairs; // Use Spot as default
             }
 
@@ -140,7 +135,7 @@ const App: React.FC = () => {
                 }
             } catch (err) {
                 console.error(`Could not fetch pairs for mode ${tradingMode}:`, err);
-                setAllPairs(TRADING_PAIRS); // Fallback to constants on error
+                setAllPairs(constants.TRADING_PAIRS); // Fallback to constants on error
             }
         };
 
@@ -220,57 +215,69 @@ const App: React.FC = () => {
         setIsChartLoading(true);
         try {
             const formattedPair = selectedPair.replace('/', '');
+
+            // Use the correct symbol info endpoint for the selected trading mode
+            const symbolInfoFetcher = tradingMode === TradingMode.USDSM_Futures
+                ? binanceService.getFuturesSymbolInfo(formattedPair)
+                : binanceService.getSymbolInfo(formattedPair);
+
             const [klineData, info] = await Promise.all([
                 binanceService.fetchKlines(formattedPair, chartTimeFrame),
-                binanceService.getSymbolInfo(formattedPair)
+                symbolInfoFetcher
             ]);
+
+            if (!info) {
+                 throw new Error(`Symbol information not found for ${selectedPair} in ${tradingMode} mode. This pair may not be available for this type of trading.`);
+            }
+
             setKlines(klineData);
-            setSymbolInfo(info);
+            setSymbolInfo(info as SymbolInfo); // Cast is acceptable as the used properties are common
             botManagerService.updateKlines(formattedPair, chartTimeFrame, klineData);
         } catch (error) {
             console.error("Failed to fetch chart data:", error);
             setKlines([]);
+            setSymbolInfo(undefined); // Clear symbol info on error
         } finally {
             setIsChartLoading(false);
         }
-    }, [selectedPair, chartTimeFrame]);
+    }, [selectedPair, chartTimeFrame, tradingMode]);
+
 
     useEffect(() => {
         fetchChartData();
     }, [fetchChartData]);
 
-    // UI Price Ticker (now managed by botManager's shared pool)
+    // Subscribe to live kline and ticker data from the centralized service
     useEffect(() => {
         const formattedPair = selectedPair.replace('/', '').toLowerCase();
         
-        const priceUrl = `wss://stream.binance.com:9443/ws/${formattedPair}@ticker`;
-        priceWsRef.current = new WebSocket(priceUrl);
-        priceWsRef.current.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            if (data.c) {
-                setLivePrice(parseFloat(data.c));
-                setLiveTicker({ pair: data.s, closePrice: parseFloat(data.c), highPrice: parseFloat(data.h), lowPrice: parseFloat(data.l), volume: parseFloat(data.v), quoteVolume: parseFloat(data.q) });
+        // Ticker subscription for UI
+        const tickerCallback = (ticker: LiveTicker) => {
+            if (ticker.pair.toLowerCase() === formattedPair) {
+                setLivePrice(ticker.closePrice);
+                setLiveTicker(ticker);
             }
         };
+        botManagerService.subscribeToTickerUpdates(formattedPair, tickerCallback);
 
+        // Kline subscription for UI chart
         const klineCallback = (newKline: Kline) => {
              setKlines(prevKlines => {
                 if (prevKlines.length === 0) return [newKline];
                 const lastKline = prevKlines[prevKlines.length - 1];
                 if (lastKline && newKline.time === lastKline.time) {
                     const updatedKlines = [...prevKlines];
-                    updatedKlines[updatedKlines.length - 1] = newKline;
+                    updatedKlines[prevKlines.length - 1] = newKline;
                     return updatedKlines;
                 } else {
                     return [...prevKlines.slice(1), newKline];
                 }
             });
         };
-        
         botManagerService.subscribeToKlineUpdates(formattedPair, chartTimeFrame, klineCallback);
         
         return () => {
-            if (priceWsRef.current) priceWsRef.current.close();
+            botManagerService.unsubscribeFromTickerUpdates(formattedPair, tickerCallback);
             botManagerService.unsubscribeFromKlineUpdates(formattedPair, chartTimeFrame, klineCallback);
         };
     }, [selectedPair, chartTimeFrame]);
@@ -291,14 +298,8 @@ const App: React.FC = () => {
                 case TradingMode.Spot:
                     info = await binanceService.fetchSpotWalletBalance();
                     break;
-                case TradingMode.Funding:
-                    info = await binanceService.fetchFundingWalletBalance();
-                    break;
                 case TradingMode.USDSM_Futures:
                     info = await binanceService.fetchFuturesWalletBalance();
-                    break;
-                case TradingMode.Margin:
-                    info = await binanceService.fetchMarginWalletBalance();
                     break;
                 default:
                     setWalletError("Invalid trading mode selected for wallet view.");
@@ -319,6 +320,14 @@ const App: React.FC = () => {
     useEffect(() => {
         fetchWalletBalances();
     }, [fetchWalletBalances]);
+
+    // Synchronize open positions from running bots
+    useEffect(() => {
+        const positionsFromBots = runningBots
+            .filter(bot => bot.openPosition)
+            .map(bot => bot.openPosition!);
+        setOpenPositions(positionsFromBots);
+    }, [runningBots]);
 
 
     // ---- Handlers ----
@@ -372,32 +381,6 @@ const App: React.FC = () => {
         }
     }, [isFetchingMoreChartData, klines, selectedPair, chartTimeFrame]);
 
-    const handleUpdatePositionTargets = useCallback((positionId: number, newTargets: { tp?: number; sl?: number }) => {
-        const positionToUpdate = openPositions.find(p => p.id === positionId);
-        if (!positionToUpdate) {
-            return;
-        }
-
-        const updatedPosition = {
-            ...positionToUpdate,
-            takeProfitPrice: newTargets.tp ?? positionToUpdate.takeProfitPrice,
-            stopLossPrice: newTargets.sl ?? positionToUpdate.stopLossPrice,
-        };
-        
-        // Pure state update
-        setOpenPositions(prev => prev.map(p => (p.id === positionId ? updatedPosition : p)));
-
-        // Side-effects are now outside the state updater, preventing double calls in Strict Mode
-        if (updatedPosition.botId) {
-            botManagerService.updateBotOpenPosition(updatedPosition.botId, updatedPosition);
-            botManagerService.addBotLog(
-                updatedPosition.botId, 
-                `Targets updated. TP: ${updatedPosition.takeProfitPrice.toFixed(updatedPosition.pricePrecision)}, SL: ${updatedPosition.stopLossPrice.toFixed(updatedPosition.pricePrecision)}`,
-                LogType.Action
-            );
-        }
-    }, [openPositions]);
-
     const handleClosePosition = useCallback(async (posToClose: Position, exitReason: string = "Manual Close", exitPriceOverride?: number) => {
         if (!posToClose || closingPositionIds.has(posToClose.id)) {
             return;
@@ -412,24 +395,21 @@ const App: React.FC = () => {
         }
 
         const closePositionInState = (finalExitPrice: number) => {
-             setOpenPositions(prevOpenPositions => {
-                const pnl = (finalExitPrice - posToClose.entryPrice) * posToClose.size * (posToClose.direction === 'LONG' ? 1 : -1) * (posToClose.mode === TradingMode.USDSM_Futures ? posToClose.leverage : 1);
-                const newTrade: Trade = { ...posToClose, exitPrice: finalExitPrice, exitTime: new Date(), pnl, exitReason };
-                
-                setTradeHistory(prevHistory => {
-                    if (prevHistory.some(t => t.id === newTrade.id)) return prevHistory;
-                    historyService.saveTrade(newTrade);
-                    return [newTrade, ...prevHistory].sort((a, b) => new Date(b.exitTime).getTime() - new Date(a.exitTime).getTime());
-                });
-
-                if (posToClose.botId) {
-                    botManagerService.notifyPositionClosed(posToClose.botId, pnl);
-                }
-
-                setClosingPositionIds(prev => { const newSet = new Set(prev); newSet.delete(posToClose.id); return newSet; });
-                
-                return prevOpenPositions.filter(p => p.id !== posToClose.id);
+            // Corrected PNL calculation. Leverage is already part of the position's `size` for futures.
+            const pnl = (finalExitPrice - posToClose.entryPrice) * posToClose.size * (posToClose.direction === 'LONG' ? 1 : -1);
+            const newTrade: Trade = { ...posToClose, exitPrice: finalExitPrice, exitTime: new Date(), pnl, exitReason };
+            
+            setTradeHistory(prevHistory => {
+                if (prevHistory.some(t => t.id === newTrade.id)) return prevHistory;
+                historyService.saveTrade(newTrade);
+                return [newTrade, ...prevHistory].sort((a, b) => new Date(b.exitTime).getTime() - new Date(a.exitTime).getTime());
             });
+
+            if (posToClose.botId) {
+                botManagerService.notifyPositionClosed(posToClose.botId, pnl);
+            }
+
+            setClosingPositionIds(prev => { const newSet = new Set(prev); newSet.delete(posToClose.id); return newSet; });
         }
 
         if (posToClose.executionMode === 'live') {
@@ -462,9 +442,6 @@ const App: React.FC = () => {
                     case TradingMode.USDSM_Futures:
                         orderResponse = await binanceService.createFuturesOrder(posToClose.pair, closingSide, quantity, true);
                         break;
-                    case TradingMode.Margin:
-                        orderResponse = await binanceService.createMarginOrder(posToClose.pair, closingSide, quantity, { sideEffectType: 'AUTO_REPAY' });
-                        break;
                     default:
                         throw new Error(`Unsupported trading mode for closing position: ${posToClose.mode}`);
                 }
@@ -494,28 +471,32 @@ const App: React.FC = () => {
 
     }, [closingPositionIds]);
 
-    const handleExecuteTrade = useCallback(async (execSignal: TradeSignal, botId: string) => {
-        if (execSignal.signal === 'HOLD') return;
-
-        let entryPrice = await botManagerService.waitForBotLivePrice(botId, 5000); // 5s timeout
-
-        if (entryPrice === null) {
-            const reason = "Could not get live price for trade execution. Aborting.";
-            botManagerService.addBotLog(botId, `Trade execution failed: ${reason}`, LogType.Error);
-            botManagerService.updateBotState(botId, { status: BotStatus.Error, analysis: { signal: 'HOLD', reasons: [reason] } });
-            return;
-        }
-
+    const handleExecuteTrade = useCallback(async (
+        execSignal: TradeSignal,
+        botId: string,
+    ) => {
         const bot = botManagerService.getBot(botId);
-        if (!bot || !bot.config) {
-            const reason = "Bot configuration not found.";
-            botManagerService.addBotLog(botId, `Trade execution failed: ${reason}`, LogType.Error);
-            botManagerService.updateBotState(botId, { status: BotStatus.Error, analysis: { signal: 'HOLD', reasons: [reason] } });
+        if (!bot) {
+            console.error(`handleExecuteTrade called for non-existent bot ID: ${botId}`);
             return;
         }
 
+        if (execSignal.signal === 'HOLD') {
+            const reason = "Trade execution requested for a 'HOLD' signal. This should not happen.";
+            botManagerService.addBotLog(botId, reason, LogType.Error);
+            botManagerService.updateBotState(botId, { status: BotStatus.Monitoring });
+            return;
+        }
+        
         const { config } = bot;
-        const isLong = execSignal.signal === 'BUY';
+        
+        // The bot has already calculated the final SL/TP prices. We just use them.
+        const { stopLossPrice, takeProfitPrice } = execSignal;
+        if (stopLossPrice === undefined || takeProfitPrice === undefined) {
+             const reason = "Trade execution failed: Bot did not provide required Stop Loss/Take Profit targets.";
+             botManagerService.notifyTradeExecutionFailed(botId, reason);
+             return;
+        }
 
         let orderResponse: BinanceOrderResponse | null = null;
         let tradeSize: number;
@@ -523,80 +504,105 @@ const App: React.FC = () => {
         let finalLiquidationPrice: number | undefined = undefined;
 
         if (config.executionMode === 'live') {
-             botManagerService.addBotLog(botId, `Executing live ${execSignal.signal} trade for ${config.pair}...`, LogType.Info);
-             try {
-                const stepSize = binanceService.getStepSize(symbolInfo);
+            // --- Pre-flight Balance Check using App state ---
+            if (!accountInfo) {
+                const reason = `Trade aborted: Live account information is not yet available. Please wait a moment.`;
+                botManagerService.notifyTradeExecutionFailed(botId, reason);
+                return;
+            }
+
+            const modeToAccountType: Record<string, string> = {
+                [TradingMode.Spot]: 'SPOT',
+                [TradingMode.USDSM_Futures]: 'USDT_FUTURES',
+            };
+            const expectedAccountType = modeToAccountType[config.mode];
+
+            if (accountInfo.accountType !== expectedAccountType) {
+                const reason = `Trade aborted: Wallet mismatch. Bot needs ${config.mode}, but UI wallet is ${accountInfo.accountType}. Please switch the sidebar wallet view.`;
+                botManagerService.notifyTradeExecutionFailed(botId, reason);
+                return;
+            }
+
+            const quoteAsset = config.pair.split('/')[1];
+            const balance = accountInfo.balances.find(b => b.asset === quoteAsset);
+            const availableBalance = balance ? balance.free : 0;
+
+            if (config.investmentAmount > availableBalance) {
+                const reason = `Trade aborted: Insufficient funds. Required: ${config.investmentAmount.toFixed(2)} ${quoteAsset}, Available: ${availableBalance.toFixed(2)} ${quoteAsset}.`;
+                botManagerService.addBotLog(botId, reason, LogType.Error);
+                botManagerService.updateBotState(botId, { status: BotStatus.Monitoring }); // No cooldown for this state
+                return;
+            }
+            // --- End of Pre-flight Balance Check ---
+
+            try {
+                // Use the entry price determined by the bot
+                const entryPriceForOrder = execSignal.entryPrice;
+                if (!entryPriceForOrder || entryPriceForOrder <= 0) {
+                    throw new Error("Could not get live price for trade execution.");
+                }
+
+                // Calculate quantity based on investment and live price
                 let rawQuantity: number;
-
                 if (config.mode === TradingMode.USDSM_Futures) {
-                    rawQuantity = (config.investmentAmount * config.leverage) / entryPrice;
+                    rawQuantity = (config.investmentAmount * config.leverage) / entryPriceForOrder;
                 } else {
-                    rawQuantity = config.investmentAmount / entryPrice;
+                    rawQuantity = config.investmentAmount / entryPriceForOrder;
                 }
 
-                const quantity = Math.floor(rawQuantity / stepSize) * stepSize;
-                
+                const tempQuantity = Math.floor(rawQuantity / config.stepSize) * config.stepSize;
+                const quantity = parseFloat(tempQuantity.toFixed(config.quantityPrecision));
+
                 if (quantity <= 0) {
-                     throw new Error("Calculated quantity is too small to trade based on investment and asset's step size.");
+                    throw new Error("Calculated quantity is too small to trade based on investment and asset's step size.");
                 }
 
-                switch(config.mode) {
+                // Place the order
+                switch (config.mode) {
                     case TradingMode.Spot:
                         orderResponse = await binanceService.createSpotOrder(config.pair, execSignal.signal, quantity);
                         break;
                     case TradingMode.USDSM_Futures:
                         orderResponse = await binanceService.createFuturesOrder(config.pair, execSignal.signal, quantity);
                         break;
-                    case TradingMode.Margin:
-                        orderResponse = await binanceService.createMarginOrder(config.pair, execSignal.signal, quantity);
-                        break;
                     default:
                         throw new Error(`Unsupported trading mode for trade execution: ${config.mode}`);
                 }
                 
-                finalEntryPrice = parseFloat(orderResponse.cummulativeQuoteQty) / parseFloat(orderResponse.executedQty);
                 tradeSize = parseFloat(orderResponse.executedQty);
 
-                // For futures, get liquidation price after opening position
-                if (config.mode === TradingMode.USDSM_Futures) {
-                    const positionRisk = await binanceService.getFuturesPositionRisk(config.pair.replace('/', ''));
-                    if (positionRisk) {
-                        finalLiquidationPrice = positionRisk.liquidationPrice;
-                    }
+                // --- ROBUST PRICE CALCULATION ---
+                if (orderResponse.avgPrice && parseFloat(orderResponse.avgPrice) > 0) {
+                    finalEntryPrice = parseFloat(orderResponse.avgPrice);
+                } else if (tradeSize > 0) {
+                    finalEntryPrice = parseFloat(orderResponse.cummulativeQuoteQty) / tradeSize;
+                } else {
+                    throw new Error("Order filled, but failed to parse execution details. Check position manually.");
                 }
 
-                botManagerService.addBotLog(botId, `Live order placed successfully. Order ID: ${orderResponse?.orderId}. Avg Price: ${finalEntryPrice.toFixed(pricePrecision)}`, LogType.Success);
-             } catch (e) {
-                 const errorMessage = binanceService.interpretBinanceError(e);
-                 console.error("Failed to execute live trade:", e);
-                 botManagerService.addBotLog(botId, `Live trade execution failed: ${errorMessage}`, LogType.Error);
-                 botManagerService.updateBotState(botId, { status: BotStatus.Error, analysis: { signal: 'HOLD', reasons: [errorMessage] } });
-                 return;
-             }
-        } else {
-            finalEntryPrice = entryPrice;
-            tradeSize = config.investmentAmount / finalEntryPrice;
-        }
-        
-        // --- Calculate final position parameters ---
-        let stopLossPrice: number;
-        if (config.stopLossMode === RiskMode.Percent) {
-            const slAmount = config.investmentAmount * (config.stopLossValue / 100);
-            const priceChange = slAmount / tradeSize;
-            stopLossPrice = isLong ? finalEntryPrice - priceChange : finalEntryPrice + priceChange;
-        } else { // Amount
-            const priceChange = config.stopLossValue / tradeSize;
-            stopLossPrice = isLong ? finalEntryPrice - priceChange : finalEntryPrice + priceChange;
-        }
+                 // For futures, get liquidation price after opening position
+                if (config.mode === TradingMode.USDSM_Futures) {
+                    const positionRisk = await binanceService.getFuturesPositionRisk(config.pair.replace('/', ''));
+                    if (positionRisk) finalLiquidationPrice = positionRisk.liquidationPrice;
+                }
+                
+                botManagerService.addBotLog(botId, `Live order placed. ID: ${orderResponse?.orderId}. Avg Price: ${finalEntryPrice.toFixed(config.pricePrecision)}`, LogType.Success);
 
-        let takeProfitPrice: number;
-        if (config.takeProfitMode === RiskMode.Percent) {
-            const tpAmount = config.investmentAmount * (config.takeProfitValue / 100);
-            const priceChange = tpAmount / tradeSize;
-            takeProfitPrice = isLong ? finalEntryPrice + priceChange : finalEntryPrice - priceChange;
-        } else { // Amount
-            const priceChange = config.takeProfitValue / tradeSize;
-            takeProfitPrice = isLong ? finalEntryPrice + priceChange : finalEntryPrice - priceChange;
+            } catch (e) {
+                const errorMessage = binanceService.interpretBinanceError(e);
+                botManagerService.notifyTradeExecutionFailed(botId, errorMessage);
+                return;
+            }
+        } else {
+            // Paper trade execution
+            finalEntryPrice = execSignal.entryPrice || 0;
+            if(finalEntryPrice === 0) {
+                 botManagerService.addBotLog(botId, `Paper trade failed: no live price was provided by the bot.`, LogType.Error);
+                 botManagerService.updateBotState(botId, { status: BotStatus.Monitoring });
+                 return;
+            }
+            const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
+            tradeSize = positionValue / finalEntryPrice;
         }
 
         const newPosition: Position = {
@@ -605,7 +611,7 @@ const App: React.FC = () => {
             mode: config.mode,
             marginType: config.marginType,
             executionMode: config.executionMode,
-            direction: isLong ? 'LONG' : 'SHORT',
+            direction: execSignal.signal === 'BUY' ? 'LONG' : 'SHORT',
             entryPrice: finalEntryPrice,
             size: tradeSize,
             leverage: config.mode === TradingMode.USDSM_Futures ? config.leverage : 1,
@@ -614,27 +620,25 @@ const App: React.FC = () => {
             agentName: config.agent.name,
             takeProfitPrice,
             stopLossPrice,
-            pricePrecision: pricePrecision,
+            pricePrecision: config.pricePrecision,
             timeFrame: config.timeFrame,
             botId,
             orderId: orderResponse?.orderId ?? null,
             liquidationPrice: finalLiquidationPrice,
         };
 
-        setOpenPositions(prev => [...prev, newPosition]);
         botManagerService.updateBotState(botId, {
             status: BotStatus.PositionOpen,
             openPositionId: newPosition.id,
             openPosition: newPosition,
         });
 
-    }, [pricePrecision, symbolInfo]);
+    }, [accountInfo]);
     
     // Set ref on every render to ensure bots have the latest handlers
     botHandlersRef.current = {
         onExecuteTrade: handleExecuteTrade,
         onClosePosition: handleClosePosition,
-        onUpdatePositionTargets: handleUpdatePositionTargets,
     };
     
     // Check if a bot with the specific config is active
@@ -661,6 +665,11 @@ const App: React.FC = () => {
     }, [runningBots, selectedPair, chartTimeFrame, selectedAgent, executionMode]);
     
     const handleStartBot = useCallback(() => {
+        if (!symbolInfo) {
+            console.error("Cannot start bot: symbol information is not yet loaded.");
+            return;
+        }
+
         const botConfig: BotConfig = {
             pair: selectedPair,
             mode: tradingMode,
@@ -676,16 +685,22 @@ const App: React.FC = () => {
             takeProfitValue,
             isStopLossLocked,
             isTakeProfitLocked,
+            isCooldownEnabled,
             agentParams,
+            // Add precision data to the config
+            pricePrecision: binanceService.getPricePrecision(symbolInfo),
+            quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
+            stepSize: binanceService.getStepSize(symbolInfo),
         };
         botManagerService.startBot(botConfig, botHandlersRef);
     }, [
         selectedPair, tradingMode, leverage, marginType, selectedAgent, chartTimeFrame, executionMode,
         investmentAmount, stopLossMode, stopLossValue, takeProfitMode, takeProfitValue,
-        isStopLossLocked, isTakeProfitLocked, agentParams
+        isStopLossLocked, isTakeProfitLocked, isCooldownEnabled, agentParams, symbolInfo
     ]);
 
-    const handleUpdateBotLockStates = useCallback((botId: string, partialConfig: Partial<BotConfig>) => {
+    // This is the new centralized handler for all bot config updates from the UI
+    const handleUpdateBotConfig = useCallback((botId: string, partialConfig: Partial<BotConfig>) => {
         botManagerService.updateBotConfig(botId, partialConfig);
     }, []);
 
@@ -747,6 +762,7 @@ const App: React.FC = () => {
         setTakeProfitValue(config.takeProfitValue);
         setIsStopLossLocked(config.isStopLossLocked);
         setIsTakeProfitLocked(config.isTakeProfitLocked);
+        setIsCooldownEnabled(config.isCooldownEnabled);
 
     }, []);
 
@@ -757,8 +773,7 @@ const App: React.FC = () => {
         onResumeBot: useCallback((botId: string) => botManagerService.resumeBot(botId), []),
         onStopBot: useCallback((botId: string) => botManagerService.stopBot(botId), []),
         onDeleteBot: useCallback((botId: string) => botManagerService.deleteBot(botId), []),
-        onUpdatePositionTargets: handleUpdatePositionTargets,
-        onUpdateBotLockStates: handleUpdateBotLockStates,
+        onUpdateBotConfig: handleUpdateBotConfig,
     };
 
     return (
@@ -774,7 +789,7 @@ const App: React.FC = () => {
             
             {activeView === 'trading' && (
                 <main className="container mx-auto p-2 sm:p-4 grid grid-cols-12 gap-4">
-                    <div className="col-span-12 lg:col-span-3">
+                    <div className="col-span-12 lg:col-span-3 order-last lg:order-first">
                         <Sidebar
                             executionMode={executionMode} setExecutionMode={setExecutionMode}
                             tradingMode={tradingMode} setTradingMode={setTradingMode}
@@ -792,6 +807,7 @@ const App: React.FC = () => {
                             takeProfitValue={takeProfitValue} setTakeProfitValue={setTakeProfitValue}
                             isStopLossLocked={isStopLossLocked} setIsStopLossLocked={setIsStopLossLocked}
                             isTakeProfitLocked={isTakeProfitLocked} setIsTakeProfitLocked={setIsTakeProfitLocked}
+                            isCooldownEnabled={isCooldownEnabled} setIsCooldownEnabled={setIsCooldownEnabled}
                             timeFrame={chartTimeFrame} setTimeFrame={setChartTimeFrame}
                             selectedAgent={selectedAgent} setSelectedAgent={setSelectedAgent}
                             onStartBot={handleStartBot} klines={klines}
@@ -823,7 +839,7 @@ const App: React.FC = () => {
                             isFetchingMoreData={isFetchingMoreChartData}
                             theme={theme}
                         />
-                        <RunningBots bots={runningBots} openPositions={openPositions} {...botActions} />
+                        <RunningBots bots={runningBots} {...botActions} />
                         <TradingLog tradeHistory={tradeHistory} onLoadMoreHistory={() => historyService.loadTrades(lastHistoryDate ?? undefined)} />
                     </div>
                 </main>
@@ -834,8 +850,6 @@ const App: React.FC = () => {
                     <BacktestingPanel 
                         backtestResult={backtestResult}
                         setBacktestResult={setBacktestResult}
-                        optimizationResults={optimizationResults}
-                        setOptimizationResults={setOptimizationResults}
                         setActiveView={setActiveView}
                         klines={klines}
                         onApplyConfig={handleApplyBacktestConfig}

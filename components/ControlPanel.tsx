@@ -1,10 +1,8 @@
 
-
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { TradingMode, Agent, Kline, AgentParams, RiskMode } from '../types';
-import { TIME_FRAMES, AGENTS } from '../constants';
-import { PlayIcon, ChevronDown, ChevronUp, SparklesIcon, LockIcon, UnlockIcon } from './icons';
+import * as constants from '../constants';
+import { PlayIcon, SparklesIcon, LockIcon, UnlockIcon } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
 import * as binanceService from './../services/binanceService';
 import { SearchableDropdown } from './SearchableDropdown';
@@ -40,6 +38,8 @@ interface ControlPanelProps {
     setIsStopLossLocked: (locked: boolean) => void;
     isTakeProfitLocked: boolean;
     setIsTakeProfitLocked: (locked: boolean) => void;
+    isCooldownEnabled: boolean;
+    setIsCooldownEnabled: (enabled: boolean) => void;
     timeFrame: string;
     setTimeFrame: (timeFrame: string) => void;
     selectedAgent: Agent;
@@ -48,7 +48,6 @@ interface ControlPanelProps {
     klines: Kline[];
     isBotCombinationActive: boolean;
     agentParams: AgentParams;
-    setAgentParams: (params: AgentParams | ((p: AgentParams) => AgentParams)) => void;
     theme: 'light' | 'dark';
 }
 
@@ -58,16 +57,71 @@ const formInputClass = "w-full px-3 py-2 bg-white dark:bg-slate-700/50 border bo
 const buttonClass = "w-full flex items-center justify-center gap-2 px-4 py-2.5 text-white font-semibold rounded-md shadow-sm transition-colors duration-200";
 const primaryButtonClass = `${buttonClass} bg-sky-600 hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 focus:ring-offset-slate-50 dark:focus:ring-offset-slate-800 disabled:bg-slate-400 dark:disabled:bg-slate-600 disabled:cursor-not-allowed`;
 
+const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) => void }> = ({ checked, onChange }) => (
+    <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={() => onChange(!checked)}
+        className={`${checked ? 'bg-sky-600' : 'bg-slate-300 dark:bg-slate-600'} relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2 dark:focus:ring-offset-slate-800`}
+    >
+        <span
+            aria-hidden="true"
+            className={`${checked ? 'translate-x-5' : 'translate-x-0'} pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`}
+        />
+    </button>
+);
+
 const RiskInputWithLock: React.FC<{
     label: string;
     mode: RiskMode;
     value: number;
     isLocked: boolean;
+    investmentAmount: number;
     onModeChange: (mode: RiskMode) => void;
     onValueChange: (value: number) => void;
     onLockToggle: () => void;
-}> = ({ label, mode, value, isLocked, onModeChange, onValueChange, onLockToggle }) => {
-    const nextMode = mode === RiskMode.Percent ? RiskMode.Amount : RiskMode.Percent;
+}> = ({ label, mode, value, isLocked, investmentAmount, onModeChange, onValueChange, onLockToggle }) => {
+    
+    const [inputValue, setInputValue] = useState<string>(String(value));
+
+    useEffect(() => {
+        setInputValue(String(value));
+    }, [value, mode]); // Reset input when props change from outside
+
+    const handleToggleMode = () => {
+        const currentValue = parseFloat(inputValue);
+        // Add guard clause to prevent division by zero or NaN operations
+        if (isNaN(currentValue) || investmentAmount <= 0) {
+            const nextMode = mode === RiskMode.Percent ? RiskMode.Amount : RiskMode.Percent;
+            onModeChange(nextMode);
+            return;
+        }
+
+        let nextValue: number;
+        const nextMode = mode === RiskMode.Percent ? RiskMode.Amount : RiskMode.Percent;
+
+        if (nextMode === RiskMode.Amount) { // from % to $
+            nextValue = investmentAmount * (currentValue / 100);
+        } else { // from $ to %
+            nextValue = (currentValue / investmentAmount) * 100;
+        }
+
+        const formattedNextValue = parseFloat(nextValue.toFixed(2));
+        
+        onModeChange(nextMode);
+        onValueChange(formattedNextValue);
+    };
+
+    const handleBlur = () => {
+         const numValue = parseFloat(inputValue);
+         if (!isNaN(numValue) && numValue !== value) {
+            onValueChange(numValue);
+         } else {
+            // Revert to original value if input is invalid
+            setInputValue(String(value));
+         }
+    };
     
     return (
         <div className={formGroupClass}>
@@ -87,16 +141,18 @@ const RiskInputWithLock: React.FC<{
                     </span>
                     <input
                         type="number"
-                        value={value}
-                        onChange={e => onValueChange(parseFloat(e.target.value) || 0)}
+                        value={inputValue}
+                        onChange={e => setInputValue(e.target.value)}
+                        onBlur={handleBlur}
                         className={`${formInputClass} pl-7 rounded-none`}
                         min="0"
                     />
                 </div>
                 <button
-                    onClick={() => onModeChange(nextMode)}
+                    onClick={handleToggleMode}
                     className="px-3 bg-slate-100 dark:bg-slate-600 border border-l-0 border-slate-300 dark:border-slate-600 rounded-r-md font-bold text-sm hover:bg-slate-200 dark:hover:bg-slate-500 transition-colors"
-                    aria-label={`Switch to ${nextMode} mode`}
+                    aria-label={`Switch to ${mode === RiskMode.Percent ? 'PNL Amount ($)' : 'Percentage (%)'}`}
+                    title={`Switch to ${mode === RiskMode.Percent ? 'PNL Amount ($)' : 'Percentage (%)'}`}
                 >
                    {mode === RiskMode.Percent ? '$' : '%'}
                 </button>
@@ -114,13 +170,13 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         stopLossMode, setStopLossMode, stopLossValue, setStopLossValue,
         takeProfitMode, setTakeProfitMode, takeProfitValue, setTakeProfitValue,
         isStopLossLocked, setIsStopLossLocked, isTakeProfitLocked, setIsTakeProfitLocked,
-        agentParams, setAgentParams, theme, marginType, setMarginType, futuresSettingsError,
+        isCooldownEnabled, setIsCooldownEnabled,
+        agentParams, theme, marginType, setMarginType, futuresSettingsError,
         isMultiAssetMode, onSetMultiAssetMode, multiAssetModeError
     } = props;
     
     const [maxLeverage, setMaxLeverage] = useState(125);
     const [isLeverageLoading, setIsLeverageLoading] = useState(false);
-    const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
 
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
 
@@ -178,7 +234,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             <div className={formGroupClass}>
                 <label htmlFor="time-frame" className={formLabelClass}>Time Frame</label>
                 <select id="time-frame" value={timeFrame} onChange={e => setTimeFrame(e.target.value)} className={formInputClass}>
-                    {TIME_FRAMES.map(tf => <option key={tf} value={tf}>{tf}</option>)}
+                    {constants.TIME_FRAMES.map(tf => <option key={tf} value={tf}>{tf}</option>)}
                 </select>
             </div>
 
@@ -217,6 +273,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     mode={stopLossMode}
                     value={stopLossValue}
                     isLocked={isStopLossLocked}
+                    investmentAmount={investmentAmount}
                     onModeChange={setStopLossMode}
                     onValueChange={setStopLossValue}
                     onLockToggle={() => setIsStopLossLocked(!isStopLossLocked)}
@@ -226,6 +283,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     mode={takeProfitMode}
                     value={takeProfitValue}
                     isLocked={isTakeProfitLocked}
+                    investmentAmount={investmentAmount}
                     onModeChange={setTakeProfitMode}
                     onValueChange={setTakeProfitValue}
                     onLockToggle={() => setIsTakeProfitLocked(!isTakeProfitLocked)}
@@ -246,86 +304,84 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         </div>
                     )}
                     <div className={formGroupClass}>
-                        <label className={formLabelClass}>Pair Margin Type</label>
-                        <div className="flex items-center gap-2 p-1 bg-slate-200 dark:bg-slate-700/50 rounded-md">
-                            <button disabled={isMultiAssetMode} onClick={() => setMarginType('ISOLATED')} className={`flex-1 text-center text-sm font-semibold p-1.5 rounded-md transition-colors ${marginType === 'ISOLATED' ? 'bg-white dark:bg-slate-600 shadow text-sky-600 dark:text-sky-300' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'} disabled:opacity-50 disabled:cursor-not-allowed`}>Isolated</button>
-                            <button disabled={isMultiAssetMode} onClick={() => setMarginType('CROSSED')} className={`flex-1 text-center text-sm font-semibold p-1.5 rounded-md transition-colors ${marginType === 'CROSSED' ? 'bg-white dark:bg-slate-600 shadow text-sky-600 dark:text-sky-300' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'} disabled:opacity-50 disabled:cursor-not-allowed`}>Cross</button>
+                        <label className={formLabelClass}>Position Margin Mode</label>
+                        <div className="flex items-center gap-2 p-1 bg-slate-200 dark:bg-slate-900/70 rounded-md">
+                            <button 
+                                onClick={() => setMarginType('ISOLATED')} 
+                                className={`flex-1 text-center text-sm font-semibold p-1.5 rounded-md transition-colors ${marginType === 'ISOLATED' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
+                                disabled={isMultiAssetMode}
+                            >
+                                Isolated
+                            </button>
+                            <button 
+                                onClick={() => setMarginType('CROSSED')} 
+                                className={`flex-1 text-center text-sm font-semibold p-1.5 rounded-md transition-colors ${marginType === 'CROSSED' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
+                                disabled={isMultiAssetMode}
+                            >
+                                Crossed
+                            </button>
                         </div>
-                        {isMultiAssetMode && <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">Pair margin is set to Cross when Multi-Asset Mode is active.</p>}
-                        {futuresSettingsError && (
-                            <p className="text-xs text-rose-600 dark:text-rose-400 mt-1">{futuresSettingsError}</p>
-                        )}
+                        {isMultiAssetMode && <p className="text-xs text-slate-500 dark:text-slate-400">Multi-Asset mode forces CROSSED margin.</p>}
+                        {futuresSettingsError && <p className="text-xs text-rose-600 dark:text-rose-400 mt-1">{futuresSettingsError}</p>}
                     </div>
+
                     <div className={formGroupClass}>
-                        <label htmlFor="leverage-slider" className={formLabelClass}>Leverage: <span className="font-bold text-sky-500">{leverage}x</span></label>
+                        <label htmlFor="leverage-slider" className="flex justify-between items-baseline">
+                            <span className={formLabelClass}>Leverage</span>
+                            <span className={`font-bold text-sky-500 ${isLeverageLoading ? 'animate-pulse' : ''}`}>{leverage}x</span>
+                        </label>
                         <input
                             id="leverage-slider"
                             type="range"
                             min="1"
                             max={maxLeverage}
-                            step="1"
                             value={leverage}
                             onChange={e => setLeverage(Number(e.target.value))}
-                            disabled={isLeverageLoading}
                             className="w-full h-2 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer"
+                            disabled={isLeverageLoading}
                         />
                     </div>
                 </>
             )}
-            
+
             <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
 
             <div className={formGroupClass}>
-                <label htmlFor="trading-agent" className={formLabelClass}>Trading Agent</label>
-                 <select id="trading-agent" value={selectedAgent.id} onChange={e => setSelectedAgent(AGENTS.find(a => a.id === Number(e.target.value))!)} className={formInputClass}>
-                    {AGENTS.map(agent => (
-                        <option key={agent.id} value={agent.id}>{agent.name}</option>
-                    ))}
+                <label htmlFor="agent-select" className={formLabelClass}>Trading Agent</label>
+                <select id="agent-select" value={selectedAgent.id} onChange={e => setSelectedAgent(constants.AGENTS.find(a => a.id === Number(e.target.value))!)} className={formInputClass}>
+                    {constants.AGENTS.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
                 </select>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{selectedAgent.description}</p>
             </div>
             
-            <div className="text-xs text-slate-500 dark:text-slate-400 p-3 bg-slate-100 dark:bg-slate-800/50 rounded-md">
-                <p className="font-semibold text-slate-700 dark:text-slate-200">{selectedAgent.name}</p>
-                <p>{selectedAgent.description}</p>
-            </div>
-
-            <AnalysisPreview
+            <AnalysisPreview 
                 klines={klines}
                 selectedPair={selectedPair}
                 timeFrame={timeFrame}
                 selectedAgent={selectedAgent}
                 agentParams={agentParams}
             />
-
-            <div className="border-t border-slate-200 dark:border-slate-700 -mx-4"></div>
-
-            <div className="bg-slate-100 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-slate-700/50">
-                <button
-                    onClick={() => setIsAdvancedOpen(!isAdvancedOpen)}
-                    className="w-full flex justify-between items-center p-3 text-left"
-                >
-                    <div className="flex items-center gap-2">
-                        <SparklesIcon className="w-5 h-5 text-sky-500"/>
-                        <span className="font-semibold text-slate-700 dark:text-slate-200">Customize Agent Logic</span>
-                    </div>
-                    {isAdvancedOpen ? <ChevronUp className="w-5 h-5 text-slate-500" /> : <ChevronDown className="w-5 h-5 text-slate-500" />}
-                </button>
-                {isAdvancedOpen && (
-                    <div className="mt-2 p-3 border-t border-slate-200 dark:border-slate-700 space-y-4">
-                       {/* Agent-specific parameters will be added here as needed */}
-                       <p className="text-xs text-center text-slate-500">Agent-specific logic parameters can be configured in the Backtesting panel.</p>
-                    </div>
-                )}
-            </div>
             
-            <button
-                onClick={onStartBot}
-                disabled={isBotCombinationActive || klines.length < 50 || isInvestmentInvalid}
-                title={isBotCombinationActive ? "A bot with this exact configuration (pair, timeframe, agent) is already running." : (klines.length < 50 ? "Not enough market data to start." : (isInvestmentInvalid ? "Investment exceeds available balance." : "Start Trading Bot"))}
-                className={primaryButtonClass}
-            >
-                <PlayIcon className="w-5 h-5" />
-                {isBotCombinationActive ? 'Bot Running' : 'Start Bot'}
+            <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
+
+             <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="cooldown-toggle" className={formLabelClass}>
+                        Post-Trade Cooldown
+                    </label>
+                    <ToggleSwitch
+                        checked={isCooldownEnabled}
+                        onChange={setIsCooldownEnabled}
+                    />
+                </div>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Bot will pause for {constants.BOT_COOLDOWN_CANDLES} candles after a trade closes.
+                </p>
+            </div>
+
+            <button onClick={onStartBot} disabled={isBotCombinationActive || isInvestmentInvalid} className={primaryButtonClass}>
+                <PlayIcon className="w-5 h-5"/>
+                {isBotCombinationActive ? 'Bot Is Already Running' : 'Start Trading Bot'}
             </button>
         </div>
     );

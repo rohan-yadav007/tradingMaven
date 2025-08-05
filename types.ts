@@ -1,13 +1,8 @@
 
 
-
-
-
 export enum TradingMode {
     Spot = 'Spot',
-    Funding = 'Funding',
     USDSM_Futures = 'USDS-M Futures',
-    Margin = 'Margin',
 }
 
 export interface Agent {
@@ -20,6 +15,11 @@ export interface Agent {
 export interface TradeSignal {
     signal: 'BUY' | 'SELL' | 'HOLD';
     reasons: string[];
+    // These are added so the bot's tick method can pass the final calculated
+    // targets and the execution price to the handler.
+    stopLossPrice?: number;
+    takeProfitPrice?: number;
+    entryPrice?: number;
 }
 
 // For proactive trade management
@@ -71,23 +71,7 @@ export interface WalletBalance extends RawWalletBalance {
 
 
 // --- Margin Account Types ---
-export interface MarginAsset {
-    asset: string;
-    borrowed: string;
-    free: string;
-    interest: string;
-    locked: string;
-    netAsset: string;
-}
-
-export interface MarginAccountInfo extends AccountInfo {
-    marginLevel: string;
-    totalAssetOfBtc: string;
-    totalLiabilityOfBtc: string;
-    totalNetAssetOfBtc: string;
-    userAssets: MarginAsset[];
-    btcUsdPrice?: number;
-}
+// Removed as Margin trading is no longer supported.
 
 export interface AccountInfo {
   canTrade: boolean;
@@ -203,7 +187,12 @@ export interface BotConfig {
     // Proactive Management Toggles
     isStopLossLocked: boolean;
     isTakeProfitLocked: boolean;
+    isCooldownEnabled: boolean;
     agentParams?: AgentParams;
+    // Precision data for self-contained bot logic
+    pricePrecision: number;
+    quantityPrecision: number;
+    stepSize: number;
 }
 
 export enum BotStatus {
@@ -231,6 +220,7 @@ export interface BinanceOrderResponse {
     timeInForce: string;
     type: string;
     side: string;
+    avgPrice?: string; // For futures
 }
 
 
@@ -250,6 +240,7 @@ export interface RunningBot {
     accumulatedActiveMs: number;
     lastResumeTimestamp: number | null;
     klinesLoaded?: number;
+    lastAnalysisTimestamp: number | null;
 }
 
 export interface LeverageBracket {
@@ -278,48 +269,31 @@ export interface AgentParams {
     mom_emaSlowPeriod?: number;
     mom_rsiThresholdBullish?: number;
     mom_rsiThresholdBearish?: number;
+    mom_volumeSmaPeriod?: number;
+    mom_volumeMultiplier?: number;
 
-    // Agent 2: Volatility Voyager
-    vol_bbPeriod?: number;
-    vol_bbStdDev?: number;
-    vol_stochRsiRsiPeriod?: number;
-    vol_stochRsiStochasticPeriod?: number;
-    vol_stochRsiKPeriod?: number;
-    vol_stochRsiDPeriod?: number;
-    vol_stochRsiUpperThreshold?: number;
-    vol_stochRsiLowerThreshold?: number;
-    vol_emaTrendPeriod?: number;
-
-    // Agent 3: Trend Surfer
-    trend_emaFastPeriod?: number;
-    trend_emaSlowPeriod?: number;
-    trend_adxThreshold?: number;
-    psarStep?: number;
-    psarMax?: number;
-
-    // Agent 4: Scalping Expert
+    // Agent 4: Scalping Expert (Score-based)
+    scalp_scoreThreshold?: number;
+    scalp_emaPeriod?: number;
+    scalp_rsiPeriod?: number; // Used for StochRSI
+    scalp_stochRsiPeriod?: number;
+    scalp_stochRsiOversold?: number;
+    scalp_stochRsiOverbought?: number;
     scalp_superTrendPeriod?: number;
     scalp_superTrendMultiplier?: number;
-    scalp_emaFastPeriod?: number;
-    scalp_emaSlowPeriod?: number;
-    scalp_rsiPeriod?: number;
-    scalp_rsiBuyThreshold?: number;
-    scalp_rsiSellThreshold?: number;
-    scalp_bbPeriod?: number;
-    scalp_bbStdDev?: number;
-    scalp_volumeSmaPeriod?: number;
-    scalp_scoreThreshold?: number;
+    scalp_psarStep?: number;
+    scalp_psarMax?: number;
     
-    // Agent 5 & 6: Smart Agent & Profit Locker
-    smart_superTrendPeriod?: number;
-    smart_superTrendMultiplier?: number;
-    smart_emaFastPeriod?: number;
-    smart_emaSlowPeriod?: number;
-    smart_rsiPeriod?: number;
-    smart_rsiBuyThreshold?: number;
-    smart_rsiSellThreshold?: number;
-    smart_volumeSmaPeriod?: number;
-    smart_confidenceThreshold?: number;
+    // Agent 5 & 6: Market Phase Adaptor & Profit Locker
+    mpa_adxTrend?: number;
+    mpa_adxChop?: number;
+    mpa_bbwSqueeze?: number;
+    mpa_trendEmaFast?: number;
+    mpa_trendEmaSlow?: number;
+    mpa_rangeBBPeriod?: number;
+    mpa_rangeBBStdDev?: number;
+    mpa_rangeRsiOversold?: number;
+    mpa_rangeRsiOverbought?: number;
 
     // Agent 7: Market Structure Maven
     msm_htfEmaPeriod?: number;

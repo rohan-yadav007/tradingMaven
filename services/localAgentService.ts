@@ -1,12 +1,24 @@
-import type { Agent, TradeSignal, Kline, AgentParams, Position, ADXOutput, MACDOutput, BollingerBandsOutput, StochasticRSIOutput, TradeManagementSignal } from '../types';
+
+import type { Agent, TradeSignal, Kline, AgentParams, Position, ADXOutput, MACDOutput, BollingerBandsOutput, StochasticRSIOutput, TradeManagementSignal, BotConfig } from '../types';
 import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR } from 'technicalindicators';
-import { TIMEFRAME_ADAPTIVE_SETTINGS, DEFAULT_AGENT_PARAMS } from '../constants';
+import * as constants from '../constants';
 
 
 const getLast = <T>(arr: T[] | undefined): T | undefined => arr && arr.length > 0 ? arr[arr.length - 1] : undefined;
 
+const quantile = (arr: number[], q: number): number => {
+    const sorted = [...arr].sort((a, b) => a - b);
+    const pos = (sorted.length - 1) * q;
+    const base = Math.floor(pos);
+    const rest = pos - base;
+    if (sorted[base + 1] !== undefined) {
+        return sorted[base] + rest * (sorted[base + 1] - sorted[base]);
+    } else {
+        return sorted[base];
+    }
+};
 
-// --- Agent 1: Momentum Master ---
+// --- Agent 1: Momentum Master (Upgraded) ---
 const getMomentumMasterSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
     if (klines.length < params.mom_emaSlowPeriod) {
         return { signal: 'HOLD', reasons: [`Not enough klines for Momentum Master analysis (need ${params.mom_emaSlowPeriod}).`] };
@@ -15,126 +27,63 @@ const getMomentumMasterSignal = (klines: Kline[], params: Required<AgentParams>)
     const closes = klines.map(k => k.close);
     const highs = klines.map(k => k.high);
     const lows = klines.map(k => k.low);
+    const volumes = klines.map(k => k.volume || 0);
 
-    // Calculate indicators dynamically using params
+    // Calculate indicators
     const adx = getLast(ADX.calculate({ close: closes, high: highs, low: lows, period: params.adxPeriod })) as ADXOutput | undefined;
-    const macd = getLast(MACD.calculate({ values: closes, fastPeriod: params.macdFastPeriod, slowPeriod: params.macdSlowPeriod, signalPeriod: params.macdSignalPeriod, SimpleMAOscillator: false, SimpleMASignal: false })) as MACDOutput | undefined;
+    const macdValues = MACD.calculate({ values: closes, fastPeriod: params.macdFastPeriod, slowPeriod: params.macdSlowPeriod, signalPeriod: params.macdSignalPeriod, SimpleMAOscillator: false, SimpleMASignal: false }) as MACDOutput[];
+    const macd = getLast(macdValues);
+    const macdHistogram = macdValues.map(m => m.histogram).filter((h): h is number => h !== undefined);
     const rsi = getLast(RSI.calculate({ period: params.rsiPeriod, values: closes }));
     const emaFast = getLast(EMA.calculate({ period: params.mom_emaFastPeriod, values: closes }));
     const emaSlow = getLast(EMA.calculate({ period: params.mom_emaSlowPeriod, values: closes }));
-
-    if (!adx || !macd || macd.histogram === undefined || typeof rsi !== 'number' || !emaFast || !emaSlow) {
+    const volumeSma = getLast(SMA.calculate({ period: params.mom_volumeSmaPeriod, values: volumes }));
+    const currentVolume = getLast(volumes);
+    
+    if (!adx || !macd || typeof macd.histogram !== 'number' || typeof rsi !== 'number' || typeof emaFast !== 'number' || typeof emaSlow !== 'number' || typeof volumeSma !== 'number' || typeof currentVolume !== 'number') {
         return { signal: 'HOLD', reasons: ["Could not calculate all momentum indicators."] };
     }
 
     if (adx.adx < params.adxTrendThreshold) {
-        return { signal: 'HOLD', reasons: [`Market is not trending (ADX: ${adx.adx.toFixed(1)} < ${params.adxTrendThreshold}). Momentum signals are unreliable.`] };
+        return { signal: 'HOLD', reasons: [`Market is not trending (ADX: ${adx.adx.toFixed(1)} < ${params.adxTrendThreshold}).`] };
     }
+    reasons.push(`Market is trending (ADX: ${adx.adx.toFixed(1)}).`);
+
+    // --- Confirmation Logic ---
+    const hasVolumeConfirmation = currentVolume > volumeSma * params.mom_volumeMultiplier;
+    const macdIsRising = macdHistogram.length >= 3 && macdHistogram.slice(-3).every((v, i, arr) => i === 0 || v > arr[i-1]);
+    const macdIsFalling = macdHistogram.length >= 3 && macdHistogram.slice(-3).every((v, i, arr) => i === 0 || v < arr[i-1]);
 
     let signal: TradeSignal['signal'] = 'HOLD';
     const isBullish = adx.pdi > adx.mdi && macd.histogram > 0 && rsi > params.mom_rsiThresholdBullish && emaFast > emaSlow;
     const isBearish = adx.pdi < adx.mdi && macd.histogram < 0 && rsi < params.mom_rsiThresholdBearish && emaFast < emaSlow;
 
     if (isBullish) {
-        signal = 'BUY';
-        reasons.push(`Strong bullish trend detected (ADX: ${adx.adx.toFixed(1)}).`);
-        reasons.push(`Positive momentum (MACD > 0, RSI: ${rsi.toFixed(1)} > ${params.mom_rsiThresholdBullish}).`);
-        reasons.push(`Uptrend confirmed (EMA ${params.mom_emaFastPeriod} > ${params.mom_emaSlowPeriod}).`);
+        reasons.push(`Primary bullish signals aligned (EMA Crossover, MACD > 0, RSI > ${params.mom_rsiThresholdBullish}).`);
+        if (hasVolumeConfirmation) reasons.push(`Confirmation: Volume spike detected.`);
+        if (macdIsRising) reasons.push(`Confirmation: MACD histogram is rising.`);
+        
+        if (hasVolumeConfirmation && macdIsRising) {
+            signal = 'BUY';
+            reasons.push(`All confirmations met. Executing BUY.`);
+        } else {
+            reasons.push(`Awaiting full confirmation (Volume/MACD Slope).`);
+        }
     } else if (isBearish) {
-        signal = 'SELL';
-        reasons.push(`Strong bearish trend detected (ADX: ${adx.adx.toFixed(1)}).`);
-        reasons.push(`Negative momentum (MACD < 0, RSI: ${rsi.toFixed(1)} < ${params.mom_rsiThresholdBearish}).`);
-        reasons.push(`Downtrend confirmed (EMA ${params.mom_emaFastPeriod} < ${params.mom_emaSlowPeriod}).`);
+        reasons.push(`Primary bearish signals aligned (EMA Crossover, MACD < 0, RSI < ${params.mom_rsiThresholdBearish}).`);
+        if (hasVolumeConfirmation) reasons.push(`Confirmation: Volume spike detected.`);
+        if (macdIsFalling) reasons.push(`Confirmation: MACD histogram is falling.`);
+        
+        if (hasVolumeConfirmation && macdIsFalling) {
+            signal = 'SELL';
+            reasons.push(`All confirmations met. Executing SELL.`);
+        } else {
+            reasons.push(`Awaiting full confirmation (Volume/MACD Slope).`);
+        }
     } else {
-        reasons.push(`Market is trending, but momentum signals are not aligned.`);
+        reasons.push(`Trend detected, but momentum signals are not aligned.`);
     }
 
-    return { signal, reasons };
-};
-
-// --- Agent 2: Volatility Voyager ---
-const getVolatilityVoyagerSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
-    const reasons: string[] = [];
-    const closes = klines.map(k => k.close);
-    const currentPrice = getLast(closes);
-    
-    const bbValues = BollingerBands.calculate({ period: params.vol_bbPeriod, stdDev: params.vol_bbStdDev, values: closes }) as BollingerBandsOutput[];
-    const bb = getLast(bbValues);
-    const stochRsiInput = { rsiPeriod: params.vol_stochRsiRsiPeriod, stochasticPeriod: params.vol_stochRsiStochasticPeriod, kPeriod: params.vol_stochRsiKPeriod, dPeriod: params.vol_stochRsiDPeriod, values: closes };
-    const stochRsi = getLast(StochasticRSI.calculate(stochRsiInput)) as StochasticRSIOutput | undefined;
-    const emaTrend = getLast(EMA.calculate({ period: params.vol_emaTrendPeriod, values: closes }));
-
-    if (!currentPrice || !bb || !stochRsi || typeof stochRsi.k !== 'number' || !emaTrend || bbValues.length < 50) return { signal: 'HOLD', reasons: ["Could not calculate all volatility indicators."] };
-    
-    const bbwHistory = bbValues.map(b => b.middle > 0 ? (b.upper - b.lower) / b.middle : 0).filter(v => v > 0);
-    const lookbackPeriod = 50;
-    if (bbwHistory.length < lookbackPeriod) return { signal: 'HOLD', reasons: ["Not enough data for BBW squeeze check."] };
-    
-    const currentBbw = bbwHistory[bbwHistory.length - 1];
-    const minBbwInPeriod = Math.min(...bbwHistory.slice(-lookbackPeriod));
-    const isInSqueeze = currentBbw <= minBbwInPeriod * 1.15;
-
-    if (!isInSqueeze) {
-         return { signal: 'HOLD', reasons: [`No BBW squeeze detected. Awaiting volatility contraction.`] };
-    }
-    reasons.push(`BBW Squeeze detected (potential for breakout).`);
-
-    let signal: TradeSignal['signal'] = 'HOLD';
-    const isBreakoutBuy = currentPrice > bb.upper && stochRsi.k > params.vol_stochRsiUpperThreshold && currentPrice > emaTrend;
-    const isBreakoutSell = currentPrice < bb.lower && stochRsi.k < params.vol_stochRsiLowerThreshold && currentPrice < emaTrend;
-
-    if (isBreakoutBuy) {
-        signal = 'BUY';
-        reasons.push(`Price broke above upper Bollinger Band post-squeeze.`);
-        reasons.push(`Momentum confirmed (StochRSI.k: ${stochRsi.k.toFixed(1)} > ${params.vol_stochRsiUpperThreshold}).`);
-        reasons.push(`Trend confirmed (Price > EMA ${params.vol_emaTrendPeriod}).`);
-    } else if (isBreakoutSell) {
-        signal = 'SELL';
-        reasons.push(`Price broke below lower Bollinger Band post-squeeze.`);
-        reasons.push(`Momentum confirmed (StochRSI.k: ${stochRsi.k.toFixed(1)} < ${params.vol_stochRsiLowerThreshold}).`);
-         reasons.push(`Trend confirmed (Price < EMA ${params.vol_emaTrendPeriod}).`);
-    } else {
-        reasons.push(`Squeeze is on, but awaiting breakout from bands.`);
-    }
-
-    return { signal, reasons };
-};
-
-// --- Agent 3: Trend Surfer ---
-const getTrendSurferSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
-    const reasons: string[] = [];
-    const closes = klines.map(k => k.close);
-    const highs = klines.map(k => k.high);
-    const lows = klines.map(k => k.low);
-    const currentPrice = getLast(closes);
-    
-    const emaFast = getLast(EMA.calculate({ period: params.trend_emaFastPeriod, values: closes }));
-    const emaSlow = getLast(EMA.calculate({ period: params.trend_emaSlowPeriod, values: closes }));
-    const adx = getLast(ADX.calculate({ close: closes, high: highs, low: lows, period: params.adxPeriod })) as ADXOutput | undefined;
-    const psar = getLast(PSAR.calculate({ high: highs, low: lows, step: params.psarStep, max: params.psarMax }));
-
-    if (!currentPrice || !emaFast || !emaSlow || !adx || typeof psar !== 'number') return { signal: 'HOLD', reasons: ["Could not calculate all trend indicators."] };
-
-    if (adx.adx < params.trend_adxThreshold) {
-        return { signal: 'HOLD', reasons: [`Market is not trending (ADX: ${adx.adx.toFixed(1)} < ${params.trend_adxThreshold}). Trend Surfer is idle.`] };
-    }
-
-    let signal: TradeSignal['signal'] = 'HOLD';
-    const isBullish = emaFast > emaSlow && currentPrice > psar;
-    const isBearish = emaFast < emaSlow && currentPrice < psar;
-
-    if (isBullish) {
-        signal = 'BUY';
-        reasons.push(`Long-term uptrend confirmed (EMA ${params.trend_emaFastPeriod} > ${params.trend_emaSlowPeriod}).`);
-        reasons.push(`Price is above Parabolic SAR, confirming buy signal.`);
-    } else if (isBearish) {
-        signal = 'SELL';
-        reasons.push(`Long-term downtrend confirmed (EMA ${params.trend_emaFastPeriod} < ${params.trend_emaSlowPeriod}).`);
-        reasons.push(`Price is below Parabolic SAR, confirming sell signal.`);
-    } else {
-        reasons.push(`Market is trending, but entry signals (PSAR) are not aligned with long-term EMA direction.`);
-    }
-    
     return { signal, reasons };
 };
 
@@ -180,108 +129,140 @@ function calculateSuperTrend(candles: Kline[], period: number, multiplier: numbe
 }
 
 
-// --- Agent 4: Scalping Expert ---
-function getScalpingAgentSignal(klines: Kline[], params: Required<AgentParams>): TradeSignal {
-    const reasons: string[] = [];
-    const closes = klines.map(k => k.close);
-    const volumes = klines.map(k => k.volume || 0);
-    const currentPrice = getLast(closes);
+// --- Agent 4: Scalping Expert (Score-based) ---
+function getScalpingExpertSignal(klines: Kline[], params: Required<AgentParams>): TradeSignal {
+    const minKlines = Math.max(params.scalp_emaPeriod, params.scalp_superTrendPeriod, params.scalp_rsiPeriod) + params.scalp_stochRsiPeriod;
+    if (klines.length < minKlines) {
+        return { signal: 'HOLD', reasons: [`Need ${minKlines} klines for Scalping Expert.`] };
+    }
 
-    const macdInput = { values: closes, fastPeriod: params.macdFastPeriod, slowPeriod: params.macdSlowPeriod, signalPeriod: params.macdSignalPeriod, SimpleMAOscillator: false, SimpleMASignal: false };
-    const macdValues = MACD.calculate(macdInput) as MACDOutput[];
-    const macd = getLast(macdValues);
-    const prevMacd = macdValues.length > 1 ? macdValues[macdValues.length - 2] : undefined;
-    const rsi = getLast(RSI.calculate({ period: params.scalp_rsiPeriod, values: closes }));
-    const bb = getLast(BollingerBands.calculate({ period: params.scalp_bbPeriod, stdDev: params.scalp_bbStdDev, values: closes })) as BollingerBandsOutput | undefined;
+    const closes = klines.map(k => k.close);
+    const highs = klines.map(k => k.high);
+    const lows = klines.map(k => k.low);
+    const currentPrice = closes[closes.length - 1];
+
+    // Indicators
+    const ema = getLast(EMA.calculate({ period: params.scalp_emaPeriod, values: closes }));
     const st = calculateSuperTrend(klines, params.scalp_superTrendPeriod, params.scalp_superTrendMultiplier);
-    const volumeSma = getLast(SMA.calculate({ period: params.scalp_volumeSmaPeriod, values: volumes }));
-    const currentVolume = getLast(volumes);
-    const ema5 = getLast(EMA.calculate({ period: params.scalp_emaFastPeriod, values: closes }));
-    const ema20 = getLast(EMA.calculate({ period: params.scalp_emaSlowPeriod, values: closes }));
-
-    if (!currentPrice || !ema5 || !ema20 || !macd || !prevMacd || typeof rsi !== 'number' || !bb || !st || typeof volumeSma !== 'number' || typeof currentVolume !== 'number') {
-        return { signal: 'HOLD', reasons: ["Could not calculate all required indicators for scalping."] };
-    }
-    if (macd.MACD === undefined || macd.signal === undefined || prevMacd.MACD === undefined || prevMacd.signal === undefined) return { signal: 'HOLD', reasons: ["Invalid MACD data."] };
+    const psar = getLast(PSAR.calculate({ high: highs, low: lows, step: params.scalp_psarStep, max: params.scalp_psarMax }));
     
-    let buyScore = 0, sellScore = 0;
+    const stochRsiInput = {
+        values: closes,
+        rsiPeriod: params.scalp_rsiPeriod,
+        stochasticPeriod: params.scalp_stochRsiPeriod,
+        kPeriod: 3,
+        dPeriod: 3,
+    };
+    const stochRsiResult = StochasticRSI.calculate(stochRsiInput);
+    const stochRsi = getLast(stochRsiResult);
 
-    if (st.trend === 'bullish') { buyScore += 5; reasons.push(`(B+5) SuperTrend is bullish.`); }
-    if (st.trend === 'bearish') { sellScore += 5; reasons.push(`(S+5) SuperTrend is bearish.`); }
-    if (ema5 > ema20) { buyScore += 5; reasons.push(`(B+5) Bullish EMA Crossover (${params.scalp_emaFastPeriod}/${params.scalp_emaSlowPeriod}).`); }
-    if (ema5 < ema20) { sellScore += 5; reasons.push(`(S+5) Bearish EMA Crossover (${params.scalp_emaFastPeriod}/${params.scalp_emaSlowPeriod}).`); }
-    if (prevMacd.MACD < prevMacd.signal && macd.MACD > macd.signal) { buyScore += 3; reasons.push(`(B+3) Bullish MACD Crossover.`); }
-    if (prevMacd.MACD > prevMacd.signal && macd.MACD < macd.signal) { sellScore += 3; reasons.push(`(S+3) Bearish MACD Crossover.`); }
-    if (rsi < params.scalp_rsiBuyThreshold) { buyScore += 4; reasons.push(`(B+4) RSI is oversold (${rsi.toFixed(1)} < ${params.scalp_rsiBuyThreshold}).`); }
-    if (rsi > params.scalp_rsiSellThreshold) { sellScore += 4; reasons.push(`(S+4) RSI is overbought (${rsi.toFixed(1)} > ${params.scalp_rsiSellThreshold}).`); }
-    if (currentPrice <= bb.lower) { buyScore += 4; reasons.push(`(B+4) Price at lower Bollinger Band.`); }
-    if (currentPrice >= bb.upper) { sellScore += 4; reasons.push(`(S+4) Price at upper Bollinger Band.`); }
-    if (currentVolume > volumeSma * 1.5) { buyScore += 2; sellScore += 2; reasons.push(`(B+2 S+2) Volume spike confirms momentum.`); }
+    if (typeof ema !== 'number' || !st || typeof psar !== 'number' || !stochRsi) {
+        return { signal: 'HOLD', reasons: ["Calculating indicators..."] };
+    }
 
-    let signal: TradeSignal['signal'] = 'HOLD';
-    if (buyScore >= params.scalp_scoreThreshold) signal = 'BUY';
-    else if (sellScore >= params.scalp_scoreThreshold) signal = 'SELL';
-    else reasons.push('No strong entry signal found. Strict conditions not met.');
-
-    return { signal, reasons };
-}
-
-// --- Agent 5 & 6: Smart Agent & Profit Locker (shared entry logic) ---
-function getSmartAgentSignal(klines: Kline[], params: Required<AgentParams>): TradeSignal {
     const reasons: string[] = [];
-    const closes = klines.map(k => k.close);
-    const volumes = klines.map(k => k.volume || 0);
-    const currentPrice = getLast(closes);
-    
-    const st = calculateSuperTrend(klines, params.smart_superTrendPeriod, params.smart_superTrendMultiplier);
-    const ema9 = getLast(EMA.calculate({ period: params.smart_emaFastPeriod, values: closes }));
-    const ema20 = getLast(EMA.calculate({ period: params.smart_emaSlowPeriod, values: closes }));
-    const rsi = getLast(RSI.calculate({ period: params.smart_rsiPeriod, values: closes }));
-    const macdInput = { values: closes, fastPeriod: params.macdFastPeriod, slowPeriod: params.macdSlowPeriod, signalPeriod: params.macdSignalPeriod, SimpleMAOscillator: false, SimpleMASignal: false };
-    const macdValues = MACD.calculate(macdInput) as MACDOutput[];
-    const macd = getLast(macdValues);
-    const prevMacd = macdValues.length > 1 ? macdValues[macdValues.length - 2] : undefined;
-    const currentVolume = getLast(volumes);
-    const volumeSma = getLast(SMA.calculate({ period: params.smart_volumeSmaPeriod, values: volumes }));
-
-    if(!currentPrice || !st || !ema9 || !ema20 || typeof rsi !== 'number' || !macd || !prevMacd || macd.MACD === undefined || macd.signal === undefined || prevMacd.MACD === undefined || prevMacd.signal === undefined || typeof currentVolume !== 'number' || typeof volumeSma !== 'number') {
-        return { signal: 'HOLD', reasons: ["Not enough data for Smart Agent analysis."] };
-    }
-
     let score = 0;
-    const MAX_SCORE = 29;
-    
-    if (st.trend === 'bullish') { score += 10; reasons.push("(+10) SuperTrend is bullish."); } 
-    else { score -= 10; reasons.push("(-10) SuperTrend is bearish."); }
 
-    if (ema9 > ema20) { score += 7; reasons.push(`(+7) Short-term momentum is bullish (EMA ${params.smart_emaFastPeriod} > ${params.smart_emaSlowPeriod}).`); } 
-    else { score -= 7; reasons.push(`(-7) Short-term momentum is bearish (EMA ${params.smart_emaFastPeriod} < ${params.smart_emaSlowPeriod}).`); }
-  
-    if (prevMacd.MACD < prevMacd.signal && macd.MACD > macd.signal) { score += 5; reasons.push("(+5) Bullish MACD crossover detected."); }
-    else if (prevMacd.MACD > prevMacd.signal && macd.MACD < macd.signal) { score -= 5; reasons.push("(-5) Bearish MACD crossover detected."); }
+    // --- BUY SCORE ---
+    if (currentPrice > ema) { score++; reasons.push(`Price > EMA(${params.scalp_emaPeriod})`); }
+    if (st.trend === 'bullish') { score++; reasons.push('SuperTrend is bullish'); }
+    if (currentPrice > psar) { score++; reasons.push('PSAR is below price'); }
+    if (stochRsi.stochRSI < params.scalp_stochRsiOversold) { score += 2; reasons.push(`StochRSI is oversold (${stochRsi.stochRSI.toFixed(1)}) - Strong Signal`); }
 
-    if (rsi > params.smart_rsiBuyThreshold) { score += 4; reasons.push(`(+4) RSI (${rsi.toFixed(1)} > ${params.smart_rsiBuyThreshold}) shows bullish momentum.`); } 
-    else if (rsi < params.smart_rsiSellThreshold) { score -= 4; reasons.push(`(-4) RSI (${rsi.toFixed(1)} < ${params.smart_rsiSellThreshold}) shows bearish momentum.`); } 
-    else { reasons.push(`(0) RSI (${rsi.toFixed(1)}) is neutral.`); }
-
-    if (currentVolume > volumeSma * 1.5) {
-        if (score > 0) { score += 3; reasons.push("(+3) Volume spike confirms bullish bias."); }
-        if (score < 0) { score -= 3; reasons.push("(-3) Volume spike confirms bearish bias."); }
+    if (score >= params.scalp_scoreThreshold) {
+        return { signal: 'BUY', reasons: [`Buy score of ${score} reached threshold of ${params.scalp_scoreThreshold}.`, ...reasons] };
     }
-    
-    const confidence = score / MAX_SCORE;
-    reasons.push(`Final Confidence Score: ${confidence.toFixed(2)}`);
 
-    let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
-    if (confidence >= params.smart_confidenceThreshold) action = 'BUY';
-    else if (confidence <= -params.smart_confidenceThreshold) action = 'SELL';
-  
-    if (action === 'HOLD') reasons.push("Confidence threshold not met. Holding position.");
-    return { signal: action, reasons };
+    // --- SELL SCORE ---
+    score = 0;
+    reasons.length = 0; // Clear reasons for sell check
+    if (currentPrice < ema) { score++; reasons.push(`Price < EMA(${params.scalp_emaPeriod})`); }
+    if (st.trend === 'bearish') { score++; reasons.push('SuperTrend is bearish'); }
+    if (currentPrice < psar) { score++; reasons.push('PSAR is above price'); }
+    if (stochRsi.stochRSI > params.scalp_stochRsiOverbought) { score += 2; reasons.push(`StochRSI is overbought (${stochRsi.stochRSI.toFixed(1)}) - Strong Signal`); }
+    
+    if (score >= params.scalp_scoreThreshold) {
+        return { signal: 'SELL', reasons: [`Sell score of ${score} reached threshold of ${params.scalp_scoreThreshold}.`, ...reasons] };
+    }
+
+    return { signal: 'HOLD', reasons: ["Score threshold not met for entry."] };
 }
 
 
-// --- Agent 7: Market Structure Maven (CORRECTED LOGIC) ---
+// --- Agent 5 & 6: Market Phase Adaptor (NEW) ---
+type MarketPhase = 'TRENDING' | 'RANGING' | 'CHOPPY';
+const getMarketPhaseAdaptorSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
+    const minKlineLength = Math.max(params.adxPeriod, params.mpa_rangeBBPeriod, params.mpa_trendEmaSlow) + 1;
+    if (klines.length < minKlineLength) {
+        return { signal: 'HOLD', reasons: [`Need ${minKlineLength} klines for Market Phase analysis.`] };
+    }
+    
+    const closes = klines.map(k => k.close);
+    const highs = klines.map(k => k.high);
+    const lows = klines.map(k => k.low);
+    const currentPrice = closes[closes.length - 1];
+
+    // --- Phase Detection Indicators ---
+    const adx = getLast(ADX.calculate({ close: closes, high: highs, low: lows, period: params.adxPeriod })) as ADXOutput | undefined;
+    const bbValues = BollingerBands.calculate({ period: params.mpa_rangeBBPeriod, stdDev: params.mpa_rangeBBStdDev, values: closes }) as BollingerBandsOutput[];
+    const currentBB = getLast(bbValues);
+    const bbWidth = currentBB ? (currentBB.upper - currentBB.lower) / currentBB.middle : undefined;
+
+    if (!adx || !currentBB || typeof bbWidth !== 'number') {
+        return { signal: 'HOLD', reasons: ['Calculating phase detection indicators...'] };
+    }
+    
+    // --- Phase Logic ---
+    let phase: MarketPhase = 'CHOPPY';
+    if (adx.adx > params.mpa_adxTrend) {
+        phase = 'TRENDING';
+    } else if (adx.adx < params.mpa_adxChop && bbWidth < params.mpa_bbwSqueeze) {
+        phase = 'RANGING';
+    }
+    
+    // --- Strategy Selection ---
+    switch (phase) {
+        case 'TRENDING': {
+            const emaFast = getLast(EMA.calculate({ period: params.mpa_trendEmaFast, values: closes }));
+            const emaSlow = getLast(EMA.calculate({ period: params.mpa_trendEmaSlow, values: closes }));
+            const prevEmaFast = EMA.calculate({ period: params.mpa_trendEmaFast, values: closes })[closes.length - 2];
+
+            if (typeof emaFast !== 'number' || typeof emaSlow !== 'number' || typeof prevEmaFast !== 'number') {
+                return { signal: 'HOLD', reasons: ['Calculating trend indicators...'] };
+            }
+            
+            const uptrend = adx.pdi > adx.mdi && currentPrice > emaSlow;
+            const downtrend = adx.mdi > adx.pdi && currentPrice < emaSlow;
+            
+            if (uptrend && currentPrice < emaFast && prevEmaFast > emaFast) {
+                return { signal: 'BUY', reasons: [`Phase: TRENDING`, `Detected pullback to fast EMA in an uptrend.`] };
+            }
+            if (downtrend && currentPrice > emaFast && prevEmaFast < emaFast) {
+                return { signal: 'SELL', reasons: [`Phase: TRENDING`, `Detected pullback to fast EMA in a downtrend.`] };
+            }
+            return { signal: 'HOLD', reasons: [`Phase: TRENDING`, `Awaiting pullback to EMA ${params.mpa_trendEmaFast}.`] };
+        }
+        case 'RANGING': {
+            const rsi = getLast(RSI.calculate({ period: params.rsiPeriod, values: closes }));
+            if (typeof rsi !== 'number') {
+                return { signal: 'HOLD', reasons: ['Calculating ranging indicators...'] };
+            }
+            if (currentPrice < currentBB.lower && rsi < params.mpa_rangeRsiOversold) {
+                return { signal: 'BUY', reasons: [`Phase: RANGING`, `Price at lower Bollinger Band with RSI (${rsi.toFixed(1)}) confirmation.`] };
+            }
+            if (currentPrice > currentBB.upper && rsi > params.mpa_rangeRsiOverbought) {
+                return { signal: 'SELL', reasons: [`Phase: RANGING`, `Price at upper Bollinger Band with RSI (${rsi.toFixed(1)}) confirmation.`] };
+            }
+            return { signal: 'HOLD', reasons: [`Phase: RANGING`, `Awaiting price to touch band extremes.`] };
+        }
+        case 'CHOPPY':
+        default:
+            return { signal: 'HOLD', reasons: [`Phase: CHOPPY / Indecisive`, `Market is unpredictable. Staying out to preserve capital.`] };
+    }
+};
+
+
+// --- Agent 7: Market Structure Maven ---
 const findSwingPoints = (klines: Kline[], lookback: number): { highs: { price: number, index: number }[], lows: { price: number, index: number }[] } => {
     const swingHighs: { price: number, index: number }[] = [];
     const swingLows: { price: number, index: number }[] = [];
@@ -317,11 +298,13 @@ const getMarketStructureMavenSignal = (klines: Kline[], params: Required<AgentPa
     }
 
     const closes = klines.map(k => k.close);
+    const volumes = klines.map(k => k.volume || 0);
     const currentPrice = getLast(closes);
     const currentCandle = getLast(klines);
+    const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes }));
 
-    if (!currentPrice || !currentCandle) {
-        return { signal: 'HOLD', reasons: ["No current price data."] };
+    if (typeof currentPrice !== 'number' || !currentCandle || typeof volumeSma !== 'number' || typeof currentCandle.volume !== 'number') {
+        return { signal: 'HOLD', reasons: ["No current price or volume data."] };
     }
 
     const htfEma = getLast(EMA.calculate({ period: params.msm_htfEmaPeriod, values: closes }));
@@ -337,6 +320,8 @@ const getMarketStructureMavenSignal = (klines: Kline[], params: Required<AgentPa
 
     let signal: TradeSignal['signal'] = 'HOLD';
     
+    const hasVolumeOnBoS = currentCandle.volume > volumeSma;
+
     if (bias === 'BULLISH' && recentSwingLows.length > 1 && recentSwingHighs.length > 0) {
         const lastSwingLow = recentSwingLows[0];
         const prevSwingLowToSweep = recentSwingLows[1];
@@ -351,8 +336,12 @@ const getMarketStructureMavenSignal = (klines: Kline[], params: Required<AgentPa
                 reasons.push(`Liquidity swept below previous swing low at ${prevSwingLowToSweep.price.toFixed(4)}.`);
             }
             if (hasBrokenStructure && hasSweptLow) {
-                signal = 'BUY';
-                reasons.push(`Bullish Market Structure Shift confirmed by break of BoS level ${boSLevelHigh.price.toFixed(4)}.`);
+                if (hasVolumeOnBoS) {
+                    signal = 'BUY';
+                    reasons.push(`Bullish MSS confirmed by break of BoS level ${boSLevelHigh.price.toFixed(4)} with volume.`);
+                } else {
+                    reasons.push(`Market Structure Shift detected, but awaiting volume confirmation.`);
+                }
             }
         }
     }
@@ -371,19 +360,23 @@ const getMarketStructureMavenSignal = (klines: Kline[], params: Required<AgentPa
                 reasons.push(`Liquidity swept above previous swing high at ${prevSwingHighToSweep.price.toFixed(4)}.`);
             }
             if (hasBrokenStructure && hasSweptHigh) {
-                signal = 'SELL';
-                reasons.push(`Bearish Market Structure Shift confirmed by break of BoS level ${boSLevelLow.price.toFixed(4)}.`);
+                if (hasVolumeOnBoS) {
+                    signal = 'SELL';
+                    reasons.push(`Bearish MSS confirmed by break of BoS level ${boSLevelLow.price.toFixed(4)} with volume.`);
+                } else {
+                    reasons.push(`Market Structure Shift detected, but awaiting volume confirmation.`);
+                }
             }
         }
     }
 
-    if (signal === 'HOLD') {
+    if (signal === 'HOLD' && reasons.length <= 1) {
         reasons.push("Awaiting valid market structure shift setup.");
     }
     return { signal, reasons };
 };
 
-// --- Agent 8: Institutional Scalper (CORRECTED LOGIC) ---
+// --- Agent 8: Institutional Scalper ---
 const getInstitutionalScalperSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
     const lookbackPeriod = params.inst_lookbackPeriod;
     if (klines.length < lookbackPeriod + 2) {
@@ -393,13 +386,17 @@ const getInstitutionalScalperSignal = (klines: Kline[], params: Required<AgentPa
     const reasons: string[] = [];
     const currentCandle = klines[klines.length - 1];
     const prevCandle = klines[klines.length - 2];
-    
-    // Lookback candles should be before the previous candle, as the previous candle is part of the setup
     const lookbackCandles = klines.slice(klines.length - 2 - lookbackPeriod, klines.length - 2);
+    
+    const volumes = klines.map(k => k.volume || 0);
+    const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes }));
+    const currentVolume = currentCandle.volume || 0;
 
-    if (!currentCandle || !prevCandle || lookbackCandles.length < lookbackPeriod) {
-        return { signal: 'HOLD', reasons: ['Not enough candles for lookback.'] };
+    if (!currentCandle || !prevCandle || lookbackCandles.length < lookbackPeriod || typeof volumeSma !== 'number' || typeof currentVolume !== 'number') {
+        return { signal: 'HOLD', reasons: ['Not enough candles or volume data for lookback.'] };
     }
+    
+    const hasVolumeSpike = currentVolume > volumeSma * 2;
 
     // --- BUY SETUP ---
     const isBullishEngulfing = currentCandle.close > currentCandle.open && 
@@ -409,28 +406,27 @@ const getInstitutionalScalperSignal = (klines: Kline[], params: Required<AgentPa
 
     if (isBullishEngulfing) {
         reasons.push('Bullish engulfing candle detected.');
-        
         const lookbackLow = Math.min(...lookbackCandles.map(k => k.low));
-        // A sweep can happen on the previous candle (the red one) or the current one (the green one)
         const hasSwept = prevCandle.low < lookbackLow || currentCandle.low < lookbackLow;
         
         if (hasSwept) {
             reasons.push(`Liquidity grab below ${lookbackPeriod}-candle low of ${lookbackLow.toFixed(4)}.`);
             
-            const currentBody = currentCandle.close - currentCandle.open;
-            const prevBody = prevCandle.open - prevCandle.close;
-            const isPowerCandle = currentBody > prevBody * params.inst_powerCandleMultiplier;
+            const body = currentCandle.close - currentCandle.open;
+            const upperWick = currentCandle.high - currentCandle.close;
+            const lowerWick = currentCandle.open - currentCandle.low;
+            const isImbalanced = body > (upperWick + lowerWick) * params.inst_powerCandleMultiplier;
 
-            if (isPowerCandle) {
-                reasons.push(`Power candle confirmed (body > ${params.inst_powerCandleMultiplier}x previous).`);
-                return { signal: 'BUY', reasons };
-            } else {
-                reasons.push('HOLD: Confirmation failed. Not a power candle.');
-                return { signal: 'HOLD', reasons };
+            if (isImbalanced) {
+                reasons.push(`Imbalance confirmed (body > ${params.inst_powerCandleMultiplier}x total wick length).`);
+                if (hasVolumeSpike) {
+                    reasons.push(`Volume spike confirmed (Vol > 2x average).`);
+                    return { signal: 'BUY', reasons };
+                } else {
+                     reasons.push('HOLD: Awaiting volume spike confirmation.');
+                     return { signal: 'HOLD', reasons };
+                }
             }
-        } else {
-            reasons.push('HOLD: Confirmation failed. No liquidity grab.');
-            return { signal: 'HOLD', reasons };
         }
     }
 
@@ -442,33 +438,31 @@ const getInstitutionalScalperSignal = (klines: Kline[], params: Required<AgentPa
 
     if (isBearishEngulfing) {
         reasons.push('Bearish engulfing candle detected.');
-        
         const lookbackHigh = Math.max(...lookbackCandles.map(k => k.high));
-        // A sweep can happen on the previous candle (the green one) or the current one (the red one)
         const hasSwept = prevCandle.high > lookbackHigh || currentCandle.high > lookbackHigh;
 
         if (hasSwept) {
             reasons.push(`Liquidity grab above ${lookbackPeriod}-candle high of ${lookbackHigh.toFixed(4)}.`);
             
-            const currentBody = currentCandle.open - currentCandle.close;
-            const prevBody = prevCandle.close - prevCandle.open;
-            const isPowerCandle = currentBody > prevBody * params.inst_powerCandleMultiplier;
+            const body = currentCandle.open - currentCandle.close;
+            const upperWick = currentCandle.high - currentCandle.open;
+            const lowerWick = currentCandle.close - currentCandle.low;
+            const isImbalanced = body > (upperWick + lowerWick) * params.inst_powerCandleMultiplier;
 
-            if (isPowerCandle) {
-                reasons.push(`Power candle confirmed (body > ${params.inst_powerCandleMultiplier}x previous).`);
-                return { signal: 'SELL', reasons };
-            } else {
-                reasons.push('HOLD: Confirmation failed. Not a power candle.');
-                return { signal: 'HOLD', reasons };
+            if (isImbalanced) {
+                reasons.push(`Imbalance confirmed (body > ${params.inst_powerCandleMultiplier}x total wick length).`);
+                 if (hasVolumeSpike) {
+                    reasons.push(`Volume spike confirmed (Vol > 2x average).`);
+                    return { signal: 'SELL', reasons };
+                } else {
+                     reasons.push('HOLD: Awaiting volume spike confirmation.');
+                     return { signal: 'HOLD', reasons };
+                }
             }
-        } else {
-            reasons.push('HOLD: Confirmation failed. No liquidity grab.');
-            return { signal: 'HOLD', reasons };
         }
     }
     
-    // If no engulfing pattern was found at all
-    return { signal: 'HOLD', reasons: ['Waiting for a clear engulfing pattern to form.'] };
+    return { signal: 'HOLD', reasons: ['Waiting for a clear liquidity sweep and engulfing pattern.'] };
 };
 
 
@@ -479,26 +473,22 @@ export const getTradingSignal = async (
     timeFrame: string,
     params: AgentParams = {}
 ): Promise<TradeSignal> => {
-    if (klines.length < 200 && agent.id !== 8) { // Institutional Scalper has its own check
+    if (klines.length < 200 && ![4, 5, 6, 8].includes(agent.id)) { // New agents have their own checks
         return { signal: 'HOLD', reasons: [`Need at least 200 klines for full analysis (have ${klines.length}).`] };
     }
     
-    const timeframeAdaptiveParams = TIMEFRAME_ADAPTIVE_SETTINGS[timeFrame] || {};
-    const finalParams = { ...DEFAULT_AGENT_PARAMS, ...timeframeAdaptiveParams, ...params };
+    const timeframeAdaptiveParams = constants.TIMEFRAME_ADAPTIVE_SETTINGS[timeFrame] || {};
+    const finalParams = { ...constants.DEFAULT_AGENT_PARAMS, ...timeframeAdaptiveParams, ...params };
 
     switch (agent.id) {
         case 1:
             return getMomentumMasterSignal(klines, finalParams);
-        case 2:
-            return getVolatilityVoyagerSignal(klines, finalParams);
-        case 3:
-            return getTrendSurferSignal(klines, finalParams);
         case 4:
-            return getScalpingAgentSignal(klines, finalParams);
-        case 5:
-            return getSmartAgentSignal(klines, finalParams);
-        case 6: // Profit Locker uses Smart Agent entry logic
-            return getSmartAgentSignal(klines, finalParams);
+            return getScalpingExpertSignal(klines, finalParams);
+        case 5: // Market Phase Adaptor
+            return getMarketPhaseAdaptorSignal(klines, finalParams);
+        case 6: // Profit Locker now uses Scalping Expert's entry logic
+            return getScalpingExpertSignal(klines, finalParams);
         case 7:
             return getMarketStructureMavenSignal(klines, finalParams);
         case 8:
@@ -508,79 +498,134 @@ export const getTradingSignal = async (
     }
 };
 
-// --- Proactive Trade Management ---
-export const getTradeManagementSignal = async (
-    position: Position,
-    klines: Kline[], // Should be 1-minute klines for granularity
-    livePrice: number
-): Promise<TradeManagementSignal> => {
-    const reasons: string[] = [];
-    let newStopLoss: number | undefined = undefined;
+/**
+ * Calculates initial "smart" Stop Loss and Take Profit targets based on market volatility (ATR).
+ * This is used when the user has not "locked" the SL/TP, allowing the agent to set a more
+ * robust starting point that is less susceptible to market noise, especially with leverage.
+ * This version incorporates a dynamic ATR multiplier based on the timeframe, as suggested by the user.
+ */
+export const getInitialAgentTargets = (
+    klines: Kline[],
+    entryPrice: number,
+    direction: 'LONG' | 'SHORT',
+    timeFrame: string,
+    params: Required<AgentParams>
+): { stopLossPrice: number, takeProfitPrice: number } => {
+    // Timeframe-aware ATR multipliers, as suggested by user.
+    const atrMultipliers = {
+        '1m': 1,
+        '3m': 1.2,
+        '5m': 1.5,
+        '15m': 1.8,
+        '30m': 2.0,
+        '1h': 2.2,
+        '4h': 2.5,
+        '1d': 3.0,
+    };
+    const atrMultiplier = atrMultipliers[timeFrame as keyof typeof atrMultipliers] || 2.0;
+    const riskRewardRatio = 1.5; // Default RRR for smart targets
 
-    // --- Trailing Stop Loss Logic (SuperTrend) ---
-    const isLong = position.direction === 'LONG';
-    const isInProfit = isLong ? livePrice > position.entryPrice : livePrice < position.entryPrice;
+    const closes = klines.map(k => k.close);
+    const highs = klines.map(k => k.high);
+    const lows = klines.map(k => k.low);
 
-    if (!isInProfit) {
-        reasons.push('Position not yet in profit. Holding targets.');
-        return { reasons };
+    const atr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: params.atrPeriod }));
+
+    if (typeof atr !== 'number' || atr === 0) {
+        // Fallback to a simple 2% if ATR is not available
+        const stopDistance = entryPrice * 0.02;
+        const profitDistance = stopDistance * riskRewardRatio;
+        const stopLossPrice = direction === 'LONG' ? entryPrice - stopDistance : entryPrice + profitDistance;
+        const takeProfitPrice = direction === 'LONG' ? entryPrice + profitDistance : entryPrice - profitDistance;
+        return { stopLossPrice, takeProfitPrice };
     }
 
-    const st = calculateSuperTrend(klines, 10, 3); // Standard ST params for 1m chart
-    if (!st) {
-        reasons.push('Calculating SuperTrend for management...');
-        return { reasons };
+    const stopDistance = atr * atrMultiplier;
+    const profitDistance = stopDistance * riskRewardRatio;
+
+    const stopLossPrice = direction === 'LONG' ? entryPrice - stopDistance : entryPrice + stopDistance;
+    const takeProfitPrice = direction === 'LONG' ? entryPrice + profitDistance : entryPrice - profitDistance;
+
+    return { stopLossPrice, takeProfitPrice };
+};
+
+
+// --- Proactive Trade Management ---
+
+/**
+ * Implements a robust, percentage-based PNL trailing system.
+ */
+const getPercentageBasedTrailingSignal = (
+    position: Position,
+    livePrice: number,
+    botConfig: BotConfig,
+    agentName: string
+): TradeManagementSignal => {
+    const reasons: string[] = [];
+    let newStopLoss: number | undefined;
+
+    const isLong = position.direction === 'LONG';
+    const pnl = (livePrice - position.entryPrice) * position.size * (isLong ? 1 : -1);
+
+    if (pnl <= 0) {
+        return { reasons: [`Position not in profit.`], newStopLoss: undefined, newTakeProfit: undefined };
+    }
+
+    const investmentAmount = botConfig.investmentAmount;
+    if (investmentAmount <= 0) {
+        return { reasons: ['Invalid investment amount in config.'], newStopLoss: undefined, newTakeProfit: undefined };
+    }
+    const pnlPercent = (pnl / investmentAmount) * 100;
+
+    let proposedNewStopLoss: number | undefined;
+    
+    // --- Staged PNL Trailing ---
+    // This logic is now shared and robust.
+    if (pnlPercent >= 3.0) { // Stage 3: Aggressive Lock
+        const profitToLock = pnl * 0.75; // Lock 75%
+        proposedNewStopLoss = isLong ? position.entryPrice + (profitToLock / position.size) : position.entryPrice - (profitToLock / position.size);
+        reasons.push(`Stage 3 Trail: PNL > 3.0%. Locking 75% of gains.`);
+    } else if (pnlPercent >= 1.5) { // Stage 2: Profit Creep
+        const profitToLock = pnl * 0.50; // Lock 50%
+        proposedNewStopLoss = isLong ? position.entryPrice + (profitToLock / position.size) : position.entryPrice - (profitToLock / position.size);
+        reasons.push(`Stage 2 Trail: PNL > 1.5%. Locking 50% of gains.`);
+    } else if (pnlPercent >= 0.5) { // Stage 1: Breakeven
+        proposedNewStopLoss = position.entryPrice;
+        reasons.push(`Stage 1 Trail: PNL > 0.5%. Moving SL to Breakeven.`);
     }
     
-    let candidateStopLoss: number | undefined = undefined;
-
-    if (isLong) {
-        if (st.trend === 'bullish') {
-            if (st.supertrend > position.stopLossPrice) {
-                candidateStopLoss = st.supertrend;
-                reasons.push(`Proactive Action: Trailing SL to ${candidateStopLoss.toFixed(position.pricePrecision)} based on bullish SuperTrend.`);
-            } else {
-                reasons.push(`Uptrend confirmed by SuperTrend. Holding current SL as it's more aggressive than ST value of ${st.supertrend.toFixed(position.pricePrecision)}.`);
-            }
-        } else {
-            reasons.push(`SuperTrend flipped bearish. Holding SL and monitoring for exit conditions.`);
-        }
-    } else { // SHORT
-        if (st.trend === 'bearish') {
-            if (st.supertrend < position.stopLossPrice) {
-                candidateStopLoss = st.supertrend;
-                reasons.push(`Proactive Action: Trailing SL to ${candidateStopLoss.toFixed(position.pricePrecision)} based on bearish SuperTrend.`);
-            } else {
-                reasons.push(`Downtrend confirmed by SuperTrend. Holding current SL as it's more aggressive than ST value of ${st.supertrend.toFixed(position.pricePrecision)}.`);
-            }
-        } else {
-            reasons.push(`SuperTrend flipped bullish. Holding SL and monitoring for exit conditions.`);
+    // --- Finalize and check if the proposed SL is an improvement ---
+    if (proposedNewStopLoss !== undefined) {
+        const isNewStopBetter = (isLong && proposedNewStopLoss > position.stopLossPrice) || (!isLong && proposedNewStopLoss < position.stopLossPrice);
+        if (isNewStopBetter) {
+            newStopLoss = proposedNewStopLoss;
         }
     }
+    
+    return { reasons, newStopLoss, newTakeProfit: undefined };
+};
 
-    // CRITICAL SAFETY CHECK: Ensure the new SL does not go past the liquidation price
-    if (candidateStopLoss !== undefined && position.liquidationPrice && position.liquidationPrice > 0) {
-        if (isLong) {
-            if (candidateStopLoss < position.liquidationPrice) {
-                // Adjust SL to be slightly safer than liquidation
-                newStopLoss = position.liquidationPrice * 1.001; 
-                reasons.push(`Safety Override: Adjusted SL from ${candidateStopLoss.toFixed(position.pricePrecision)} to ${newStopLoss.toFixed(position.pricePrecision)} to avoid liquidation.`);
-            } else {
-                newStopLoss = candidateStopLoss;
-            }
-        } else { // SHORT
-            if (candidateStopLoss > position.liquidationPrice) {
-                // Adjust SL to be slightly safer than liquidation
-                newStopLoss = position.liquidationPrice * 0.999;
-                reasons.push(`Safety Override: Adjusted SL from ${candidateStopLoss.toFixed(position.pricePrecision)} to ${newStopLoss.toFixed(position.pricePrecision)} to avoid liquidation.`);
-            } else {
-                newStopLoss = candidateStopLoss;
-            }
+
+export const getTradeManagementSignal = async (
+    position: Position,
+    klines: Kline[],
+    livePrice: number,
+    botConfig: BotConfig
+): Promise<TradeManagementSignal> => {
+    
+    // --- PNL-based trailing for Scalper/Locker agents ---
+    if (position.agentName === 'Scalping Expert' || position.agentName === 'Profit Locker') {
+        const pnlSignal = getPercentageBasedTrailingSignal(position, livePrice, botConfig, position.agentName);
+        // Always return the full signal object, even if no action is taken.
+        if (pnlSignal.newStopLoss) {
+            return pnlSignal; 
         }
-    } else if (candidateStopLoss !== undefined) {
-        newStopLoss = candidateStopLoss;
     }
-
-
-    return { reasons, newStopLoss };
+    
+    // Default response for all other agents or when no action is needed
+    return {
+        reasons: ["No specific management action for this agent. Holding initial targets."],
+        newStopLoss: undefined,
+        newTakeProfit: undefined,
+    };
 };

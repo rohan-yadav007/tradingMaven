@@ -1,6 +1,4 @@
 
-
-
 import React, { useState } from 'react';
 import { TradingMode, Agent, Kline, AccountInfo, AgentParams, RiskMode } from '../types';
 import { SettingsIcon, WalletIcon } from './icons';
@@ -41,6 +39,8 @@ interface SidebarProps {
     setIsStopLossLocked: (locked: boolean) => void;
     isTakeProfitLocked: boolean;
     setIsTakeProfitLocked: (locked: boolean) => void;
+    isCooldownEnabled: boolean;
+    setIsCooldownEnabled: (enabled: boolean) => void;
     timeFrame: string;
     setTimeFrame: (timeFrame: string) => void;
     selectedAgent: Agent;
@@ -121,6 +121,8 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                         setIsStopLossLocked={props.setIsStopLossLocked}
                         isTakeProfitLocked={props.isTakeProfitLocked}
                         setIsTakeProfitLocked={props.setIsTakeProfitLocked}
+                        isCooldownEnabled={props.isCooldownEnabled}
+                        setIsCooldownEnabled={props.setIsCooldownEnabled}
                         timeFrame={props.timeFrame}
                         setTimeFrame={props.setTimeFrame}
                         selectedAgent={props.selectedAgent}
@@ -129,7 +131,6 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                         klines={props.klines}
                         isBotCombinationActive={props.isBotCombinationActive}
                         agentParams={props.agentParams}
-                        setAgentParams={props.setAgentParams}
                         theme={props.theme}
                     />
                 )}

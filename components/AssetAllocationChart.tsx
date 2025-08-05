@@ -51,7 +51,7 @@ export const AssetAllocationChart: React.FC<AssetAllocationChartProps> = ({ data
     
     if(data.length === 0 || totalValue === 0) {
         return (
-            <div className="flex items-center justify-center h-full text-gray-500 dark:text-gray-500 text-sm">
+            <div className="flex items-center justify-center h-full text-slate-500 dark:text-slate-500 text-sm">
                 No asset data to display.
             </div>
         );
@@ -82,10 +82,10 @@ export const AssetAllocationChart: React.FC<AssetAllocationChartProps> = ({ data
                     return segment;
                 })}
             </g>
-            <text x="100" y="95" textAnchor="middle" className="fill-gray-800 dark:fill-gray-100" fontSize="24" fontWeight="bold">
+            <text x="100" y="95" textAnchor="middle" className="fill-slate-800 dark:fill-slate-100" fontSize="24" fontWeight="bold">
                 {hoveredData ? hoveredData.asset : ''}
             </text>
-            <text x="100" y="120" textAnchor="middle" className="fill-gray-600 dark:fill-gray-400" fontSize="14">
+            <text x="100" y="120" textAnchor="middle" className="fill-slate-600 dark:fill-slate-400" fontSize="14">
                 {hoveredData ? `${(hoveredData.usdValue / totalValue * 100).toFixed(1)}%` : `Top ${data.length} Assets`}
             </text>
         </svg>

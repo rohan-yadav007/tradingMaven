@@ -1,9 +1,8 @@
 
-
-
-import { Kline, BotConfig, BacktestResult, SimulatedTrade, AgentParams, Position, OptimizationResultItem, RiskMode } from '../types';
-import { getTradingSignal, getTradeManagementSignal } from './localAgentService';
-import { BOT_COOLDOWN_CANDLES } from '../constants';
+import { Kline, BotConfig, BacktestResult, SimulatedTrade, AgentParams, Position, RiskMode, TradingMode } from '../types';
+import * as binanceService from './binanceService';
+import { getTradingSignal, getTradeManagementSignal, getInitialAgentTargets } from './localAgentService';
+import * as constants from '../constants';
 
 interface SimulatedPosition extends Omit<Position, 'id' | 'entryTime' | 'botId' | 'orderId'> {
     entryTime: number; // Use timestamp for easier comparison
@@ -24,7 +23,7 @@ function formatDuration(ms: number): string {
     return `${seconds}s`;
 }
 
-// High-fidelity backtesting engine that mirrors the live bot's tick-based logic
+// High-Fidelity Backtesting Engine
 export async function runBacktest(
     mainKlines: Kline[],
     managementKlines: Kline[],
@@ -37,160 +36,181 @@ export async function runBacktest(
     const STARTING_CAPITAL = 10000;
     let equity = STARTING_CAPITAL;
     let cooldownUntilTimestamp = -1; 
+    let managementKlineIndex = 0;
     
-    // Create a map for quick lookups of main timeframe candles
-    const mainKlineMap = new Map<number, Kline>();
-    mainKlines.forEach(k => mainKlineMap.set(k.time, k));
-
-    // This tracks the index of the *last closed* main timeframe candle
-    let currentMainKlineIndex = -1;
+    const minCandles = 200;
+    if (mainKlines.length < minCandles) {
+        return {
+            trades: [], totalPnl: 0, winRate: 0, totalTrades: 0, wins: 0, losses: 0, breakEvens: 0, maxDrawdown: 0, profitFactor: 0, sharpeRatio: 0, averageTradeDuration: 'N/A'
+        };
+    }
     
-    for (let i = 0; i < managementKlines.length; i++) {
-        const mgmtKline = managementKlines[i];
+    for (let i = minCandles; i < mainKlines.length; i++) {
+        const entrySignalCandle = mainKlines[i-1]; // The main TF candle that just closed
+        const historySlice = mainKlines.slice(0, i);
 
-        // --- 1. CHECK FOR EXITS (highest priority) ---
+        // --- MANAGE OPEN POSITION using 1m klines up to the current main candle's close time ---
         if (openPosition) {
-            const { direction, takeProfitPrice, stopLossPrice } = openPosition;
-            const isLong = direction === 'LONG';
-            let exitReason = '';
-            let exitPrice = 0;
-
-            // Check for intra-candle SL/TP hit
-            if (isLong) {
-                if (mgmtKline.high >= takeProfitPrice) { exitPrice = takeProfitPrice; exitReason = 'Take Profit Hit'; } 
-                else if (mgmtKline.low <= stopLossPrice) { exitPrice = stopLossPrice; exitReason = 'Stop Loss Hit'; }
-            } else { // SHORT
-                if (mgmtKline.low <= takeProfitPrice) { exitPrice = takeProfitPrice; exitReason = 'Take Profit Hit'; } 
-                else if (mgmtKline.high >= stopLossPrice) { exitPrice = stopLossPrice; exitReason = 'Stop Loss Hit'; }
-            }
+            const isLong = openPosition.direction === 'LONG';
             
-            // Force close at the very end of the simulation if still open
-            if (i === managementKlines.length - 1 && exitPrice === 0) {
-                exitPrice = mgmtKline.close;
-                exitReason = 'End of backtest';
-            }
-
-            if (exitPrice > 0) {
-                const pnl = (exitPrice - openPosition.entryPrice) * openPosition.size * (isLong ? 1 : -1) * openPosition.leverage;
-                equity += pnl;
-
-                trades.push({
-                    id: trades.length + 1,
-                    pair: openPosition.pair,
-                    direction: openPosition.direction,
-                    entryPrice: openPosition.entryPrice,
-                    exitPrice: exitPrice,
-                    entryTime: openPosition.entryTime,
-                    exitTime: mgmtKline.time,
-                    size: openPosition.size,
-                    investedAmount: openPosition.entryPrice * openPosition.size,
-                    pnl,
-                    exitReason,
-                    entryReason: openPosition.entryReason,
-                });
+            while (managementKlineIndex < managementKlines.length && managementKlines[managementKlineIndex].time <= entrySignalCandle.time) {
+                const managementCandle = managementKlines[managementKlineIndex];
                 
-                // Set cooldown based on the timestamp of the 1m candle where the exit occurred
-                const timeframeMs = mainKlines[1].time - mainKlines[0].time;
-                cooldownUntilTimestamp = mgmtKline.time + (BOT_COOLDOWN_CANDLES * timeframeMs);
+                // 1. Check for SL/TP hit
+                let exitPrice = 0;
+                let exitReason = '';
+                if (isLong) {
+                    if (managementCandle.high >= openPosition.takeProfitPrice) { exitPrice = openPosition.takeProfitPrice; exitReason = 'Take Profit Hit'; } 
+                    else if (managementCandle.low <= openPosition.stopLossPrice) { exitPrice = openPosition.stopLossPrice; exitReason = 'Stop Loss Hit'; }
+                } else { // SHORT
+                    if (managementCandle.low <= openPosition.takeProfitPrice) { exitPrice = openPosition.takeProfitPrice; exitReason = 'Take Profit Hit'; } 
+                    else if (managementCandle.high >= openPosition.stopLossPrice) { exitPrice = openPosition.stopLossPrice; exitReason = 'Stop Loss Hit'; }
+                }
+
+                if (exitPrice > 0) {
+                    const pnl = (exitPrice - openPosition.entryPrice) * openPosition.size * (isLong ? 1 : -1);
+                    equity += pnl;
+
+                    trades.push({
+                        id: trades.length + 1,
+                        pair: openPosition.pair,
+                        direction: openPosition.direction,
+                        entryPrice: openPosition.entryPrice,
+                        exitPrice: exitPrice,
+                        entryTime: openPosition.entryTime,
+                        exitTime: managementCandle.time,
+                        size: openPosition.size,
+                        investedAmount: config.investmentAmount,
+                        pnl,
+                        exitReason,
+                        entryReason: openPosition.entryReason,
+                    });
+                    
+                    if (config.isCooldownEnabled) {
+                        const timeframeMs = mainKlines[1].time - mainKlines[0].time;
+                        cooldownUntilTimestamp = managementCandle.time + (constants.BOT_COOLDOWN_CANDLES * timeframeMs);
+                    } else {
+                        // Simulate the mandatory 2-second delay if cooldown is off
+                        cooldownUntilTimestamp = managementCandle.time + 2000;
+                    }
+                    openPosition = null;
+                    break; // Exit the management kline loop
+                }
+
+                // 2. Proactive management on each 1m candle close
+                if (!config.isStopLossLocked || !config.isTakeProfitLocked) {
+                    const tempPositionForSignal: Position = { ...openPosition, id: 0, botId: 'sim', orderId: null, entryTime: new Date(openPosition.entryTime) };
+                    const mgmtHistorySlice = managementKlines.slice(0, managementKlineIndex + 1);
+                    const mgmtSignal = await getTradeManagementSignal(tempPositionForSignal, mgmtHistorySlice, managementCandle.close, config);
+
+                    if (mgmtSignal.newStopLoss && !config.isStopLossLocked) openPosition.stopLossPrice = mgmtSignal.newStopLoss;
+                    if (mgmtSignal.newTakeProfit && !config.isTakeProfitLocked) openPosition.takeProfitPrice = mgmtSignal.newTakeProfit;
+                }
                 
-                openPosition = null;
+                managementKlineIndex++;
+            }
+        } else {
+            // If no position, just advance the management kline index
+            while (managementKlineIndex < managementKlines.length && managementKlines[managementKlineIndex].time <= entrySignalCandle.time) {
+                managementKlineIndex++;
             }
         }
         
-        // --- 2. CHECK FOR PROACTIVE MANAGEMENT ---
-        if (openPosition) {
-             const tempPositionForSignal: Position = {
-                ...openPosition,
-                id: trades.length + 1,
-                botId: 'backtest-sim',
-                orderId: null,
-                entryTime: new Date(openPosition.entryTime),
-             };
-             // Simulate using the current 1m kline data available up to this point
-             const mgmtSignal = await getTradeManagementSignal(tempPositionForSignal, managementKlines.slice(0, i + 1), mgmtKline.close);
-             if (mgmtSignal.newStopLoss && !config.isStopLossLocked) {
-                openPosition.stopLossPrice = mgmtSignal.newStopLoss;
-             }
-             if (mgmtSignal.newTakeProfit && !config.isTakeProfitLocked) {
-                openPosition.takeProfitPrice = mgmtSignal.newTakeProfit;
-             }
-        }
-        
-        // --- 3. CHECK FOR ENTRIES (on every tick/1m candle) ---
-        
-        // Update the current main kline index if this 1m candle corresponds to the close of a main candle
-        if (mainKlineMap.has(mgmtKline.time)) {
-             currentMainKlineIndex = mainKlines.findIndex(k => k.time === mgmtKline.time);
-        }
-
-        if (!openPosition && currentMainKlineIndex >= 199 && mgmtKline.time > cooldownUntilTimestamp) {
-             // We have enough data and are not in cooldown, let's analyze
-             const relevantMainKlines = mainKlines.slice(0, currentMainKlineIndex + 1);
-             const signal = await getTradingSignal(config.agent, relevantMainKlines, config.timeFrame, config.agentParams);
+        // --- CHECK FOR ENTRIES (if no position and not in cooldown) ---
+        if (!openPosition && entrySignalCandle.time > cooldownUntilTimestamp) {
+            const signal = await getTradingSignal(config.agent, historySlice, config.timeFrame, config.agentParams);
              
             if (signal.signal !== 'HOLD') {
-                // Assume entry on the next tick, which we simulate as the next 1m candle's open price
-                const entryPrice = managementKlines[i + 1]?.open ?? mgmtKline.close; 
-                if (!entryPrice) continue; // Cannot enter if we are at the last candle
-
+                const entryPrice = mainKlines[i].open; 
                 const isLong = signal.signal === 'BUY';
 
                 if (config.investmentAmount > 0 && entryPrice > 0) {
-                    const tradeSize = config.investmentAmount / entryPrice;
+                    const isFutures = config.mode === TradingMode.USDSM_Futures;
+                    const positionValue = isFutures ? config.investmentAmount * config.leverage : config.investmentAmount;
+                    const tradeSize = positionValue / entryPrice;
 
-                    let stopLossPrice: number;
+                    // --- TARGET CALCULATION (3-LAYER SYSTEM) ---
+                    // LAYER 1: USER-DEFINED SL
+                    let userStopLossPrice: number;
                     if (config.stopLossMode === RiskMode.Percent) {
-                        const slAmount = config.investmentAmount * (config.stopLossValue / 100);
-                        const priceChange = slAmount / tradeSize;
-                        stopLossPrice = isLong ? entryPrice - priceChange : entryPrice + priceChange;
+                        const lossAmount = config.investmentAmount * (config.stopLossValue / 100);
+                        userStopLossPrice = isLong ? entryPrice - (lossAmount / tradeSize) : entryPrice + (lossAmount / tradeSize);
                     } else { // Amount
-                        const priceChange = config.stopLossValue / tradeSize;
-                        stopLossPrice = isLong ? entryPrice - priceChange : entryPrice + priceChange;
+                        userStopLossPrice = isLong ? entryPrice - (config.stopLossValue / tradeSize) : entryPrice + (config.stopLossValue / tradeSize);
                     }
 
+                    // LAYER 2: AGENT'S SMART (ATR) SL
+                    const agentTargets = getInitialAgentTargets(historySlice, entryPrice, isLong ? 'LONG' : 'SHORT', config.timeFrame, { ...constants.DEFAULT_AGENT_PARAMS, ...config.agentParams });
+                    const agentStopLossPrice = agentTargets.stopLossPrice;
+                    
+                    // LAYER 3: HARD CAP SAFETY NET SL
+                    const maxLossAmount = config.investmentAmount * (constants.MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
+                    const hardCapStopLossPrice = isLong ? entryPrice - (maxLossAmount / tradeSize) : entryPrice + (maxLossAmount / tradeSize);
+                    
+                    // Determine primary SL based on whether it's locked
+                    const primaryStopLoss = config.isStopLossLocked ? userStopLossPrice : agentStopLossPrice;
+                    
+                    // FINAL STOP LOSS: The tightest (safest) of the primary SL and the hard cap.
+                    let stopLossPrice: number;
+                    if (isLong) {
+                        stopLossPrice = Math.max(primaryStopLoss, hardCapStopLossPrice);
+                    } else { // SHORT
+                        stopLossPrice = Math.min(primaryStopLoss, hardCapStopLossPrice);
+                    }
+                    
+                    // TAKE PROFIT
                     let takeProfitPrice: number;
-                    if (config.takeProfitMode === RiskMode.Percent) {
-                        const tpAmount = config.investmentAmount * (config.takeProfitValue / 100);
-                        const priceChange = tpAmount / tradeSize;
-                        takeProfitPrice = isLong ? entryPrice + priceChange : entryPrice - priceChange;
-                    } else { // Amount
-                        const priceChange = config.takeProfitValue / tradeSize;
-                        takeProfitPrice = isLong ? entryPrice + priceChange : entryPrice - priceChange;
+                    if (config.isTakeProfitLocked) {
+                        if (config.takeProfitMode === RiskMode.Percent) {
+                            const profitAmount = config.investmentAmount * (config.takeProfitValue / 100);
+                            takeProfitPrice = isLong ? entryPrice + (profitAmount / tradeSize) : entryPrice - (profitAmount / tradeSize);
+                        } else { // Amount
+                            takeProfitPrice = isLong ? entryPrice + (config.takeProfitValue / tradeSize) : entryPrice - (config.takeProfitValue / tradeSize);
+                        }
+                    } else {
+                         // Maintain the agent's R:R, but adjusted for the final (potentially capped) stop loss
+                        const finalRiskDistance = Math.abs(entryPrice - stopLossPrice);
+                        const agentRiskDistance = Math.abs(entryPrice - agentTargets.stopLossPrice);
+                        const agentProfitDistance = Math.abs(agentTargets.takeProfitPrice - entryPrice);
+                        const riskRewardRatio = agentRiskDistance > 0 ? agentProfitDistance / agentRiskDistance : 1.5;
+                        const finalProfitDistance = finalRiskDistance * riskRewardRatio;
+                        takeProfitPrice = isLong ? entryPrice + finalProfitDistance : entryPrice - finalProfitDistance;
                     }
                     
                     if (tradeSize > 0) {
-                         openPosition = {
-                            pair: config.pair,
-                            mode: config.mode,
-                            executionMode: config.executionMode,
-                            direction: isLong ? 'LONG' : 'SHORT',
-                            entryPrice,
-                            size: tradeSize,
-                            leverage: config.leverage,
-                            entryTime: mgmtKline.time,
-                            entryReason: signal.reasons.join(' '),
-                            agentName: config.agent.name,
-                            takeProfitPrice,
-                            stopLossPrice,
-                            pricePrecision: 2, // Assuming 2 for backtest display
-                            timeFrame: config.timeFrame,
+                        openPosition = {
+                            pair: config.pair, mode: config.mode, executionMode: config.executionMode, direction: isLong ? 'LONG' : 'SHORT',
+                            entryPrice, size: tradeSize, leverage: config.leverage, entryTime: entrySignalCandle.time,
+                            entryReason: signal.reasons.join(' '), agentName: config.agent.name, takeProfitPrice,
+                            stopLossPrice, pricePrecision: config.pricePrecision, timeFrame: config.timeFrame,
                         };
                     }
                 }
-             }
+            }
         }
         
-        // Update equity curve at the end of each 1-minute candle
         let currentPnl = 0;
         if(openPosition) {
-            currentPnl = (mgmtKline.close - openPosition.entryPrice) * openPosition.size * (openPosition.direction === 'LONG' ? 1 : -1) * openPosition.leverage;
+            currentPnl = (entrySignalCandle.close - openPosition.entryPrice) * openPosition.size * (openPosition.direction === 'LONG' ? 1 : -1);
         }
         equityCurve.push(equity + currentPnl);
     }
     
+    // Force close at the very end if still open
+    if (openPosition) {
+        const lastKline = managementKlines[managementKlines.length - 1] || mainKlines[mainKlines.length - 1];
+        const exitPrice = lastKline.close;
+        const pnl = (exitPrice - openPosition.entryPrice) * openPosition.size * (openPosition.direction === 'LONG' ? 1 : -1);
+        trades.push({
+            id: trades.length + 1, pair: openPosition.pair, direction: openPosition.direction,
+            entryPrice: openPosition.entryPrice, exitPrice, entryTime: openPosition.entryTime, exitTime: lastKline.time,
+            size: openPosition.size, pnl, investedAmount: config.investmentAmount,
+            exitReason: 'End of backtest', entryReason: openPosition.entryReason,
+        });
+    }
+    
     return calculateResults(trades, equityCurve, STARTING_CAPITAL);
 }
-
 
 function calculateResults(trades: SimulatedTrade[], equityCurve: number[], startingCapital: number): BacktestResult {
     const totalTrades = trades.length;
@@ -259,134 +279,4 @@ function calculateResults(trades: SimulatedTrade[], equityCurve: number[], start
         sharpeRatio,
         averageTradeDuration,
     };
-}
-
-
-// --- Parameter Optimization Engine ---
-
-type ParamRange = { start: number; end: number; step: number; };
-
-const AGENT_LOGIC_OPTIMIZATION_CONFIG: Record<number, Partial<Record<keyof AgentParams, ParamRange>>> = {
-    1: { // Momentum Master
-        adxTrendThreshold: { start: 20, end: 30, step: 2 },
-        mom_rsiThresholdBullish: { start: 55, end: 65, step: 2 },
-        mom_rsiThresholdBearish: { start: 35, end: 45, step: 2 },
-        mom_emaFastPeriod: { start: 10, end: 30, step: 5 },
-        mom_emaSlowPeriod: { start: 40, end: 60, step: 5 },
-    },
-    2: { // Volatility Voyager
-        vol_bbPeriod: { start: 18, end: 22, step: 2 },
-        vol_bbStdDev: { start: 1.8, end: 2.5, step: 0.1 },
-        vol_stochRsiUpperThreshold: { start: 65, end: 75, step: 5 },
-        vol_stochRsiLowerThreshold: { start: 25, end: 35, step: 5 },
-    },
-    3: { // Trend Surfer
-        trend_adxThreshold: { start: 18, end: 25, step: 2 },
-        psarStep: { start: 0.015, end: 0.025, step: 0.005 },
-        psarMax: { start: 0.15, end: 0.25, step: 0.05 },
-    },
-    4: { // Scalping Expert
-        scalp_superTrendPeriod: { start: 8, end: 12, step: 2 },
-        scalp_superTrendMultiplier: { start: 2.5, end: 3.5, step: 0.5 },
-        scalp_scoreThreshold: { start: 12, end: 18, step: 2 },
-    },
-    5: { // Smart Agent
-        smart_superTrendMultiplier: { start: 2.5, end: 4, step: 0.5 },
-        smart_confidenceThreshold: { start: 0.6, end: 0.85, step: 0.05 },
-        smart_rsiBuyThreshold: { start: 55, end: 65, step: 5 },
-        smart_rsiSellThreshold: { start: 35, end: 45, step: 5 },
-    },
-    6: { // Profit Locker (same as Smart Agent)
-        smart_superTrendMultiplier: { start: 2.5, end: 4, step: 0.5 },
-        smart_confidenceThreshold: { start: 0.6, end: 0.85, step: 0.05 },
-    },
-    7: { // Market Structure Maven
-        msm_htfEmaPeriod: { start: 150, end: 300, step: 50 },
-        msm_swingPointLookback: { start: 3, end: 7, step: 1 },
-    },
-    8: { // Institutional Scalper
-        inst_lookbackPeriod: { start: 3, end: 10, step: 1 },
-        inst_powerCandleMultiplier: { start: 1.2, end: 2.0, step: 0.2 },
-    },
-};
-
-// Risk management is now user-defined, so we don't optimize it.
-const RISK_OPTIMIZATION_CONFIG: Partial<Record<keyof AgentParams, ParamRange>> = {};
-
-
-export function runOptimization(
-    mainKlines: Kline[],
-    managementKlines: Kline[],
-    baseConfig: BotConfig,
-    onProgress: (progress: { percent: number; result: OptimizationResultItem | null }) => void
-): Promise<void> {
-    return new Promise((resolve, reject) => {
-        try {
-            const agentId = baseConfig.agent.id;
-            const agentLogicParams = AGENT_LOGIC_OPTIMIZATION_CONFIG[agentId] || {};
-            
-            const paramRanges = { ...agentLogicParams, ...RISK_OPTIMIZATION_CONFIG };
-            const paramKeys = Object.keys(paramRanges) as (keyof AgentParams)[];
-
-            if (paramKeys.length === 0) {
-                console.log(`No optimizable parameters for agent "${baseConfig.agent.name}". Running single backtest as fallback.`);
-                runBacktest(mainKlines, managementKlines, baseConfig).then(result => {
-                    onProgress({ percent: 100, result: { params: baseConfig.agentParams || {}, result } });
-                    resolve();
-                }).catch(reject);
-                return;
-            }
-
-            const generateCombinations = (index: number, currentParams: AgentParams): AgentParams[] => {
-                if (index === paramKeys.length) return [currentParams];
-                const key = paramKeys[index];
-                const range = paramRanges[key]!;
-                const combinations: AgentParams[] = [];
-                for (let value = range.start; value <= range.end; value += range.step) {
-                    const precision = (range.step.toString().split('.')[1] || '').length;
-                    const nextParams = { ...currentParams, [key]: Number(value.toFixed(precision)) };
-                    combinations.push(...generateCombinations(index + 1, nextParams));
-                }
-                return combinations;
-            };
-
-            const initialParams = { ...(baseConfig.agentParams || {}) };
-            
-            const paramCombinations = generateCombinations(0, initialParams);
-            const totalCombinations = paramCombinations.length;
-
-            if (totalCombinations === 0) {
-                onProgress({ percent: 100, result: null });
-                return resolve();
-            }
-
-            let i = 0;
-            const processChunk = async () => {
-                try {
-                    const params = paramCombinations[i];
-                    if (!params) return;
-
-                    const testConfig = { ...baseConfig, agentParams: params };
-                    const result = await runBacktest(mainKlines, managementKlines, testConfig);
-                    const optimizationResult = { params, result };
-                    
-                    const percent = Math.round(((i + 1) / totalCombinations) * 100);
-                    onProgress({ percent, result: optimizationResult });
-
-                    i++;
-                    if (i < totalCombinations) {
-                        setTimeout(processChunk, 0);
-                    } else {
-                        resolve();
-                    }
-                } catch(e) {
-                    reject(e);
-                }
-            };
-
-            processChunk();
-        } catch (e) {
-            reject(e);
-        }
-    });
 }

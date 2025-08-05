@@ -5,14 +5,12 @@ import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseI
 
 interface RunningBotsProps {
     bots: RunningBot[];
-    openPositions: Position[];
     onClosePosition: (position: Position, exitReason?: string, exitPriceOverride?: number) => void;
     onPauseBot: (botId: string) => void;
     onResumeBot: (botId: string) => void;
     onStopBot: (botId: string) => void;
     onDeleteBot: (botId: string) => void;
-    onUpdatePositionTargets: (positionId: number, newTargets: { tp?: number; sl?: number }) => void;
-    onUpdateBotLockStates: (botId: string, partialConfig: Partial<BotConfig>) => void;
+    onUpdateBotConfig: (botId: string, partialConfig: Partial<BotConfig>) => void;
 }
 
 const useDuration = (bot: RunningBot) => {
@@ -70,29 +68,54 @@ const getStatusInfo = (status: BotStatus): { text: string; bg: string; text_colo
     }
 }
 
+const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) => void; size?: 'sm' | 'md' }> = ({ checked, onChange, size = 'md' }) => {
+    const height = size === 'sm' ? 'h-5' : 'h-6';
+    const width = size === 'sm' ? 'w-9' : 'w-11';
+    const knobSize = size === 'sm' ? 'h-4 w-4' : 'h-5 w-5';
+    const translation = size === 'sm' ? 'translate-x-4' : 'translate-x-5';
+
+    return (
+        <button
+            type="button"
+            role="switch"
+            aria-checked={checked}
+            onClick={() => onChange(!checked)}
+            className={`${checked ? 'bg-sky-600' : 'bg-slate-300 dark:bg-slate-600'} relative inline-flex ${height} ${width} flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2 dark:focus:ring-offset-slate-800`}
+        >
+            <span
+                aria-hidden="true"
+                className={`${checked ? translation : 'translate-x-0'} pointer-events-none inline-block ${knobSize} transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`}
+            />
+        </button>
+    );
+};
+
 const formatRiskValue = (mode: RiskMode, value: number) => {
     return mode === RiskMode.Percent ? `${value}%` : `$${value}`;
 };
 
-const BotConfigDetails: React.FC<{ config: BotConfig }> = ({ config }) => (
+const BotConfigDetails: React.FC<{ config: BotConfig; onUpdate: (change: Partial<BotConfig>) => void }> = ({ config, onUpdate }) => (
     <div>
         <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Configuration</h4>
-        <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-            <InfoItem label="Mode" value={config.mode} />
-            <InfoItem label="Timeframe" value={config.timeFrame} />
-            {config.mode === TradingMode.USDSM_Futures && <InfoItem label="Leverage" value={`${config.leverage}x`} />}
-            {config.mode === TradingMode.USDSM_Futures && <InfoItem label="Margin" value={config.marginType || 'N/A'} />}
-            <InfoItem label="Investment" value={`$${config.investmentAmount}`} />
-            <InfoItem 
-                label="Stop Loss" 
-                value={<span className="flex items-center gap-1">{formatRiskValue(config.stopLossMode, config.stopLossValue)} {config.isStopLossLocked ? <LockIcon className="w-3 h-3 text-slate-400"/> : <UnlockIcon className="w-3 h-3 text-sky-500"/>}</span>}
-                valueClassName="text-rose-600 dark:text-rose-400 font-semibold" 
-            />
-            <InfoItem 
-                label="Take Profit" 
-                value={<span className="flex items-center gap-1">{formatRiskValue(config.takeProfitMode, config.takeProfitValue)} {config.isTakeProfitLocked ? <LockIcon className="w-3 h-3 text-slate-400"/> : <UnlockIcon className="w-3 h-3 text-sky-500"/>}</span>}
-                valueClassName="text-emerald-600 dark:text-emerald-400 font-semibold" 
-            />
+        <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg space-y-2 text-sm">
+            <div className="grid grid-cols-2 gap-x-4">
+                <InfoItem label="Mode" value={config.mode} />
+                <InfoItem label="Timeframe" value={config.timeFrame} />
+                {config.mode === TradingMode.USDSM_Futures && <InfoItem label="Leverage" value={`${config.leverage}x`} />}
+                {config.mode === TradingMode.USDSM_Futures && <InfoItem label="Margin" value={config.marginType || 'N/A'} />}
+                <InfoItem label="Investment" value={`$${config.investmentAmount}`} />
+            </div>
+             <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                 <div className="flex flex-col">
+                    <span className="font-medium text-slate-700 dark:text-slate-300">Cooldown</span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">Pause after trades</span>
+                </div>
+                <ToggleSwitch
+                    checked={config.isCooldownEnabled}
+                    onChange={(checked) => onUpdate({ isCooldownEnabled: checked })}
+                    size="sm"
+                />
+            </div>
         </div>
     </div>
 );
@@ -128,65 +151,83 @@ const BotAnalysisDisplay: React.FC<{ analysis: TradeSignal | null }> = ({ analys
     );
 };
 
-type TargetMode = '$' | '%' | 'PNL';
-const TARGET_MODES: TargetMode[] = ['$', '%', 'PNL'];
-
 const TargetInput: React.FC<{
     label: string;
+    botConfig: BotConfig;
     position: Position;
     isTP: boolean;
-    isLocked: boolean;
-    onUpdate: (newPrice: number) => void;
-    onLockToggle?: () => void;
-}> = ({ label, position, isTP, isLocked, onUpdate, onLockToggle }) => {
+    onConfigChange: (change: Partial<BotConfig>) => void;
+}> = ({ label, botConfig, position, isTP, onConfigChange }) => {
     
-    const [modeIndex, setModeIndex] = useState(0);
-    const [value, setValue] = useState('');
-    const mode = TARGET_MODES[modeIndex];
+    const { entryPrice, size, leverage, direction } = position;
+    const {
+        isTakeProfitLocked, takeProfitMode, takeProfitValue,
+        isStopLossLocked, stopLossMode, stopLossValue
+    } = botConfig;
 
-    const { entryPrice, pricePrecision, direction, size, leverage } = position;
-    const targetPrice = isTP ? position.takeProfitPrice : position.stopLossPrice;
+    const isLocked = isTP ? isTakeProfitLocked : isStopLossLocked;
+    const mode = isTP ? takeProfitMode : stopLossMode;
+    const value = isTP ? takeProfitValue : stopLossValue;
+
+    const [inputValue, setInputValue] = useState<string>(String(value));
 
     useEffect(() => {
-        let displayValue = '';
-        if (mode === '$') {
-            displayValue = targetPrice.toFixed(pricePrecision);
-        } else if (mode === '%') {
-            const percentage = ((targetPrice - entryPrice) / entryPrice) * 100 * (direction === 'LONG' ? 1 : -1);
-            displayValue = percentage.toFixed(2);
-        } else { // PNL
-            const pnl = (targetPrice - entryPrice) * size * (direction === 'LONG' ? 1 : -1) * leverage;
-            displayValue = pnl.toFixed(2);
+        let displayValue: string;
+        // This effect correctly displays the value from the bot's central config
+        if (mode === RiskMode.Percent) {
+            displayValue = String(value);
+        } else { // RiskMode.Amount (PNL)
+            displayValue = String(value);
         }
-        setValue(displayValue);
-    }, [targetPrice, entryPrice, mode, pricePrecision, direction, size, leverage]);
+        setInputValue(displayValue);
+    }, [value, mode]);
 
     const handleValueChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setValue(e.target.value);
+        setInputValue(e.target.value);
     };
 
     const handleUpdateOnBlur = () => {
-        const numValue = parseFloat(value);
-        if (isNaN(numValue)) {
-             setValue(TARGET_MODES[modeIndex] === '$' ? targetPrice.toFixed(position.pricePrecision) : '');
-             return;
+        const numValue = parseFloat(inputValue);
+        if (isNaN(numValue) || numValue === value) {
+            // Revert if invalid or unchanged
+            setInputValue(String(value));
+            return;
         }
-
-        let newPrice: number;
-        if (mode === '$') {
-            newPrice = numValue;
-        } else if (mode === '%') {
-            const percentageChange = numValue / 100 * (position.direction === 'LONG' ? 1 : -1);
-            newPrice = entryPrice * (1 + percentageChange);
-        } else { // PNL
-            const priceChange = numValue / (position.size * position.leverage);
-            newPrice = entryPrice + (priceChange * (position.direction === 'LONG' ? 1 : -1));
-        }
-        onUpdate(newPrice);
+        // Send update to the central handler
+        const configKey = isTP ? 'takeProfitValue' : 'stopLossValue';
+        onConfigChange({ [configKey]: numValue });
     };
     
-    const toggleMode = () => setModeIndex(prev => (prev + 1) % TARGET_MODES.length);
-    const inputClass = "w-full px-3 py-2 bg-white dark:bg-slate-700/50 border border-slate-300 dark:border-slate-600 rounded-l-md shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors text-sm";
+    const handleToggleMode = () => {
+        const currentValue = parseFloat(inputValue);
+        if (isNaN(currentValue) || size <= 0) return;
+
+        const nextMode = mode === RiskMode.Percent ? RiskMode.Amount : RiskMode.Percent;
+        let nextValue: number;
+
+        if (nextMode === RiskMode.Amount) { // from % to $
+            const pnlAmount = botConfig.investmentAmount * (currentValue / 100);
+            nextValue = parseFloat(pnlAmount.toFixed(2));
+        } else { // from $ to %
+            const percentage = (currentValue / botConfig.investmentAmount) * 100;
+            nextValue = parseFloat(percentage.toFixed(2));
+        }
+        
+        // Send both mode and value updates to the central handler
+        const modeKey = isTP ? 'takeProfitMode' : 'stopLossMode';
+        const valueKey = isTP ? 'takeProfitValue' : 'stopLossValue';
+        onConfigChange({
+            [modeKey]: nextMode,
+            [valueKey]: nextValue
+        });
+    };
+
+    const handleLockToggle = () => {
+        const lockKey = isTP ? 'isTakeProfitLocked' : 'isStopLossLocked';
+        onConfigChange({ [lockKey]: !isLocked });
+    };
+
+    const inputClass = "w-full pl-7 pr-3 py-2 bg-white dark:bg-slate-700/50 border border-slate-300 dark:border-slate-600 rounded-l-md shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors text-sm";
     const buttonClass = "px-3 py-2 bg-slate-100 dark:bg-slate-600 border border-l-0 border-slate-300 dark:border-slate-600 rounded-r-md font-bold text-sm hover:bg-slate-200 dark:hover:bg-slate-500 transition-colors";
     
     return (
@@ -194,28 +235,31 @@ const TargetInput: React.FC<{
             <div className="text-sm font-medium text-slate-700 dark:text-slate-300 flex items-center gap-2">
                 <span>{label}</span>
                 <button 
-                    onClick={onLockToggle} 
-                    disabled={!onLockToggle}
-                    className={`p-1 rounded-full disabled:cursor-default enabled:hover:bg-slate-200 enabled:dark:hover:bg-slate-600`}
-                    title={!onLockToggle ? (isLocked ? 'Locked' : 'Auto-Managed') : (isLocked ? 'Unlock to enable auto-management' : 'Lock to set a hard target')}
+                    onClick={handleLockToggle} 
+                    className={`p-1 rounded-full enabled:hover:bg-slate-200 enabled:dark:hover:bg-slate-600`}
+                    title={isLocked ? 'Unlock to enable auto-management' : 'Lock to set a hard target'}
                 >
                     {isLocked ? <LockIcon className="w-3 h-3 text-slate-400"/> : <UnlockIcon className="w-3 h-3 text-sky-500"/>}
                 </button>
             </div>
-            <div className="flex">
+            <div className="flex relative">
+                 <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 text-sm pointer-events-none">
+                    {mode === RiskMode.Percent ? '%' : '$'}
+                </span>
                 <input 
                     type="number" 
-                    value={value} 
+                    value={inputValue} 
                     onChange={handleValueChange}
                     onBlur={handleUpdateOnBlur}
                     className={inputClass}
                 />
                 <button 
-                    onClick={toggleMode} 
-                    aria-label={`Switch target mode`}
-                    className={buttonClass} style={{width: '60px'}}
+                    onClick={handleToggleMode} 
+                    aria-label={`Switch to ${mode === RiskMode.Percent ? 'PNL Amount ($)' : 'Percentage (%)'}`}
+                    title={`Switch to ${mode === RiskMode.Percent ? 'PNL Amount ($)' : 'Percentage (%)'}`}
+                    className={buttonClass} style={{width: '50px'}}
                 >
-                    {mode === 'PNL' ? '$' : mode}
+                    {mode === RiskMode.Percent ? '$' : '%'}
                 </button>
             </div>
         </div>
@@ -254,44 +298,42 @@ const PositionPnlProgress: React.FC<{position: Position; livePrice: number}> = (
 };
 
 const PositionManager: React.FC<{ 
-    botConfig: BotConfig; 
-    position: Position; 
-    livePrice: number; 
-    onUpdateTargets: (id: number, t: {tp?: number, sl?: number}) => void; 
-    onUpdateBotLockStates: (botId: string, partialConfig: Partial<BotConfig>) => void;
-}> = ({ botConfig, position, onUpdateTargets, livePrice, onUpdateBotLockStates }) => {
+    bot: RunningBot;
+    onConfigChange: (change: Partial<BotConfig>) => void;
+}> = ({ bot, onConfigChange }) => {
+    const { config, openPosition, livePrice } = bot;
+    if (!openPosition || !livePrice) return null;
+
     return (
         <div className="flex flex-col gap-3">
             <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-0">Manage Position</h4>
             <div className="grid grid-cols-2 gap-4 text-sm mt-1 mb-2 bg-slate-100 dark:bg-slate-900/50 p-2 rounded-lg">
-                <InfoItem label="Entry Price" value={formatPrice(position.entryPrice, position.pricePrecision)} />
-                {position.liquidationPrice && position.liquidationPrice > 0 ? (
+                <InfoItem label="Entry Price" value={formatPrice(openPosition.entryPrice, openPosition.pricePrecision)} />
+                {openPosition.liquidationPrice && openPosition.liquidationPrice > 0 ? (
                     <InfoItem 
                         label="Liq. Price" 
-                        value={<span className="flex items-center gap-1">{formatPrice(position.liquidationPrice, position.pricePrecision)} <InfoIcon title="Position will be liquidated if price reaches this level." className="w-3 h-3"/></span>}
+                        value={<span className="flex items-center gap-1">{formatPrice(openPosition.liquidationPrice, openPosition.pricePrecision)} <InfoIcon title="Position will be liquidated if price reaches this level." className="w-3 h-3"/></span>}
                         valueClassName="text-rose-600 dark:text-rose-400 font-semibold"
                     />
                 ) : (
-                    <InfoItem label="Live Price" value={formatPrice(livePrice, position.pricePrecision)} />
+                    <InfoItem label="Live Price" value={formatPrice(livePrice, openPosition.pricePrecision)} />
                 )}
             </div>
-            <PositionPnlProgress position={position} livePrice={livePrice}/>
+            <PositionPnlProgress position={openPosition} livePrice={livePrice}/>
             <div className="grid grid-cols-2 gap-3">
                 <TargetInput 
                     label="Take Profit" 
-                    position={position} 
+                    botConfig={config}
+                    position={openPosition} 
                     isTP={true} 
-                    isLocked={botConfig.isTakeProfitLocked} 
-                    onUpdate={(newPrice) => onUpdateTargets(position.id, { tp: newPrice })}
-                    onLockToggle={() => onUpdateBotLockStates(position.botId!, { isTakeProfitLocked: !botConfig.isTakeProfitLocked })}
+                    onConfigChange={onConfigChange}
                 />
                 <TargetInput 
                     label="Stop Loss" 
-                    position={position} 
+                    botConfig={config}
+                    position={openPosition} 
                     isTP={false} 
-                    isLocked={botConfig.isStopLossLocked}
-                    onUpdate={(newPrice) => onUpdateTargets(position.id, { sl: newPrice })}
-                    onLockToggle={() => onUpdateBotLockStates(position.botId!, { isStopLossLocked: !botConfig.isStopLossLocked })}
+                    onConfigChange={onConfigChange}
                 />
             </div>
         </div>
@@ -382,20 +424,19 @@ const StructuredActivityLog: React.FC<{ log: BotLogEntry[] }> = ({ log }) => {
 };
 
 
-interface BotRowProps extends Omit<RunningBotsProps, 'bots' | 'openPositions'> {
+interface BotRowProps extends Omit<RunningBotsProps, 'bots'> {
     bot: RunningBot;
-    position: Position | undefined;
     onToggle: () => void;
     isOpen: boolean;
 }
 
 
 const BotRow: React.FC<BotRowProps> = (props) => {
-    const { bot, position, onClosePosition, onPauseBot, onResumeBot, onStopBot, onDeleteBot, onUpdatePositionTargets, onToggle, isOpen, onUpdateBotLockStates } = props;
-    const { config, status, id, livePrice } = bot;
+    const { bot, onClosePosition, onPauseBot, onResumeBot, onStopBot, onDeleteBot, onUpdateBotConfig, onToggle, isOpen } = props;
+    const { config, status, id, livePrice, openPosition } = bot;
     
-    // Robust PNL check to prevent NaN
-    const pnl = (position && livePrice && position.entryPrice) ? (livePrice - position.entryPrice) * position.size * (position.direction === 'LONG' ? 1 : -1) * (position.mode === TradingMode.USDSM_Futures ? position.leverage : 1) : 0;
+    // Corrected PNL calculation
+    const pnl = (openPosition && livePrice && openPosition.entryPrice) ? (livePrice - openPosition.entryPrice) * openPosition.size * (openPosition.direction === 'LONG' ? 1 : -1) : 0;
     const pnlIsProfit = pnl >= 0;
     const duration = useDuration(bot);
     const statusInfo = getStatusInfo(status);
@@ -407,11 +448,11 @@ const BotRow: React.FC<BotRowProps> = (props) => {
         const isPaused = status === BotStatus.Paused;
         const isActive = !isStopped;
         const isCoolingDown = status === BotStatus.Cooldown;
-        const cannotBeStopped = !!position;
+        const cannotBeStopped = !!openPosition;
 
         return (
              <div className="flex items-center gap-2">
-                {position && livePrice && <button className={`${controlButtonClass} bg-rose-500/10 text-rose-600 hover:bg-rose-500/20 dark:text-rose-400`} onClick={() => onClosePosition(position, "Manual Close", livePrice)} title="Close Position"><CloseIcon className="w-4 h-4" /></button>}
+                {openPosition && livePrice && <button className={`${controlButtonClass} bg-rose-500/10 text-rose-600 hover:bg-rose-500/20 dark:text-rose-400`} onClick={() => onClosePosition(openPosition, "Manual Close", livePrice)} title="Close Position"><CloseIcon className="w-4 h-4" /></button>}
                 
                 {(isActive || isCoolingDown) && !isPaused && <button className={`${controlButtonClass}`} onClick={() => onPauseBot(id)} title="Pause Bot"><PauseIcon className="w-5 h-5" /></button>}
                 {isPaused && <button className={`${controlButtonClass} text-emerald-600 dark:text-emerald-400`} onClick={() => onResumeBot(id)} title="Resume Bot"><PlayIcon className="w-5 h-5" /></button>}
@@ -452,7 +493,7 @@ const BotRow: React.FC<BotRowProps> = (props) => {
                 
                 {/* Middle Column: Status or PNL */}
                 <div className="text-center min-h-[42px] flex flex-col justify-center">
-                    {position && livePrice ? (
+                    {openPosition && livePrice ? (
                         <InfoItem label="Unrealized PNL" value={`${pnlIsProfit ? '+' : ''}$${pnl?.toFixed(2)}`} valueClassName={`text-lg ${pnlIsProfit ? 'text-emerald-500' : 'text-rose-500'}`} labelClassName="text-center" />
                     ) : (
                          <div className={`flex items-center justify-center gap-2 text-xs font-semibold px-3 py-1 rounded-full ${statusInfo.bg} ${statusInfo.text_color} ${statusInfo.pulse ? 'animate-pulse' : ''}`} title={primaryStatusText}>
@@ -460,10 +501,10 @@ const BotRow: React.FC<BotRowProps> = (props) => {
                             <span className="truncate max-w-[200px]">{primaryStatusText}</span>
                          </div>
                     )}
-                    {position && (
+                    {openPosition && (
                          <div className="flex items-center justify-center gap-2 mt-1">
-                            <span className={`px-2 py-0.5 rounded-md text-xs font-bold ${position.direction === 'LONG' ? 'bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300' : 'bg-rose-100 dark:bg-rose-900 text-rose-700 dark:text-rose-300'}`}>
-                                {position.direction}
+                            <span className={`px-2 py-0.5 rounded-md text-xs font-bold ${openPosition.direction === 'LONG' ? 'bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300' : 'bg-rose-100 dark:bg-rose-900 text-rose-700 dark:text-rose-300'}`}>
+                                {openPosition.direction}
                             </span>
                         </div>
                     )}
@@ -490,19 +531,16 @@ const BotRow: React.FC<BotRowProps> = (props) => {
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4 pt-3">
                     <div className="flex flex-col gap-4">
-                        {position && livePrice ? (
+                        {openPosition && livePrice ? (
                             <PositionManager 
-                                botConfig={config} 
-                                position={position} 
-                                livePrice={livePrice} 
-                                onUpdateTargets={onUpdatePositionTargets} 
-                                onUpdateBotLockStates={onUpdateBotLockStates}
+                                bot={bot}
+                                onConfigChange={(partialConfig) => onUpdateBotConfig(bot.id, partialConfig)}
                             />
                         ) : (
                             <BotAnalysisDisplay analysis={bot.analysis} />
                         )}
                         <BotPerformanceSummary bot={bot} />
-                        <BotConfigDetails config={config} />
+                        <BotConfigDetails config={config} onUpdate={(partialConfig) => onUpdateBotConfig(bot.id, partialConfig)} />
                         <BotHealthDisplay bot={bot} />
                     </div>
                      <div className="flex flex-col">
@@ -518,22 +556,18 @@ const BotRow: React.FC<BotRowProps> = (props) => {
 export const RunningBots: React.FC<RunningBotsProps> = (props) => {
     const [openBotId, setOpenBotId] = useState<string | null>(null);
 
-    // This effect now correctly handles setting the initial open bot and
-    // gracefully handles the case where the currently open bot is deleted.
-    // It depends on a stable representation of the bot list's IDs.
     useEffect(() => {
         const botIds = props.bots.map(b => b.id);
-        const firstBotId = botIds[0] || null;
-
-        // On initial load or if no bot is open, open the first one.
-        if (!openBotId && firstBotId) {
-            setOpenBotId(firstBotId);
+        
+        // If the currently open bot is no longer valid (e.g., deleted), find a new one to open.
+        if (openBotId && !botIds.includes(openBotId)) {
+            setOpenBotId(botIds[0] || null);
+        } 
+        // If no bot is open, but there are bots available, open the first one.
+        else if (!openBotId && botIds.length > 0) {
+            setOpenBotId(botIds[0]);
         }
-        // If the currently open bot has been deleted, select the new first bot.
-        else if (openBotId && !botIds.includes(openBotId)) {
-            setOpenBotId(firstBotId);
-        }
-    }, [props.bots.map(b => b.id).join(',')]);
+    }, [props.bots, openBotId]);
 
 
     const handleToggle = (botId: string) => {
@@ -552,8 +586,7 @@ export const RunningBots: React.FC<RunningBotsProps> = (props) => {
             </div>
             <div className="p-2 sm:p-4 space-y-3">
                 {props.bots.map(bot => {
-                    const position = props.openPositions.find(p => p.id === bot.openPositionId);
-                    return <BotRow key={bot.id} {...props} bot={bot} position={position} onToggle={() => handleToggle(bot.id)} isOpen={openBotId === bot.id} />
+                    return <BotRow key={bot.id} {...props} bot={bot} onToggle={() => handleToggle(bot.id)} isOpen={openBotId === bot.id} />
                 })}
             </div>
         </div>

@@ -1,7 +1,8 @@
+
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Kline, LiveTicker } from '../types';
 import { ChartIcon } from './icons';
-import { TIME_FRAMES } from '../constants';
+import * as constants from '../constants';
 import { calculateSupportResistance, SupportResistance } from '../services/chartAnalysisService';
 import { SearchableDropdown } from './SearchableDropdown';
 
@@ -40,7 +41,7 @@ const ChartCandle: React.FC<{ kline: Kline, x: number, y_scale: (val: number) =>
 
 const TimeFrameSelector: React.FC<{selected: string, onSelect: (tf: string) => void}> = ({ selected, onSelect }) => (
     <div className="flex items-center bg-slate-100 dark:bg-slate-700/50 rounded-md p-1">
-        {TIME_FRAMES.map(tf => (
+        {constants.TIME_FRAMES.map(tf => (
             <button 
                 key={tf}
                 onClick={() => onSelect(tf)}

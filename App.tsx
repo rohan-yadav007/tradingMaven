@@ -1,19 +1,19 @@
 
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { ChartComponent } from './components/ChartComponent';
 import { TradingLog } from './components/TradingLog';
 import { RunningBots } from './components/RunningBots';
-import { TradingMode, Agent, TradeSignal, Position, Trade, WalletBalance, Kline, SymbolInfo, LiveTicker, AccountInfo, RunningBot, BotConfig, BotStatus, BinanceOrderResponse, AgentParams, BacktestResult, RiskMode, LogType } from './types';
+import { TradingMode, Agent, TradeSignal, Position, Trade, WalletBalance, Kline, SymbolInfo, LiveTicker, AccountInfo, RunningBot, BotConfig, BotStatus, BinanceOrderResponse, AgentParams, BacktestResult, LogType } from './types';
 import * as constants from './constants';
 import * as binanceService from './services/binanceService';
 import { historyService } from './services/historyService';
 import { botManagerService, BotHandlers } from './services/botManagerService';
 import { BacktestingPanel } from './components/BacktestingPanel';
+import { TradingConfigProvider, useTradingConfigState, useTradingConfigActions } from './contexts/TradingConfigContext';
 
-const App: React.FC = () => {
+const AppContent: React.FC = () => {
     // ---- State Management ----
     // UI State
     const [isApiConnected, setIsApiConnected] = useState(false);
@@ -22,32 +22,21 @@ const App: React.FC = () => {
     });
     const [activeView, setActiveView] = useState<'trading' | 'backtesting'>('trading');
     
-    // Trading Configuration
-    const [executionMode, setExecutionMode] = useState<'live' | 'paper'>('paper');
-    const [tradingMode, setTradingMode] = useState<TradingMode>(TradingMode.Spot);
-    const [walletViewMode, setWalletViewMode] = useState<TradingMode>(TradingMode.Spot);
-    const [allPairs, setAllPairs] = useState<string[]>(constants.TRADING_PAIRS); // Init with fallback
-    const [selectedPair, setSelectedPair] = useState('BTC/USDT');
-    const [leverage, setLeverage] = useState(10);
-    const [marginType, setMarginType] = useState<'ISOLATED' | 'CROSSED'>('ISOLATED');
-    const [futuresSettingsError, setFuturesSettingsError] = useState<string | null>(null);
-    const [isMultiAssetMode, setIsMultiAssetMode] = useState(false);
-    const [multiAssetModeError, setMultiAssetModeError] = useState<string | null>(null);
-    const [chartTimeFrame, setChartTimeFrame] = useState('3m');
-    const [selectedAgent, setSelectedAgent] = useState<Agent>(constants.AGENTS[0]);
-    const [agentParams, setAgentParams] = useState<AgentParams>({});
-    
-    // New Risk Management State
-    const [investmentAmount, setInvestmentAmount] = useState(100);
-    const [stopLossMode, setStopLossMode] = useState<RiskMode>(RiskMode.Percent);
-    const [stopLossValue, setStopLossValue] = useState(2); // e.g., 2%
-    const [takeProfitMode, setTakeProfitMode] = useState<RiskMode>(RiskMode.Percent);
-    const [takeProfitValue, setTakeProfitValue] = useState(4); // e.g., 4%
-    const [isStopLossLocked, setIsStopLossLocked] = useState(false);
-    const [isTakeProfitLocked, setIsTakeProfitLocked] = useState(false);
-    const [isCooldownEnabled, setIsCooldownEnabled] = useState(true);
+    // Trading Configuration (from context)
+    const configState = useTradingConfigState();
+    const configActions = useTradingConfigActions();
+    const { 
+        executionMode, tradingMode, selectedPair, chartTimeFrame, 
+        selectedAgent, investmentAmount, stopLossMode, stopLossValue, takeProfitMode, 
+        takeProfitValue, isStopLossLocked, isTakeProfitLocked, isCooldownEnabled, agentParams,
+        leverage, marginType
+    } = configState;
 
-    // Backtesting State (now fully self-contained in BacktestingPanel, but results are lifted)
+    const {
+        setSelectedPair,
+    } = configActions;
+    
+    // Backtesting State
     const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
     
     // Bot State
@@ -104,110 +93,9 @@ const App: React.FC = () => {
         }
     }, []);
 
-    // Effect to fetch the correct tradable pairs when the trading mode changes
     useEffect(() => {
-        const fetchPairs = async () => {
-            if (!isApiConnected) {
-                setAllPairs(constants.TRADING_PAIRS);
-                return;
-            }
-
-            let pairFetcher: () => Promise<string[]>;
-            switch(tradingMode) {
-                case TradingMode.Spot:
-                    pairFetcher = binanceService.fetchSpotPairs;
-                    break;
-                case TradingMode.USDSM_Futures:
-                    pairFetcher = binanceService.fetchFuturesPairs;
-                    break;
-                default:
-                    pairFetcher = binanceService.fetchSpotPairs; // Use Spot as default
-            }
-
-            try {
-                const pairs = await pairFetcher();
-                 if (pairs.length > 0) {
-                    setAllPairs(pairs);
-                    // Check if current pair is still valid, if not, update it
-                    if (!pairs.includes(selectedPair)) {
-                        setSelectedPair(pairs[0] || 'BTC/USDT');
-                    }
-                }
-            } catch (err) {
-                console.error(`Could not fetch pairs for mode ${tradingMode}:`, err);
-                setAllPairs(constants.TRADING_PAIRS); // Fallback to constants on error
-            }
-        };
-
-        fetchPairs();
-    }, [tradingMode, isApiConnected, selectedPair]);
-    
-    // Sync wallet view with trading mode for better UX and balance validation
-    useEffect(() => {
-        setWalletViewMode(tradingMode);
-    }, [tradingMode]);
-
-
-    // Effect to set futures leverage on change
-    useEffect(() => {
-        if (tradingMode === TradingMode.USDSM_Futures && executionMode === 'live' && isApiConnected) {
-            const updateLeverage = async () => {
-                setFuturesSettingsError(null);
-                const pairSymbol = selectedPair.replace('/', '');
-                try {
-                    await binanceService.setFuturesLeverage(pairSymbol, leverage);
-                } catch (e) {
-                    const errorMessage = binanceService.interpretBinanceError(e);
-                    console.error("Failed to update leverage:", errorMessage);
-                    setFuturesSettingsError(errorMessage);
-                }
-            };
-            updateLeverage();
-        }
-    }, [leverage, selectedPair, tradingMode, executionMode, isApiConnected]);
-
-    // Smart effect to set futures margin type only when needed
-    useEffect(() => {
-        if (tradingMode === TradingMode.USDSM_Futures && executionMode === 'live' && isApiConnected && !isMultiAssetMode) {
-            const updateMarginType = async () => {
-                setFuturesSettingsError(null);
-                const pairSymbol = selectedPair.replace('/', '');
-                try {
-                    // 1. Check current margin type on Binance first
-                    const positionRisk = await binanceService.getFuturesPositionRisk(pairSymbol);
-                    if (positionRisk && positionRisk.marginType.toUpperCase() !== marginType) {
-                        // 2. Only send the update if it's different
-                        await binanceService.setMarginType(pairSymbol, marginType);
-                    }
-                } catch (e: any) {
-                    // Ignore the "No need to change" error, show others
-                    if (e.code !== -4046) {
-                        const errorMessage = binanceService.interpretBinanceError(e);
-                        console.error("Failed to update margin type:", errorMessage);
-                        setFuturesSettingsError(errorMessage);
-                    }
-                }
-            };
-            updateMarginType();
-        }
-    }, [marginType, selectedPair, tradingMode, executionMode, isApiConnected, isMultiAssetMode]);
-
-
-    // Effect to get the account-wide multi-asset margin mode for futures
-    useEffect(() => {
-        if (tradingMode === TradingMode.USDSM_Futures && isApiConnected) {
-            const fetchMode = async () => {
-                try {
-                    const data = await binanceService.getMultiAssetsMargin();
-                    setIsMultiAssetMode(data.multiAssetsMargin);
-                } catch (e) {
-                    console.error("Failed to fetch multi-asset margin mode", e);
-                    // Don't set an error, just log it. The UI will show the default.
-                }
-            };
-            fetchMode();
-        }
-    }, [tradingMode, isApiConnected]);
+        configActions.setIsApiConnected(isApiConnected);
+    }, [isApiConnected, configActions]);
 
 
     // Fetch chart and symbol data when pair or timeframe changes
@@ -251,16 +139,12 @@ const App: React.FC = () => {
     useEffect(() => {
         const formattedPair = selectedPair.replace('/', '').toLowerCase();
         
-        // Ticker subscription for UI
         const tickerCallback = (ticker: LiveTicker) => {
             if (ticker.pair.toLowerCase() === formattedPair) {
                 setLivePrice(ticker.closePrice);
                 setLiveTicker(ticker);
             }
         };
-        botManagerService.subscribeToTickerUpdates(formattedPair, tickerCallback);
-
-        // Kline subscription for UI chart
         const klineCallback = (newKline: Kline) => {
              setKlines(prevKlines => {
                 if (prevKlines.length === 0) return [newKline];
@@ -274,6 +158,8 @@ const App: React.FC = () => {
                 }
             });
         };
+        
+        botManagerService.subscribeToTickerUpdates(formattedPair, tickerCallback);
         botManagerService.subscribeToKlineUpdates(formattedPair, chartTimeFrame, klineCallback);
         
         return () => {
@@ -294,7 +180,7 @@ const App: React.FC = () => {
         setWalletError(null);
         try {
             let info;
-            switch (walletViewMode) {
+            switch (configState.walletViewMode) {
                 case TradingMode.Spot:
                     info = await binanceService.fetchSpotWalletBalance();
                     break;
@@ -315,7 +201,7 @@ const App: React.FC = () => {
         } finally {
             setIsWalletLoading(false);
         }
-    }, [isApiConnected, walletViewMode]);
+    }, [isApiConnected, configState.walletViewMode]);
 
     useEffect(() => {
         fetchWalletBalances();
@@ -332,29 +218,21 @@ const App: React.FC = () => {
 
     // ---- Handlers ----
     const getAvailableBalanceForInvestment = useCallback(() => {
-        // For paper mode, there's no limit.
         if (executionMode !== 'live') return Infinity;
-        
-        // Failsafe: If API isn't connected or info is missing, prevent live trading.
         if (!isApiConnected || !accountInfo || !symbolInfo) return 0;
-
-        // CRITICAL: Ensure the user is viewing the correct wallet for the trade they are about to place.
-        if (walletViewMode !== tradingMode) {
-            // This prevents using Spot balance for a Futures trade, for example.
-            return 0;
-        }
+        if (configState.walletViewMode !== tradingMode) return 0;
         
         const quoteAsset = symbolInfo.quoteAsset;
-        if (!quoteAsset) return 0; // Should not happen with valid symbolInfo
+        if (!quoteAsset) return 0;
         
-        // liveBalances is already correctly populated based on walletViewMode
         const balance = liveBalances.find(b => b.asset === quoteAsset);
-        
-        // For futures, the available balance is the 'free' amount (availableBalance field).
-        // For spot, it's also 'free'.
         return balance ? balance.free : 0;
 
-    }, [executionMode, isApiConnected, accountInfo, symbolInfo, walletViewMode, tradingMode, liveBalances]);
+    }, [executionMode, isApiConnected, accountInfo, symbolInfo, configState.walletViewMode, tradingMode, liveBalances]);
+
+    useEffect(() => {
+        configActions.setAvailableBalance(getAvailableBalanceForInvestment());
+    }, [getAvailableBalanceForInvestment, configActions]);
 
 
     const handleLoadMoreChartData = useCallback(async () => {
@@ -395,7 +273,6 @@ const App: React.FC = () => {
         }
 
         const closePositionInState = (finalExitPrice: number) => {
-            // Corrected PNL calculation. Leverage is already part of the position's `size` for futures.
             const pnl = (finalExitPrice - posToClose.entryPrice) * posToClose.size * (posToClose.direction === 'LONG' ? 1 : -1);
             const newTrade: Trade = { ...posToClose, exitPrice: finalExitPrice, exitTime: new Date(), pnl, exitReason };
             
@@ -417,7 +294,6 @@ const App: React.FC = () => {
             try {
                 const formattedPair = posToClose.pair.replace('/', '');
                 
-                // CRITICAL FIX: Fetch the correct symbol info for the mode (Spot vs Futures)
                 const liveSymbolInfo = posToClose.mode === TradingMode.USDSM_Futures 
                     ? await binanceService.getFuturesSymbolInfo(formattedPair)
                     : await binanceService.getSymbolInfo(formattedPair);
@@ -427,7 +303,6 @@ const App: React.FC = () => {
                 const quantityPrecision = binanceService.getQuantityPrecision(liveSymbolInfo);
                 const closingSide = posToClose.direction === 'LONG' ? 'SELL' : 'BUY';
                 
-                // Use the exact size of the open position, formatted to the required precision.
                 const quantity = parseFloat(posToClose.size.toFixed(quantityPrecision));
 
                 if (quantity <= 0) {
@@ -447,17 +322,14 @@ const App: React.FC = () => {
                 }
                  botManagerService.addBotLog(posToClose.botId!, `Live position closed successfully via API.`, LogType.Success);
                  const finalExitPrice = parseFloat(orderResponse.cummulativeQuoteQty) / parseFloat(orderResponse.executedQty);
-                 // If API call is successful, then update state
                  closePositionInState(finalExitPrice);
             } catch(e) {
-                // FAILSAFE: If API fails, do NOT remove position from UI. Log critical error.
                 const errorMessage = binanceService.interpretBinanceError(e);
                 console.error("CRITICAL: Failed to close live position on Binance:", e);
                 const criticalMessage = `CRITICAL: Failed to close live position. Please close manually on Binance to prevent loss. Reason: ${errorMessage}`;
                 botManagerService.addBotLog(posToClose.botId!, criticalMessage, LogType.Error);
                 botManagerService.updateBotState(posToClose.botId!, { status: BotStatus.Error, analysis: {signal: 'HOLD', reasons: [criticalMessage]}});
 
-                // Unlock the position ID to allow another attempt if needed
                 setClosingPositionIds(prev => {
                     const newSet = new Set(prev);
                     newSet.delete(posToClose.id);
@@ -465,7 +337,6 @@ const App: React.FC = () => {
                 });
             }
         } else {
-            // For paper trades, close directly in state
             closePositionInState(exitPrice);
         }
 
@@ -490,7 +361,6 @@ const App: React.FC = () => {
         
         const { config } = bot;
         
-        // The bot has already calculated the final SL/TP prices. We just use them.
         const { stopLossPrice, takeProfitPrice } = execSignal;
         if (stopLossPrice === undefined || takeProfitPrice === undefined) {
              const reason = "Trade execution failed: Bot did not provide required Stop Loss/Take Profit targets.";
@@ -504,7 +374,6 @@ const App: React.FC = () => {
         let finalLiquidationPrice: number | undefined = undefined;
 
         if (config.executionMode === 'live') {
-            // --- Pre-flight Balance Check using App state ---
             if (!accountInfo) {
                 const reason = `Trade aborted: Live account information is not yet available. Please wait a moment.`;
                 botManagerService.notifyTradeExecutionFailed(botId, reason);
@@ -533,16 +402,13 @@ const App: React.FC = () => {
                 botManagerService.updateBotState(botId, { status: BotStatus.Monitoring }); // No cooldown for this state
                 return;
             }
-            // --- End of Pre-flight Balance Check ---
 
             try {
-                // Use the entry price determined by the bot
                 const entryPriceForOrder = execSignal.entryPrice;
                 if (!entryPriceForOrder || entryPriceForOrder <= 0) {
                     throw new Error("Could not get live price for trade execution.");
                 }
 
-                // Calculate quantity based on investment and live price
                 let rawQuantity: number;
                 if (config.mode === TradingMode.USDSM_Futures) {
                     rawQuantity = (config.investmentAmount * config.leverage) / entryPriceForOrder;
@@ -557,7 +423,6 @@ const App: React.FC = () => {
                     throw new Error("Calculated quantity is too small to trade based on investment and asset's step size.");
                 }
 
-                // Place the order
                 switch (config.mode) {
                     case TradingMode.Spot:
                         orderResponse = await binanceService.createSpotOrder(config.pair, execSignal.signal, quantity);
@@ -571,7 +436,6 @@ const App: React.FC = () => {
                 
                 tradeSize = parseFloat(orderResponse.executedQty);
 
-                // --- ROBUST PRICE CALCULATION ---
                 if (orderResponse.avgPrice && parseFloat(orderResponse.avgPrice) > 0) {
                     finalEntryPrice = parseFloat(orderResponse.avgPrice);
                 } else if (tradeSize > 0) {
@@ -580,7 +444,6 @@ const App: React.FC = () => {
                     throw new Error("Order filled, but failed to parse execution details. Check position manually.");
                 }
 
-                 // For futures, get liquidation price after opening position
                 if (config.mode === TradingMode.USDSM_Futures) {
                     const positionRisk = await binanceService.getFuturesPositionRisk(config.pair.replace('/', ''));
                     if (positionRisk) finalLiquidationPrice = positionRisk.liquidationPrice;
@@ -594,7 +457,6 @@ const App: React.FC = () => {
                 return;
             }
         } else {
-            // Paper trade execution
             finalEntryPrice = execSignal.entryPrice || 0;
             if(finalEntryPrice === 0) {
                  botManagerService.addBotLog(botId, `Paper trade failed: no live price was provided by the bot.`, LogType.Error);
@@ -635,15 +497,12 @@ const App: React.FC = () => {
 
     }, [accountInfo]);
     
-    // Set ref on every render to ensure bots have the latest handlers
     botHandlersRef.current = {
         onExecuteTrade: handleExecuteTrade,
         onClosePosition: handleClosePosition,
     };
     
-    // Check if a bot with the specific config is active
     const isBotCombinationActive = useCallback(() => {
-        // Enforce one LIVE bot per pair
         if (executionMode === 'live') {
             return runningBots.some(bot => 
                 bot.config.executionMode === 'live' &&
@@ -653,7 +512,6 @@ const App: React.FC = () => {
             );
         }
         
-        // Allow multiple PAPER bots with unique configs
         return runningBots.some(bot => 
             bot.config.executionMode === 'paper' &&
             bot.config.pair === selectedPair &&
@@ -687,7 +545,6 @@ const App: React.FC = () => {
             isTakeProfitLocked,
             isCooldownEnabled,
             agentParams,
-            // Add precision data to the config
             pricePrecision: binanceService.getPricePrecision(symbolInfo),
             quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
             stepSize: binanceService.getStepSize(symbolInfo),
@@ -699,74 +556,32 @@ const App: React.FC = () => {
         isStopLossLocked, isTakeProfitLocked, isCooldownEnabled, agentParams, symbolInfo
     ]);
 
-    // This is the new centralized handler for all bot config updates from the UI
     const handleUpdateBotConfig = useCallback((botId: string, partialConfig: Partial<BotConfig>) => {
         botManagerService.updateBotConfig(botId, partialConfig);
     }, []);
-
-    const handleSetMultiAssetMode = useCallback(async (isEnabled: boolean) => {
-        setMultiAssetModeError(null);
-        try {
-            // Pre-flight checks for enabling Multi-Asset Mode to prevent -4167 error
-            if (isEnabled) {
-                // 1. Check for open positions
-                if (accountInfo?.positions && accountInfo.positions.some(p => parseFloat(p.positionAmt) !== 0)) {
-                    throw new Error("Cannot enable Multi-Asset Mode with open futures positions. Please close all positions first.");
-                }
-
-                // 2. Proactively switch all ISOLATED symbols with positions to CROSSED
-                const allPositionRisks = await binanceService.getAllFuturesPositionRisk();
-                const isolatedSymbols = allPositionRisks
-                    .filter(p => p.marginType.toUpperCase() === 'ISOLATED' && parseFloat(p.positionAmt) !== 0)
-                    .map(p => p.symbol);
-                
-                if (isolatedSymbols.length > 0) {
-                    setMultiAssetModeError(`Switching ${isolatedSymbols.length} pairs to CROSSED margin...`);
-                    await Promise.all(
-                        isolatedSymbols.map(symbol => binanceService.setMarginType(symbol, 'CROSSED'))
-                    );
-                }
-            }
-
-            // 3. Attempt to set the mode
-            await binanceService.setMultiAssetsMargin(isEnabled);
-            setIsMultiAssetMode(isEnabled);
-            
-            // 4. When multi-asset mode is on, margin type is effectively CROSSED
-            if (isEnabled) {
-                setMarginType('CROSSED');
-            }
-        } catch (e) {
-            const errorMessage = binanceService.interpretBinanceError(e);
-            console.error("Failed to set multi-asset margin mode:", e);
-            setMultiAssetModeError(errorMessage);
-        }
-    }, [accountInfo]);
     
     const handleApplyBacktestConfig = useCallback((config: BotConfig) => {
-        setSelectedPair(config.pair);
-        setTradingMode(config.mode);
+        configActions.setSelectedPair(config.pair);
+        configActions.setTradingMode(config.mode);
         if (config.mode === TradingMode.USDSM_Futures) {
-            setLeverage(config.leverage);
-            if(config.marginType) setMarginType(config.marginType);
+            configActions.setLeverage(config.leverage);
+            if(config.marginType) configActions.setMarginType(config.marginType);
         }
-        setChartTimeFrame(config.timeFrame);
-        setSelectedAgent(config.agent);
-        setAgentParams(config.agentParams || {});
+        configActions.setTimeFrame(config.timeFrame);
+        configActions.setSelectedAgent(config.agent);
+        configActions.setAgentParams(config.agentParams || {});
         
-        // Apply risk management settings
-        setInvestmentAmount(config.investmentAmount);
-        setStopLossMode(config.stopLossMode);
-        setStopLossValue(config.stopLossValue);
-        setTakeProfitMode(config.takeProfitMode);
-        setTakeProfitValue(config.takeProfitValue);
-        setIsStopLossLocked(config.isStopLossLocked);
-        setIsTakeProfitLocked(config.isTakeProfitLocked);
-        setIsCooldownEnabled(config.isCooldownEnabled);
+        configActions.setInvestmentAmount(config.investmentAmount);
+        configActions.setStopLossMode(config.stopLossMode);
+        configActions.setStopLossValue(config.stopLossValue);
+        configActions.setTakeProfitMode(config.takeProfitMode);
+        configActions.setTakeProfitValue(config.takeProfitValue);
+        configActions.setIsStopLossLocked(config.isStopLossLocked);
+        configActions.setIsTakeProfitLocked(config.isTakeProfitLocked);
+        configActions.setIsCooldownEnabled(config.isCooldownEnabled);
 
-    }, []);
+    }, [configActions]);
 
-    // Memoize bot actions to avoid re-renders of RunningBots component
     const botActions = {
         onClosePosition: handleClosePosition,
         onPauseBot: useCallback((botId: string) => botManagerService.pauseBot(botId), []),
@@ -791,36 +606,15 @@ const App: React.FC = () => {
                 <main className="container mx-auto p-2 sm:p-4 grid grid-cols-12 gap-4">
                     <div className="col-span-12 lg:col-span-3 order-last lg:order-first">
                         <Sidebar
-                            executionMode={executionMode} setExecutionMode={setExecutionMode}
-                            tradingMode={tradingMode} setTradingMode={setTradingMode}
-                            allPairs={allPairs} selectedPair={selectedPair} setSelectedPair={setSelectedPair}
-                            leverage={leverage} setLeverage={setLeverage}
-                            marginType={marginType} setMarginType={setMarginType}
-                            futuresSettingsError={futuresSettingsError}
-                            isMultiAssetMode={isMultiAssetMode}
-                            onSetMultiAssetMode={handleSetMultiAssetMode}
-                            multiAssetModeError={multiAssetModeError}
-                            investmentAmount={investmentAmount} setInvestmentAmount={setInvestmentAmount}
-                            stopLossMode={stopLossMode} setStopLossMode={setStopLossMode}
-                            stopLossValue={stopLossValue} setStopLossValue={setStopLossValue}
-                            takeProfitMode={takeProfitMode} setTakeProfitMode={setTakeProfitMode}
-                            takeProfitValue={takeProfitValue} setTakeProfitValue={setTakeProfitValue}
-                            isStopLossLocked={isStopLossLocked} setIsStopLossLocked={setIsStopLossLocked}
-                            isTakeProfitLocked={isTakeProfitLocked} setIsTakeProfitLocked={setIsTakeProfitLocked}
-                            isCooldownEnabled={isCooldownEnabled} setIsCooldownEnabled={setIsCooldownEnabled}
-                            timeFrame={chartTimeFrame} setTimeFrame={setChartTimeFrame}
-                            selectedAgent={selectedAgent} setSelectedAgent={setSelectedAgent}
-                            onStartBot={handleStartBot} klines={klines}
+                            klines={klines}
                             isBotCombinationActive={isBotCombinationActive()}
-                            agentParams={agentParams} setAgentParams={setAgentParams}
+                            onStartBot={handleStartBot}
                             theme={theme}
-                            walletViewMode={walletViewMode} setWalletViewMode={setWalletViewMode}
                             isApiConnected={isApiConnected}
                             pricePrecision={pricePrecision}
                             accountInfo={accountInfo}
                             isWalletLoading={isWalletLoading}
                             walletError={walletError}
-                            availableBalance={getAvailableBalanceForInvestment()}
                         />
                     </div>
                     <div className="col-span-12 lg:col-span-9 flex flex-col gap-4">
@@ -832,8 +626,8 @@ const App: React.FC = () => {
                             livePrice={livePrice}
                             liveTicker={liveTicker}
                             chartTimeFrame={chartTimeFrame}
-                            onTimeFrameChange={setChartTimeFrame}
-                            allPairs={allPairs}
+                            onTimeFrameChange={configActions.setTimeFrame}
+                            allPairs={configState.allPairs}
                             onPairChange={setSelectedPair}
                             onLoadMoreData={handleLoadMoreChartData}
                             isFetchingMoreData={isFetchingMoreChartData}
@@ -860,5 +654,12 @@ const App: React.FC = () => {
         </div>
     );
 };
+
+const App: React.FC = () => (
+    <TradingConfigProvider>
+        <AppContent />
+    </TradingConfigProvider>
+);
+
 
 export default App;

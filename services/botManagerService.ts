@@ -36,6 +36,7 @@ class BotInstance {
     private isTicking = false;
     private analysisTimer: number | null = null;
     private managementTimer: number | null = null;
+    private isAwaitingImmediateAnalysis = false;
     private isManagingScalperPosition = false;
     private lastTimerLogTimestamp: number | null = null;
     
@@ -81,6 +82,36 @@ class BotInstance {
         const newLog: BotLogEntry = { timestamp: new Date(), message, type };
         this.bot.log = [newLog, ...this.bot.log].slice(0, MAX_LOG_ENTRIES);
         this.onUpdate();
+    }
+
+    private async runImmediateAnalysis() {
+        if (this.bot.openPosition) return;
+        
+        // Ensure there is at least one kline to analyze
+        const lastCandle = this.klines.length > 0 ? this.klines[this.klines.length - 1] : null;
+        if (!lastCandle) {
+             this.addLog('Immediate analysis skipped: no klines available.', LogType.Info);
+            return;
+        }
+
+        if (this.handlersRef.current) {
+            this.addLog('Performing immediate re-analysis on current market data.', LogType.Action);
+            this.bot.lastAnalysisTimestamp = lastCandle.time; // Prevent re-analysis by regular tick
+            const signal = await getTradingSignal(this.bot.config.agent, this.klines, this.bot.config.timeFrame, this.bot.config.agentParams);
+            this.bot.analysis = signal;
+
+            if (signal.signal !== 'HOLD') {
+                this.bot.status = BotStatus.ExecutingTrade;
+                this.onUpdate();
+                await this.executeTrade(signal);
+            } else {
+                const primaryReason = signal.reasons[signal.reasons.length - 1] || "Conditions not met for a trade.";
+                this.addLog(`Immediate Analysis: HOLD. ${primaryReason}`, LogType.Info);
+                // Return to normal monitoring after the hold
+                this.bot.status = BotStatus.Monitoring;
+                this.onUpdate();
+            }
+        }
     }
 
     private async proactiveManageScalperPosition(livePrice: number) {
@@ -331,7 +362,7 @@ class BotInstance {
     
         const lastCandle = this.klines.length > 0 ? this.klines[this.klines.length - 1] : null;
     
-        if (!lastCandle || (this.bot.lastAnalysisTimestamp === lastCandle.time)) {
+        if (!lastCandle || !lastCandle.isFinal || (this.bot.lastAnalysisTimestamp === lastCandle.time)) {
             return;
         }
     
@@ -353,26 +384,38 @@ class BotInstance {
     
     private async tick() {
         if (this.isTicking) return;
-    
-        // 1. Handle state transitions first.
-        if (this.bot.status === BotStatus.Cooldown && Date.now() >= (this.bot.cooldownUntil || 0)) {
-            this.addLog('Cooldown period finished. Resuming market monitoring.', LogType.Status);
-            this.updateState({
-                status: BotStatus.Monitoring,
-                cooldownUntil: null,
-                analysis: null,
-            });
-    
-            // FIX: Instead of processing in the same execution cycle, schedule a new tick shortly.
-            // This prevents a potential race condition where the bot tries to trade with state
-            // (e.g., live price from websocket) that hasn't been updated since resuming.
-            setTimeout(() => this.tick(), 1000); // Re-process in 1 second.
-            return; // Exit this tick cycle to allow state to settle.
-        }
-    
-        // 2. Perform action based on the *current, stable* state.
+
         this.isTicking = true;
         try {
+            // Handle state transitions first
+            if (this.bot.status === BotStatus.Cooldown && Date.now() >= (this.bot.cooldownUntil || 0)) {
+                if (this.isAwaitingImmediateAnalysis) {
+                    this.isAwaitingImmediateAnalysis = false; // Reset flag
+                    this.addLog('Short cooldown finished. Performing immediate re-analysis.', LogType.Status);
+                    this.updateState({
+                        status: BotStatus.Monitoring,
+                        cooldownUntil: null,
+                        analysis: null,
+                        lastAnalysisTimestamp: null,
+                    });
+                    
+                    await this.runImmediateAnalysis();
+                    // After immediate analysis, the state is either PositionOpen or Monitoring.
+                    // No further action in this tick, so we return.
+                    return; 
+                } else {
+                    this.addLog('Cooldown period finished. Resuming market monitoring.', LogType.Status);
+                    this.updateState({
+                        status: BotStatus.Monitoring,
+                        cooldownUntil: null,
+                        analysis: null,
+                        lastAnalysisTimestamp: null,
+                    });
+                    // Fall through to potentially run monitoring logic in the same tick if a new candle is ready
+                }
+            }
+
+            // Perform action based on current state
             switch (this.bot.status) {
                 case BotStatus.Monitoring:
                     await this.runMonitoringLogic();
@@ -390,7 +433,7 @@ class BotInstance {
             this.updateState({ status: BotStatus.Error, analysis: { signal: 'HOLD', reasons: [errorMessage] } });
         } finally {
             this.isTicking = false;
-            this.onUpdate(); // Always update UI at the end of a processing tick.
+            this.onUpdate();
         }
     }
 
@@ -521,7 +564,7 @@ class BotInstance {
         this.bot.openPositionId = null;
         this.bot.openPosition = null;
         this.managementKlines = []; // Clear 1m klines
-        this.bot.lastAnalysisTimestamp = null; // <<< FIX: Reset analysis state to prevent getting stuck.
+        this.bot.lastAnalysisTimestamp = null;
         this.bot.closedTradesCount = (this.bot.closedTradesCount || 0) + 1;
         this.bot.totalPnl = (this.bot.totalPnl || 0) + pnl;
 
@@ -530,14 +573,16 @@ class BotInstance {
             const timeframeMs = getTimeframeMilliseconds(this.bot.config.timeFrame);
             const cooldownMs = BOT_COOLDOWN_CANDLES * timeframeMs;
             this.bot.cooldownUntil = closeTime + cooldownMs;
+            this.isAwaitingImmediateAnalysis = false;
             const cooldownMinutes = cooldownMs / 60000;
             this.addLog(`Position closed with PNL: ${pnl.toFixed(2)}. Bot in cooldown for ${BOT_COOLDOWN_CANDLES} candles (~${cooldownMinutes.toFixed(1)} mins).`, LogType.Success);
         } else {
-            // If cooldown is disabled, apply a short, fixed delay to prevent immediate re-entry.
+            // If cooldown is disabled, apply a short, fixed delay to allow for immediate re-analysis.
             this.bot.status = BotStatus.Cooldown;
-            const delayMs = 2000; // 2 seconds
+            const delayMs = 5000; // 5 seconds
             this.bot.cooldownUntil = closeTime + delayMs;
-            this.addLog(`Position closed with PNL: ${pnl.toFixed(2)}. Cooldown disabled, applying a ${delayMs / 1000}s delay.`, LogType.Success);
+            this.isAwaitingImmediateAnalysis = true;
+            this.addLog(`Position closed with PNL: ${pnl.toFixed(2)}. Cooldown disabled, starting a ${delayMs / 1000}s timer for immediate re-analysis.`, LogType.Success);
         }
         this.onUpdate();
     }
@@ -562,25 +607,36 @@ class BotInstance {
     resume() {
         if (this.bot.status !== BotStatus.Paused) return;
     
+        this.addLog('Bot resumed.', LogType.Info);
         this.bot.lastResumeTimestamp = Date.now();
-        let newStatus: BotStatus;
+        this.analysisTimer = window.setInterval(() => this.timedTickCheck(), 5000);
     
+        // Case 1: Resuming with a position open
         if (this.bot.openPosition) {
-            newStatus = BotStatus.PositionOpen;
+            this.bot.status = BotStatus.PositionOpen;
             this.startManagementTimer();
-        } else if (this.bot.cooldownUntil && Date.now() < this.bot.cooldownUntil) {
-            newStatus = BotStatus.Cooldown;
-        } else {
-            this.bot.cooldownUntil = null;
-            newStatus = BotStatus.Monitoring;
+            this.onUpdate();
+            return;
         }
     
-        this.bot.status = newStatus;
+        // Case 2: Resuming while in a cooldown period
+        if (this.bot.cooldownUntil && Date.now() < this.bot.cooldownUntil) {
+            this.bot.status = BotStatus.Cooldown;
+            this.onUpdate();
+            this.tick(); // Let the tick handler manage the cooldown.
+            return;
+        }
+
+        // Case 3: Resuming to a fresh monitoring state
+        this.bot.status = BotStatus.Monitoring;
+        this.bot.cooldownUntil = null;
         this.bot.analysis = null;
-        this.analysisTimer = window.setInterval(() => this.timedTickCheck(), 5000);
-        this.addLog('Bot resumed.', LogType.Info);
-        this.onUpdate();
-        this.tick();
+        this.bot.lastAnalysisTimestamp = null;
+        this.onUpdate(); // Update UI to show "Monitoring"
+        
+        // Then, perform the analysis. This is the fix for the "dead silent" issue.
+        this.addLog("Performing analysis immediately upon resume.", LogType.Info);
+        this.runImmediateAnalysis();
     }
     
     async updateTradeParams(partialConfig: Partial<BotConfig>) {

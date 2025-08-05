@@ -1,5 +1,7 @@
 
 
+
+
 export enum TradingMode {
     Spot = 'Spot',
     USDSM_Futures = 'USDS-M Futures',
@@ -131,6 +133,19 @@ export interface LiveTicker {
     lowPrice: number;
     volume: number;
     quoteVolume: number;
+}
+
+export interface OrderBookEntry {
+    price: number;
+    amount: number;
+    total: number; // Cumulative total
+}
+
+export interface OrderBook {
+    bids: OrderBookEntry[];
+    asks: OrderBookEntry[];
+    spread: number;
+    spreadPercentage: number;
 }
 
 export interface SymbolFilter {

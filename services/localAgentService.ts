@@ -1,4 +1,5 @@
 
+
 import type { Agent, TradeSignal, Kline, AgentParams, Position, ADXOutput, MACDOutput, BollingerBandsOutput, StochasticRSIOutput, TradeManagementSignal, BotConfig } from '../types';
 import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR } from 'technicalindicators';
 import * as constants from '../constants';
@@ -558,8 +559,7 @@ export const getInitialAgentTargets = (
 const getPercentageBasedTrailingSignal = (
     position: Position,
     livePrice: number,
-    botConfig: BotConfig,
-    agentName: string
+    botConfig: BotConfig
 ): TradeManagementSignal => {
     const reasons: string[] = [];
     let newStopLoss: number | undefined;
@@ -615,16 +615,12 @@ export const getTradeManagementSignal = async (
     
     // --- PNL-based trailing for Scalper/Locker agents ---
     if (position.agentName === 'Scalping Expert' || position.agentName === 'Profit Locker') {
-        const pnlSignal = getPercentageBasedTrailingSignal(position, livePrice, botConfig, position.agentName);
-        // Always return the full signal object, even if no action is taken.
-        if (pnlSignal.newStopLoss) {
-            return pnlSignal; 
-        }
+        return getPercentageBasedTrailingSignal(position, livePrice, botConfig);
     }
     
     // Default response for all other agents or when no action is needed
     return {
-        reasons: ["No specific management action for this agent. Holding initial targets."],
+        reasons: ["No management action for this agent. Holding initial targets."],
         newStopLoss: undefined,
         newTakeProfit: undefined,
     };

@@ -1,4 +1,5 @@
 
+
 import { Kline, BotConfig, BacktestResult, SimulatedTrade, AgentParams, Position, RiskMode, TradingMode } from '../types';
 import * as binanceService from './binanceService';
 import { getTradingSignal, getTradeManagementSignal, getInitialAgentTargets } from './localAgentService';
@@ -90,8 +91,8 @@ export async function runBacktest(
                         const timeframeMs = mainKlines[1].time - mainKlines[0].time;
                         cooldownUntilTimestamp = managementCandle.time + (constants.BOT_COOLDOWN_CANDLES * timeframeMs);
                     } else {
-                        // Simulate the mandatory 2-second delay if cooldown is off
-                        cooldownUntilTimestamp = managementCandle.time + 2000;
+                        // If cooldown is disabled, simulate a 5-second delay before re-evaluating
+                        cooldownUntilTimestamp = managementCandle.time + 5000;
                     }
                     openPosition = null;
                     break; // Exit the management kline loop

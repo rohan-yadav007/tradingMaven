@@ -1,61 +1,26 @@
 
 import React, { useState, useEffect } from 'react';
-import { TradingMode, Agent, Kline, AgentParams, RiskMode } from '../types';
+import { TradingMode, Kline, RiskMode, TradeSignal } from '../types';
 import * as constants from '../constants';
-import { PlayIcon, SparklesIcon, LockIcon, UnlockIcon } from './icons';
+import { PlayIcon, LockIcon, UnlockIcon, CpuIcon, ChevronDown, ChevronUp } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
 import * as binanceService from './../services/binanceService';
+import { getTradingSignal } from '../services/localAgentService';
 import { SearchableDropdown } from './SearchableDropdown';
+import { useTradingConfigState, useTradingConfigActions } from '../contexts/TradingConfigContext';
 
 interface ControlPanelProps {
-    executionMode: 'live' | 'paper';
-    setExecutionMode: (mode: 'live' | 'paper') => void;
-    availableBalance: number;
-    tradingMode: TradingMode;
-    setTradingMode: (mode: TradingMode) => void;
-    allPairs: string[];
-    selectedPair: string;
-    setSelectedPair: (pair: string) => void;
-    leverage: number;
-    setLeverage: (leverage: number) => void;
-    marginType: 'ISOLATED' | 'CROSSED';
-    setMarginType: (type: 'ISOLATED' | 'CROSSED') => void;
-    futuresSettingsError: string | null;
-    isMultiAssetMode: boolean;
-    onSetMultiAssetMode: (isEnabled: boolean) => void;
-    multiAssetModeError: string | null;
-    investmentAmount: number;
-    setInvestmentAmount: (amount: number) => void;
-    stopLossMode: RiskMode;
-    setStopLossMode: (mode: RiskMode) => void;
-    stopLossValue: number;
-    setStopLossValue: (value: number) => void;
-    takeProfitMode: RiskMode;
-    setTakeProfitMode: (mode: RiskMode) => void;
-    takeProfitValue: number;
-    setTakeProfitValue: (value: number) => void;
-    isStopLossLocked: boolean;
-    setIsStopLossLocked: (locked: boolean) => void;
-    isTakeProfitLocked: boolean;
-    setIsTakeProfitLocked: (locked: boolean) => void;
-    isCooldownEnabled: boolean;
-    setIsCooldownEnabled: (enabled: boolean) => void;
-    timeFrame: string;
-    setTimeFrame: (timeFrame: string) => void;
-    selectedAgent: Agent;
-    setSelectedAgent: (agent: Agent) => void;
     onStartBot: () => void;
-    klines: Kline[];
     isBotCombinationActive: boolean;
-    agentParams: AgentParams;
     theme: 'light' | 'dark';
+    klines: Kline[];
 }
 
 const formGroupClass = "flex flex-col gap-1.5";
 const formLabelClass = "text-sm font-medium text-slate-700 dark:text-slate-300";
 const formInputClass = "w-full px-3 py-2 bg-white dark:bg-slate-700/50 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors";
 const buttonClass = "w-full flex items-center justify-center gap-2 px-4 py-2.5 text-white font-semibold rounded-md shadow-sm transition-colors duration-200";
-const primaryButtonClass = `${buttonClass} bg-sky-600 hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 focus:ring-offset-slate-50 dark:focus:ring-offset-slate-800 disabled:bg-slate-400 dark:disabled:bg-slate-600 disabled:cursor-not-allowed`;
+const primaryButtonClass = `${buttonClass} bg-sky-600 hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 focus:ring-offset-slate-50 dark:dark:focus:ring-offset-slate-800 disabled:bg-slate-400 dark:disabled:bg-slate-600 disabled:cursor-not-allowed`;
 
 const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) => void }> = ({ checked, onChange }) => (
     <button
@@ -91,7 +56,6 @@ const RiskInputWithLock: React.FC<{
 
     const handleToggleMode = () => {
         const currentValue = parseFloat(inputValue);
-        // Add guard clause to prevent division by zero or NaN operations
         if (isNaN(currentValue) || investmentAmount <= 0) {
             const nextMode = mode === RiskMode.Percent ? RiskMode.Amount : RiskMode.Percent;
             onModeChange(nextMode);
@@ -163,46 +127,48 @@ const RiskInputWithLock: React.FC<{
 
 export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
     const {
-        executionMode, setExecutionMode, availableBalance,
-        tradingMode, setTradingMode, allPairs, selectedPair, setSelectedPair,
-        leverage, setLeverage, timeFrame, setTimeFrame, selectedAgent, setSelectedAgent,
-        onStartBot, klines, isBotCombinationActive, investmentAmount, setInvestmentAmount,
-        stopLossMode, setStopLossMode, stopLossValue, setStopLossValue,
-        takeProfitMode, setTakeProfitMode, takeProfitValue, setTakeProfitValue,
-        isStopLossLocked, setIsStopLossLocked, isTakeProfitLocked, setIsTakeProfitLocked,
-        isCooldownEnabled, setIsCooldownEnabled,
-        agentParams, theme, marginType, setMarginType, futuresSettingsError,
-        isMultiAssetMode, onSetMultiAssetMode, multiAssetModeError
+        onStartBot, isBotCombinationActive, theme, klines
     } = props;
     
-    const [maxLeverage, setMaxLeverage] = useState(125);
-    const [isLeverageLoading, setIsLeverageLoading] = useState(false);
+    const {
+        executionMode, availableBalance, tradingMode, allPairs, selectedPair,
+        leverage, chartTimeFrame: timeFrame, selectedAgent, investmentAmount,
+        stopLossMode, stopLossValue, takeProfitMode, takeProfitValue,
+        isStopLossLocked, isTakeProfitLocked, isCooldownEnabled, agentParams,
+        marginType, futuresSettingsError, isMultiAssetMode, multiAssetModeError,
+        maxLeverage, isLeverageLoading
+    } = useTradingConfigState();
 
+    const {
+        setExecutionMode, setTradingMode, setSelectedPair, setLeverage, setTimeFrame,
+        setSelectedAgent, setInvestmentAmount, setStopLossMode, setStopLossValue,
+        setTakeProfitMode, setTakeProfitValue, setIsStopLossLocked, setIsTakeProfitLocked,
+        setIsCooldownEnabled, setMarginType, onSetMultiAssetMode
+    } = useTradingConfigActions();
+    
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
 
-    React.useEffect(() => {
-        if (tradingMode === TradingMode.USDSM_Futures) {
-            setIsLeverageLoading(true);
-            binanceService.fetchFuturesLeverageBrackets(selectedPair)
-                .then(bracketInfo => {
-                    if (bracketInfo && bracketInfo.brackets.length > 0) {
-                        const maxLeverageBracket = bracketInfo.brackets.find(b => b.initialLeverage > 1);
-                        const max = maxLeverageBracket ? maxLeverageBracket.initialLeverage : 125;
-                        setMaxLeverage(max);
-                        if (leverage > max) {
-                            setLeverage(max);
-                        }
-                    } else {
-                        setMaxLeverage(125); // Fallback if no specific bracket found
-                    }
-                })
-                .catch(err => {
-                    console.error("Could not fetch leverage brackets", err);
-                    setMaxLeverage(125); // fallback
-                })
-                .finally(() => setIsLeverageLoading(false));
-        }
-    }, [selectedPair, tradingMode, leverage, setLeverage]);
+    const [analysisSignal, setAnalysisSignal] = useState<TradeSignal | null>(null);
+    const [isAnalysisLoading, setIsAnalysisLoading] = useState(false);
+    const [isAnalysisOpen, setIsAnalysisOpen] = useState(true); // Open by default
+
+    useEffect(() => {
+        const fetchAnalysis = async () => {
+            if (klines.length > 50) { // Check for sufficient data
+                setIsAnalysisLoading(true);
+                try {
+                    const signal = await getTradingSignal(selectedAgent, klines, timeFrame, agentParams);
+                    setAnalysisSignal(signal);
+                } catch (e) {
+                    console.error("Error fetching analysis signal:", e);
+                    setAnalysisSignal({ signal: 'HOLD', reasons: ['Error fetching analysis.'] });
+                } finally {
+                    setIsAnalysisLoading(false);
+                }
+            }
+        };
+        fetchAnalysis();
+    }, [selectedAgent, klines, timeFrame, agentParams]);
 
     return (
         <div className="flex flex-col gap-4">
@@ -354,15 +320,30 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 <p className="text-xs text-slate-500 dark:text-slate-400">{selectedAgent.description}</p>
             </div>
             
-            <AnalysisPreview 
-                klines={klines}
-                selectedPair={selectedPair}
-                timeFrame={timeFrame}
-                selectedAgent={selectedAgent}
-                agentParams={agentParams}
-            />
-            
             <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
+
+            <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
+                <button
+                    onClick={() => setIsAnalysisOpen(!isAnalysisOpen)}
+                    className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200"
+                >
+                    <div className="flex items-center gap-2">
+                        <CpuIcon className="w-5 h-5 text-sky-500" />
+                        <span>AI Analysis Preview</span>
+                    </div>
+                    {isAnalysisOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                </button>
+                {isAnalysisOpen && (
+                    <div className="p-3 border-t border-slate-200 dark:border-slate-600">
+                        <AnalysisPreview
+                            agent={selectedAgent}
+                            agentParams={agentParams}
+                            analysis={analysisSignal}
+                            isLoading={isAnalysisLoading}
+                        />
+                    </div>
+                )}
+            </div>
 
              <div className={formGroupClass}>
                 <div className="flex items-center justify-between">

@@ -1,60 +1,18 @@
 
 import React, { useState } from 'react';
-import { TradingMode, Agent, Kline, AccountInfo, AgentParams, RiskMode } from '../types';
+import { Kline, AccountInfo } from '../types';
 import { SettingsIcon, WalletIcon } from './icons';
 import { ControlPanel } from './ControlPanel';
 import { WalletDashboard } from './WalletDashboard';
+import { useTradingConfigState, useTradingConfigActions } from '../contexts/TradingConfigContext';
 
 interface SidebarProps {
-    // Execution Mode
-    executionMode: 'live' | 'paper';
-    setExecutionMode: (mode: 'live' | 'paper') => void;
-    availableBalance: number;
-
-    // Control Panel Props
-    tradingMode: TradingMode;
-    setTradingMode: (mode: TradingMode) => void;
-    allPairs: string[];
-    selectedPair: string;
-    setSelectedPair: (pair: string) => void;
-    leverage: number;
-    setLeverage: (leverage: number) => void;
-    marginType: 'ISOLATED' | 'CROSSED';
-    setMarginType: (type: 'ISOLATED' | 'CROSSED') => void;
-    futuresSettingsError: string | null;
-    isMultiAssetMode: boolean;
-    onSetMultiAssetMode: (isEnabled: boolean) => void;
-    multiAssetModeError: string | null;
-    investmentAmount: number;
-    setInvestmentAmount: (amount: number) => void;
-    stopLossMode: RiskMode;
-    setStopLossMode: (mode: RiskMode) => void;
-    stopLossValue: number;
-    setStopLossValue: (value: number) => void;
-    takeProfitMode: RiskMode;
-    setTakeProfitMode: (mode: RiskMode) => void;
-    takeProfitValue: number;
-    setTakeProfitValue: (value: number) => void;
-    isStopLossLocked: boolean;
-    setIsStopLossLocked: (locked: boolean) => void;
-    isTakeProfitLocked: boolean;
-    setIsTakeProfitLocked: (locked: boolean) => void;
-    isCooldownEnabled: boolean;
-    setIsCooldownEnabled: (enabled: boolean) => void;
-    timeFrame: string;
-    setTimeFrame: (timeFrame: string) => void;
-    selectedAgent: Agent;
-    setSelectedAgent: (agent: Agent) => void;
     onStartBot: () => void;
     klines: Kline[];
     isBotCombinationActive: boolean;
-    agentParams: AgentParams;
-    setAgentParams: (params: AgentParams | ((p: AgentParams) => AgentParams)) => void;
     theme: 'light' | 'dark';
 
     // Wallet Dashboard Props
-    walletViewMode: TradingMode;
-    setWalletViewMode: (mode: TradingMode) => void;
     isApiConnected: boolean;
     pricePrecision: number;
     accountInfo: AccountInfo | null;
@@ -65,6 +23,8 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = (props) => {
     const [activeTab, setActiveTab] = useState<'trade' | 'wallet'>('trade');
+    const { executionMode, walletViewMode } = useTradingConfigState();
+    const { setWalletViewMode } = useTradingConfigActions();
 
     const getTabClass = (tabName: 'trade' | 'wallet') => {
         const baseClass = "flex-1 flex items-center justify-center gap-2 p-3 text-sm font-semibold transition-colors duration-200";
@@ -91,54 +51,17 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
             <div className="flex-grow p-4 overflow-y-auto">
                 {activeTab === 'trade' && (
                     <ControlPanel
-                        executionMode={props.executionMode}
-                        setExecutionMode={props.setExecutionMode}
-                        availableBalance={props.availableBalance}
-                        tradingMode={props.tradingMode}
-                        setTradingMode={props.setTradingMode}
-                        allPairs={props.allPairs}
-                        selectedPair={props.selectedPair}
-                        setSelectedPair={props.setSelectedPair}
-                        leverage={props.leverage}
-                        setLeverage={props.setLeverage}
-                        marginType={props.marginType}
-                        setMarginType={props.setMarginType}
-                        futuresSettingsError={props.futuresSettingsError}
-                        isMultiAssetMode={props.isMultiAssetMode}
-                        onSetMultiAssetMode={props.onSetMultiAssetMode}
-                        multiAssetModeError={props.multiAssetModeError}
-                        investmentAmount={props.investmentAmount}
-                        setInvestmentAmount={props.setInvestmentAmount}
-                        stopLossMode={props.stopLossMode}
-                        setStopLossMode={props.setStopLossMode}
-                        stopLossValue={props.stopLossValue}
-                        setStopLossValue={props.setStopLossValue}
-                        takeProfitMode={props.takeProfitMode}
-                        setTakeProfitMode={props.setTakeProfitMode}
-                        takeProfitValue={props.takeProfitValue}
-                        setTakeProfitValue={props.setTakeProfitValue}
-                        isStopLossLocked={props.isStopLossLocked}
-                        setIsStopLossLocked={props.setIsStopLossLocked}
-                        isTakeProfitLocked={props.isTakeProfitLocked}
-                        setIsTakeProfitLocked={props.setIsTakeProfitLocked}
-                        isCooldownEnabled={props.isCooldownEnabled}
-                        setIsCooldownEnabled={props.setIsCooldownEnabled}
-                        timeFrame={props.timeFrame}
-                        setTimeFrame={props.setTimeFrame}
-                        selectedAgent={props.selectedAgent}
-                        setSelectedAgent={props.setSelectedAgent}
-                        onStartBot={props.onStartBot}
                         klines={props.klines}
                         isBotCombinationActive={props.isBotCombinationActive}
-                        agentParams={props.agentParams}
+                        onStartBot={props.onStartBot}
                         theme={props.theme}
                     />
                 )}
                 {activeTab === 'wallet' && (
                     <WalletDashboard
-                        executionMode={props.executionMode}
-                        walletViewMode={props.walletViewMode}
-                        setWalletViewMode={props.setWalletViewMode}
+                        executionMode={executionMode}
+                        walletViewMode={walletViewMode}
+                        setWalletViewMode={setWalletViewMode}
                         isApiConnected={props.isApiConnected}
                         pricePrecision={props.pricePrecision}
                         accountInfo={props.accountInfo}

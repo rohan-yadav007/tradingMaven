@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect } from 'react';
 import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, TradeSignal, TradingMode, RiskMode, LogType } from '../types';
 import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, LockIcon, UnlockIcon, InfoIcon, ZapIcon } from './icons';
@@ -284,7 +285,7 @@ const PositionPnlProgress: React.FC<{position: Position; livePrice: number}> = (
     progressPercent = Math.min(100, Math.max(0, progressPercent));
     
     return (
-        <div className="w-full bg-rose-200 dark:bg-rose-900/50 rounded-full h-2.5 relative overflow-hidden">
+        <div className="w-full bg-rose-200 dark:bg-rose-900/50 rounded-full h-5 relative overflow-hidden">
             <div 
                 className="bg-emerald-500 dark:bg-emerald-600 h-full rounded-full transition-all duration-300" 
                 style={{ width: `${progressPercent}%`}}
@@ -531,13 +532,12 @@ const BotRow: React.FC<BotRowProps> = (props) => {
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4 pt-3">
                     <div className="flex flex-col gap-4">
-                        {openPosition && livePrice ? (
+                        <BotAnalysisDisplay analysis={bot.analysis} />
+                        {openPosition && livePrice && (
                             <PositionManager 
                                 bot={bot}
                                 onConfigChange={(partialConfig) => onUpdateBotConfig(bot.id, partialConfig)}
                             />
-                        ) : (
-                            <BotAnalysisDisplay analysis={bot.analysis} />
                         )}
                         <BotPerformanceSummary bot={bot} />
                         <BotConfigDetails config={config} onUpdate={(partialConfig) => onUpdateBotConfig(bot.id, partialConfig)} />
@@ -556,18 +556,22 @@ const BotRow: React.FC<BotRowProps> = (props) => {
 export const RunningBots: React.FC<RunningBotsProps> = (props) => {
     const [openBotId, setOpenBotId] = useState<string | null>(null);
 
+    // This effect now correctly handles setting the initial open bot and
+    // gracefully handles the case where the currently open bot is deleted.
+    // It depends on a stable representation of the bot list's IDs.
     useEffect(() => {
         const botIds = props.bots.map(b => b.id);
-        
-        // If the currently open bot is no longer valid (e.g., deleted), find a new one to open.
-        if (openBotId && !botIds.includes(openBotId)) {
-            setOpenBotId(botIds[0] || null);
-        } 
-        // If no bot is open, but there are bots available, open the first one.
-        else if (!openBotId && botIds.length > 0) {
-            setOpenBotId(botIds[0]);
+        const firstBotId = botIds[0] || null;
+
+        // On initial load or if no bot is open, open the first one.
+        if (!openBotId && firstBotId) {
+            setOpenBotId(firstBotId);
         }
-    }, [props.bots, openBotId]);
+        // If the currently open bot has been deleted, select the new first bot.
+        else if (openBotId && !botIds.includes(openBotId)) {
+            setOpenBotId(firstBotId);
+        }
+    }, [props.bots.map(b => b.id).join(',')]);
 
 
     const handleToggle = (botId: string) => {

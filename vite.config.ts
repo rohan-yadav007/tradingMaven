@@ -18,6 +18,20 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/proxy-futures/, ''),
       },
+      // Proxy for WebSocket Streams to fix cross-origin issues in dev
+      '/proxy-spot-ws': {
+        target: 'wss://stream.binance.com:9443',
+        ws: true,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/proxy-spot-ws/, ''),
+      },
+      // CORRECTED: The target for futures does not use port 9443.
+      '/proxy-futures-ws': {
+        target: 'wss://fstream.binance.com',
+        ws: true,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/proxy-futures-ws/, ''),
+      },
     },
   },
 })

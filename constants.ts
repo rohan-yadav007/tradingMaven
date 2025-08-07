@@ -1,3 +1,4 @@
+
 import { Agent, WalletBalance, AgentParams } from './types';
 
 export const TRADING_PAIRS: string[] = [
@@ -6,42 +7,60 @@ export const TRADING_PAIRS: string[] = [
 
 export const TIME_FRAMES: string[] = ['1m', '3m', '5m', '15m', '1h', '4h', '1d'];
 
+/**
+ * The standard taker fee rate for Binance Spot and Futures.
+ * Used to calculate estimated PNL after fees.
+ */
+export const TAKER_FEE_RATE = 0.001; // 0.1% fee per trade side.
+
 export const AGENTS: Agent[] = [
     {
         id: 1,
         name: 'Momentum Master',
-        description: 'Trades aggressively on confirmed trends. Uses ADX to find trending markets, then enters on strong RSI and MACD signals.',
+        description: 'Identifies a strong trend, then waits for a pullback on RSI and MACD to enter, avoiding chasing peaks.',
         indicators: ['RSI', 'MACD', 'EMA (20, 50)', 'ADX', 'ATR']
+    },
+    {
+        id: 2,
+        name: 'Trend Rider',
+        description: 'A pure momentum-following agent. It enters trades when a strong trend is established and momentum is high, aiming to ride the trend. Good for strong market moves.',
+        indicators: ['EMA (20, 50)', 'ADX', 'RSI', 'Price Action']
     },
     {
         id: 4,
         name: 'Scalping Expert',
-        description: 'A fast-acting agent designed for scalping. It uses a scoring system based on multiple indicators (EMA, SuperTrend, PSAR, StochRSI) to make quick entry decisions when momentum aligns.',
-        indicators: ['EMA', 'SuperTrend', 'PSAR', 'StochRSI']
+        description: "A flexible, score-based scalper. It evaluates trend (EMA, SuperTrend), momentum (StochRSI), and volume (OBV Divergence) to find high-probability entries. Exits aggressively on signal reversal or through its partial TP/trailing stop system.",
+        indicators: ['EMA', 'SuperTrend', 'PSAR', 'StochRSI', 'OBV']
     },
     {
         id: 5,
         name: 'Market Phase Adaptor',
-        description: 'The most advanced agent. It first determines if the market is trending, ranging, or choppy. It then deploys a specialized strategy (trend-following or mean-reversion) best suited for the current phase, while staying out of unpredictable conditions.',
-        indicators: ['Market Phase Analysis', 'ADX', 'BBW', 'ATR', 'EMA', 'RSI']
+        description: 'Dynamically switches between trend-following and range-trading strategies based on market volatility (ADX, BBW). Not yet implemented.',
+        indicators: ['ADX', 'Bollinger Bands', 'EMA', 'RSI'],
     },
     {
         id: 6,
         name: 'Profit Locker',
-        description: "Combines the rapid, score-based entry signals of the 'Scalping Expert' with a superior, dynamic profit-securing exit strategy. Designed to enter trades quickly and maximize gains on any favorable move.",
-        indicators: ["Score-Based Entry (EMA, SuperTrend, PSAR, StochRSI)", "Dynamic PNL Trailing Stop"]
+        description: "Uses the same flexible, score-based entry as the 'Scalping Expert'. Its exit strategy is twofold: it closes on signal reversal for capital protection, and it also moves the stop-loss to lock in profits once a minimum gain is achieved.",
+        indicators: ["Score-Based Entry (EMA, SuperTrend, PSAR, StochRSI)", "Minimum Profit Protection Exit"]
     },
     {
         id: 7,
         name: 'Market Structure Maven',
-        description: 'A professional-grade agent that reads market structure. It identifies the high-timeframe trend, waits for a pullback, and enters on a confirmed "liquidity grab" pattern.',
-        indicators: ['EMA (HTF)', 'Price Action', 'Market Structure', 'ATR']
+        description: 'Identifies market structure shifts and order blocks to trade based on price action principles. Not yet implemented.',
+        indicators: ['Price Action (Swing Points)', 'EMA (Bias)'],
     },
     {
         id: 8,
         name: 'Institutional Scalper',
-        description: 'A high-precision scalping agent based on smart money concepts. It ignores traditional indicators, focusing purely on price action to identify liquidity sweeps followed by a powerful, engulfing confirmation candle. Allows for up to 2 re-entries if a setup re-appears after a stop-out.',
-        indicators: ['Price Action', 'Liquidity Grabs', 'Engulfing Patterns']
+        description: 'A Smart Money Concepts (SMC) agent that looks for liquidity sweeps and fair value gaps. Not yet implemented.',
+        indicators: ['Liquidity Sweeps', 'FVG/Imbalance'],
+    },
+    {
+        id: 9,
+        name: 'Quantum Scalper',
+        description: 'An aggressive, adaptive scalper. It detects the market regime (trend/range) and uses a tailored scoring system for entries. Exits are managed by a PSAR trailing stop combined with a minimum profit protector safety net.',
+        indicators: ['Market Regime Filter (EMA, ADX)', 'Score-based (StochRSI, MACD, Supertrend)', 'PSAR Trailing Exit'],
     }
 ];
 
@@ -62,9 +81,16 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     mom_rsiThresholdBearish: 45,
     mom_volumeSmaPeriod: 20,
     mom_volumeMultiplier: 1.5,
+    
+    // Agent 2: Trend Rider
+    tr_emaFastPeriod: 20,
+    tr_emaSlowPeriod: 50,
+    tr_rsiMomentumBullish: 60,
+    tr_rsiMomentumBearish: 40,
+    tr_breakoutPeriod: 5,
 
-    // Agent 4: Scalping Expert
-    scalp_scoreThreshold: 3,
+    // Agent 4 & 6: Scalping Expert & Profit Locker
+    scalp_scoreThreshold: 4,
     scalp_emaPeriod: 50,
     scalp_rsiPeriod: 14,
     scalp_stochRsiPeriod: 14,
@@ -74,25 +100,47 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     scalp_superTrendMultiplier: 2,
     scalp_psarStep: 0.02,
     scalp_psarMax: 0.2,
-    
-    // Agent 5 & 6: Market Phase Adaptor & Profit Locker
+    scalp_obvLookback: 10,
+    scalp_obvScore: 2,
+
+    // Agent 5: Market Phase Adaptor
     mpa_adxTrend: 25,
     mpa_adxChop: 20,
     mpa_bbwSqueeze: 0.015,
-    mpa_trendEmaFast: 20,
+    mpa_trendEmaFast: 21,
     mpa_trendEmaSlow: 50,
     mpa_rangeBBPeriod: 20,
     mpa_rangeBBStdDev: 2,
-    mpa_rangeRsiOversold: 35,
-    mpa_rangeRsiOverbought: 65,
+    mpa_rangeRsiOversold: 30,
+    mpa_rangeRsiOverbought: 70,
 
     // Agent 7: Market Structure Maven
     msm_htfEmaPeriod: 200,
     msm_swingPointLookback: 5,
 
     // Agent 8: Institutional Scalper
-    inst_lookbackPeriod: 5,
+    inst_lookbackPeriod: 10,
     inst_powerCandleMultiplier: 1.5,
+
+    // Agent 9: Quantum Scalper
+    qsc_fastEmaPeriod: 9,
+    qsc_slowEmaPeriod: 21,
+    qsc_adxPeriod: 10,
+    qsc_adxThreshold: 20,
+    qsc_bbPeriod: 20,
+    qsc_bbStdDev: 2,
+    qsc_bbwSqueezeThreshold: 0.01,
+    qsc_stochRsiPeriod: 14,
+    qsc_stochRsiOversold: 25,
+    qsc_stochRsiOverbought: 75,
+    qsc_superTrendPeriod: 10,
+    qsc_superTrendMultiplier: 2,
+    qsc_psarStep: 0.02,
+    qsc_psarMax: 0.2,
+    qsc_atrPeriod: 14,
+    qsc_atrMultiplier: 1.5,
+    qsc_trendScoreThreshold: 3,
+    qsc_rangeScoreThreshold: 2,
 };
 
 
@@ -122,19 +170,16 @@ export const TIMEFRAME_ADAPTIVE_SETTINGS: Record<string, AgentParams> = {
         adxTrendThreshold: 22,
         mom_rsiThresholdBullish: 60,
         mom_rsiThresholdBearish: 40,
-        msm_htfEmaPeriod: 200, // on 1h, this approximates a 50 EMA on 4h
     },
     '4h': {
         adxTrendThreshold: 20,
         mom_rsiThresholdBullish: 65,
         mom_rsiThresholdBearish: 35,
-        msm_htfEmaPeriod: 200, // on 4h, this approximates an 80 EMA on 1D
     },
     '1d': {
         adxTrendThreshold: 18,
         mom_rsiThresholdBullish: 70,
         mom_rsiThresholdBearish: 30,
-        msm_htfEmaPeriod: 50, // on 1d, 50 EMA is a common trend indicator
     }
 };
 
@@ -152,12 +197,6 @@ export const MOCK_PAPER_FUTURES_WALLET: WalletBalance[] = [
 ];
 
 // --- BOT & RISK CONSTANTS ---
-
-/**
- * The number of candles a bot waits after closing a trade before it starts monitoring again.
- * This only applies if the bot's cooldown is enabled.
- */
-export const BOT_COOLDOWN_CANDLES = 3;
 
 /**
  * A non-configurable hard cap on risk to prevent catastrophic single-trade losses.

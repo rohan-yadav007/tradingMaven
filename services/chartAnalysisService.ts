@@ -1,4 +1,5 @@
 
+
 import { Kline } from '../types';
 
 export interface SupportResistance {
@@ -60,8 +61,8 @@ export const calculateSupportResistance = (klines: Kline[], lookback: number = 1
         }
     });
 
-    // Filter for significant levels (e.g., score > 1) and sort by score
-    const significantLevels = levels.filter(l => l.score > 1).sort((a, b) => b.score - a.score);
+    // Filter for significant levels (e.g., score >= 1) and sort by score
+    const significantLevels = levels.filter(l => l.score >= 1).sort((a, b) => b.score - a.score);
 
     // Return the top N levels for each type
     const supports = significantLevels

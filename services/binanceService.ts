@@ -1,6 +1,4 @@
 
-
-
 import { Kline, SymbolInfo, SymbolFilter, WalletBalance, RawWalletBalance, AccountInfo, LeverageBracket, BinanceOrderResponse, TradingMode } from '../types';
 
 // --- Configuration ---
@@ -289,6 +287,26 @@ const fetchAllTickerPrices = async (): Promise<Map<string, number>> => {
     tickerPriceCache = newCache;
     tickerPriceCacheTimestamp = now;
     return newCache;
+};
+
+export const fetchTickerPrice = async (symbol: string): Promise<number | null> => {
+    const response = await fetch(`${SPOT_BASE_URL}/api/v3/ticker/price?symbol=${symbol}`);
+    if (!response.ok) {
+        console.error(`Failed to fetch price for ${symbol}:`, await response.text());
+        return null;
+    }
+    const data = await response.json();
+    return parseFloat(data.price);
+};
+
+export const fetchFuturesTickerPrice = async (symbol: string): Promise<number | null> => {
+    const response = await fetch(`${FUTURES_BASE_URL}/fapi/v1/ticker/price?symbol=${symbol}`);
+    if (!response.ok) {
+        console.error(`Failed to fetch futures price for ${symbol}:`, await response.text());
+        return null;
+    }
+    const data = await response.json();
+    return parseFloat(data.price);
 };
 
 const mapBalances = async (rawBalances: RawWalletBalance[]): Promise<WalletBalance[]> => {

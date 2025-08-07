@@ -1,11 +1,12 @@
 
+
 import React, { useState, useEffect } from 'react';
-import { TradingMode, Kline, RiskMode, TradeSignal } from '../types';
+import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams } from '../types';
 import * as constants from '../constants';
 import { PlayIcon, LockIcon, UnlockIcon, CpuIcon, ChevronDown, ChevronUp } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
 import * as binanceService from './../services/binanceService';
-import { getTradingSignal } from '../services/localAgentService';
+import { getTradingSignal, getInitialAgentTargets } from '../services/localAgentService';
 import { SearchableDropdown } from './SearchableDropdown';
 import { useTradingConfigState, useTradingConfigActions } from '../contexts/TradingConfigContext';
 
@@ -136,14 +137,14 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         stopLossMode, stopLossValue, takeProfitMode, takeProfitValue,
         isStopLossLocked, isTakeProfitLocked, isCooldownEnabled, agentParams,
         marginType, futuresSettingsError, isMultiAssetMode, multiAssetModeError,
-        maxLeverage, isLeverageLoading
+        maxLeverage, isLeverageLoading, minimumGrossProfit
     } = useTradingConfigState();
 
     const {
         setExecutionMode, setTradingMode, setSelectedPair, setLeverage, setTimeFrame,
         setSelectedAgent, setInvestmentAmount, setStopLossMode, setStopLossValue,
         setTakeProfitMode, setTakeProfitValue, setIsStopLossLocked, setIsTakeProfitLocked,
-        setIsCooldownEnabled, setMarginType, onSetMultiAssetMode
+        setIsCooldownEnabled, setMarginType, onSetMultiAssetMode, setAgentParams, setMinimumGrossProfit
     } = useTradingConfigActions();
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -170,6 +171,48 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         fetchAnalysis();
     }, [selectedAgent, klines, timeFrame, agentParams]);
 
+    useEffect(() => {
+        const updateSmartTargets = () => {
+            if (klines.length < 50 || (!isStopLossLocked || !isTakeProfitLocked)) return;
+
+            const currentPrice = klines[klines.length - 1].close;
+            if (currentPrice <= 0) return;
+            
+            const timeframeAdaptiveParams = constants.TIMEFRAME_ADAPTIVE_SETTINGS[timeFrame] || {};
+            const finalParams: Required<AgentParams> = { ...constants.DEFAULT_AGENT_PARAMS, ...timeframeAdaptiveParams, ...agentParams };
+
+            const longTargets = getInitialAgentTargets(klines, currentPrice, 'LONG', timeFrame, finalParams, selectedAgent.id);
+            
+            const stopDistance = currentPrice - longTargets.stopLossPrice;
+            const profitDistance = longTargets.takeProfitPrice - currentPrice;
+
+            if (!isStopLossLocked) {
+                let newSlValue: number;
+                if (stopLossMode === RiskMode.Percent) {
+                    newSlValue = (stopDistance / currentPrice) * 100;
+                } else { // Amount
+                    newSlValue = investmentAmount * (stopDistance / currentPrice);
+                }
+                setStopLossValue(parseFloat(newSlValue.toFixed(2)));
+            }
+            
+            if (!isTakeProfitLocked) {
+                let newTpValue: number;
+                if (takeProfitMode === RiskMode.Percent) {
+                    newTpValue = (profitDistance / currentPrice) * 100;
+                } else { // Amount
+                    newTpValue = investmentAmount * (profitDistance / currentPrice);
+                }
+                setTakeProfitValue(parseFloat(newTpValue.toFixed(2)));
+            }
+        };
+
+        updateSmartTargets();
+    }, [
+        klines, isStopLossLocked, isTakeProfitLocked, selectedAgent, timeFrame, agentParams, 
+        investmentAmount, stopLossMode, takeProfitMode, setStopLossValue, setTakeProfitValue
+    ]);
+    
     return (
         <div className="flex flex-col gap-4">
              <div className="flex flex-col gap-2 p-3 bg-slate-100 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg">
@@ -254,6 +297,22 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     onValueChange={setTakeProfitValue}
                     onLockToggle={() => setIsTakeProfitLocked(!isTakeProfitLocked)}
                 />
+            </div>
+             <div className={formGroupClass}>
+                <label htmlFor="min-gross-profit" className={formLabelClass}>Minimum Gross Profit ($)</label>
+                 <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500">$</span>
+                    <input 
+                        type="number"
+                        id="min-gross-profit"
+                        value={minimumGrossProfit} 
+                        onChange={e => setMinimumGrossProfit(Number(e.target.value))} 
+                        className={`${formInputClass} pl-7`}
+                        min="0"
+                        step="0.1"
+                    />
+                </div>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">Used by 'Profit Locker' to only secure gains above this value (based on price movement).</p>
             </div>
             
             {tradingMode === TradingMode.USDSM_Futures && (
@@ -348,7 +407,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
              <div className={formGroupClass}>
                 <div className="flex items-center justify-between">
                     <label htmlFor="cooldown-toggle" className={formLabelClass}>
-                        Post-Trade Cooldown
+                        Post-Profit Cooldown
                     </label>
                     <ToggleSwitch
                         checked={isCooldownEnabled}
@@ -356,7 +415,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     />
                 </div>
                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Bot will pause for {constants.BOT_COOLDOWN_CANDLES} candles after a trade closes.
+                    If enabled, the bot enters a persistent cautious state after a profit. It analyzes the next trade opportunity for trend exhaustion to protect gains.
                 </p>
             </div>
 

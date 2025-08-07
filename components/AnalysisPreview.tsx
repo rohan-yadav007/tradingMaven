@@ -1,9 +1,10 @@
 
 
 
+
 import React from 'react';
 import { Agent, TradeSignal, AgentParams } from '../types';
-import { ChevronDown, ChevronUp } from './icons';
+import { ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon } from './icons';
 
 interface AnalysisPreviewProps {
     analysis: TradeSignal | null;
@@ -32,6 +33,28 @@ const SignalTag: React.FC<{ signal: 'BUY' | 'SELL' | 'HOLD' }> = ({ signal }) =>
     );
 };
 
+const ReasonItem: React.FC<{ reason: string }> = ({ reason }) => {
+    const isMet = reason.startsWith('✅');
+    const isUnmet = reason.startsWith('❌');
+
+    if (isMet || isUnmet) {
+        const text = reason.substring(2).trim();
+        const iconColor = isMet ? 'text-emerald-500' : 'text-rose-500';
+        const textColor = isMet ? 'text-slate-700 dark:text-slate-300' : 'text-slate-500 dark:text-slate-400';
+        const Icon = isMet ? CheckCircleIcon : XCircleIcon;
+
+        return (
+            <li className="flex items-center gap-2">
+                <Icon className={`w-4 h-4 flex-shrink-0 ${iconColor}`} />
+                <span className={textColor}>{text}</span>
+            </li>
+        );
+    }
+
+    // Default for non-checklist items (headers, summaries)
+    return <li className="font-semibold text-slate-700 dark:text-slate-200">{reason}</li>;
+};
+
 export const AnalysisPreview: React.FC<AnalysisPreviewProps> = ({ analysis, isLoading, agent, agentParams }) => {
     const hasCustomParams = Object.keys(agentParams).length > 0;
 
@@ -44,12 +67,12 @@ export const AnalysisPreview: React.FC<AnalysisPreviewProps> = ({ analysis, isLo
                 </p>
             </div>
             {analysis && !isLoading ? (
-                 <div className="flex items-start gap-3">
+                 <div className="flex items-start gap-4">
                     <SignalTag signal={analysis.signal} />
                     <div className="text-xs text-slate-600 dark:text-slate-400 flex-grow">
-                        <ul className="list-disc list-inside space-y-1">
+                        <ul className="space-y-1.5">
                             {analysis.reasons.map((reason, index) => (
-                                <li key={index}>{reason}</li>
+                                <ReasonItem key={index} reason={reason} />
                             ))}
                         </ul>
                     </div>

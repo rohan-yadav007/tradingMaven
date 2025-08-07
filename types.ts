@@ -2,6 +2,7 @@
 
 
 
+
 export enum TradingMode {
     Spot = 'Spot',
     USDSM_Futures = 'USDS-M Futures',
@@ -22,13 +23,21 @@ export interface TradeSignal {
     stopLossPrice?: number;
     takeProfitPrice?: number;
     entryPrice?: number;
+    // For partial TP strategy
+    partialTps?: { price: number; hit: boolean; sizeFraction: number }[];
+    trailStartPrice?: number;
 }
 
 // For proactive trade management
 export interface TradeManagementSignal {
     newStopLoss?: number;
     newTakeProfit?: number;
+    closePosition?: boolean;
     reasons: string[];
+    partialClose?: { // Signal to partially close the position
+        tpIndex: number;
+        reason: string;
+    };
 }
 
 
@@ -52,12 +61,16 @@ export interface Position {
     botId?: string; // Link back to the bot that opened this position
     orderId: number | null; // Store the real order ID from Binance
     liquidationPrice?: number; // For futures positions
+    // For partial TP strategy
+    initialSize?: number; 
+    partialTps?: { price: number; hit: boolean; sizeFraction: number }[];
+    trailStartPrice?: number;
 }
 
 export interface Trade extends Position {
     exitPrice: number;
     exitTime: Date;
-    pnl: number;
+    pnl: number; // Gross PNL (price movement only)
     exitReason: string;
 }
 
@@ -138,7 +151,7 @@ export interface LiveTicker {
 export interface OrderBookEntry {
     price: number;
     amount: number;
-    total: number; // Cumulative total
+    total: number;
 }
 
 export interface OrderBook {
@@ -203,6 +216,7 @@ export interface BotConfig {
     isStopLossLocked: boolean;
     isTakeProfitLocked: boolean;
     isCooldownEnabled: boolean;
+    minimumGrossProfit: number;
     agentParams?: AgentParams;
     // Precision data for self-contained bot logic
     pricePrecision: number;
@@ -213,6 +227,7 @@ export interface BotConfig {
 export enum BotStatus {
     Starting = 'Starting',
     Monitoring = 'Monitoring',
+    PostProfitAnalysis = 'Post-Profit Analysis',
     ExecutingTrade = 'Executing Trade',
     PositionOpen = 'Position Open',
     Cooldown = 'Cooldown',
@@ -249,13 +264,21 @@ export interface RunningBot {
     liveTicker?: LiveTicker;
     openPositionId: number | null;
     openPosition: Position | null;
+    // Performance Metrics
     closedTradesCount: number;
-    totalPnl: number;
-    cooldownUntil: number | null; // Timestamp
+    totalPnl: number; // Gross PNL
+    wins: number;
+    losses: number;
+    totalGrossProfit: number;
+    totalGrossLoss: number; // Stored as a positive number
+    // State & Monitoring
+    cooldownUntil: number | null; // Timestamp for error cooldown
+    lastProfitableTradeDirection: 'LONG' | 'SHORT' | null;
     accumulatedActiveMs: number;
     lastResumeTimestamp: number | null;
     klinesLoaded?: number;
     lastAnalysisTimestamp: number | null;
+    lastPriceUpdateTimestamp: number | null;
 }
 
 export interface LeverageBracket {
@@ -287,7 +310,7 @@ export interface AgentParams {
     mom_volumeSmaPeriod?: number;
     mom_volumeMultiplier?: number;
 
-    // Agent 4: Scalping Expert (Score-based)
+    // Agent 4 & 6: Scalping Expert & Profit Locker (share params)
     scalp_scoreThreshold?: number;
     scalp_emaPeriod?: number;
     scalp_rsiPeriod?: number; // Used for StochRSI
@@ -298,8 +321,10 @@ export interface AgentParams {
     scalp_superTrendMultiplier?: number;
     scalp_psarStep?: number;
     scalp_psarMax?: number;
-    
-    // Agent 5 & 6: Market Phase Adaptor & Profit Locker
+    scalp_obvLookback?: number;
+    scalp_obvScore?: number;
+
+    // Agent 5: Market Phase Adaptor
     mpa_adxTrend?: number;
     mpa_adxChop?: number;
     mpa_bbwSqueeze?: number;
@@ -317,6 +342,26 @@ export interface AgentParams {
     // Agent 8: Institutional Scalper
     inst_lookbackPeriod?: number;
     inst_powerCandleMultiplier?: number;
+
+    // Agent 9: Quantum Scalper
+    qsc_fastEmaPeriod?: number;
+    qsc_slowEmaPeriod?: number;
+    qsc_adxPeriod?: number;
+    qsc_adxThreshold?: number;
+    qsc_bbPeriod?: number;
+    qsc_bbStdDev?: number;
+    qsc_bbwSqueezeThreshold?: number;
+    qsc_stochRsiPeriod?: number;
+    qsc_stochRsiOversold?: number;
+    qsc_stochRsiOverbought?: number;
+    qsc_superTrendPeriod?: number;
+    qsc_superTrendMultiplier?: number;
+    qsc_psarStep?: number;
+    qsc_psarMax?: number;
+    qsc_atrPeriod?: number;
+    qsc_atrMultiplier?: number;
+    qsc_trendScoreThreshold?: number;
+    qsc_rangeScoreThreshold?: number;
 }
 
 

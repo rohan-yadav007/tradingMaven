@@ -1,9 +1,13 @@
 
+
+
+
 import React, { useState, useEffect } from 'react';
 import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, Kline, SimulatedTrade, RiskMode } from '../types';
 import * as constants from '../constants';
 import * as binanceService from './../services/binanceService';
 import { runBacktest } from '../services/backtestingService';
+import { getInitialAgentTargets } from '../services/localAgentService';
 import { FlaskIcon, ChevronUp, ChevronDown, LockIcon, UnlockIcon } from './icons';
 import { SearchableDropdown } from './SearchableDropdown';
 
@@ -218,6 +222,23 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onChang
                     <ParamSlider label="Liquidity Lookback" value={P.inst_lookbackPeriod} min={3} max={15} step={1} onChange={v => onChange('inst_lookbackPeriod', v)} />
                     <ParamSlider label="Power Candle Multiplier" value={P.inst_powerCandleMultiplier} min={1.0} max={3.0} step={0.1} onChange={v => onChange('inst_powerCandleMultiplier', v)} />
                 </> )
+            case 9: // Quantum Scalper
+                 return ( <>
+                    <p className="text-xs text-center text-slate-500 dark:text-slate-400">Adaptive scalper. Uses regime detection and a PSAR trailing stop for exits.</p>
+                    <h4 className="font-semibold text-sm -mb-2">Regime Detection</h4>
+                    <ParamSlider label="Fast EMA" value={P.qsc_fastEmaPeriod!} min={5} max={15} step={1} onChange={v => onChange('qsc_fastEmaPeriod', v)} />
+                    <ParamSlider label="Slow EMA" value={P.qsc_slowEmaPeriod!} min={18} max={30} step={1} onChange={v => onChange('qsc_slowEmaPeriod', v)} />
+                    <ParamSlider label="ADX Threshold" value={P.qsc_adxThreshold!} min={15} max={25} step={1} onChange={v => onChange('qsc_adxThreshold', v)} />
+                    <h4 className="font-semibold text-sm -mb-2">Entry Scoring</h4>
+                    <ParamSlider label="Trend Score Threshold" value={P.qsc_trendScoreThreshold!} min={2} max={4} step={1} onChange={v => onChange('qsc_trendScoreThreshold', v)} />
+                    <ParamSlider label="Range Score Threshold" value={P.qsc_rangeScoreThreshold!} min={1} max={3} step={1} onChange={v => onChange('qsc_rangeScoreThreshold', v)} />
+                    <ParamSlider label="StochRSI Oversold" value={P.qsc_stochRsiOversold!} min={20} max={35} step={1} onChange={v => onChange('qsc_stochRsiOversold', v)} />
+                    <ParamSlider label="StochRSI Overbought" value={P.qsc_stochRsiOverbought!} min={65} max={80} step={1} onChange={v => onChange('qsc_stochRsiOverbought', v)} />
+                    <h4 className="font-semibold text-sm -mb-2">Risk & Exit</h4>
+                    <ParamSlider label="Initial SL (ATR Mult)" value={P.qsc_atrMultiplier!} min={1.0} max={3.0} step={0.1} onChange={v => onChange('qsc_atrMultiplier', v)} />
+                    <ParamSlider label="PSAR Trail Step" value={P.qsc_psarStep!} min={0.01} max={0.05} step={0.005} onChange={v => onChange('qsc_psarStep', v)} />
+                    <ParamSlider label="PSAR Trail Max" value={P.qsc_psarMax!} min={0.1} max={0.3} step={0.01} onChange={v => onChange('qsc_psarMax', v)} />
+                </> )
             default:
                 return <p className="text-xs text-center text-slate-500 dark:text-slate-400">This agent has no configurable parameters.</p>
         }
@@ -273,26 +294,27 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     const [localSelectedPair, setLocalSelectedPair] = useState('BTC/USDT');
     const [tradablePairs, setTradablePairs] = useState<string[]>(constants.TRADING_PAIRS);
     const [localTimeFrame, setLocalTimeFrame] = useState('3m');
-    const [localSelectedAgent, setLocalSelectedAgent] = useState<Agent>(constants.AGENTS.find(a => a.id === 5)!); // Default to Market Phase Adaptor
+    const [localSelectedAgent, setLocalSelectedAgent] = useState<Agent>(constants.AGENTS.find(a => a.id === 9)!); // Default to Quantum Scalper
     const [localTradingMode, setLocalTradingMode] = useState<TradingMode>(TradingMode.Spot);
     const [localLeverage, setLocalLeverage] = useState(10);
     const [localAgentParams, setLocalAgentParams] = useState<AgentParams>({});
     
     const [localInvestmentAmount, setLocalInvestmentAmount] = useState(100);
     const [localStopLossMode, setLocalStopLossMode] = useState<RiskMode>(RiskMode.Percent);
-    const [localStopLossValue, setLocalStopLossValue] = useState(2);
+    const [localStopLossValue, setLocalStopLossValue] = useState<number>(2);
     const [localTakeProfitMode, setLocalTakeProfitMode] = useState<RiskMode>(RiskMode.Percent);
-    const [localTakeProfitValue, setLocalTakeProfitValue] = useState(4);
-    const [isLocalStopLossLocked, setIsLocalStopLossLocked] = useState(false);
-    const [isLocalTakeProfitLocked, setIsLocalTakeProfitLocked] = useState(false);
-    const [isLocalCooldownEnabled, setIsLocalCooldownEnabled] = useState(true);
+    const [localTakeProfitValue, setLocalTakeProfitValue] = useState<number>(4);
+    const [isLocalStopLossLocked, setIsLocalStopLossLocked] = useState<boolean>(false);
+    const [isLocalTakeProfitLocked, setIsLocalTakeProfitLocked] = useState<boolean>(false);
+    const [isLocalCooldownEnabled, setIsLocalCooldownEnabled] = useState(false);
+    const [localMinimumGrossProfit, setLocalMinimumGrossProfit] = useState<number>(1.0);
 
 
     const [isParamsOpen, setIsParamsOpen] = useState(false);
 
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [candleLimit, setCandleLimit] = useState(1000);
+    const [testPeriodDays, setTestPeriodDays] = useState(30);
 
     useEffect(() => {
         const fetchPairs = async () => {
@@ -319,6 +341,48 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         fetchPairs();
     }, [localTradingMode, localSelectedPair]);
 
+    useEffect(() => {
+        const updateSmartTargets = () => {
+            if (props.klines.length < 50 || (!isLocalStopLossLocked || !isLocalTakeProfitLocked)) return;
+
+            const currentPrice = props.klines[props.klines.length - 1].close;
+            if (currentPrice <= 0) return;
+            
+            const timeframeAdaptiveParams = constants.TIMEFRAME_ADAPTIVE_SETTINGS[localTimeFrame] || {};
+            const finalParams: Required<AgentParams> = { ...constants.DEFAULT_AGENT_PARAMS, ...timeframeAdaptiveParams, ...localAgentParams };
+
+            const longTargets = getInitialAgentTargets(props.klines, currentPrice, 'LONG', localTimeFrame, finalParams, localSelectedAgent.id);
+            
+            const stopDistance = currentPrice - longTargets.stopLossPrice;
+            const profitDistance = longTargets.takeProfitPrice - currentPrice;
+
+            if (!isLocalStopLossLocked) {
+                let newSlValue: number;
+                if (localStopLossMode === RiskMode.Percent) {
+                    newSlValue = (stopDistance / currentPrice) * 100;
+                } else { // Amount
+                    newSlValue = localInvestmentAmount * (stopDistance / currentPrice);
+                }
+                setLocalStopLossValue(parseFloat(newSlValue.toFixed(2)));
+            }
+            
+            if (!isLocalTakeProfitLocked) {
+                let newTpValue: number;
+                if (localTakeProfitMode === RiskMode.Percent) {
+                    newTpValue = (profitDistance / currentPrice) * 100;
+                } else { // Amount
+                    newTpValue = localInvestmentAmount * (profitDistance / currentPrice);
+                }
+                setLocalTakeProfitValue(parseFloat(newTpValue.toFixed(2)));
+            }
+        };
+
+        updateSmartTargets();
+    }, [
+        props.klines, isLocalStopLossLocked, isLocalTakeProfitLocked, localSelectedAgent, localTimeFrame, localAgentParams, 
+        localInvestmentAmount, localStopLossMode, localTakeProfitMode, setLocalStopLossValue, setLocalTakeProfitValue
+    ]);
+
 
     const handleParamChange = (param: keyof AgentParams, value: number | boolean) => {
         setLocalAgentParams(prev => ({...prev, [param]: value}));
@@ -336,8 +400,15 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
             throw new Error(`Could not fetch symbol info for ${localSelectedPair} to run backtest.`);
         }
         
-        // 1. Fetch main timeframe klines
-        const mainKlines = await binanceService.fetchKlines(formattedPair, localTimeFrame, { limit: candleLimit });
+        const timeframeDurationMs = getTimeframeDuration(localTimeFrame);
+        if (timeframeDurationMs === 0) {
+            throw new Error("Invalid timeframe selected.");
+        }
+        const totalMsInPeriod = testPeriodDays * 24 * 60 * 60 * 1000;
+        const candleLimit = Math.ceil(totalMsInPeriod / timeframeDurationMs);
+
+        // Fetch main timeframe klines for the calculated period
+        const mainKlines = await binanceService.fetchKlines(formattedPair, localTimeFrame, { limit: Math.min(candleLimit, 1500) });
         if (mainKlines.length < 200) {
             throw new Error("Not enough historical data for a meaningful backtest. Need at least 200 candles.");
         }
@@ -360,6 +431,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
             takeProfitMode: localTakeProfitMode, takeProfitValue: localTakeProfitValue,
             isStopLossLocked: isLocalStopLossLocked, isTakeProfitLocked: isLocalTakeProfitLocked,
             isCooldownEnabled: isLocalCooldownEnabled,
+            minimumGrossProfit: localMinimumGrossProfit,
             leverage: localTradingMode === TradingMode.USDSM_Futures ? localLeverage : 1, 
             mode: localTradingMode,
             agentParams: localAgentParams,
@@ -406,6 +478,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 takeProfitMode: localTakeProfitMode, takeProfitValue: localTakeProfitValue,
                 isStopLossLocked: isLocalStopLossLocked, isTakeProfitLocked: isLocalTakeProfitLocked,
                 isCooldownEnabled: isLocalCooldownEnabled,
+                minimumGrossProfit: localMinimumGrossProfit,
                 agentParams: localAgentParams,
                 pricePrecision: binanceService.getPricePrecision(symbolInfo),
                 quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
@@ -510,15 +583,19 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                             <RiskInputWithLock label="Stop Loss" mode={localStopLossMode} value={localStopLossValue} isLocked={isLocalStopLossLocked} investmentAmount={localInvestmentAmount} onModeChange={setLocalStopLossMode} onValueChange={setLocalStopLossValue} onLockToggle={() => setIsLocalStopLossLocked(!isLocalStopLossLocked)} />
                             <RiskInputWithLock label="Take Profit" mode={localTakeProfitMode} value={localTakeProfitValue} isLocked={isLocalTakeProfitLocked} investmentAmount={localInvestmentAmount} onModeChange={setLocalTakeProfitMode} onValueChange={setLocalTakeProfitValue} onLockToggle={() => setIsLocalTakeProfitLocked(!isLocalTakeProfitLocked)} />
                         </div>
+                        <div className={formGroupClass}>
+                            <label htmlFor="min-gross-profit" className={formLabelClass}>Minimum Gross Profit ($)</label>
+                            <input type="number" id="min-gross-profit" value={localMinimumGrossProfit} onChange={e => setLocalMinimumGrossProfit(Number(e.target.value))} min="0" step="0.1" className={formInputClass} />
+                        </div>
                         {localTradingMode === TradingMode.USDSM_Futures && (
                             <ParamSlider label="Leverage" value={localLeverage} min={1} max={125} step={1} onChange={setLocalLeverage} />
                         )}
-                        <ParamSlider label="Candle Limit" value={candleLimit} min={300} max={1500} step={50} onChange={setCandleLimit} />
+                        <ParamSlider label="Test Period (Days)" value={testPeriodDays} min={1} max={180} step={1} onChange={setTestPeriodDays} />
 
                         <div className={formGroupClass}>
                             <div className="flex items-center justify-between">
                                 <label htmlFor="cooldown-toggle" className={formLabelClass}>
-                                    Post-Trade Cooldown
+                                    Post-Profit Cooldown
                                 </label>
                                 <ToggleSwitch
                                     checked={isLocalCooldownEnabled}
@@ -526,7 +603,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                                 />
                             </div>
                             <p className="text-xs text-slate-500 dark:text-slate-400">
-                                Pause bot for {constants.BOT_COOLDOWN_CANDLES} candles after a trade.
+                                If enabled, bot enters a persistent cautious state after a profit. It analyzes the next trade opportunity for trend exhaustion to protect gains.
                             </p>
                         </div>
                         

@@ -1,6 +1,7 @@
+
 import React, { useState } from 'react';
 import { Trade, TradingMode } from '../types';
-import { HistoryIcon } from './icons';
+import { HistoryIcon, ChevronDown, ChevronUp } from './icons';
 
 interface TradingLogProps {
     tradeHistory: Trade[];
@@ -24,32 +25,61 @@ const formatDisplayDate = (dateString: Date): string => {
     });
 };
 
-const TradeRow: React.FC<{ trade: Trade }> = ({ trade }) => {
+const TradeRow: React.FC<{ trade: Trade; isOpen: boolean; onToggle: () => void; }> = ({ trade, isOpen, onToggle }) => {
     const isLong = trade.direction === 'LONG';
     const isProfit = trade.pnl >= 0;
     return (
-        <tr className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-            <td className="px-4 py-3 align-middle text-xs">
-                <div>{formatDisplayDate(trade.exitTime)}</div>
-                {trade.botId && <div className="text-sky-500 font-mono opacity-80">{trade.botId}</div>}
-            </td>
-            <td className="px-4 py-3 font-semibold align-middle text-sm">{trade.pair}</td>
-            <td className={`px-4 py-3 font-bold align-middle text-sm ${isLong ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                 {trade.direction}{trade.mode === TradingMode.USDSM_Futures && ` ${trade.leverage}x`}
-            </td>
-            <td className="px-4 py-3 align-middle font-mono text-sm">{formatPrice(trade.entryPrice, trade.pricePrecision)}</td>
-            <td className="px-4 py-3 align-middle font-mono text-sm">{formatPrice(trade.exitPrice, trade.pricePrecision)}</td>
-            <td className={`px-4 py-3 font-bold align-middle font-mono text-sm ${isProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                {isProfit ? '+' : ''}{formatPrice(trade.pnl, 2)}
-            </td>
-            <td className="px-4 py-3 align-middle text-sm">{trade.agentName}</td>
-            <td className="px-4 py-3 text-slate-500 dark:text-slate-400 align-middle text-xs">{trade.exitReason}</td>
-        </tr>
+        <>
+            <tr onClick={onToggle} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer">
+                <td className="px-4 py-3 align-middle text-xs">
+                     <div className="flex items-center gap-2">
+                        <span className="text-slate-400">
+                            {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                        </span>
+                        <div>
+                            <div>{formatDisplayDate(trade.exitTime)}</div>
+                            {trade.botId && <div className="text-sky-500 font-mono opacity-80">{trade.botId}</div>}
+                        </div>
+                    </div>
+                </td>
+                <td className="px-4 py-3 font-semibold align-middle text-sm">{trade.pair}</td>
+                <td className={`px-4 py-3 font-bold align-middle text-sm ${isLong ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                    {trade.direction}{trade.mode === TradingMode.USDSM_Futures && ` ${trade.leverage}x`}
+                </td>
+                <td className="px-4 py-3 align-middle font-mono text-sm">{formatPrice(trade.entryPrice, trade.pricePrecision)}</td>
+                <td className="px-4 py-3 align-middle font-mono text-sm">{formatPrice(trade.exitPrice, trade.pricePrecision)}</td>
+                <td className={`px-4 py-3 font-bold align-middle font-mono text-sm ${isProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                    {isProfit ? '+' : ''}{formatPrice(trade.pnl, 2)}
+                </td>
+                <td className="px-4 py-3 align-middle text-sm">{trade.agentName}</td>
+            </tr>
+            {isOpen && (
+                <tr className="bg-slate-50 dark:bg-slate-800/20">
+                    <td colSpan={7} className="px-4 py-3">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs p-2">
+                             <div>
+                                <h4 className="font-semibold text-slate-700 dark:text-slate-300 mb-1">Entry Reason</h4>
+                                <p className="text-slate-500 dark:text-slate-400 whitespace-pre-wrap break-words">{trade.entryReason || 'N/A'}</p>
+                            </div>
+                            <div>
+                                <h4 className="font-semibold text-slate-700 dark:text-slate-300 mb-1">Exit Reason</h4>
+                                <p className="text-slate-500 dark:text-slate-400 whitespace-pre-wrap break-words">{trade.exitReason}</p>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+            )}
+        </>
     );
 };
 
 export const TradingLog: React.FC<TradingLogProps> = ({ tradeHistory, onLoadMoreHistory }) => {
     const [visibleCount, setVisibleCount] = useState(5);
+    const [expandedRowId, setExpandedRowId] = useState<number | null>(null);
+
+    const handleToggleRow = (tradeId: number) => {
+        setExpandedRowId(prevId => (prevId === tradeId ? null : tradeId));
+    };
 
     const handleShowMore = () => {
         setVisibleCount(prev => Math.min(prev + 10, tradeHistory.length));
@@ -78,14 +108,13 @@ export const TradingLog: React.FC<TradingLogProps> = ({ tradeHistory, onLoadMore
                             <th scope="col" className="px-4 py-2 font-medium">Exit</th>
                             <th scope="col" className="px-4 py-2 font-medium">P/L</th>
                             <th scope="col" className="px-4 py-2 font-medium">Agent</th>
-                            <th scope="col" className="px-4 py-2 font-medium">Exit Reason</th>
                         </tr>
                     </thead>
                     <tbody>
                         {visibleTrades.length > 0 ? (
-                            visibleTrades.map((trade) => <TradeRow key={trade.id} trade={trade} />)
+                            visibleTrades.map((trade) => <TradeRow key={trade.id} trade={trade} isOpen={expandedRowId === trade.id} onToggle={() => handleToggleRow(trade.id)}/>)
                         ) : (
-                            <tr><td colSpan={8} className="text-center p-8 text-slate-500">No trade history recorded yet.</td></tr>
+                            <tr><td colSpan={7} className="text-center p-8 text-slate-500">No trade history recorded yet.</td></tr>
                         )}
                     </tbody>
                 </table>

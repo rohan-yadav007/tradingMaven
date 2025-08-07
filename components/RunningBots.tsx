@@ -1,14 +1,19 @@
 
 
+
+
+
+
 import React, { useState, useEffect } from 'react';
 import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, TradeSignal, TradingMode, RiskMode, LogType } from '../types';
 import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, LockIcon, UnlockIcon, InfoIcon, ZapIcon } from './icons';
+import { AnalysisPreview } from './AnalysisPreview';
 
 interface RunningBotsProps {
     bots: RunningBot[];
     onClosePosition: (position: Position, exitReason?: string, exitPriceOverride?: number) => void;
     onPauseBot: (botId: string) => void;
-    onResumeBot: (botId: string) => void;
+    onResumeBot: (botId:string) => void;
     onStopBot: (botId: string) => void;
     onDeleteBot: (botId: string) => void;
     onUpdateBotConfig: (botId: string, partialConfig: Partial<BotConfig>) => void;
@@ -61,6 +66,7 @@ const getStatusInfo = (status: BotStatus): { text: string; bg: string; text_colo
         case BotStatus.PositionOpen: return { text: 'Position Open', bg: 'bg-emerald-100 dark:bg-emerald-900/50', text_color: 'text-emerald-700 dark:text-emerald-300', icon: <CheckCircleIcon className="w-3 h-3"/>, pulse: false };
         case BotStatus.ExecutingTrade: return { text: 'Executing...', bg: 'bg-amber-100 dark:bg-amber-900/50', text_color: 'text-amber-700 dark:text-amber-300', icon: <CpuIcon className="w-3 h-3"/>, pulse: true };
         case BotStatus.Cooldown: return { text: 'Cooldown', bg: 'bg-amber-100 dark:bg-amber-900/50', text_color: 'text-amber-700 dark:text-amber-300', icon: <PauseIcon className="w-3 h-3"/>, pulse: false };
+        case BotStatus.PostProfitAnalysis: return { text: 'Post-Profit Analysis', bg: 'bg-indigo-100 dark:bg-indigo-900/50', text_color: 'text-indigo-700 dark:text-indigo-300', icon: <CpuIcon className="w-3 h-3"/>, pulse: true };
         case BotStatus.Error: return { text: status, bg: 'bg-rose-100 dark:bg-rose-900/50', text_color: 'text-rose-700 dark:text-rose-300', icon: <XCircleIcon className="w-3 h-3"/>, pulse: false };
         case BotStatus.Paused: return { text: status, bg: 'bg-slate-200 dark:bg-slate-700', text_color: 'text-slate-600 dark:text-slate-300', icon: <PauseIcon className="w-3 h-3"/>, pulse: false };
         case BotStatus.Stopped: return { text: status, bg: 'bg-slate-200 dark:bg-slate-700', text_color: 'text-slate-600 dark:text-slate-300', icon: <StopIcon className="w-3 h-3"/>, pulse: false };
@@ -89,10 +95,6 @@ const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) =>
             />
         </button>
     );
-};
-
-const formatRiskValue = (mode: RiskMode, value: number) => {
-    return mode === RiskMode.Percent ? `${value}%` : `$${value}`;
 };
 
 const BotConfigDetails: React.FC<{ config: BotConfig; onUpdate: (change: Partial<BotConfig>) => void }> = ({ config, onUpdate }) => (
@@ -130,169 +132,78 @@ const BotHealthDisplay: React.FC<{ bot: RunningBot }> = ({ bot }) => (
     </div>
 );
 
-
-const BotAnalysisDisplay: React.FC<{ analysis: TradeSignal | null }> = ({ analysis }) => {
-    if (!analysis) return null;
-    const isBuy = analysis.signal === 'BUY', isSell = analysis.signal === 'SELL';
-    const colorClasses = isBuy ? 'bg-emerald-100 dark:bg-emerald-900/50 border-emerald-500 text-emerald-800 dark:text-emerald-300' : isSell ? 'bg-rose-100 dark:bg-rose-900/50 border-rose-500 text-rose-800 dark:text-rose-300' : 'bg-amber-100 dark:bg-amber-900/50 border-amber-500 text-amber-800 dark:text-amber-300';
+const PartialTpDisplay: React.FC<{ position: Position }> = ({ position }) => {
+    if (!position.partialTps) return null;
 
     return (
         <div>
-            <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Latest Analysis</h4>
-            <div className={`p-3 rounded-lg border-l-4 ${colorClasses}`}>
-                <div className="flex items-center gap-2 font-bold text-base">
-                    <CpuIcon className="w-5 h-5"/>{analysis.signal}
-                </div>
-                <hr className="my-2 border-slate-300 dark:border-slate-600"/>
-                <ul className="list-disc list-inside space-y-1 text-sm">
-                    {analysis.reasons.map((reason, i) => <li key={i}>{reason}</li>)}
-                </ul>
+             <h5 className="font-semibold text-slate-600 dark:text-slate-300 text-sm mb-1">Partial Take Profits</h5>
+             <div className="space-y-1">
+                {position.partialTps.map((tp, index) => (
+                    <div key={index} className="flex items-center justify-between text-xs p-1.5 bg-slate-100 dark:bg-slate-700/50 rounded-md">
+                        <div className="flex items-center gap-2">
+                           {tp.hit ? <CheckCircleIcon className="w-4 h-4 text-emerald-500"/> : <div className="w-4 h-4 rounded-full border-2 border-slate-400 dark:border-slate-500"></div>}
+                           <span className="font-semibold text-slate-700 dark:text-slate-200">TP {index + 1} ({tp.sizeFraction * 100}%)</span>
+                        </div>
+                        <span className={`font-mono ${tp.hit ? 'text-slate-400 dark:text-slate-500 line-through' : 'text-slate-800 dark:text-slate-100'}`}>
+                            {formatPrice(tp.price, position.pricePrecision)}
+                        </span>
+                    </div>
+                ))}
             </div>
         </div>
-    );
+    )
 };
 
-const TargetInput: React.FC<{
-    label: string;
-    botConfig: BotConfig;
-    position: Position;
-    isTP: boolean;
-    onConfigChange: (change: Partial<BotConfig>) => void;
-}> = ({ label, botConfig, position, isTP, onConfigChange }) => {
-    
-    const { entryPrice, size, leverage, direction } = position;
-    const {
-        isTakeProfitLocked, takeProfitMode, takeProfitValue,
-        isStopLossLocked, stopLossMode, stopLossValue
-    } = botConfig;
-
-    const isLocked = isTP ? isTakeProfitLocked : isStopLossLocked;
-    const mode = isTP ? takeProfitMode : stopLossMode;
-    const value = isTP ? takeProfitValue : stopLossValue;
-
-    const [inputValue, setInputValue] = useState<string>(String(value));
-
-    useEffect(() => {
-        let displayValue: string;
-        // This effect correctly displays the value from the bot's central config
-        if (mode === RiskMode.Percent) {
-            displayValue = String(value);
-        } else { // RiskMode.Amount (PNL)
-            displayValue = String(value);
-        }
-        setInputValue(displayValue);
-    }, [value, mode]);
-
-    const handleValueChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setInputValue(e.target.value);
-    };
-
-    const handleUpdateOnBlur = () => {
-        const numValue = parseFloat(inputValue);
-        if (isNaN(numValue) || numValue === value) {
-            // Revert if invalid or unchanged
-            setInputValue(String(value));
-            return;
-        }
-        // Send update to the central handler
-        const configKey = isTP ? 'takeProfitValue' : 'stopLossValue';
-        onConfigChange({ [configKey]: numValue });
-    };
-    
-    const handleToggleMode = () => {
-        const currentValue = parseFloat(inputValue);
-        if (isNaN(currentValue) || size <= 0) return;
-
-        const nextMode = mode === RiskMode.Percent ? RiskMode.Amount : RiskMode.Percent;
-        let nextValue: number;
-
-        if (nextMode === RiskMode.Amount) { // from % to $
-            const pnlAmount = botConfig.investmentAmount * (currentValue / 100);
-            nextValue = parseFloat(pnlAmount.toFixed(2));
-        } else { // from $ to %
-            const percentage = (currentValue / botConfig.investmentAmount) * 100;
-            nextValue = parseFloat(percentage.toFixed(2));
-        }
-        
-        // Send both mode and value updates to the central handler
-        const modeKey = isTP ? 'takeProfitMode' : 'stopLossMode';
-        const valueKey = isTP ? 'takeProfitValue' : 'stopLossValue';
-        onConfigChange({
-            [modeKey]: nextMode,
-            [valueKey]: nextValue
-        });
-    };
-
-    const handleLockToggle = () => {
-        const lockKey = isTP ? 'isTakeProfitLocked' : 'isStopLossLocked';
-        onConfigChange({ [lockKey]: !isLocked });
-    };
-
-    const inputClass = "w-full pl-7 pr-3 py-2 bg-white dark:bg-slate-700/50 border border-slate-300 dark:border-slate-600 rounded-l-md shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors text-sm";
-    const buttonClass = "px-3 py-2 bg-slate-100 dark:bg-slate-600 border border-l-0 border-slate-300 dark:border-slate-600 rounded-r-md font-bold text-sm hover:bg-slate-200 dark:hover:bg-slate-500 transition-colors";
-    
-    return (
-        <div className="flex flex-col gap-1">
-            <div className="text-sm font-medium text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                <span>{label}</span>
-                <button 
-                    onClick={handleLockToggle} 
-                    className={`p-1 rounded-full enabled:hover:bg-slate-200 enabled:dark:hover:bg-slate-600`}
-                    title={isLocked ? 'Unlock to enable auto-management' : 'Lock to set a hard target'}
-                >
-                    {isLocked ? <LockIcon className="w-3 h-3 text-slate-400"/> : <UnlockIcon className="w-3 h-3 text-sky-500"/>}
-                </button>
-            </div>
-            <div className="flex relative">
-                 <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 text-sm pointer-events-none">
-                    {mode === RiskMode.Percent ? '%' : '$'}
-                </span>
-                <input 
-                    type="number" 
-                    value={inputValue} 
-                    onChange={handleValueChange}
-                    onBlur={handleUpdateOnBlur}
-                    className={inputClass}
-                />
-                <button 
-                    onClick={handleToggleMode} 
-                    aria-label={`Switch to ${mode === RiskMode.Percent ? 'PNL Amount ($)' : 'Percentage (%)'}`}
-                    title={`Switch to ${mode === RiskMode.Percent ? 'PNL Amount ($)' : 'Percentage (%)'}`}
-                    className={buttonClass} style={{width: '50px'}}
-                >
-                    {mode === RiskMode.Percent ? '$' : '%'}
-                </button>
-            </div>
-        </div>
-    );
-};
 
 const PositionPnlProgress: React.FC<{position: Position; livePrice: number}> = ({ position, livePrice }) => {
-    const { entryPrice, takeProfitPrice, stopLossPrice, direction } = position;
+    const { entryPrice, takeProfitPrice, stopLossPrice, direction, pricePrecision } = position;
     const isLong = direction === 'LONG';
     
-    const actualSL = isLong ? stopLossPrice : takeProfitPrice;
-    const actualTP = isLong ? takeProfitPrice : stopLossPrice;
+    let progressPercent = 0;
+    if (isLong) {
+        const totalRange = takeProfitPrice - stopLossPrice;
+        if (totalRange > 0) {
+            progressPercent = ((livePrice - stopLossPrice) / totalRange) * 100;
+        }
+    } else { // SHORT
+        const totalRange = stopLossPrice - takeProfitPrice;
+        if (totalRange > 0) {
+            progressPercent = ((stopLossPrice - livePrice) / totalRange) * 100;
+        }
+    }
 
-    const totalRange = Math.abs(actualTP - actualSL);
-    if(totalRange === 0) return null;
+    const clampedProgress = Math.min(100, Math.max(0, progressPercent));
 
-    const progressFromSL = livePrice - actualSL;
-    let progressPercent = (progressFromSL / totalRange) * 100;
-    
-    if(!isLong) progressPercent = 100 - progressPercent;
+    const pnl = (livePrice - entryPrice) * position.size * (isLong ? 1 : -1);
+    const pnlIsProfit = pnl >= 0;
 
-    progressPercent = Math.min(100, Math.max(0, progressPercent));
-    
     return (
-        <div className="w-full bg-rose-200 dark:bg-rose-900/50 rounded-full h-5 relative overflow-hidden">
-            <div 
-                className="bg-emerald-500 dark:bg-emerald-600 h-full rounded-full transition-all duration-300" 
-                style={{ width: `${progressPercent}%`}}
-            ></div>
-            <div className="absolute inset-0 flex justify-between items-center px-2 text-xs text-white font-bold">
-                 <span>SL</span>
-                 <span>TP</span>
+        <div className="flex flex-col gap-1.5 pt-2">
+            <div className="w-full bg-rose-200 dark:bg-rose-900/50 rounded-full h-4 relative">
+                {/* Progress Fill */}
+                <div 
+                    className="bg-emerald-500 dark:bg-emerald-600 h-full rounded-full transition-all duration-300" 
+                    style={{ width: `${clampedProgress}%`}}
+                ></div>
+                
+                {/* Live Price Marker & PNL */}
+                <div 
+                    className="absolute top-0 h-full flex items-center" 
+                    style={{ left: `calc(${clampedProgress}% - 8px)`}}
+                >
+                    <div className="w-1 h-5 bg-slate-800 dark:bg-white rounded-full border border-white dark:border-slate-800 shadow-lg"></div>
+                    <div className={`absolute top-5 whitespace-nowrap px-1.5 py-0.5 rounded text-xs font-bold shadow-md ${pnlIsProfit ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}`}
+                         style={{ transform: 'translateX(-50%)' }}
+                    >
+                         {pnlIsProfit ? '+' : ''}${pnl.toFixed(2)}
+                    </div>
+                </div>
+            </div>
+            {/* Labels */}
+            <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 font-mono">
+                <span>SL: {stopLossPrice.toFixed(pricePrecision)}</span>
+                <span>TP: {takeProfitPrice.toFixed(pricePrecision)}</span>
             </div>
         </div>
     );
@@ -304,6 +215,8 @@ const PositionManager: React.FC<{
 }> = ({ bot, onConfigChange }) => {
     const { config, openPosition, livePrice } = bot;
     if (!openPosition || !livePrice) return null;
+
+    const isPartialTpAgent = openPosition.partialTps && openPosition.partialTps.length > 0;
 
     return (
         <div className="flex flex-col gap-3">
@@ -320,23 +233,12 @@ const PositionManager: React.FC<{
                     <InfoItem label="Live Price" value={formatPrice(livePrice, openPosition.pricePrecision)} />
                 )}
             </div>
-            <PositionPnlProgress position={openPosition} livePrice={livePrice}/>
-            <div className="grid grid-cols-2 gap-3">
-                <TargetInput 
-                    label="Take Profit" 
-                    botConfig={config}
-                    position={openPosition} 
-                    isTP={true} 
-                    onConfigChange={onConfigChange}
-                />
-                <TargetInput 
-                    label="Stop Loss" 
-                    botConfig={config}
-                    position={openPosition} 
-                    isTP={false} 
-                    onConfigChange={onConfigChange}
-                />
-            </div>
+            
+            {isPartialTpAgent ? (
+                <PartialTpDisplay position={openPosition} />
+            ) : (
+                <PositionPnlProgress position={openPosition} livePrice={livePrice}/>
+            )}
         </div>
     )
 };
@@ -349,12 +251,17 @@ const BotPerformanceSummary: React.FC<{ bot: RunningBot }> = ({ bot }) => {
     const totalPnl = bot.totalPnl || 0;
     const pnlIsProfit = totalPnl >= 0;
 
+    const winRate = bot.wins && bot.closedTradesCount > 0 ? (bot.wins / bot.closedTradesCount) * 100 : 0;
+    const profitFactor = bot.totalGrossLoss > 0 ? bot.totalGrossProfit / bot.totalGrossLoss : Infinity;
+
     return (
         <div>
             <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Performance</h4>
-             <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg grid grid-cols-2 gap-4">
+             <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <InfoItem label="Total PNL" value={`$${totalPnl.toFixed(2)}`} valueClassName={`font-bold font-mono text-lg ${pnlIsProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`} />
                 <InfoItem label="Closed Trades" value={bot.closedTradesCount} valueClassName="text-lg" />
+                <InfoItem label="Win Rate" value={`${winRate.toFixed(1)}%`} valueClassName={`text-lg ${winRate >= 50 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`} />
+                <InfoItem label="Profit Factor" value={profitFactor === Infinity ? '∞' : profitFactor.toFixed(2)} valueClassName={`text-lg ${profitFactor >= 1 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`} />
             </div>
         </div>
     );
@@ -436,8 +343,9 @@ const BotRow: React.FC<BotRowProps> = (props) => {
     const { bot, onClosePosition, onPauseBot, onResumeBot, onStopBot, onDeleteBot, onUpdateBotConfig, onToggle, isOpen } = props;
     const { config, status, id, livePrice, openPosition } = bot;
     
-    // Corrected PNL calculation
-    const pnl = (openPosition && livePrice && openPosition.entryPrice) ? (livePrice - openPosition.entryPrice) * openPosition.size * (openPosition.direction === 'LONG' ? 1 : -1) : 0;
+    // Calculate unrealized PNL based on pure price movement (Gross PNL).
+    const pnl = (openPosition && livePrice) ? (livePrice - openPosition.entryPrice) * openPosition.size * (openPosition.direction === 'LONG' ? 1 : -1) : 0;
+    
     const pnlIsProfit = pnl >= 0;
     const duration = useDuration(bot);
     const statusInfo = getStatusInfo(status);
@@ -532,7 +440,17 @@ const BotRow: React.FC<BotRowProps> = (props) => {
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4 pt-3">
                     <div className="flex flex-col gap-4">
-                        <BotAnalysisDisplay analysis={bot.analysis} />
+                        <div>
+                            <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Live AI Analysis</h4>
+                            <div className="p-3 border rounded-lg bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
+                                <AnalysisPreview
+                                    agent={bot.config.agent}
+                                    agentParams={bot.config.agentParams || {}}
+                                    analysis={bot.analysis}
+                                    isLoading={bot.status === BotStatus.Starting || !bot.analysis}
+                                />
+                            </div>
+                        </div>
                         {openPosition && livePrice && (
                             <PositionManager 
                                 bot={bot}

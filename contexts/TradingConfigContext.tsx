@@ -1,4 +1,7 @@
 
+
+
+
 import React, { createContext, useState, useContext, useMemo, useEffect, useCallback } from 'react';
 import { TradingMode, Agent, AgentParams, RiskMode } from '../types';
 import * as constants from '../constants';
@@ -23,6 +26,7 @@ interface TradingConfigState {
     isStopLossLocked: boolean;
     isTakeProfitLocked: boolean;
     isCooldownEnabled: boolean;
+    minimumGrossProfit: number;
     agentParams: AgentParams;
     isApiConnected: boolean; // Managed from App.tsx but needed here
     walletViewMode: TradingMode;
@@ -53,6 +57,7 @@ interface TradingConfigActions {
     setIsStopLossLocked: (isLocked: boolean) => void;
     setIsTakeProfitLocked: (isLocked: boolean) => void;
     setIsCooldownEnabled: (isEnabled: boolean) => void;
+    setMinimumGrossProfit: (profit: number) => void;
     setAgentParams: (params: AgentParams) => void;
     setIsApiConnected: (isConnected: boolean) => void;
     setWalletViewMode: (mode: TradingMode) => void;
@@ -86,7 +91,8 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [takeProfitMode, setTakeProfitMode] = useState<RiskMode>(RiskMode.Percent);
     const [takeProfitValue, setTakeProfitValue] = useState<number>(4);
     const [isTakeProfitLocked, setIsTakeProfitLocked] = useState<boolean>(false);
-    const [isCooldownEnabled, setIsCooldownEnabled] = useState<boolean>(true);
+    const [isCooldownEnabled, setIsCooldownEnabled] = useState<boolean>(false);
+    const [minimumGrossProfit, setMinimumGrossProfit] = useState<number>(1.0);
     const [isApiConnected, setIsApiConnected] = useState(false);
     const [walletViewMode, setWalletViewMode] = useState<TradingMode>(TradingMode.Spot);
     const [isMultiAssetMode, setIsMultiAssetMode] = useState(false);
@@ -223,6 +229,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         setTakeProfitMode, setTakeProfitValue, setIsStopLossLocked, setIsTakeProfitLocked,
         setIsCooldownEnabled, setAgentParams, setIsApiConnected, setWalletViewMode,
         setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError,
+        setMinimumGrossProfit,
     }), [onSetMultiAssetMode]);
     
     const state = {
@@ -230,7 +237,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         selectedAgent, agentParams, investmentAmount, availableBalance, stopLossMode, stopLossValue,
         takeProfitMode, takeProfitValue, isStopLossLocked, isTakeProfitLocked, isCooldownEnabled,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
-        futuresSettingsError, multiAssetModeError
+        futuresSettingsError, multiAssetModeError, minimumGrossProfit
     };
 
     return (

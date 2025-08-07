@@ -29,7 +29,7 @@ const AppContent: React.FC = () => {
         executionMode, tradingMode, selectedPair, chartTimeFrame, 
         selectedAgent, investmentAmount, stopLossMode, stopLossValue, takeProfitMode, 
         takeProfitValue, isStopLossLocked, isTakeProfitLocked, isCooldownEnabled, agentParams,
-        leverage, marginType
+        leverage, marginType, minimumGrossProfit
     } = configState;
 
     const {
@@ -159,14 +159,14 @@ const AppContent: React.FC = () => {
             });
         };
         
-        botManagerService.subscribeToTickerUpdates(formattedPair, tickerCallback);
-        botManagerService.subscribeToKlineUpdates(formattedPair, chartTimeFrame, klineCallback);
+        botManagerService.subscribeToTickerUpdates(formattedPair, tradingMode, tickerCallback);
+        botManagerService.subscribeToKlineUpdates(formattedPair, chartTimeFrame, tradingMode, klineCallback);
         
         return () => {
-            botManagerService.unsubscribeFromTickerUpdates(formattedPair, tickerCallback);
-            botManagerService.unsubscribeFromKlineUpdates(formattedPair, chartTimeFrame, klineCallback);
+            botManagerService.unsubscribeFromTickerUpdates(formattedPair, tradingMode, tickerCallback);
+            botManagerService.unsubscribeFromKlineUpdates(formattedPair, chartTimeFrame, tradingMode, klineCallback);
         };
-    }, [selectedPair, chartTimeFrame]);
+    }, [selectedPair, chartTimeFrame, tradingMode]);
 
     // Fetch wallet balances when mode or API connection change
     const fetchWalletBalances = useCallback(async () => {
@@ -273,7 +273,9 @@ const AppContent: React.FC = () => {
         }
 
         const closePositionInState = (finalExitPrice: number) => {
-            const pnl = (finalExitPrice - posToClose.entryPrice) * posToClose.size * (posToClose.direction === 'LONG' ? 1 : -1);
+            const isLong = posToClose.direction === 'LONG';
+            const pnl = (finalExitPrice - posToClose.entryPrice) * posToClose.size * (isLong ? 1 : -1);
+            
             const newTrade: Trade = { ...posToClose, exitPrice: finalExitPrice, exitTime: new Date(), pnl, exitReason };
             
             setTradeHistory(prevHistory => {
@@ -337,13 +339,74 @@ const AppContent: React.FC = () => {
                 });
             }
         } else {
+            // For paper trades, use the same logic (without fees)
             closePositionInState(exitPrice);
         }
 
     }, [closingPositionIds]);
 
+    const handlePartialClose = useCallback(async (position: Position, tpIndex: number) => {
+        if (!position || !position.botId || !position.partialTps || !position.initialSize) return;
+
+        const bot = botManagerService.getBot(position.botId);
+        if (!bot) return;
+
+        const tpInfo = position.partialTps[tpIndex];
+        if (tpInfo.hit) {
+            botManagerService.addBotLog(position.botId, `Attempted to close on an already hit TP #${tpIndex + 1}. Ignoring.`, LogType.Info);
+            return;
+        }
+
+        const sizeToClose = position.initialSize * tpInfo.sizeFraction;
+        const botConfig = bot.config;
+
+        const quantity = parseFloat((Math.floor(sizeToClose / botConfig.stepSize) * botConfig.stepSize).toFixed(botConfig.quantityPrecision));
+
+        if (quantity <= 0) {
+            botManagerService.addBotLog(position.botId, `Partial close for TP #${tpIndex + 1} resulted in zero quantity. Closing remaining position.`, LogType.Info);
+            handleClosePosition(position, `Final TP Close (zero quantity)`);
+            return;
+        }
+        
+        botManagerService.addBotLog(position.botId, `Attempting partial close for TP #${tpIndex + 1} (${(tpInfo.sizeFraction * 100).toFixed(0)}%)...`, LogType.Action);
+
+        if (position.executionMode === 'live') {
+            try {
+                const closingSide = position.direction === 'LONG' ? 'SELL' : 'BUY';
+                let orderResponse: BinanceOrderResponse;
+                
+                switch(position.mode) {
+                    case TradingMode.Spot:
+                        orderResponse = await binanceService.createSpotOrder(position.pair, closingSide, quantity);
+                        break;
+                    case TradingMode.USDSM_Futures:
+                        orderResponse = await binanceService.createFuturesOrder(position.pair, closingSide, quantity, true);
+                        break;
+                    default:
+                        throw new Error(`Unsupported trading mode for partial close: ${position.mode}`);
+                }
+                
+                const executedQty = parseFloat(orderResponse.executedQty);
+                const avgPrice = parseFloat(orderResponse.cummulativeQuoteQty) / executedQty;
+                const realizedPnl = (avgPrice - position.entryPrice) * executedQty * (position.direction === 'LONG' ? 1 : -1);
+
+                botManagerService.notifyPartialPositionClosed(position.botId, realizedPnl, executedQty, tpIndex);
+
+            } catch (e) {
+                const errorMessage = binanceService.interpretBinanceError(e);
+                botManagerService.addBotLog(position.botId, `CRITICAL: Failed to execute partial close for TP #${tpIndex + 1}. Reason: ${errorMessage}`, LogType.Error);
+                botManagerService.updateBotState(position.botId!, { status: BotStatus.Error, analysis: {signal: 'HOLD', reasons: [`Partial close failed.`]}});
+            }
+        } else { // Paper trade
+            const exitPrice = tpInfo.price;
+            const realizedPnl = (exitPrice - position.entryPrice) * quantity * (position.direction === 'LONG' ? 1 : -1);
+            botManagerService.notifyPartialPositionClosed(position.botId, realizedPnl, quantity, tpIndex);
+        }
+
+    }, [handleClosePosition]);
+
     const handleExecuteTrade = useCallback(async (
-        execSignal: TradeSignal,
+        execSignal: TradeSignal & { partialTps?: any[], trailStartPrice?: number },
         botId: string,
     ) => {
         const bot = botManagerService.getBot(botId);
@@ -487,6 +550,10 @@ const AppContent: React.FC = () => {
             botId,
             orderId: orderResponse?.orderId ?? null,
             liquidationPrice: finalLiquidationPrice,
+            // Add partial TP info if available from the agent
+            initialSize: tradeSize,
+            partialTps: execSignal.partialTps,
+            trailStartPrice: execSignal.trailStartPrice,
         };
 
         botManagerService.updateBotState(botId, {
@@ -500,6 +567,7 @@ const AppContent: React.FC = () => {
     botHandlersRef.current = {
         onExecuteTrade: handleExecuteTrade,
         onClosePosition: handleClosePosition,
+        onPartialClose: handlePartialClose,
     };
     
     const isBotCombinationActive = useCallback(() => {
@@ -544,6 +612,7 @@ const AppContent: React.FC = () => {
             isStopLossLocked,
             isTakeProfitLocked,
             isCooldownEnabled,
+            minimumGrossProfit,
             agentParams,
             pricePrecision: binanceService.getPricePrecision(symbolInfo),
             quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
@@ -553,7 +622,7 @@ const AppContent: React.FC = () => {
     }, [
         selectedPair, tradingMode, leverage, marginType, selectedAgent, chartTimeFrame, executionMode,
         investmentAmount, stopLossMode, stopLossValue, takeProfitMode, takeProfitValue,
-        isStopLossLocked, isTakeProfitLocked, isCooldownEnabled, agentParams, symbolInfo
+        isStopLossLocked, isTakeProfitLocked, isCooldownEnabled, agentParams, symbolInfo, minimumGrossProfit
     ]);
 
     const handleUpdateBotConfig = useCallback((botId: string, partialConfig: Partial<BotConfig>) => {
@@ -579,6 +648,7 @@ const AppContent: React.FC = () => {
         configActions.setIsStopLossLocked(config.isStopLossLocked);
         configActions.setIsTakeProfitLocked(config.isTakeProfitLocked);
         configActions.setIsCooldownEnabled(config.isCooldownEnabled);
+        configActions.setMinimumGrossProfit(config.minimumGrossProfit);
 
     }, [configActions]);
 

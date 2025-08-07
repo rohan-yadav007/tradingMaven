@@ -1,8 +1,12 @@
 
 
+
+
+
+
 import { Kline, BotConfig, BacktestResult, SimulatedTrade, AgentParams, Position, RiskMode, TradingMode } from '../types';
 import * as binanceService from './binanceService';
-import { getTradingSignal, getTradeManagementSignal, getInitialAgentTargets } from './localAgentService';
+import { getTradingSignal, getTradeManagementSignal, getInitialAgentTargets, analyzeTrendExhaustion } from './localAgentService';
 import * as constants from '../constants';
 
 interface SimulatedPosition extends Omit<Position, 'id' | 'entryTime' | 'botId' | 'orderId'> {
@@ -36,8 +40,11 @@ export async function runBacktest(
     const equityCurve: number[] = [];
     const STARTING_CAPITAL = 10000;
     let equity = STARTING_CAPITAL;
-    let cooldownUntilTimestamp = -1; 
     let managementKlineIndex = 0;
+
+    // State for simulating the Trend Exhaustion Veto logic
+    let inPostProfitAnalysis = false;
+    let lastProfitableDirection: 'LONG' | 'SHORT' | null = null;
     
     const minCandles = 200;
     if (mainKlines.length < minCandles) {
@@ -57,7 +64,33 @@ export async function runBacktest(
             while (managementKlineIndex < managementKlines.length && managementKlines[managementKlineIndex].time <= entrySignalCandle.time) {
                 const managementCandle = managementKlines[managementKlineIndex];
                 
-                // 1. Check for SL/TP hit
+                // --- Partial TP Logic ---
+                if (openPosition.partialTps) {
+                    for (let tpIdx = 0; tpIdx < openPosition.partialTps.length; tpIdx++) {
+                        const tp = openPosition.partialTps[tpIdx];
+                        if (!tp.hit) {
+                            const priceConditionMet = isLong ? managementCandle.high >= tp.price : managementCandle.low <= tp.price;
+                            if (priceConditionMet) {
+                                const sizeToClose = openPosition.initialSize! * tp.sizeFraction;
+                                const pnl = (tp.price - openPosition.entryPrice) * sizeToClose * (isLong ? 1 : -1);
+                                equity += pnl;
+                                
+                                // Record a "realized" part of the trade
+                                trades.push({
+                                    id: trades.length + 1, pair: openPosition.pair, direction: openPosition.direction,
+                                    entryPrice: openPosition.entryPrice, exitPrice: tp.price, entryTime: openPosition.entryTime,
+                                    exitTime: managementCandle.time, size: sizeToClose, pnl, investedAmount: config.investmentAmount,
+                                    exitReason: `Partial TP ${tpIdx + 1}`, entryReason: openPosition.entryReason
+                                });
+
+                                openPosition.size -= sizeToClose;
+                                openPosition.partialTps[tpIdx].hit = true;
+                            }
+                        }
+                    }
+                }
+
+                // --- SL/Final TP Hit Logic ---
                 let exitPrice = 0;
                 let exitReason = '';
                 if (isLong) {
@@ -72,40 +105,30 @@ export async function runBacktest(
                     const pnl = (exitPrice - openPosition.entryPrice) * openPosition.size * (isLong ? 1 : -1);
                     equity += pnl;
 
-                    trades.push({
-                        id: trades.length + 1,
-                        pair: openPosition.pair,
-                        direction: openPosition.direction,
-                        entryPrice: openPosition.entryPrice,
-                        exitPrice: exitPrice,
-                        entryTime: openPosition.entryTime,
-                        exitTime: managementCandle.time,
-                        size: openPosition.size,
-                        investedAmount: config.investmentAmount,
-                        pnl,
-                        exitReason,
-                        entryReason: openPosition.entryReason,
-                    });
+                    const closedTrade: SimulatedTrade = {
+                        id: trades.length + 1, pair: openPosition.pair, direction: openPosition.direction,
+                        entryPrice: openPosition.entryPrice, exitPrice: exitPrice, entryTime: openPosition.entryTime,
+                        exitTime: managementCandle.time, size: openPosition.size, investedAmount: config.investmentAmount, pnl,
+                        exitReason, entryReason: openPosition.entryReason
+                    };
+                    trades.push(closedTrade);
                     
-                    if (config.isCooldownEnabled) {
-                        const timeframeMs = mainKlines[1].time - mainKlines[0].time;
-                        cooldownUntilTimestamp = managementCandle.time + (constants.BOT_COOLDOWN_CANDLES * timeframeMs);
-                    } else {
-                        // If cooldown is disabled, simulate a 5-second delay before re-evaluating
-                        cooldownUntilTimestamp = managementCandle.time + 5000;
+                    if (config.isCooldownEnabled && pnl > 0) {
+                        inPostProfitAnalysis = true;
+                        lastProfitableDirection = closedTrade.direction;
                     }
+
                     openPosition = null;
                     break; // Exit the management kline loop
                 }
 
-                // 2. Proactive management on each 1m candle close
-                if (!config.isStopLossLocked || !config.isTakeProfitLocked) {
+                // --- Proactive Trailing Stop Management ---
+                if (!config.isStopLossLocked) {
                     const tempPositionForSignal: Position = { ...openPosition, id: 0, botId: 'sim', orderId: null, entryTime: new Date(openPosition.entryTime) };
                     const mgmtHistorySlice = managementKlines.slice(0, managementKlineIndex + 1);
                     const mgmtSignal = await getTradeManagementSignal(tempPositionForSignal, mgmtHistorySlice, managementCandle.close, config);
 
-                    if (mgmtSignal.newStopLoss && !config.isStopLossLocked) openPosition.stopLossPrice = mgmtSignal.newStopLoss;
-                    if (mgmtSignal.newTakeProfit && !config.isTakeProfitLocked) openPosition.takeProfitPrice = mgmtSignal.newTakeProfit;
+                    if (mgmtSignal.newStopLoss) openPosition.stopLossPrice = mgmtSignal.newStopLoss;
                 }
                 
                 managementKlineIndex++;
@@ -117,75 +140,98 @@ export async function runBacktest(
             }
         }
         
-        // --- CHECK FOR ENTRIES (if no position and not in cooldown) ---
-        if (!openPosition && entrySignalCandle.time > cooldownUntilTimestamp) {
+        // --- CHECK FOR ENTRIES (if no position) ---
+        if (!openPosition) {
             const signal = await getTradingSignal(config.agent, historySlice, config.timeFrame, config.agentParams);
              
             if (signal.signal !== 'HOLD') {
-                const entryPrice = mainKlines[i].open; 
-                const isLong = signal.signal === 'BUY';
+                let canProceed = true;
 
-                if (config.investmentAmount > 0 && entryPrice > 0) {
-                    const isFutures = config.mode === TradingMode.USDSM_Futures;
-                    const positionValue = isFutures ? config.investmentAmount * config.leverage : config.investmentAmount;
-                    const tradeSize = positionValue / entryPrice;
-
-                    // --- TARGET CALCULATION (3-LAYER SYSTEM) ---
-                    // LAYER 1: USER-DEFINED SL
-                    let userStopLossPrice: number;
-                    if (config.stopLossMode === RiskMode.Percent) {
-                        const lossAmount = config.investmentAmount * (config.stopLossValue / 100);
-                        userStopLossPrice = isLong ? entryPrice - (lossAmount / tradeSize) : entryPrice + (lossAmount / tradeSize);
-                    } else { // Amount
-                        userStopLossPrice = isLong ? entryPrice - (config.stopLossValue / tradeSize) : entryPrice + (config.stopLossValue / tradeSize);
-                    }
-
-                    // LAYER 2: AGENT'S SMART (ATR) SL
-                    const agentTargets = getInitialAgentTargets(historySlice, entryPrice, isLong ? 'LONG' : 'SHORT', config.timeFrame, { ...constants.DEFAULT_AGENT_PARAMS, ...config.agentParams });
-                    const agentStopLossPrice = agentTargets.stopLossPrice;
-                    
-                    // LAYER 3: HARD CAP SAFETY NET SL
-                    const maxLossAmount = config.investmentAmount * (constants.MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
-                    const hardCapStopLossPrice = isLong ? entryPrice - (maxLossAmount / tradeSize) : entryPrice + (maxLossAmount / tradeSize);
-                    
-                    // Determine primary SL based on whether it's locked
-                    const primaryStopLoss = config.isStopLossLocked ? userStopLossPrice : agentStopLossPrice;
-                    
-                    // FINAL STOP LOSS: The tightest (safest) of the primary SL and the hard cap.
-                    let stopLossPrice: number;
-                    if (isLong) {
-                        stopLossPrice = Math.max(primaryStopLoss, hardCapStopLossPrice);
-                    } else { // SHORT
-                        stopLossPrice = Math.min(primaryStopLoss, hardCapStopLossPrice);
-                    }
-                    
-                    // TAKE PROFIT
-                    let takeProfitPrice: number;
-                    if (config.isTakeProfitLocked) {
-                        if (config.takeProfitMode === RiskMode.Percent) {
-                            const profitAmount = config.investmentAmount * (config.takeProfitValue / 100);
-                            takeProfitPrice = isLong ? entryPrice + (profitAmount / tradeSize) : entryPrice - (profitAmount / tradeSize);
-                        } else { // Amount
-                            takeProfitPrice = isLong ? entryPrice + (config.takeProfitValue / tradeSize) : entryPrice - (config.takeProfitValue / tradeSize);
+                if (inPostProfitAnalysis) {
+                    const signalDirection = signal.signal === 'BUY' ? 'LONG' : 'SHORT';
+                    if (signalDirection === lastProfitableDirection) {
+                        const { veto } = analyzeTrendExhaustion(historySlice, signalDirection);
+                        if (veto) {
+                            canProceed = false; // Veto the trade
                         }
-                    } else {
-                         // Maintain the agent's R:R, but adjusted for the final (potentially capped) stop loss
-                        const finalRiskDistance = Math.abs(entryPrice - stopLossPrice);
-                        const agentRiskDistance = Math.abs(entryPrice - agentTargets.stopLossPrice);
-                        const agentProfitDistance = Math.abs(agentTargets.takeProfitPrice - entryPrice);
-                        const riskRewardRatio = agentRiskDistance > 0 ? agentProfitDistance / agentRiskDistance : 1.5;
-                        const finalProfitDistance = finalRiskDistance * riskRewardRatio;
-                        takeProfitPrice = isLong ? entryPrice + finalProfitDistance : entryPrice - finalProfitDistance;
                     }
-                    
-                    if (tradeSize > 0) {
-                        openPosition = {
-                            pair: config.pair, mode: config.mode, executionMode: config.executionMode, direction: isLong ? 'LONG' : 'SHORT',
-                            entryPrice, size: tradeSize, leverage: config.leverage, entryTime: entrySignalCandle.time,
-                            entryReason: signal.reasons.join(' '), agentName: config.agent.name, takeProfitPrice,
-                            stopLossPrice, pricePrecision: config.pricePrecision, timeFrame: config.timeFrame,
-                        };
+                    inPostProfitAnalysis = false; 
+                    lastProfitableDirection = null;
+                }
+
+                if (canProceed) {
+                    const entryPrice = mainKlines[i].open; 
+                    const isLong = signal.signal === 'BUY';
+
+                    if (config.investmentAmount > 0 && entryPrice > 0) {
+                        const agentTargets = getInitialAgentTargets(historySlice, entryPrice, isLong ? 'LONG' : 'SHORT', config.timeFrame, { ...constants.DEFAULT_AGENT_PARAMS, ...config.agentParams }, config.agent.id);
+                        
+                        let stopLossPrice: number;
+                        if (config.isStopLossLocked) {
+                            const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
+                            const tradeSize = positionValue / entryPrice;
+                            if (config.stopLossMode === RiskMode.Percent) {
+                                const lossAmount = config.investmentAmount * (config.stopLossValue / 100);
+                                stopLossPrice = isLong ? entryPrice - (lossAmount / tradeSize) : entryPrice + (lossAmount / tradeSize);
+                            } else { // Amount
+                                stopLossPrice = isLong ? entryPrice - (config.stopLossValue / tradeSize) : entryPrice + (config.stopLossValue / tradeSize);
+                            }
+                        } else {
+                            stopLossPrice = agentTargets.stopLossPrice;
+                        }
+                        
+                        let takeProfitPrice = agentTargets.takeProfitPrice;
+                        if (config.isTakeProfitLocked && !agentTargets.partialTps) { // Only override TP if not using partial TP strategy
+                           const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
+                           const tradeSize = positionValue / entryPrice;
+                           if(config.takeProfitMode === RiskMode.Percent) {
+                               const profitAmount = config.investmentAmount * (config.takeProfitValue / 100);
+                               takeProfitPrice = isLong ? entryPrice + (profitAmount / tradeSize) : entryPrice - (profitAmount / tradeSize);
+                           } else {
+                               takeProfitPrice = isLong ? entryPrice + (config.takeProfitValue / tradeSize) : entryPrice - (config.takeProfitValue / tradeSize);
+                           }
+                        }
+                        
+                        // --- Hard Cap Safety Net ---
+                        const positionValueForCap = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
+                        const tradeSizeForCap = positionValueForCap / entryPrice;
+                        if (tradeSizeForCap > 0) {
+                            const maxLossAmount = config.investmentAmount * (constants.MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
+                            const hardCapStopLossPrice = isLong ? entryPrice - (maxLossAmount / tradeSizeForCap) : entryPrice + (maxLossAmount / tradeSizeForCap);
+
+                            const originalStopLoss = stopLossPrice;
+                            stopLossPrice = isLong ? Math.max(stopLossPrice, hardCapStopLossPrice) : Math.min(stopLossPrice, hardCapStopLossPrice);
+
+                            if (stopLossPrice !== originalStopLoss && !config.isTakeProfitLocked) {
+                                const riskDistance = Math.abs(entryPrice - stopLossPrice);
+                                const originalRiskDistance = Math.abs(entryPrice - originalStopLoss);
+                                const originalProfitDistance = Math.abs(takeProfitPrice - entryPrice);
+                                const riskRewardRatio = originalRiskDistance > 0 ? originalProfitDistance / originalRiskDistance : 1.5;
+                                takeProfitPrice = isLong ? entryPrice + (riskDistance * riskRewardRatio) : entryPrice - (riskDistance * riskRewardRatio);
+                            }
+                        }
+
+                        const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
+                        const tradeSize = positionValue / entryPrice;
+                        
+                        if (tradeSize > 0) {
+                            openPosition = {
+                                pair: config.pair, mode: config.mode, executionMode: config.executionMode, direction: isLong ? 'LONG' : 'SHORT',
+                                entryPrice, size: tradeSize, leverage: config.leverage, entryTime: entrySignalCandle.time,
+                                entryReason: signal.reasons.join(' '), agentName: config.agent.name, takeProfitPrice,
+                                stopLossPrice, pricePrecision: config.pricePrecision, timeFrame: config.timeFrame,
+                                // Add partial TP info if the agent provides it
+                                initialSize: tradeSize,
+                                partialTps: agentTargets.partialTps,
+                                trailStartPrice: agentTargets.trailStartPrice,
+                            };
+                        }
                     }
+                }
+            } else { // Signal is HOLD
+                if (inPostProfitAnalysis) {
+                    inPostProfitAnalysis = false;
+                    lastProfitableDirection = null;
                 }
             }
         }
@@ -202,6 +248,7 @@ export async function runBacktest(
         const lastKline = managementKlines[managementKlines.length - 1] || mainKlines[mainKlines.length - 1];
         const exitPrice = lastKline.close;
         const pnl = (exitPrice - openPosition.entryPrice) * openPosition.size * (openPosition.direction === 'LONG' ? 1 : -1);
+
         trades.push({
             id: trades.length + 1, pair: openPosition.pair, direction: openPosition.direction,
             entryPrice: openPosition.entryPrice, exitPrice, entryTime: openPosition.entryTime, exitTime: lastKline.time,

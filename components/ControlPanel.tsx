@@ -1,5 +1,6 @@
 
-import React, { useState, useEffect } from 'react';
+
+import React, { useState, useEffect, useRef } from 'react';
 import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams } from '../types';
 import * as constants from '../constants';
 import { PlayIcon, LockIcon, UnlockIcon, CpuIcon, ChevronDown, ChevronUp } from './icons';
@@ -150,25 +151,42 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
 
     const [analysisSignal, setAnalysisSignal] = useState<TradeSignal | null>(null);
     const [isAnalysisLoading, setIsAnalysisLoading] = useState(false);
-    const [isAnalysisOpen, setIsAnalysisOpen] = useState(true); // Open by default
+    const [isAnalysisOpen, setIsAnalysisOpen] = useState(true);
+
+    // Create a stable key representing the core analysis configuration.
+    const analysisConfigKey = `${selectedAgent.id}-${timeFrame}-${JSON.stringify(agentParams)}`;
+    const analysisConfigChangedRef = useRef(true);
+
+    // Detect when the core configuration changes to trigger the loading state.
+    useEffect(() => {
+        analysisConfigChangedRef.current = true;
+    }, [analysisConfigKey]);
 
     useEffect(() => {
         const fetchAnalysis = async () => {
             if (klines.length > 50) { // Check for sufficient data
-                setIsAnalysisLoading(true);
+                // Show loader only if the configuration has changed since the last analysis.
+                if (analysisConfigChangedRef.current) {
+                    setIsAnalysisLoading(true);
+                }
+
                 try {
                     const signal = await getTradingSignal(selectedAgent, klines, timeFrame, agentParams);
                     setAnalysisSignal(signal);
+                    // Mark that an analysis for this config has run, so subsequent kline updates don't flicker.
+                    analysisConfigChangedRef.current = false;
                 } catch (e) {
                     console.error("Error fetching analysis signal:", e);
                     setAnalysisSignal({ signal: 'HOLD', reasons: ['Error fetching analysis.'] });
                 } finally {
+                    // Always turn off the loader after an attempt.
                     setIsAnalysisLoading(false);
                 }
             }
         };
         fetchAnalysis();
-    }, [selectedAgent, klines, timeFrame, agentParams]);
+    }, [selectedAgent, klines, timeFrame, agentParams, analysisConfigKey]);
+
 
     useEffect(() => {
         const updateSmartTargets = () => {

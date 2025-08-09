@@ -228,7 +228,7 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onChang
                     <h4 className="font-semibold text-sm -mb-2">Regime Detection</h4>
                     <ParamSlider label="Fast EMA" value={P.qsc_fastEmaPeriod!} min={5} max={15} step={1} onChange={v => onChange('qsc_fastEmaPeriod', v)} />
                     <ParamSlider label="Slow EMA" value={P.qsc_slowEmaPeriod!} min={18} max={30} step={1} onChange={v => onChange('qsc_slowEmaPeriod', v)} />
-                    <ParamSlider label="ADX Threshold" value={P.qsc_adxThreshold!} min={15} max={25} step={1} onChange={v => onChange('qsc_adxThreshold', v)} />
+                    <ParamSlider label="ADX Threshold" value={P.qsc_adxThreshold!} min={15} max={40} step={1} onChange={v => onChange('qsc_adxThreshold', v)} />
                     <h4 className="font-semibold text-sm -mb-2">Entry Scoring</h4>
                     <ParamSlider label="Trend Score Threshold" value={P.qsc_trendScoreThreshold!} min={2} max={4} step={1} onChange={v => onChange('qsc_trendScoreThreshold', v)} />
                     <ParamSlider label="Range Score Threshold" value={P.qsc_rangeScoreThreshold!} min={1} max={3} step={1} onChange={v => onChange('qsc_rangeScoreThreshold', v)} />

@@ -1,7 +1,4 @@
 
-
-
-
 import React, { useState, useEffect } from 'react';
 import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, Kline, SimulatedTrade, RiskMode } from '../types';
 import * as constants from '../constants';
@@ -180,8 +177,37 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onChang
                         <ParamSlider label="Volume SMA Period" value={P.mom_volumeSmaPeriod} min={10} max={30} step={1} onChange={v => onChange('mom_volumeSmaPeriod', v)} />
                         <ParamSlider label="Volume Multiplier" value={P.mom_volumeMultiplier} min={1.1} max={3.0} step={0.1} onChange={v => onChange('mom_volumeMultiplier', v)} />
                     </> );
+            case 2: // Trend Rider
+                return ( <>
+                    <p className="text-xs text-center text-slate-500 dark:text-slate-400">Enters on strong breakouts in the direction of the trend. Does not wait for pullbacks.</p>
+                    <h4 className="font-semibold text-sm -mb-2">Trend Confirmation</h4>
+                    <ParamSlider label="ADX Period" value={P.adxPeriod} min={5} max={25} step={1} onChange={v => onChange('adxPeriod', v)} />
+                    <ParamSlider label="ADX Trend Threshold" value={P.adxTrendThreshold} min={15} max={40} step={1} onChange={v => onChange('adxTrendThreshold', v)} />
+                    <ParamSlider label="Slow EMA Period" value={P.tr_emaSlowPeriod} min={30} max={100} step={5} onChange={v => onChange('tr_emaSlowPeriod', v)} />
+                    <ParamSlider label="Fast EMA Period" value={P.tr_emaFastPeriod} min={10} max={50} step={2} onChange={v => onChange('tr_emaFastPeriod', v)} />
+                    <h4 className="font-semibold text-sm -mb-2">Entry Logic</h4>
+                    <ParamSlider label="RSI Period" value={P.rsiPeriod} min={7} max={21} step={1} onChange={v => onChange('rsiPeriod', v)} />
+                    <ParamSlider label="RSI Bullish Momentum" value={P.tr_rsiMomentumBullish} min={55} max={75} step={1} onChange={v => onChange('tr_rsiMomentumBullish', v)} />
+                    <ParamSlider label="RSI Bearish Momentum" value={P.tr_rsiMomentumBearish} min={25} max={45} step={1} onChange={v => onChange('tr_rsiMomentumBearish', v)} />
+                    <ParamSlider label="Breakout Lookback" value={P.tr_breakoutPeriod} min={3} max={10} step={1} onChange={v => onChange('tr_breakoutPeriod', v)} />
+                </> );
              case 4: // Scalping Expert
-             case 6: // Profit Locker (uses Scalping Expert logic)
+                return ( <>
+                    <p className="text-xs text-center text-slate-500 dark:text-slate-400">Multi-indicator confirmation strategy. See agent description for logic.</p>
+                    <h4 className="font-semibold text-sm -mb-2">Trend & Volatility</h4>
+                    <ParamSlider label="Fast EMA Period" value={P.se_emaFastPeriod!} min={5} max={20} step={1} onChange={v => onChange('se_emaFastPeriod', v)} />
+                    <ParamSlider label="Slow EMA Period" value={P.se_emaSlowPeriod!} min={20} max={50} step={1} onChange={v => onChange('se_emaSlowPeriod', v)} />
+                    <ParamSlider label="BB Period" value={P.se_bbPeriod!} min={15} max={30} step={1} onChange={v => onChange('se_bbPeriod', v)} />
+                    <ParamSlider label="ATR Volatility Threshold (%)" value={P.se_atrVolatilityThreshold!} min={0.1} max={1.0} step={0.05} onChange={v => onChange('se_atrVolatilityThreshold', v)} />
+                    <h4 className="font-semibold text-sm -mb-2">Momentum & Entry</h4>
+                    <ParamSlider label="RSI Period" value={P.se_rsiPeriod!} min={7} max={21} step={1} onChange={v => onChange('se_rsiPeriod', v)} />
+                    <ParamSlider label="RSI Oversold" value={P.se_rsiOversold!} min={25} max={40} step={1} onChange={v => onChange('se_rsiOversold', v)} />
+                    <ParamSlider label="RSI Overbought" value={P.se_rsiOverbought!} min={60} max={75} step={1} onChange={v => onChange('se_rsiOverbought', v)} />
+                    <ParamSlider label="MACD Fast" value={P.se_macdFastPeriod!} min={5} max={20} step={1} onChange={v => onChange('se_macdFastPeriod', v)} />
+                    <ParamSlider label="MACD Slow" value={P.se_macdSlowPeriod!} min={20} max={50} step={1} onChange={v => onChange('se_macdSlowPeriod', v)} />
+                    <ParamSlider label="MACD Signal" value={P.se_macdSignalPeriod!} min={5} max={15} step={1} onChange={v => onChange('se_macdSignalPeriod', v)} />
+                </> );
+             case 6: // Profit Locker (uses old scalping logic)
                 return ( <>
                     <p className="text-xs text-center text-slate-500 dark:text-slate-400">Score-based scalper. A trade is triggered when the combined score of indicators exceeds the threshold.</p>
                     <ParamSlider label="Score Threshold" value={P.scalp_scoreThreshold} min={2} max={5} step={1} onChange={v => onChange('scalp_scoreThreshold', v)} />
@@ -194,41 +220,19 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onChang
                     <ParamSlider label="StochRSI Oversold" value={P.scalp_stochRsiOversold} min={10} max={30} step={1} onChange={v => onChange('scalp_stochRsiOversold', v)} />
                     <ParamSlider label="StochRSI Overbought" value={P.scalp_stochRsiOverbought} min={70} max={90} step={1} onChange={v => onChange('scalp_stochRsiOverbought', v)} />
                 </> )
-             case 5: // Market Phase Adaptor
-                return ( <>
-                        <p className="text-xs text-center text-slate-500 dark:text-slate-400">This agent adapts its strategy to the market phase.</p>
-                        <h4 className="font-semibold text-sm -mb-2">Phase Detection</h4>
-                        <ParamSlider label="ADX Trend Level" value={P.mpa_adxTrend!} min={20} max={30} step={1} onChange={v => onChange('mpa_adxTrend', v)} />
-                        <ParamSlider label="ADX Chop Level" value={P.mpa_adxChop!} min={15} max={25} step={1} onChange={v => onChange('mpa_adxChop', v)} />
-                        <ParamSlider label="BBW Squeeze Level" value={P.mpa_bbwSqueeze!} min={0.01} max={0.05} step={0.005} onChange={v => onChange('mpa_bbwSqueeze', v)} />
-                        <h4 className="font-semibold text-sm -mb-2">Trending Strategy</h4>
-                        <ParamSlider label="Trend EMA Fast" value={P.mpa_trendEmaFast!} min={10} max={30} step={1} onChange={v => onChange('mpa_trendEmaFast', v)} />
-                        <ParamSlider label="Trend EMA Slow" value={P.mpa_trendEmaSlow!} min={40} max={60} step={2} onChange={v => onChange('mpa_trendEmaSlow', v)} />
-                        <h4 className="font-semibold text-sm -mb-2">Ranging Strategy</h4>
-                        <ParamSlider label="Range BB Period" value={P.mpa_rangeBBPeriod!} min={15} max={30} step={1} onChange={v => onChange('mpa_rangeBBPeriod', v)} />
-                        <ParamSlider label="Range BB StdDev" value={P.mpa_rangeBBStdDev!} min={1.8} max={2.5} step={0.1} onChange={v => onChange('mpa_rangeBBStdDev', v)} />
-                        <ParamSlider label="Range RSI Oversold" value={P.mpa_rangeRsiOversold!} min={25} max={40} step={1} onChange={v => onChange('mpa_rangeRsiOversold', v)} />
-                        <ParamSlider label="Range RSI Overbought" value={P.mpa_rangeRsiOverbought!} min={60} max={75} step={1} onChange={v => onChange('mpa_rangeRsiOverbought', v)} />
-                    </> )
             case 7: // Market Structure Maven
                 return ( <>
                         <p className="text-xs text-center text-slate-500 dark:text-slate-400">This agent uses Price Action logic. Its primary parameter is a long-term EMA to establish a directional bias.</p>
                         <ParamSlider label="HTF Bias EMA Period" value={P.msm_htfEmaPeriod} min={100} max={400} step={10} onChange={v => onChange('msm_htfEmaPeriod', v)} />
                         <ParamSlider label="Swing Point Lookback" value={P.msm_swingPointLookback} min={2} max={10} step={1} onChange={v => onChange('msm_swingPointLookback', v)} />
-                     </> )
-            case 8: // Institutional Scalper
-                return ( <>
-                    <p className="text-xs text-center text-slate-500 dark:text-slate-400">Smart money concepts. No traditional indicators used.</p>
-                    <ParamSlider label="Liquidity Lookback" value={P.inst_lookbackPeriod} min={3} max={15} step={1} onChange={v => onChange('inst_lookbackPeriod', v)} />
-                    <ParamSlider label="Power Candle Multiplier" value={P.inst_powerCandleMultiplier} min={1.0} max={3.0} step={0.1} onChange={v => onChange('inst_powerCandleMultiplier', v)} />
-                </> )
+                     </> );
             case 9: // Quantum Scalper
                  return ( <>
                     <p className="text-xs text-center text-slate-500 dark:text-slate-400">Adaptive scalper. Uses regime detection and a PSAR trailing stop for exits.</p>
                     <h4 className="font-semibold text-sm -mb-2">Regime Detection</h4>
                     <ParamSlider label="Fast EMA" value={P.qsc_fastEmaPeriod!} min={5} max={15} step={1} onChange={v => onChange('qsc_fastEmaPeriod', v)} />
                     <ParamSlider label="Slow EMA" value={P.qsc_slowEmaPeriod!} min={18} max={30} step={1} onChange={v => onChange('qsc_slowEmaPeriod', v)} />
-                    <ParamSlider label="ADX Threshold" value={P.qsc_adxThreshold!} min={15} max={40} step={1} onChange={v => onChange('qsc_adxThreshold', v)} />
+                    <ParamSlider label="ADX Threshold" value={P.qsc_adxThreshold!} min={15} max={25} step={1} onChange={v => onChange('qsc_adxThreshold', v)} />
                     <h4 className="font-semibold text-sm -mb-2">Entry Scoring</h4>
                     <ParamSlider label="Trend Score Threshold" value={P.qsc_trendScoreThreshold!} min={2} max={4} step={1} onChange={v => onChange('qsc_trendScoreThreshold', v)} />
                     <ParamSlider label="Range Score Threshold" value={P.qsc_rangeScoreThreshold!} min={1} max={3} step={1} onChange={v => onChange('qsc_rangeScoreThreshold', v)} />
@@ -300,14 +304,10 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     const [localAgentParams, setLocalAgentParams] = useState<AgentParams>({});
     
     const [localInvestmentAmount, setLocalInvestmentAmount] = useState(100);
-    const [localStopLossMode, setLocalStopLossMode] = useState<RiskMode>(RiskMode.Percent);
-    const [localStopLossValue, setLocalStopLossValue] = useState<number>(2);
     const [localTakeProfitMode, setLocalTakeProfitMode] = useState<RiskMode>(RiskMode.Percent);
     const [localTakeProfitValue, setLocalTakeProfitValue] = useState<number>(4);
-    const [isLocalStopLossLocked, setIsLocalStopLossLocked] = useState<boolean>(false);
     const [isLocalTakeProfitLocked, setIsLocalTakeProfitLocked] = useState<boolean>(false);
     const [isLocalCooldownEnabled, setIsLocalCooldownEnabled] = useState(false);
-    const [localMinimumGrossProfit, setLocalMinimumGrossProfit] = useState<number>(1.0);
 
 
     const [isParamsOpen, setIsParamsOpen] = useState(false);
@@ -343,7 +343,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
 
     useEffect(() => {
         const updateSmartTargets = () => {
-            if (props.klines.length < 50 || (!isLocalStopLossLocked || !isLocalTakeProfitLocked)) return;
+            if (props.klines.length < 50 || !isLocalTakeProfitLocked) return;
 
             const currentPrice = props.klines[props.klines.length - 1].close;
             if (currentPrice <= 0) return;
@@ -353,18 +353,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
 
             const longTargets = getInitialAgentTargets(props.klines, currentPrice, 'LONG', localTimeFrame, finalParams, localSelectedAgent.id);
             
-            const stopDistance = currentPrice - longTargets.stopLossPrice;
             const profitDistance = longTargets.takeProfitPrice - currentPrice;
-
-            if (!isLocalStopLossLocked) {
-                let newSlValue: number;
-                if (localStopLossMode === RiskMode.Percent) {
-                    newSlValue = (stopDistance / currentPrice) * 100;
-                } else { // Amount
-                    newSlValue = localInvestmentAmount * (stopDistance / currentPrice);
-                }
-                setLocalStopLossValue(parseFloat(newSlValue.toFixed(2)));
-            }
             
             if (!isLocalTakeProfitLocked) {
                 let newTpValue: number;
@@ -379,8 +368,8 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
 
         updateSmartTargets();
     }, [
-        props.klines, isLocalStopLossLocked, isLocalTakeProfitLocked, localSelectedAgent, localTimeFrame, localAgentParams, 
-        localInvestmentAmount, localStopLossMode, localTakeProfitMode, setLocalStopLossValue, setLocalTakeProfitValue
+        props.klines, isLocalTakeProfitLocked, localSelectedAgent, localTimeFrame, localAgentParams, 
+        localInvestmentAmount, localTakeProfitMode, setLocalTakeProfitValue
     ]);
 
 
@@ -427,11 +416,9 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
             pair: localSelectedPair, timeFrame: localTimeFrame, agent: localSelectedAgent,
             executionMode: 'paper',
             investmentAmount: localInvestmentAmount,
-            stopLossMode: localStopLossMode, stopLossValue: localStopLossValue,
             takeProfitMode: localTakeProfitMode, takeProfitValue: localTakeProfitValue,
-            isStopLossLocked: isLocalStopLossLocked, isTakeProfitLocked: isLocalTakeProfitLocked,
+            isTakeProfitLocked: isLocalTakeProfitLocked,
             isCooldownEnabled: isLocalCooldownEnabled,
-            minimumGrossProfit: localMinimumGrossProfit,
             leverage: localTradingMode === TradingMode.USDSM_Futures ? localLeverage : 1, 
             mode: localTradingMode,
             agentParams: localAgentParams,
@@ -474,11 +461,9 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 leverage: localTradingMode === TradingMode.USDSM_Futures ? localLeverage : 1,
                 agent: localSelectedAgent, timeFrame: localTimeFrame, 
                 investmentAmount: localInvestmentAmount,
-                stopLossMode: localStopLossMode, stopLossValue: localStopLossValue,
                 takeProfitMode: localTakeProfitMode, takeProfitValue: localTakeProfitValue,
-                isStopLossLocked: isLocalStopLossLocked, isTakeProfitLocked: isLocalTakeProfitLocked,
+                isTakeProfitLocked: isLocalTakeProfitLocked,
                 isCooldownEnabled: isLocalCooldownEnabled,
-                minimumGrossProfit: localMinimumGrossProfit,
                 agentParams: localAgentParams,
                 pricePrecision: binanceService.getPricePrecision(symbolInfo),
                 quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
@@ -579,13 +564,11 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                             <label className={formLabelClass}>Investment Amount (USDT)</label>
                             <input type="number" value={localInvestmentAmount} onChange={e => setLocalInvestmentAmount(Number(e.target.value))} min="1" className={formInputClass} />
                         </div>
-                         <div className="grid grid-cols-2 gap-4">
-                            <RiskInputWithLock label="Stop Loss" mode={localStopLossMode} value={localStopLossValue} isLocked={isLocalStopLossLocked} investmentAmount={localInvestmentAmount} onModeChange={setLocalStopLossMode} onValueChange={setLocalStopLossValue} onLockToggle={() => setIsLocalStopLossLocked(!isLocalStopLossLocked)} />
+                         <div className="grid grid-cols-1 gap-4">
                             <RiskInputWithLock label="Take Profit" mode={localTakeProfitMode} value={localTakeProfitValue} isLocked={isLocalTakeProfitLocked} investmentAmount={localInvestmentAmount} onModeChange={setLocalTakeProfitMode} onValueChange={setLocalTakeProfitValue} onLockToggle={() => setIsLocalTakeProfitLocked(!isLocalTakeProfitLocked)} />
-                        </div>
-                        <div className={formGroupClass}>
-                            <label htmlFor="min-gross-profit" className={formLabelClass}>Minimum Gross Profit ($)</label>
-                            <input type="number" id="min-gross-profit" value={localMinimumGrossProfit} onChange={e => setLocalMinimumGrossProfit(Number(e.target.value))} min="0" step="0.1" className={formInputClass} />
+                             <p className="text-xs text-slate-500 dark:text-slate-400 -mt-2">
+                                Stop Loss is fully automated by the agent.
+                            </p>
                         </div>
                         {localTradingMode === TradingMode.USDSM_Futures && (
                             <ParamSlider label="Leverage" value={localLeverage} min={1} max={125} step={1} onChange={setLocalLeverage} />

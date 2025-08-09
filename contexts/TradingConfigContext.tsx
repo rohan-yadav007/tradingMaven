@@ -1,7 +1,4 @@
 
-
-
-
 import React, { createContext, useState, useContext, useMemo, useEffect, useCallback } from 'react';
 import { TradingMode, Agent, AgentParams, RiskMode } from '../types';
 import * as constants from '../constants';
@@ -19,14 +16,10 @@ interface TradingConfigState {
     selectedAgent: Agent;
     investmentAmount: number;
     availableBalance: number;
-    stopLossMode: RiskMode;
-    stopLossValue: number;
     takeProfitMode: RiskMode;
     takeProfitValue: number;
-    isStopLossLocked: boolean;
     isTakeProfitLocked: boolean;
     isCooldownEnabled: boolean;
-    minimumGrossProfit: number;
     agentParams: AgentParams;
     isApiConnected: boolean; // Managed from App.tsx but needed here
     walletViewMode: TradingMode;
@@ -50,14 +43,10 @@ interface TradingConfigActions {
     setSelectedAgent: (agent: Agent) => void;
     setInvestmentAmount: (amount: number) => void;
     setAvailableBalance: (balance: number) => void;
-    setStopLossMode: (mode: RiskMode) => void;
-    setStopLossValue: (value: number) => void;
     setTakeProfitMode: (mode: RiskMode) => void;
     setTakeProfitValue: (value: number) => void;
-    setIsStopLossLocked: (isLocked: boolean) => void;
     setIsTakeProfitLocked: (isLocked: boolean) => void;
     setIsCooldownEnabled: (isEnabled: boolean) => void;
-    setMinimumGrossProfit: (profit: number) => void;
     setAgentParams: (params: AgentParams) => void;
     setIsApiConnected: (isConnected: boolean) => void;
     setWalletViewMode: (mode: TradingMode) => void;
@@ -85,14 +74,10 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [agentParams, setAgentParams] = useState<AgentParams>({});
     const [investmentAmount, setInvestmentAmount] = useState<number>(100);
     const [availableBalance, setAvailableBalance] = useState<number>(Infinity);
-    const [stopLossMode, setStopLossMode] = useState<RiskMode>(RiskMode.Percent);
-    const [stopLossValue, setStopLossValue] = useState<number>(2);
-    const [isStopLossLocked, setIsStopLossLocked] = useState<boolean>(false);
     const [takeProfitMode, setTakeProfitMode] = useState<RiskMode>(RiskMode.Percent);
     const [takeProfitValue, setTakeProfitValue] = useState<number>(4);
     const [isTakeProfitLocked, setIsTakeProfitLocked] = useState<boolean>(false);
     const [isCooldownEnabled, setIsCooldownEnabled] = useState<boolean>(false);
-    const [minimumGrossProfit, setMinimumGrossProfit] = useState<number>(1.0);
     const [isApiConnected, setIsApiConnected] = useState(false);
     const [walletViewMode, setWalletViewMode] = useState<TradingMode>(TradingMode.Spot);
     const [isMultiAssetMode, setIsMultiAssetMode] = useState(false);
@@ -225,19 +210,18 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const actions = useMemo(() => ({
         setExecutionMode, setTradingMode, setSelectedPair, setAllPairs,
         setLeverage, setMarginType, setTimeFrame, setSelectedAgent,
-        setInvestmentAmount, setAvailableBalance, setStopLossMode, setStopLossValue,
-        setTakeProfitMode, setTakeProfitValue, setIsStopLossLocked, setIsTakeProfitLocked,
+        setInvestmentAmount, setAvailableBalance,
+        setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
         setIsCooldownEnabled, setAgentParams, setIsApiConnected, setWalletViewMode,
         setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError,
-        setMinimumGrossProfit,
     }), [onSetMultiAssetMode]);
     
     const state = {
         executionMode, tradingMode, selectedPair, allPairs, leverage, marginType, chartTimeFrame,
-        selectedAgent, agentParams, investmentAmount, availableBalance, stopLossMode, stopLossValue,
-        takeProfitMode, takeProfitValue, isStopLossLocked, isTakeProfitLocked, isCooldownEnabled,
+        selectedAgent, agentParams, investmentAmount, availableBalance,
+        takeProfitMode, takeProfitValue, isTakeProfitLocked, isCooldownEnabled,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
-        futuresSettingsError, multiAssetModeError, minimumGrossProfit
+        futuresSettingsError, multiAssetModeError
     };
 
     return (

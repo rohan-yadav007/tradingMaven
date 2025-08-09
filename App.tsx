@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -27,9 +28,9 @@ const AppContent: React.FC = () => {
     const configActions = useTradingConfigActions();
     const { 
         executionMode, tradingMode, selectedPair, chartTimeFrame, 
-        selectedAgent, investmentAmount, stopLossMode, stopLossValue, takeProfitMode, 
-        takeProfitValue, isStopLossLocked, isTakeProfitLocked, isCooldownEnabled, agentParams,
-        leverage, marginType, minimumGrossProfit
+        selectedAgent, investmentAmount, takeProfitMode, 
+        takeProfitValue, isTakeProfitLocked, isCooldownEnabled, agentParams,
+        leverage, marginType
     } = configState;
 
     const {
@@ -58,7 +59,6 @@ const AppContent: React.FC = () => {
     const [walletError, setWalletError] = useState<string | null>(null);
     const [openPositions, setOpenPositions] = useState<Position[]>([]);
     const [tradeHistory, setTradeHistory] = useState<Trade[]>([]);
-    const [lastHistoryDate, setLastHistoryDate] = useState<Date | null>(null);
     const [closingPositionIds, setClosingPositionIds] = useState<Set<number>>(new Set());
     
     // Ref for bot handlers to prevent stale closures
@@ -81,10 +81,8 @@ const AppContent: React.FC = () => {
             .then(setIsApiConnected)
             .catch(() => setIsApiConnected(false));
 
-        const { trades, lastDate } = historyService.loadTrades();
-        const sortedTrades = trades.sort((a, b) => new Date(b.exitTime).getTime() - new Date(a.exitTime).getTime());
-        setTradeHistory(sortedTrades);
-        setLastHistoryDate(lastDate);
+        const trades = historyService.loadTrades();
+        setTradeHistory(trades);
 
         botManagerService.init(setRunningBots);
 
@@ -265,7 +263,7 @@ const AppContent: React.FC = () => {
         }
         setClosingPositionIds(prev => new Set(prev).add(posToClose.id));
 
-        const exitPrice = exitPriceOverride ?? botManagerService.getBot(posToClose.botId!)?.livePrice ?? 0;
+        const exitPrice = exitPriceOverride ?? botManagerService.getBot(posToClose.botId!)?.bot.livePrice ?? 0;
         if (exitPrice === 0 && posToClose.executionMode !== 'live') { // For paper, we need an exit price
             console.error("Could not determine exit price for paper trade", posToClose.id);
             setClosingPositionIds(prev => { const newSet = new Set(prev); newSet.delete(posToClose.id); return newSet; });
@@ -280,8 +278,8 @@ const AppContent: React.FC = () => {
             
             setTradeHistory(prevHistory => {
                 if (prevHistory.some(t => t.id === newTrade.id)) return prevHistory;
-                historyService.saveTrade(newTrade);
-                return [newTrade, ...prevHistory].sort((a, b) => new Date(b.exitTime).getTime() - new Date(a.exitTime).getTime());
+                const updatedHistory = historyService.saveTrade(newTrade);
+                return updatedHistory;
             });
 
             if (posToClose.botId) {
@@ -358,7 +356,7 @@ const AppContent: React.FC = () => {
         }
 
         const sizeToClose = position.initialSize * tpInfo.sizeFraction;
-        const botConfig = bot.config;
+        const botConfig = bot.bot.config;
 
         const quantity = parseFloat((Math.floor(sizeToClose / botConfig.stepSize) * botConfig.stepSize).toFixed(botConfig.quantityPrecision));
 
@@ -422,7 +420,7 @@ const AppContent: React.FC = () => {
             return;
         }
         
-        const { config } = bot;
+        const { config } = bot.bot;
         
         const { stopLossPrice, takeProfitPrice } = execSignal;
         if (stopLossPrice === undefined || takeProfitPrice === undefined) {
@@ -545,6 +543,8 @@ const AppContent: React.FC = () => {
             agentName: config.agent.name,
             takeProfitPrice,
             stopLossPrice,
+            initialTakeProfitPrice: takeProfitPrice,
+            initialStopLossPrice: stopLossPrice,
             pricePrecision: config.pricePrecision,
             timeFrame: config.timeFrame,
             botId,
@@ -605,14 +605,10 @@ const AppContent: React.FC = () => {
             agent: selectedAgent,
             timeFrame: chartTimeFrame,
             investmentAmount,
-            stopLossMode,
-            stopLossValue,
             takeProfitMode,
             takeProfitValue,
-            isStopLossLocked,
             isTakeProfitLocked,
             isCooldownEnabled,
-            minimumGrossProfit,
             agentParams,
             pricePrecision: binanceService.getPricePrecision(symbolInfo),
             quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
@@ -621,8 +617,8 @@ const AppContent: React.FC = () => {
         botManagerService.startBot(botConfig, botHandlersRef);
     }, [
         selectedPair, tradingMode, leverage, marginType, selectedAgent, chartTimeFrame, executionMode,
-        investmentAmount, stopLossMode, stopLossValue, takeProfitMode, takeProfitValue,
-        isStopLossLocked, isTakeProfitLocked, isCooldownEnabled, agentParams, symbolInfo, minimumGrossProfit
+        investmentAmount, takeProfitMode, takeProfitValue,
+        isTakeProfitLocked, isCooldownEnabled, agentParams, symbolInfo
     ]);
 
     const handleUpdateBotConfig = useCallback((botId: string, partialConfig: Partial<BotConfig>) => {
@@ -641,14 +637,10 @@ const AppContent: React.FC = () => {
         configActions.setAgentParams(config.agentParams || {});
         
         configActions.setInvestmentAmount(config.investmentAmount);
-        configActions.setStopLossMode(config.stopLossMode);
-        configActions.setStopLossValue(config.stopLossValue);
         configActions.setTakeProfitMode(config.takeProfitMode);
         configActions.setTakeProfitValue(config.takeProfitValue);
-        configActions.setIsStopLossLocked(config.isStopLossLocked);
         configActions.setIsTakeProfitLocked(config.isTakeProfitLocked);
         configActions.setIsCooldownEnabled(config.isCooldownEnabled);
-        configActions.setMinimumGrossProfit(config.minimumGrossProfit);
 
     }, [configActions]);
 
@@ -704,7 +696,7 @@ const AppContent: React.FC = () => {
                             theme={theme}
                         />
                         <RunningBots bots={runningBots} {...botActions} />
-                        <TradingLog tradeHistory={tradeHistory} onLoadMoreHistory={() => historyService.loadTrades(lastHistoryDate ?? undefined)} />
+                        <TradingLog tradeHistory={tradeHistory} />
                     </div>
                 </main>
             )}

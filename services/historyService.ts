@@ -1,64 +1,45 @@
 
 import { Trade } from '../types';
 
-const HISTORY_KEY_PREFIX = 'tradeHistory_';
+const HISTORY_KEY = 'tradeHistory_v2';
+const MAX_HISTORY_LENGTH = 200;
 
-// Helper to get a date key in YYYY-MM-DD format
-const getDateKey = (date: Date): string => {
-    return date.toISOString().split('T')[0];
-};
-
-const saveTrade = (trade: Trade): void => {
+const saveTrade = (trade: Trade): Trade[] => {
     try {
-        const dateKey = getDateKey(trade.exitTime);
-        const storageKey = `${HISTORY_KEY_PREFIX}${dateKey}`;
-        const tradesForDay: Trade[] = JSON.parse(localStorage.getItem(storageKey) || '[]');
+        const allTrades = loadTrades();
         
-        // Avoid duplicates
-        if (!tradesForDay.some(t => t.id === trade.id)) {
-            tradesForDay.push(trade);
-            localStorage.setItem(storageKey, JSON.stringify(tradesForDay));
-        }
+        // Add new trade and prevent duplicates
+        const updatedTrades = [trade, ...allTrades.filter(t => t.id !== trade.id)];
+        
+        // Sort by exit time (most recent first) and cap the length
+        const sortedAndCapped = updatedTrades
+            .sort((a, b) => new Date(b.exitTime).getTime() - new Date(a.exitTime).getTime())
+            .slice(0, MAX_HISTORY_LENGTH);
+
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(sortedAndCapped));
+        return sortedAndCapped;
     } catch (error) {
         console.error("Failed to save trade to localStorage:", error);
+        return loadTrades(); // Return existing trades on failure
     }
 };
 
-const loadTrades = (startDate?: Date, daysToLoad: number = 10): { trades: Trade[], lastDate: Date | null } => {
-    const loadedTrades: Trade[] = [];
-    const currentDate = startDate ? new Date(startDate) : new Date();
-    
-    if (startDate) { // When loading more, start from the day before the last loaded date
-        currentDate.setDate(currentDate.getDate() - 1);
-    }
-
-    let daysChecked = 0;
-    let lastDateChecked: Date | null = null;
-    
-    while (daysChecked < daysToLoad) {
-        try {
-            const dateKey = getDateKey(currentDate);
-            const storageKey = `${HISTORY_KEY_PREFIX}${dateKey}`;
-            const tradesForDay: Trade[] = JSON.parse(localStorage.getItem(storageKey) || '[]');
-            loadedTrades.push(...tradesForDay);
-        } catch (error) {
-            console.error(`Failed to load trades for ${currentDate.toISOString()}:`, error);
+const loadTrades = (): Trade[] => {
+    try {
+        const storedTrades = localStorage.getItem(HISTORY_KEY);
+        if (storedTrades) {
+            // Re-hydrate date objects
+            return JSON.parse(storedTrades).map((trade: any) => ({
+                ...trade,
+                entryTime: new Date(trade.entryTime),
+                exitTime: new Date(trade.exitTime),
+            }));
         }
-
-        lastDateChecked = new Date(currentDate);
-        currentDate.setDate(currentDate.getDate() - 1);
-        daysChecked++;
-
-        // Stop if we go too far back in time (e.g., 5 years)
-        if ((new Date().getTime() - currentDate.getTime()) > 5 * 365 * 24 * 60 * 60 * 1000) {
-            break;
-        }
+        return [];
+    } catch (error) {
+        console.error("Failed to load trades from localStorage:", error);
+        return [];
     }
-    
-    // Sort trades by exit time, descending (most recent first)
-    loadedTrades.sort((a, b) => new Date(b.exitTime).getTime() - new Date(a.exitTime).getTime());
-
-    return { trades: loadedTrades, lastDate: lastDateChecked };
 };
 
 export const historyService = {

@@ -29,39 +29,27 @@ export const AGENTS: Agent[] = [
     {
         id: 4,
         name: 'Scalping Expert',
-        description: "A flexible, score-based scalper. It evaluates trend (EMA, SuperTrend), momentum (StochRSI), and volume (OBV Divergence) to find high-probability entries. Exits aggressively on signal reversal or through its partial TP/trailing stop system.",
-        indicators: ['EMA', 'SuperTrend', 'PSAR', 'StochRSI', 'OBV']
-    },
-    {
-        id: 5,
-        name: 'Market Phase Adaptor',
-        description: 'Dynamically switches between trend-following and range-trading strategies based on market volatility (ADX, BBW). Not yet implemented.',
-        indicators: ['ADX', 'Bollinger Bands', 'EMA', 'RSI'],
+        description: "A multi-indicator confirmation strategy. Enters on pullbacks (using Bollinger Bands & RSI) within a confirmed trend (EMA cross, MACD). Exits on MACD momentum fade or an ATR-based trailing stop.",
+        indicators: ['EMA Cross', 'MACD', 'RSI', 'Bollinger Bands', 'ATR']
     },
     {
         id: 6,
         name: 'Profit Locker',
-        description: "Uses the same flexible, score-based entry as the 'Scalping Expert'. Its exit strategy is twofold: it closes on signal reversal for capital protection, and it also moves the stop-loss to lock in profits once a minimum gain is achieved.",
+        description: "Uses a flexible, score-based entry (EMA, SuperTrend, StochRSI, etc.). Its exit strategy is twofold: it closes on signal reversal for capital protection, and it also moves the stop-loss to lock in profits once a minimum gain is achieved.",
         indicators: ["Score-Based Entry (EMA, SuperTrend, PSAR, StochRSI)", "Minimum Profit Protection Exit"]
     },
     {
         id: 7,
         name: 'Market Structure Maven',
-        description: 'Identifies market structure shifts and order blocks to trade based on price action principles. Not yet implemented.',
+        description: 'Identifies the main trend with a long-term EMA, then enters on a pullback to a confirmed swing point (support/resistance). Trades with the trend.',
         indicators: ['Price Action (Swing Points)', 'EMA (Bias)'],
-    },
-    {
-        id: 8,
-        name: 'Institutional Scalper',
-        description: 'A Smart Money Concepts (SMC) agent that looks for liquidity sweeps and fair value gaps. Not yet implemented.',
-        indicators: ['Liquidity Sweeps', 'FVG/Imbalance'],
     },
     {
         id: 9,
         name: 'Quantum Scalper',
         description: 'An aggressive, adaptive scalper. It detects the market regime (trend/range) and uses a tailored scoring system for entries. Exits are managed by a PSAR trailing stop combined with a minimum profit protector safety net.',
         indicators: ['Market Regime Filter (EMA, ADX)', 'Score-based (StochRSI, MACD, Supertrend)', 'PSAR Trailing Exit'],
-    }
+    },
 ];
 
 export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
@@ -89,7 +77,21 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     tr_rsiMomentumBearish: 40,
     tr_breakoutPeriod: 5,
 
-    // Agent 4 & 6: Scalping Expert & Profit Locker
+    // Agent 4: Scalping Expert (NEW LOGIC)
+    se_emaFastPeriod: 10,
+    se_emaSlowPeriod: 21,
+    se_rsiPeriod: 14,
+    se_rsiOversold: 35,
+    se_rsiOverbought: 65,
+    se_bbPeriod: 20,
+    se_bbStdDev: 2,
+    se_atrPeriod: 14,
+    se_atrVolatilityThreshold: 0.4, // Min 0.4% volatility in a candle
+    se_macdFastPeriod: 12,
+    se_macdSlowPeriod: 26,
+    se_macdSignalPeriod: 9,
+
+    // Agent 6: Profit Locker (uses old scalping logic)
     scalp_scoreThreshold: 4,
     scalp_emaPeriod: 50,
     scalp_rsiPeriod: 14,
@@ -103,24 +105,9 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     scalp_obvLookback: 10,
     scalp_obvScore: 2,
 
-    // Agent 5: Market Phase Adaptor
-    mpa_adxTrend: 25,
-    mpa_adxChop: 20,
-    mpa_bbwSqueeze: 0.015,
-    mpa_trendEmaFast: 21,
-    mpa_trendEmaSlow: 50,
-    mpa_rangeBBPeriod: 20,
-    mpa_rangeBBStdDev: 2,
-    mpa_rangeRsiOversold: 30,
-    mpa_rangeRsiOverbought: 70,
-
     // Agent 7: Market Structure Maven
     msm_htfEmaPeriod: 200,
     msm_swingPointLookback: 5,
-
-    // Agent 8: Institutional Scalper
-    inst_lookbackPeriod: 10,
-    inst_powerCandleMultiplier: 1.5,
 
     // Agent 9: Quantum Scalper
     qsc_fastEmaPeriod: 9,
@@ -201,6 +188,6 @@ export const MOCK_PAPER_FUTURES_WALLET: WalletBalance[] = [
 /**
  * A non-configurable hard cap on risk to prevent catastrophic single-trade losses.
  * This is the maximum percentage of the *investment amount* that a trade is allowed to lose.
- * E.g., a value of 10 means a maximum loss of 10%, which is $10 on a $100 investment.
+ * E.g., a value of 5 means a maximum loss of 5%, which is $5 on a $100 investment.
  */
-export const MAX_STOP_LOSS_PERCENT_OF_INVESTMENT = 10;
+export const MAX_STOP_LOSS_PERCENT_OF_INVESTMENT = 5;

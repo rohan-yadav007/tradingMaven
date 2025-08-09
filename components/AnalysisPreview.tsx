@@ -1,10 +1,7 @@
 
-
-
-
 import React from 'react';
 import { Agent, TradeSignal, AgentParams } from '../types';
-import { ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon } from './icons';
+import { ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, InfoIcon } from './icons';
 
 interface AnalysisPreviewProps {
     analysis: TradeSignal | null;
@@ -36,12 +33,27 @@ const SignalTag: React.FC<{ signal: 'BUY' | 'SELL' | 'HOLD' }> = ({ signal }) =>
 const ReasonItem: React.FC<{ reason: string }> = ({ reason }) => {
     const isMet = reason.startsWith('✅');
     const isUnmet = reason.startsWith('❌');
+    const isInfo = reason.startsWith('ℹ️');
 
-    if (isMet || isUnmet) {
+    if (isMet || isUnmet || isInfo) {
         const text = reason.substring(2).trim();
-        const iconColor = isMet ? 'text-emerald-500' : 'text-rose-500';
-        const textColor = isMet ? 'text-slate-700 dark:text-slate-300' : 'text-slate-500 dark:text-slate-400';
-        const Icon = isMet ? CheckCircleIcon : XCircleIcon;
+        let iconColor: string;
+        let textColor: string;
+        let Icon: React.FC<any>;
+
+        if (isMet) {
+            iconColor = 'text-emerald-500';
+            textColor = 'text-slate-700 dark:text-slate-300';
+            Icon = CheckCircleIcon;
+        } else if (isUnmet) {
+            iconColor = 'text-rose-500';
+            textColor = 'text-slate-500 dark:text-slate-400';
+            Icon = XCircleIcon;
+        } else { // isInfo
+            iconColor = 'text-sky-500';
+            textColor = 'text-slate-600 dark:text-slate-300';
+            Icon = InfoIcon;
+        }
 
         return (
             <li className="flex items-center gap-2">

@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect } from 'react';
 import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams } from '../types';
 import * as constants from '../constants';
@@ -134,17 +133,17 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
     const {
         executionMode, availableBalance, tradingMode, allPairs, selectedPair,
         leverage, chartTimeFrame: timeFrame, selectedAgent, investmentAmount,
-        stopLossMode, stopLossValue, takeProfitMode, takeProfitValue,
-        isStopLossLocked, isTakeProfitLocked, isCooldownEnabled, agentParams,
+        takeProfitMode, takeProfitValue,
+        isTakeProfitLocked, isCooldownEnabled, agentParams,
         marginType, futuresSettingsError, isMultiAssetMode, multiAssetModeError,
-        maxLeverage, isLeverageLoading, minimumGrossProfit
+        maxLeverage, isLeverageLoading
     } = useTradingConfigState();
 
     const {
         setExecutionMode, setTradingMode, setSelectedPair, setLeverage, setTimeFrame,
-        setSelectedAgent, setInvestmentAmount, setStopLossMode, setStopLossValue,
-        setTakeProfitMode, setTakeProfitValue, setIsStopLossLocked, setIsTakeProfitLocked,
-        setIsCooldownEnabled, setMarginType, onSetMultiAssetMode, setAgentParams, setMinimumGrossProfit
+        setSelectedAgent, setInvestmentAmount,
+        setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
+        setIsCooldownEnabled, setMarginType, onSetMultiAssetMode, setAgentParams
     } = useTradingConfigActions();
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -173,7 +172,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
 
     useEffect(() => {
         const updateSmartTargets = () => {
-            if (klines.length < 50 || (!isStopLossLocked || !isTakeProfitLocked)) return;
+            if (klines.length < 50 || !isTakeProfitLocked) return;
 
             const currentPrice = klines[klines.length - 1].close;
             if (currentPrice <= 0) return;
@@ -183,18 +182,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
 
             const longTargets = getInitialAgentTargets(klines, currentPrice, 'LONG', timeFrame, finalParams, selectedAgent.id);
             
-            const stopDistance = currentPrice - longTargets.stopLossPrice;
             const profitDistance = longTargets.takeProfitPrice - currentPrice;
-
-            if (!isStopLossLocked) {
-                let newSlValue: number;
-                if (stopLossMode === RiskMode.Percent) {
-                    newSlValue = (stopDistance / currentPrice) * 100;
-                } else { // Amount
-                    newSlValue = investmentAmount * (stopDistance / currentPrice);
-                }
-                setStopLossValue(parseFloat(newSlValue.toFixed(2)));
-            }
             
             if (!isTakeProfitLocked) {
                 let newTpValue: number;
@@ -209,8 +197,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
 
         updateSmartTargets();
     }, [
-        klines, isStopLossLocked, isTakeProfitLocked, selectedAgent, timeFrame, agentParams, 
-        investmentAmount, stopLossMode, takeProfitMode, setStopLossValue, setTakeProfitValue
+        klines, isTakeProfitLocked, selectedAgent, timeFrame, agentParams, 
+        investmentAmount, takeProfitMode, setTakeProfitValue
     ]);
     
     return (
@@ -276,17 +264,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 )}
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-                <RiskInputWithLock
-                    label="Stop Loss"
-                    mode={stopLossMode}
-                    value={stopLossValue}
-                    isLocked={isStopLossLocked}
-                    investmentAmount={investmentAmount}
-                    onModeChange={setStopLossMode}
-                    onValueChange={setStopLossValue}
-                    onLockToggle={() => setIsStopLossLocked(!isStopLossLocked)}
-                />
+            <div className="grid grid-cols-1 gap-4">
                 <RiskInputWithLock
                     label="Take Profit"
                     mode={takeProfitMode}
@@ -298,22 +276,9 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     onLockToggle={() => setIsTakeProfitLocked(!isTakeProfitLocked)}
                 />
             </div>
-             <div className={formGroupClass}>
-                <label htmlFor="min-gross-profit" className={formLabelClass}>Minimum Gross Profit ($)</label>
-                 <div className="relative">
-                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500">$</span>
-                    <input 
-                        type="number"
-                        id="min-gross-profit"
-                        value={minimumGrossProfit} 
-                        onChange={e => setMinimumGrossProfit(Number(e.target.value))} 
-                        className={`${formInputClass} pl-7`}
-                        min="0"
-                        step="0.1"
-                    />
-                </div>
-                 <p className="text-xs text-slate-500 dark:text-slate-400">Used by 'Profit Locker' to only secure gains above this value (based on price movement).</p>
-            </div>
+             <p className="text-xs text-slate-500 dark:text-slate-400 -mt-2">
+                Stop Loss is now fully automated by the agent's logic and the universal profit-locking system.
+            </p>
             
             {tradingMode === TradingMode.USDSM_Futures && (
                  <>

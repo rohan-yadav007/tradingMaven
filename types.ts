@@ -1,8 +1,3 @@
-
-
-
-
-
 export enum TradingMode {
     Spot = 'Spot',
     USDSM_Futures = 'USDS-M Futures',
@@ -65,6 +60,9 @@ export interface Position {
     initialSize?: number; 
     partialTps?: { price: number; hit: boolean; sizeFraction: number }[];
     trailStartPrice?: number;
+    // For R:R based trailing
+    initialStopLossPrice: number;
+    initialTakeProfitPrice: number;
 }
 
 export interface Trade extends Position {
@@ -208,15 +206,11 @@ export interface BotConfig {
     timeFrame: string;
     // Risk management model
     investmentAmount: number;
-    stopLossMode: RiskMode;
-    stopLossValue: number;
     takeProfitMode: RiskMode;
     takeProfitValue: number;
     // Proactive Management Toggles
-    isStopLossLocked: boolean;
     isTakeProfitLocked: boolean;
     isCooldownEnabled: boolean;
-    minimumGrossProfit: number;
     agentParams?: AgentParams;
     // Precision data for self-contained bot logic
     pricePrecision: number;
@@ -309,8 +303,29 @@ export interface AgentParams {
     mom_rsiThresholdBearish?: number;
     mom_volumeSmaPeriod?: number;
     mom_volumeMultiplier?: number;
+    
+    // Agent 2: Trend Rider
+    tr_emaFastPeriod?: number;
+    tr_emaSlowPeriod?: number;
+    tr_rsiMomentumBullish?: number;
+    tr_rsiMomentumBearish?: number;
+    tr_breakoutPeriod?: number;
 
-    // Agent 4 & 6: Scalping Expert & Profit Locker (share params)
+    // Agent 4: Scalping Expert (NEW LOGIC)
+    se_emaFastPeriod?: number;
+    se_emaSlowPeriod?: number;
+    se_rsiPeriod?: number;
+    se_rsiOversold?: number;
+    se_rsiOverbought?: number;
+    se_bbPeriod?: number;
+    se_bbStdDev?: number;
+    se_atrPeriod?: number;
+    se_atrVolatilityThreshold?: number; // As a percentage, e.g., 0.5 for 0.5%
+    se_macdFastPeriod?: number;
+    se_macdSlowPeriod?: number;
+    se_macdSignalPeriod?: number;
+
+    // Agent 6: Profit Locker (uses old scalping logic)
     scalp_scoreThreshold?: number;
     scalp_emaPeriod?: number;
     scalp_rsiPeriod?: number; // Used for StochRSI
@@ -324,24 +339,9 @@ export interface AgentParams {
     scalp_obvLookback?: number;
     scalp_obvScore?: number;
 
-    // Agent 5: Market Phase Adaptor
-    mpa_adxTrend?: number;
-    mpa_adxChop?: number;
-    mpa_bbwSqueeze?: number;
-    mpa_trendEmaFast?: number;
-    mpa_trendEmaSlow?: number;
-    mpa_rangeBBPeriod?: number;
-    mpa_rangeBBStdDev?: number;
-    mpa_rangeRsiOversold?: number;
-    mpa_rangeRsiOverbought?: number;
-
     // Agent 7: Market Structure Maven
     msm_htfEmaPeriod?: number;
     msm_swingPointLookback?: number;
-
-    // Agent 8: Institutional Scalper
-    inst_lookbackPeriod?: number;
-    inst_powerCandleMultiplier?: number;
 
     // Agent 9: Quantum Scalper
     qsc_fastEmaPeriod?: number;

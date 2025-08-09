@@ -1,15 +1,10 @@
 
-
-
-
-
-
 import { Kline, BotConfig, BacktestResult, SimulatedTrade, AgentParams, Position, RiskMode, TradingMode } from '../types';
 import * as binanceService from './binanceService';
 import { getTradingSignal, getTradeManagementSignal, getInitialAgentTargets, analyzeTrendExhaustion } from './localAgentService';
 import * as constants from '../constants';
 
-interface SimulatedPosition extends Omit<Position, 'id' | 'entryTime' | 'botId' | 'orderId'> {
+interface SimulatedPosition extends Omit<Position, 'id' | 'entryTime' | 'botId' | 'orderId' | 'exitReason' | 'pnl' | 'exitTime'> {
     entryTime: number; // Use timestamp for easier comparison
 }
 
@@ -42,7 +37,6 @@ export async function runBacktest(
     let equity = STARTING_CAPITAL;
     let managementKlineIndex = 0;
 
-    // State for simulating the Trend Exhaustion Veto logic
     let inPostProfitAnalysis = false;
     let lastProfitableDirection: 'LONG' | 'SHORT' | null = null;
     
@@ -54,54 +48,55 @@ export async function runBacktest(
     }
     
     for (let i = minCandles; i < mainKlines.length; i++) {
-        const entrySignalCandle = mainKlines[i-1]; // The main TF candle that just closed
+        const entrySignalCandle = mainKlines[i-1];
         const historySlice = mainKlines.slice(0, i);
 
-        // --- MANAGE OPEN POSITION using 1m klines up to the current main candle's close time ---
         if (openPosition) {
             const isLong = openPosition.direction === 'LONG';
             
             while (managementKlineIndex < managementKlines.length && managementKlines[managementKlineIndex].time <= entrySignalCandle.time) {
                 const managementCandle = managementKlines[managementKlineIndex];
                 
-                // --- Partial TP Logic ---
-                if (openPosition.partialTps) {
-                    for (let tpIdx = 0; tpIdx < openPosition.partialTps.length; tpIdx++) {
-                        const tp = openPosition.partialTps[tpIdx];
-                        if (!tp.hit) {
-                            const priceConditionMet = isLong ? managementCandle.high >= tp.price : managementCandle.low <= tp.price;
-                            if (priceConditionMet) {
-                                const sizeToClose = openPosition.initialSize! * tp.sizeFraction;
-                                const pnl = (tp.price - openPosition.entryPrice) * sizeToClose * (isLong ? 1 : -1);
-                                equity += pnl;
-                                
-                                // Record a "realized" part of the trade
-                                trades.push({
-                                    id: trades.length + 1, pair: openPosition.pair, direction: openPosition.direction,
-                                    entryPrice: openPosition.entryPrice, exitPrice: tp.price, entryTime: openPosition.entryTime,
-                                    exitTime: managementCandle.time, size: sizeToClose, pnl, investedAmount: config.investmentAmount,
-                                    exitReason: `Partial TP ${tpIdx + 1}`, entryReason: openPosition.entryReason
-                                });
+                let exitPrice: number | undefined;
+                let exitReason: string | undefined;
+                
+                if (isLong) {
+                    if (managementCandle.high >= openPosition.takeProfitPrice) {
+                        exitPrice = openPosition.takeProfitPrice;
+                        exitReason = 'Take Profit Hit';
+                    } else if (managementCandle.low <= openPosition.stopLossPrice) {
+                        const realisticExitPrice = managementCandle.open < openPosition.stopLossPrice ? managementCandle.open : openPosition.stopLossPrice;
+                        const pnlWithSlippage = (realisticExitPrice - openPosition.entryPrice) * openPosition.size;
+                        const maxLossAmount = config.investmentAmount * (constants.MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
 
-                                openPosition.size -= sizeToClose;
-                                openPosition.partialTps[tpIdx].hit = true;
-                            }
+                        if (Math.abs(pnlWithSlippage) > maxLossAmount) {
+                            exitPrice = openPosition.entryPrice - (maxLossAmount / openPosition.size);
+                            exitReason = `Stop Loss Hit (Slippage Capped)`;
+                        } else {
+                            exitPrice = realisticExitPrice;
+                            exitReason = 'Stop Loss Hit';
+                        }
+                    }
+                } else { // SHORT
+                    if (managementCandle.low <= openPosition.takeProfitPrice) {
+                        exitPrice = openPosition.takeProfitPrice;
+                        exitReason = 'Take Profit Hit';
+                    } else if (managementCandle.high >= openPosition.stopLossPrice) {
+                        const realisticExitPrice = managementCandle.open > openPosition.stopLossPrice ? managementCandle.open : openPosition.stopLossPrice;
+                        const pnlWithSlippage = (realisticExitPrice - openPosition.entryPrice) * openPosition.size * -1;
+                        const maxLossAmount = config.investmentAmount * (constants.MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
+
+                        if (pnlWithSlippage < -maxLossAmount) {
+                            exitPrice = openPosition.entryPrice + (maxLossAmount / openPosition.size);
+                            exitReason = 'Stop Loss Hit (Slippage Capped)';
+                        } else {
+                            exitPrice = realisticExitPrice;
+                            exitReason = 'Stop Loss Hit';
                         }
                     }
                 }
 
-                // --- SL/Final TP Hit Logic ---
-                let exitPrice = 0;
-                let exitReason = '';
-                if (isLong) {
-                    if (managementCandle.high >= openPosition.takeProfitPrice) { exitPrice = openPosition.takeProfitPrice; exitReason = 'Take Profit Hit'; } 
-                    else if (managementCandle.low <= openPosition.stopLossPrice) { exitPrice = openPosition.stopLossPrice; exitReason = 'Stop Loss Hit'; }
-                } else { // SHORT
-                    if (managementCandle.low <= openPosition.takeProfitPrice) { exitPrice = openPosition.takeProfitPrice; exitReason = 'Take Profit Hit'; } 
-                    else if (managementCandle.high >= openPosition.stopLossPrice) { exitPrice = openPosition.stopLossPrice; exitReason = 'Stop Loss Hit'; }
-                }
-
-                if (exitPrice > 0) {
+                if (exitPrice !== undefined && exitReason !== undefined) {
                     const pnl = (exitPrice - openPosition.entryPrice) * openPosition.size * (isLong ? 1 : -1);
                     equity += pnl;
 
@@ -119,28 +114,29 @@ export async function runBacktest(
                     }
 
                     openPosition = null;
-                    break; // Exit the management kline loop
+                    break;
                 }
 
-                // --- Proactive Trailing Stop Management ---
-                if (!config.isStopLossLocked) {
-                    const tempPositionForSignal: Position = { ...openPosition, id: 0, botId: 'sim', orderId: null, entryTime: new Date(openPosition.entryTime) };
+                 if (openPosition) { // Check if position still open before trailing
                     const mgmtHistorySlice = managementKlines.slice(0, managementKlineIndex + 1);
-                    const mgmtSignal = await getTradeManagementSignal(tempPositionForSignal, mgmtHistorySlice, managementCandle.close, config);
+                    const livePriceForTrail = isLong ? managementCandle.high : managementCandle.low;
+                    
+                    const tempPositionForSignal: Position = { ...openPosition, id: 0, botId: 'sim', orderId: null, entryTime: new Date(openPosition.entryTime) };
+
+                    const mgmtSignal = await getTradeManagementSignal(tempPositionForSignal, mgmtHistorySlice, livePriceForTrail, config);
 
                     if (mgmtSignal.newStopLoss) openPosition.stopLossPrice = mgmtSignal.newStopLoss;
+                    if (mgmtSignal.newTakeProfit) openPosition.takeProfitPrice = mgmtSignal.newTakeProfit;
                 }
                 
                 managementKlineIndex++;
             }
         } else {
-            // If no position, just advance the management kline index
             while (managementKlineIndex < managementKlines.length && managementKlines[managementKlineIndex].time <= entrySignalCandle.time) {
                 managementKlineIndex++;
             }
         }
         
-        // --- CHECK FOR ENTRIES (if no position) ---
         if (!openPosition) {
             const signal = await getTradingSignal(config.agent, historySlice, config.timeFrame, config.agentParams);
              
@@ -151,9 +147,7 @@ export async function runBacktest(
                     const signalDirection = signal.signal === 'BUY' ? 'LONG' : 'SHORT';
                     if (signalDirection === lastProfitableDirection) {
                         const { veto } = analyzeTrendExhaustion(historySlice, signalDirection);
-                        if (veto) {
-                            canProceed = false; // Veto the trade
-                        }
+                        if (veto) canProceed = false;
                     }
                     inPostProfitAnalysis = false; 
                     lastProfitableDirection = null;
@@ -166,49 +160,27 @@ export async function runBacktest(
                     if (config.investmentAmount > 0 && entryPrice > 0) {
                         const agentTargets = getInitialAgentTargets(historySlice, entryPrice, isLong ? 'LONG' : 'SHORT', config.timeFrame, { ...constants.DEFAULT_AGENT_PARAMS, ...config.agentParams }, config.agent.id);
                         
-                        let stopLossPrice: number;
-                        if (config.isStopLossLocked) {
-                            const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
-                            const tradeSize = positionValue / entryPrice;
-                            if (config.stopLossMode === RiskMode.Percent) {
-                                const lossAmount = config.investmentAmount * (config.stopLossValue / 100);
-                                stopLossPrice = isLong ? entryPrice - (lossAmount / tradeSize) : entryPrice + (lossAmount / tradeSize);
-                            } else { // Amount
-                                stopLossPrice = isLong ? entryPrice - (config.stopLossValue / tradeSize) : entryPrice + (config.stopLossValue / tradeSize);
-                            }
-                        } else {
-                            stopLossPrice = agentTargets.stopLossPrice;
-                        }
+                        let stopLossPrice = agentTargets.stopLossPrice;
                         
                         let takeProfitPrice = agentTargets.takeProfitPrice;
-                        if (config.isTakeProfitLocked && !agentTargets.partialTps) { // Only override TP if not using partial TP strategy
+                        if (config.isTakeProfitLocked && !agentTargets.partialTps) {
                            const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
                            const tradeSize = positionValue / entryPrice;
                            if(config.takeProfitMode === RiskMode.Percent) {
                                const profitAmount = config.investmentAmount * (config.takeProfitValue / 100);
                                takeProfitPrice = isLong ? entryPrice + (profitAmount / tradeSize) : entryPrice - (profitAmount / tradeSize);
                            } else {
-                               takeProfitPrice = isLong ? entryPrice + (config.takeProfitValue / tradeSize) : entryPrice - (config.takeProfitValue / tradeSize);
+                               const takeProfitValue = config.takeProfitValue;
+                               takeProfitPrice = isLong ? entryPrice + (takeProfitValue / tradeSize) : entryPrice - (takeProfitValue / tradeSize);
                            }
                         }
                         
-                        // --- Hard Cap Safety Net ---
                         const positionValueForCap = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
                         const tradeSizeForCap = positionValueForCap / entryPrice;
                         if (tradeSizeForCap > 0) {
                             const maxLossAmount = config.investmentAmount * (constants.MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
                             const hardCapStopLossPrice = isLong ? entryPrice - (maxLossAmount / tradeSizeForCap) : entryPrice + (maxLossAmount / tradeSizeForCap);
-
-                            const originalStopLoss = stopLossPrice;
                             stopLossPrice = isLong ? Math.max(stopLossPrice, hardCapStopLossPrice) : Math.min(stopLossPrice, hardCapStopLossPrice);
-
-                            if (stopLossPrice !== originalStopLoss && !config.isTakeProfitLocked) {
-                                const riskDistance = Math.abs(entryPrice - stopLossPrice);
-                                const originalRiskDistance = Math.abs(entryPrice - originalStopLoss);
-                                const originalProfitDistance = Math.abs(takeProfitPrice - entryPrice);
-                                const riskRewardRatio = originalRiskDistance > 0 ? originalProfitDistance / originalRiskDistance : 1.5;
-                                takeProfitPrice = isLong ? entryPrice + (riskDistance * riskRewardRatio) : entryPrice - (riskDistance * riskRewardRatio);
-                            }
                         }
 
                         const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
@@ -219,16 +191,19 @@ export async function runBacktest(
                                 pair: config.pair, mode: config.mode, executionMode: config.executionMode, direction: isLong ? 'LONG' : 'SHORT',
                                 entryPrice, size: tradeSize, leverage: config.leverage, entryTime: entrySignalCandle.time,
                                 entryReason: signal.reasons.join(' '), agentName: config.agent.name, takeProfitPrice,
-                                stopLossPrice, pricePrecision: config.pricePrecision, timeFrame: config.timeFrame,
-                                // Add partial TP info if the agent provides it
+                                stopLossPrice,
+                                initialStopLossPrice: stopLossPrice, // Store for R:R trailing
+                                initialTakeProfitPrice: takeProfitPrice,
+                                pricePrecision: config.pricePrecision, timeFrame: config.timeFrame,
                                 initialSize: tradeSize,
                                 partialTps: agentTargets.partialTps,
                                 trailStartPrice: agentTargets.trailStartPrice,
+                                marginType: config.marginType,
                             };
                         }
                     }
                 }
-            } else { // Signal is HOLD
+            } else {
                 if (inPostProfitAnalysis) {
                     inPostProfitAnalysis = false;
                     lastProfitableDirection = null;
@@ -243,7 +218,6 @@ export async function runBacktest(
         equityCurve.push(equity + currentPnl);
     }
     
-    // Force close at the very end if still open
     if (openPosition) {
         const lastKline = managementKlines[managementKlines.length - 1] || mainKlines[mainKlines.length - 1];
         const exitPrice = lastKline.close;
@@ -305,26 +279,15 @@ function calculateResults(trades: SimulatedTrade[], equityCurve: number[], start
         }
     }
 
-    // Sharpe Ratio Calculation
-    const returns = trades.map(t => t.pnl / (t.investedAmount || startingCapital));
-    const avgReturn = returns.length > 0 ? returns.reduce((sum, r) => sum + r, 0) / returns.length : 0;
-    const stdDev = returns.length > 0 ? Math.sqrt(returns.map(r => Math.pow(r - avgReturn, 2)).reduce((sum, r) => sum + r, 0) / returns.length) : 0;
-    const sharpeRatio = stdDev > 0 ? avgReturn / stdDev : 0;
+    const totalDurationMs = trades.reduce((acc, trade) => acc + (trade.exitTime - trade.entryTime), 0);
+    const averageTradeDuration = formatDuration(totalTrades > 0 ? totalDurationMs / totalTrades : 0);
 
-    const totalDurationMs = trades.reduce((sum, trade) => sum + (trade.exitTime - trade.entryTime), 0);
-    const averageTradeDuration = totalTrades > 0 ? formatDuration(totalDurationMs / totalTrades) : 'N/A';
-
+    const returns = trades.map(t => t.pnl / t.investedAmount);
+    const avgReturn = returns.reduce((acc, r) => acc + r, 0) / returns.length;
+    const stdDev = Math.sqrt(returns.map(r => Math.pow(r - avgReturn, 2)).reduce((acc, v) => acc + v, 0) / returns.length);
+    const sharpeRatio = stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(252) : 0; // Annualized for daily returns assumption (can be improved)
+    
     return {
-        trades: trades.sort((a,b) => b.exitTime - a.exitTime),
-        totalPnl,
-        winRate,
-        totalTrades,
-        wins,
-        losses,
-        breakEvens,
-        maxDrawdown,
-        profitFactor,
-        sharpeRatio,
-        averageTradeDuration,
+        trades, totalPnl, winRate, totalTrades, wins, losses, breakEvens, maxDrawdown, profitFactor, sharpeRatio, averageTradeDuration
     };
 }

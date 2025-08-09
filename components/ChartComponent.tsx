@@ -85,6 +85,12 @@ export const ChartComponent: React.FC<ChartComponentProps> = ({ data, pair, isLo
     const prevDataLengthRef = useRef(data.length);
     const isFullReloadRef = useRef(true); // Ref to track if a full data reload is needed
 
+    // --- Constants ---
+    const PADDING = { top: 20, right: 80, bottom: 40, left: 10 };
+    const SVG_WIDTH = 800;
+    const SVG_HEIGHT = 400;
+    const RIGHT_PADDING_CANDLES = 15; // Number of candles worth of space on the right
+    
     // --- Effects for managing chart state ---
 
     // Effect for live price ticker color
@@ -96,23 +102,6 @@ export const ChartComponent: React.FC<ChartComponentProps> = ({ data, pair, isLo
         return () => clearTimeout(timeout);
     }, [livePrice]);
     
-    // Effect to calculate Support/Resistance levels based on visible data
-    const visibleData = useMemo(() => {
-        return data.slice(
-            Math.max(0, Math.floor(view.startIndex)), 
-            Math.min(data.length, Math.floor(view.startIndex + view.visibleCandles))
-        );
-    }, [data, view.startIndex, view.visibleCandles]);
-
-    useEffect(() => {
-        if (visibleData.length > 50) {
-            const levels = calculateSupportResistance(visibleData);
-            setSrLevels(levels);
-        } else {
-            setSrLevels({ supports: [], resistances: [] });
-        }
-    }, [visibleData]);
-
     // Flag for a full reload when pair or timeframe changes
     useEffect(() => {
         isFullReloadRef.current = true;
@@ -120,7 +109,9 @@ export const ChartComponent: React.FC<ChartComponentProps> = ({ data, pair, isLo
 
     // This is the main effect to handle view changes based on data updates.
     useEffect(() => {
-        if (isFullReloadRef.current && data.length > 0) {
+        if (data.length === 0) return;
+
+        if (isFullReloadRef.current) {
             const initialVisibleCandles = 120;
             setView({
                 startIndex: Math.max(0, data.length - initialVisibleCandles),
@@ -152,27 +143,56 @@ export const ChartComponent: React.FC<ChartComponentProps> = ({ data, pair, isLo
         prevDataLengthRef.current = data.length;
     }, [data]);
 
+    // Derived values for rendering
+    const {
+        visibleData, chartWidth, chartHeight,
+        minPrice, maxPrice, priceRange,
+        y_scale, y_invert
+    } = useMemo(() => {
+        const _chartWidth = SVG_WIDTH - PADDING.left - PADDING.right;
+        const _chartHeight = SVG_HEIGHT - PADDING.top - PADDING.bottom;
+
+        const _visibleData = data.slice(
+            Math.max(0, Math.floor(view.startIndex)), 
+            Math.min(data.length, Math.floor(view.startIndex + view.visibleCandles))
+        );
+
+        const visiblePrices = _visibleData.flatMap(d => [d.low, d.high]);
+        if (livePrice > 0) visiblePrices.push(livePrice);
+
+        const _minPriceRaw = visiblePrices.length > 0 ? Math.min(...visiblePrices) : 0;
+        const _maxPriceRaw = visiblePrices.length > 0 ? Math.max(...visiblePrices) : 1;
+        
+        // Add vertical buffer
+        const priceBuffer = (_maxPriceRaw - _minPriceRaw) * 0.05;
+        const _minPrice = _minPriceRaw - priceBuffer;
+        const _maxPrice = _maxPriceRaw + priceBuffer;
+        
+        const _priceRange = _maxPrice - _minPrice;
+
+        const _y_scale = (price: number) => PADDING.top + _chartHeight - ((price - _minPrice) / _priceRange) * _chartHeight;
+        const _y_invert = (y: number) => _minPrice + ((PADDING.top + _chartHeight - y) / _chartHeight) * _priceRange;
+
+        return {
+            visibleData: _visibleData, chartWidth: _chartWidth, chartHeight: _chartHeight,
+            minPrice: _minPrice, maxPrice: _maxPrice, priceRange: _priceRange,
+            y_scale: _y_scale, y_invert: _y_invert
+        };
+    }, [data, view, livePrice, theme, PADDING.right]);
+    
+    // S/R Calculation
+    useEffect(() => {
+        if (visibleData.length > 50) {
+            const levels = calculateSupportResistance(visibleData);
+            setSrLevels(levels);
+        } else {
+            setSrLevels({ supports: [], resistances: [] });
+        }
+    }, [visibleData]);
+
 
     const livePriceColor = priceChange === 'up' ? 'text-emerald-500' : priceChange === 'down' ? 'text-rose-500' : 'text-slate-800 dark:text-slate-200';
-
-    const PADDING = { top: 20, right: 60, bottom: 40, left: 10 };
-    const SVG_WIDTH = 800;
-    const SVG_HEIGHT = 400;
-
-    const chartWidth = SVG_WIDTH - PADDING.left - PADDING.right;
-    const chartHeight = SVG_HEIGHT - PADDING.top - PADDING.bottom;
-    
-    const visiblePrices = visibleData.flatMap(d => [d.low, d.high]);
-    if (livePrice > 0) {
-        visiblePrices.push(livePrice);
-    }
-    
-    const minPrice = visiblePrices.length > 0 ? Math.min(...visiblePrices) : 0;
-    const maxPrice = visiblePrices.length > 0 ? Math.max(...visiblePrices) : 1;
-    const priceRange = maxPrice - minPrice;
-    
-    const y_scale = (price: number) => PADDING.top + chartHeight - ((price - minPrice) / priceRange) * chartHeight;
-    const y_invert = (y: number) => minPrice + ((PADDING.top + chartHeight - y) / chartHeight) * priceRange;
+    const livePriceStrokeColor = priceChange === 'up' ? '#22c55e' : priceChange === 'down' ? '#f43f5e' : (theme === 'dark' ? '#94a3b8' : '#64748b');
 
     const handleWheel = useCallback((event: WheelEvent) => {
         event.preventDefault();
@@ -210,8 +230,8 @@ export const ChartComponent: React.FC<ChartComponentProps> = ({ data, pair, isLo
         const y = event.clientY - rect.top;
 
         if (isPanning) {
-            const chartDomWidth = svgRef.current.clientWidth;
-            const candlesPerPixel = view.visibleCandles / chartDomWidth;
+            const barWidth = Math.max(1, chartWidth / (view.visibleCandles + RIGHT_PADDING_CANDLES) * 0.7);
+            const candlesPerPixel = view.visibleCandles / (chartWidth - RIGHT_PADDING_CANDLES * (barWidth / 0.7));
             
             const deltaX = event.clientX - panStart.x;
             const candleDelta = deltaX * candlesPerPixel;
@@ -227,15 +247,19 @@ export const ChartComponent: React.FC<ChartComponentProps> = ({ data, pair, isLo
         }
 
         if (x > PADDING.left && x < SVG_WIDTH - PADDING.right && y > PADDING.top && y < PADDING.top + chartHeight) {
-            const index = Math.floor(((x - PADDING.left) / chartWidth) * visibleData.length);
-            const kline = visibleData[index];
-            if(kline) {
-                setCrosshair({
-                    x: x,
-                    y: y,
-                    time: kline.time,
-                    price: y_invert(y),
-                });
+            const index = Math.floor(((x - PADDING.left) / chartWidth) * view.visibleCandles);
+            if (index < visibleData.length) {
+                const kline = visibleData[index];
+                if(kline) {
+                    setCrosshair({
+                        x: x,
+                        y: y,
+                        time: kline.time,
+                        price: y_invert(y),
+                    });
+                }
+            } else {
+                 setCrosshair(null);
             }
         } else {
             setCrosshair(null);
@@ -245,6 +269,7 @@ export const ChartComponent: React.FC<ChartComponentProps> = ({ data, pair, isLo
     const handleMouseUpOrLeave = () => {
         setIsPanning(false);
         if(svgRef.current) svgRef.current.style.cursor = 'crosshair';
+        setCrosshair(null);
     };
 
     useEffect(() => {
@@ -266,7 +291,8 @@ export const ChartComponent: React.FC<ChartComponentProps> = ({ data, pair, isLo
             return <div style={{height: '400px'}} className="flex items-center justify-center text-rose-500">Could not load chart data.</div>;
         }
 
-        const barWidth = Math.max(1, chartWidth / view.visibleCandles * 0.7);
+        const totalVirtualCandles = view.visibleCandles + RIGHT_PADDING_CANDLES;
+        const barWidth = Math.max(1, chartWidth / totalVirtualCandles * 0.7);
         const priceLevels = Array.from({ length: 5 }, (_, i) => minPrice + (priceRange / 4) * i);
         const timeLabelsCount = Math.min(10, Math.floor(chartWidth / 80));
         const timeLabelStep = Math.max(1, Math.floor(visibleData.length / timeLabelsCount));
@@ -287,9 +313,10 @@ export const ChartComponent: React.FC<ChartComponentProps> = ({ data, pair, isLo
                     onMouseDown={handleMouseDown}
                     onMouseMove={handleMouseMove}
                     onMouseUp={handleMouseUpOrLeave}
-                    onMouseLeave={() => setCrosshair(null)}
+                    onMouseLeave={handleMouseUpOrLeave}
                     style={{ cursor: isPanning ? 'grabbing' : 'crosshair', userSelect: 'none', background: isDark ? '#1e293b' : '#f8fafc' }}
                 >
+                    {/* Y-axis Gridlines & Labels */}
                     {priceLevels.map(price => (
                         <g key={`price-grid-${price}`}>
                             <line x1={PADDING.left} y1={y_scale(price)} x2={SVG_WIDTH - PADDING.right} y2={y_scale(price)} className="stroke-slate-200 dark:stroke-slate-700" strokeDasharray="3,3" strokeWidth="0.5" />
@@ -297,6 +324,7 @@ export const ChartComponent: React.FC<ChartComponentProps> = ({ data, pair, isLo
                         </g>
                     ))}
                     
+                    {/* S/R Levels */}
                     {srLevels.supports.map(level => (
                         <g key={`support-${level}`}>
                             <line x1={PADDING.left} y1={y_scale(level)} x2={SVG_WIDTH - PADDING.right} y2={y_scale(level)} className="stroke-emerald-500" strokeDasharray="5,5" strokeWidth="1" />
@@ -310,19 +338,30 @@ export const ChartComponent: React.FC<ChartComponentProps> = ({ data, pair, isLo
                         </g>
                     ))}
 
+                    {/* Candles & Time Labels */}
                     {visibleData.map((kline, i) => {
-                         const x = PADDING.left + (chartWidth / visibleData.length) * (i + 0.5) - barWidth/2;
+                         const x = PADDING.left + (chartWidth / totalVirtualCandles) * i;
                          const showTimeLabel = i % timeLabelStep === 0;
                          return (
                             <React.Fragment key={kline.time}>
-                                <ChartCandle kline={kline} x={x} y_scale={y_scale} barWidth={barWidth} theme={theme}/>
+                                <ChartCandle kline={kline} x={x + barWidth*0.15} y_scale={y_scale} barWidth={barWidth} theme={theme}/>
                                 {showTimeLabel && (
                                     <text x={x + barWidth / 2} y={SVG_HEIGHT - PADDING.bottom + 15} className="fill-slate-500 dark:fill-slate-400 text-xs" textAnchor="middle">{formatTimestamp(kline.time, chartTimeFrame)}</text>
                                 )}
                             </React.Fragment>
                          );
                     })}
+                    
+                    {/* Live Price Line */}
+                    {livePrice > 0 && y_scale(livePrice) > PADDING.top && y_scale(livePrice) < (PADDING.top + chartHeight) && (
+                        <g>
+                             <line x1={PADDING.left} y1={y_scale(livePrice)} x2={SVG_WIDTH - PADDING.right} y2={y_scale(livePrice)} stroke={livePriceStrokeColor} strokeDasharray="6,3" strokeWidth="1" />
+                             <rect x={SVG_WIDTH - PADDING.right} y={y_scale(livePrice) - 10} width={PADDING.right} height="20" fill={livePriceStrokeColor} />
+                             <text x={SVG_WIDTH - PADDING.right + 5} y={y_scale(livePrice)} className="fill-white text-xs font-bold" dominantBaseline="middle">{livePrice.toFixed(pricePrecision)}</text>
+                        </g>
+                    )}
 
+                    {/* Crosshair */}
                     {crosshair && (
                         <g className="pointer-events-none">
                             <line x1={crosshair.x} y1={PADDING.top} x2={crosshair.x} y2={PADDING.top + chartHeight} className="stroke-slate-500 dark:stroke-slate-400" strokeDasharray="4,2" strokeWidth="1" />

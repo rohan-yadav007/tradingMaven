@@ -2,7 +2,7 @@
 import type { Agent, TradeSignal, Kline, AgentParams, Position, ADXOutput, MACDOutput, BollingerBandsOutput, StochasticRSIOutput, TradeManagementSignal, BotConfig } from '../types';
 import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV } from 'technicalindicators';
 import * as constants from '../constants';
-import { calculateSupportResistance, SupportResistance } from './chartAnalysisService';
+import { calculateSupportResistance } from './chartAnalysisService';
 
 const getLast = <T>(arr: T[] | undefined): T | undefined => arr && arr.length > 0 ? arr[arr.length - 1] : undefined;
 
@@ -66,43 +66,36 @@ const getMomentumMasterSignal = (klines: Kline[], params: Required<AgentParams>)
         return { signal: 'HOLD', reasons: ["Could not calculate all momentum indicators."] };
     }
 
-    if (adx.adx < params.adxTrendThreshold) {
-        return { signal: 'HOLD', reasons: [`Market is not trending (ADX: ${adx.adx.toFixed(1)} < ${params.adxTrendThreshold}).`] };
-    }
-
     const checks: string[] = [];
     
     // Bullish Entry
-    if (emaFast > emaSlow) {
-        checks.push('✅ Uptrend context (EMA Fast > Slow).');
-        const isPullbackRsi = rsi > 50 && rsi < 70; // In a pullback zone, not extremely overbought
-        checks.push(isPullbackRsi ? `✅ RSI in pullback zone (${rsi.toFixed(1)})` : `❌ RSI not in pullback zone (${rsi.toFixed(1)})`);
-        
-        const macdIsRising = macd.histogram > prevMacd.histogram;
-        checks.push(macdIsRising ? `✅ MACD histogram rising` : `❌ MACD histogram not rising`);
+    const isUptrendContext = emaFast > emaSlow;
+    checks.push(isUptrendContext ? `✅ Trend Context: Bullish (EMA Fast > Slow)` : `❌ Trend Context: Not Bullish`);
+    const isPullbackRsiBullish = rsi > 50 && rsi < 70;
+    checks.push(isPullbackRsiBullish ? `✅ RSI in bullish pullback zone (${rsi.toFixed(1)})` : `❌ RSI not in bullish pullback zone (${rsi.toFixed(1)})`);
+    const macdIsRising = macd.histogram > prevMacd.histogram;
+    checks.push(macdIsRising ? `✅ MACD histogram rising` : `❌ MACD histogram not rising`);
+    const isTrendingAdx = adx.adx > params.adxTrendThreshold;
+    checks.push(isTrendingAdx ? `✅ ADX confirms trend (${adx.adx.toFixed(1)})` : `❌ ADX trend is weak (${adx.adx.toFixed(1)})`);
 
-        if (isPullbackRsi && macdIsRising) {
-            const finalReasons = checks.filter(c => c.startsWith('✅'));
-            return { signal: 'BUY', reasons: [`Uptrend pullback entry.`, ...finalReasons] };
-        }
+    if (isUptrendContext && isTrendingAdx && isPullbackRsiBullish && macdIsRising) {
+        return { signal: 'BUY', reasons: checks };
     }
     
     // Bearish Entry
-    if (emaFast < emaSlow) {
-        checks.push('✅ Downtrend context (EMA Fast < Slow).');
-        const isPullbackRsi = rsi < 50 && rsi > 30; // In a pullback zone, not extremely oversold
-        checks.push(isPullbackRsi ? `✅ RSI in pullback zone (${rsi.toFixed(1)})` : `❌ RSI not in pullback zone (${rsi.toFixed(1)})`);
-        
-        const macdIsFalling = macd.histogram < prevMacd.histogram;
-        checks.push(macdIsFalling ? `✅ MACD histogram falling` : `❌ MACD histogram not falling`);
+    const isDowntrendContext = emaFast < emaSlow;
+    checks.push(isDowntrendContext ? `✅ Trend Context: Bearish (EMA Fast < Slow)` : `❌ Trend Context: Not Bearish`);
+    const isPullbackRsiBearish = rsi < 50 && rsi > 30;
+    checks.push(isPullbackRsiBearish ? `✅ RSI in bearish pullback zone (${rsi.toFixed(1)})` : `❌ RSI not in bearish pullback zone (${rsi.toFixed(1)})`);
+    const macdIsFalling = macd.histogram < prevMacd.histogram;
+    checks.push(macdIsFalling ? `✅ MACD histogram falling` : `❌ MACD histogram not falling`);
 
-        if (isPullbackRsi && macdIsFalling) {
-            const finalReasons = checks.filter(c => c.startsWith('✅'));
-            return { signal: 'SELL', reasons: [`Downtrend pullback entry.`, ...finalReasons] };
-        }
+    if (isDowntrendContext && isTrendingAdx && isPullbackRsiBearish && macdIsFalling) {
+        return { signal: 'SELL', reasons: checks };
     }
 
-    return { signal: 'HOLD', reasons: ['No pullback entry setup found.', ...checks] };
+    // Return the checks for the current trend context for better analysis preview
+    return { signal: 'HOLD', reasons: isUptrendContext ? checks.slice(0, 4) : checks.slice(4) };
 };
 
 // --- Agent 2: Trend Rider ---
@@ -136,45 +129,33 @@ const getTrendRiderSignal = (klines: Kline[], params: Required<AgentParams>): Tr
     const isTrending = adx.adx > params.adxTrendThreshold;
     checks.push(isTrending ? `✅ Strong Trend (ADX: ${adx.adx.toFixed(1)} > ${params.adxTrendThreshold})` : `❌ Weak Trend (ADX: ${adx.adx.toFixed(1)})`);
     
-    if (!isTrending) {
-        return { signal: 'HOLD', reasons: checks };
-    }
-
     // Bullish Entry
     const isUptrend = emaFast > emaSlow;
-    checks.push(isUptrend ? '✅ Uptrend Context (Fast EMA > Slow EMA)' : '❌ Not in Uptrend Context');
+    const isDowntrend = emaFast < emaSlow;
     
     if (isUptrend) {
+        checks.push('✅ Uptrend Context (Fast EMA > Slow EMA)');
         const hasMomentum = rsi > params.tr_rsiMomentumBullish;
         checks.push(hasMomentum ? `✅ Bullish Momentum (RSI: ${rsi.toFixed(1)} > ${params.tr_rsiMomentumBullish})` : `❌ Lacks Bullish Momentum (RSI: ${rsi.toFixed(1)})`);
-
         const isBreakout = currentPrice > highestSince;
         checks.push(isBreakout ? `✅ Price breaking out above recent highs` : `❌ Price not breaking out`);
-
-        if (hasMomentum && isBreakout) {
-            const finalReasons = checks.filter(c => c.startsWith('✅'));
-            return { signal: 'BUY', reasons: [`Strong uptrend momentum entry.`, ...finalReasons] };
+        if (isTrending && hasMomentum && isBreakout) {
+            return { signal: 'BUY', reasons: checks };
         }
-    }
-    
-    // Bearish Entry
-    const isDowntrend = emaFast < emaSlow;
-    checks.push(isDowntrend ? '✅ Downtrend Context (Fast EMA < Slow EMA)' : '❌ Not in Downtrend Context');
-    
-    if (isDowntrend) {
-         const hasMomentum = rsi < params.tr_rsiMomentumBearish;
-         checks.push(hasMomentum ? `✅ Bearish Momentum (RSI: ${rsi.toFixed(1)} < ${params.tr_rsiMomentumBearish})` : `❌ Lacks Bearish Momentum (RSI: ${rsi.toFixed(1)})`);
-         
-         const isBreakout = currentPrice < lowestSince;
-         checks.push(isBreakout ? `✅ Price breaking down below recent lows` : `❌ Price not breaking down`);
-
-         if (hasMomentum && isBreakout) {
-             const finalReasons = checks.filter(c => c.startsWith('✅'));
-             return { signal: 'SELL', reasons: [`Strong downtrend momentum entry.`, ...finalReasons] };
+    } else if (isDowntrend) {
+        checks.push('✅ Downtrend Context (Fast EMA < Slow EMA)');
+        const hasMomentum = rsi < params.tr_rsiMomentumBearish;
+        checks.push(hasMomentum ? `✅ Bearish Momentum (RSI: ${rsi.toFixed(1)} < ${params.tr_rsiMomentumBearish})` : `❌ Lacks Bearish Momentum (RSI: ${rsi.toFixed(1)})`);
+        const isBreakout = currentPrice < lowestSince;
+        checks.push(isBreakout ? `✅ Price breaking down below recent lows` : `❌ Price not breaking down`);
+        if (isTrending && hasMomentum && isBreakout) {
+             return { signal: 'SELL', reasons: checks };
          }
+    } else {
+        checks.push('❌ Neutral Trend Context');
     }
 
-    return { signal: 'HOLD', reasons: ['No momentum breakout setup found.', ...checks] };
+    return { signal: 'HOLD', reasons: checks };
 };
 
 // --- SuperTrend Calculation Helper ---
@@ -251,11 +232,85 @@ const detectObvDivergence = (closes: number[], obvValues: number[], lookback: nu
 };
 
 
-// --- Agent 4 & 6: Scalping Expert & Profit Locker ---
-function getScalpingExpertSignal(klines: Kline[], params: Required<AgentParams>): TradeSignal {
-    const minKlines = Math.max(params.scalp_emaPeriod, params.scalp_superTrendPeriod, params.scalp_rsiPeriod, params.scalp_obvLookback) + params.scalp_stochRsiPeriod;
+// --- Agent 4: Scalping Expert (New V2 Logic) ---
+const getScalpingExpertV2Signal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
+    const minKlines = Math.max(params.se_emaSlowPeriod!, params.se_bbPeriod!, params.se_macdSlowPeriod! + params.se_macdSignalPeriod!);
     if (klines.length < minKlines) {
         return { signal: 'HOLD', reasons: [`Need ${minKlines} klines for Scalping Expert.`] };
+    }
+
+    const closes = klines.map(k => k.close);
+    const highs = klines.map(k => k.high);
+    const lows = klines.map(k => k.low);
+    const currentPrice = closes[closes.length - 1];
+
+    const allChecks: { condition: boolean, message: string }[] = [];
+
+    // --- Volatility Filter ---
+    const atr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: params.se_atrPeriod! }));
+    if (typeof atr !== 'number' || atr <= 0) {
+        return { signal: 'HOLD', reasons: ['Calculating ATR...'] };
+    }
+    const atrPercentage = (atr / currentPrice) * 100;
+    allChecks.push({ condition: atrPercentage >= params.se_atrVolatilityThreshold!, message: `Volatility OK (ATR ${atrPercentage.toFixed(2)}% >= ${params.se_atrVolatilityThreshold!}%)` });
+
+    if (atrPercentage < params.se_atrVolatilityThreshold!) {
+        return { signal: 'HOLD', reasons: allChecks.map(c => `${c.condition ? '✅' : '❌'} ${c.message}`) };
+    }
+
+    // --- Indicator Calculations ---
+    const emaFast = getLast(EMA.calculate({ period: params.se_emaFastPeriod!, values: closes }));
+    const emaSlow = getLast(EMA.calculate({ period: params.se_emaSlowPeriod!, values: closes }));
+    const macdValues = MACD.calculate({ values: closes, fastPeriod: params.se_macdFastPeriod!, slowPeriod: params.se_macdSlowPeriod!, signalPeriod: params.se_macdSignalPeriod!, SimpleMAOscillator: false, SimpleMASignal: false });
+    const macd = getLast(macdValues);
+    const rsiValues = RSI.calculate({ period: params.se_rsiPeriod!, values: closes });
+    const rsi = getLast(rsiValues);
+    const prevRsi = rsiValues.length > 1 ? rsiValues[rsiValues.length - 2] : undefined;
+    const bb = getLast(BollingerBands.calculate({ period: params.se_bbPeriod!, stdDev: params.se_bbStdDev!, values: closes }));
+
+    if (typeof emaFast !== 'number' || typeof emaSlow !== 'number' || !macd || !macd.MACD || !macd.signal || typeof rsi !== 'number' || typeof prevRsi !== 'number' || !bb) {
+        return { signal: 'HOLD', reasons: ["Calculating indicators..."] };
+    }
+    
+    const formattedReasons = () => allChecks.map(c => `${c.condition ? '✅' : '❌'} ${c.message}`);
+
+    // --- Long Entry Conditions ---
+    const isUptrend = emaFast > emaSlow;
+    allChecks.push({ condition: isUptrend, message: `Trend: EMA Bullish Cross` });
+    const isMacdBullish = macd.MACD > macd.signal;
+    allChecks.push({ condition: isMacdBullish, message: `Momentum: MACD Bullish` });
+    const isRsiRisingFromPullback = rsi > prevRsi && rsi < 50;
+    allChecks.push({ condition: isRsiRisingFromPullback, message: `Pullback: RSI rising in lower half` });
+    const isNearLowerBB = currentPrice <= bb.middle;
+    allChecks.push({ condition: isNearLowerBB, message: `Volatility: Price in lower BB half` });
+
+    if (isUptrend && isMacdBullish && isRsiRisingFromPullback && isNearLowerBB) {
+        return { signal: 'BUY', reasons: formattedReasons() };
+    }
+
+    // --- Short Entry Conditions ---
+    const isDowntrend = emaFast < emaSlow;
+    allChecks[1] = { condition: isDowntrend, message: `Trend: EMA Bearish Cross` };
+    const isMacdBearish = macd.MACD < macd.signal;
+    allChecks[2] = { condition: isMacdBearish, message: `Momentum: MACD Bearish` };
+    const isRsiFallingFromPullback = rsi < prevRsi && rsi > 50;
+    allChecks[3] = { condition: isRsiFallingFromPullback, message: `Pullback: RSI falling in upper half` };
+    const isNearUpperBB = currentPrice >= bb.middle;
+    allChecks[4] = { condition: isNearUpperBB, message: `Volatility: Price in upper BB half` };
+
+    if (isDowntrend && isMacdBearish && isRsiFallingFromPullback && isNearUpperBB) {
+        return { signal: 'SELL', reasons: formattedReasons() };
+    }
+
+    return { signal: 'HOLD', reasons: formattedReasons() };
+}
+
+
+// --- Agent 6: Profit Locker (uses the old score-based scalping logic for entry) ---
+function getProfitLockerSignal(klines: Kline[], params: Required<AgentParams>): TradeSignal {
+    const minKlines = Math.max(params.scalp_emaPeriod, params.scalp_superTrendPeriod, params.scalp_rsiPeriod, params.scalp_obvLookback) + params.scalp_stochRsiPeriod;
+    if (klines.length < minKlines) {
+        return { signal: 'HOLD', reasons: [`Need ${minKlines} klines for Profit Locker.`] };
     }
 
     const closes = klines.map(k => k.close);
@@ -284,60 +339,94 @@ function getScalpingExpertSignal(klines: Kline[], params: Required<AgentParams>)
         return { signal: 'HOLD', reasons: ["Calculating indicators..."] };
     }
 
-    // --- REVISED LOGIC: Score-Based Entry ---
-    // No hard trend gate. Instead, score each condition.
     let buyScore = 0;
     const buyChecks: string[] = [];
+    buyChecks.push(currentPrice > ema ? `✅ Price > EMA` : `❌ Price < EMA`); if (currentPrice > ema) buyScore++;
+    buyChecks.push(st.trend === 'bullish' ? `✅ Supertrend is Bullish` : `❌ Supertrend is Bearish`); if (st.trend === 'bullish') buyScore++;
+    buyChecks.push(currentPrice > psar ? `✅ PSAR confirms uptrend` : `❌ PSAR does not confirm uptrend`); if (currentPrice > psar) buyScore++;
+    buyChecks.push(prevStochRsi.stochRSI < params.scalp_stochRsiOversold && stochRsi.stochRSI >= params.scalp_stochRsiOversold ? `✅ StochRSI pullback entry (+2)` : `❌ No StochRSI pullback entry`); if (prevStochRsi.stochRSI < params.scalp_stochRsiOversold && stochRsi.stochRSI >= params.scalp_stochRsiOversold) buyScore += 2;
+    buyChecks.push(divergence.bullish ? `✅ Bullish OBV Divergence (+${params.scalp_obvScore}pts)` : `❌ No Bullish OBV Divergence`); if (divergence.bullish) buyScore += params.scalp_obvScore;
 
-    // Trend conditions
-    if (currentPrice > ema) { buyScore++; buyChecks.push(`✅ Price > EMA`); } else { buyChecks.push(`❌ Price < EMA`); }
-    if (st.trend === 'bullish') { buyScore++; buyChecks.push(`✅ Supertrend is Bullish`); } else { buyChecks.push(`❌ Supertrend is Bearish`); }
-
-    // Entry conditions
-    if (currentPrice > psar) { buyScore++; buyChecks.push(`✅ PSAR confirms uptrend`); } else { buyChecks.push(`❌ PSAR does not confirm uptrend`); }
-    if (prevStochRsi.stochRSI < params.scalp_stochRsiOversold && stochRsi.stochRSI >= params.scalp_stochRsiOversold) { 
-        buyScore += 2; buyChecks.push(`✅ StochRSI pullback entry (+2)`);
-    } else { 
-        buyChecks.push(`❌ No StochRSI pullback entry`);
-    }
-    if (divergence.bullish) { 
-        buyScore += params.scalp_obvScore; buyChecks.push(`✅ Bullish OBV Divergence (+${params.scalp_obvScore}pts)`); 
-    }
-
-    // Check for BUY signal
     if (buyScore >= params.scalp_scoreThreshold) {
-        const finalReasons = buyChecks.filter(r => r.startsWith('✅'));
-        return { signal: 'BUY', reasons: [`Buy score ${buyScore} >= ${params.scalp_scoreThreshold}.`, ...finalReasons] };
+        return { signal: 'BUY', reasons: [`ℹ️ Buy score ${buyScore} >= ${params.scalp_scoreThreshold}.`, ...buyChecks] };
     }
 
-    // --- Bearish Score ---
     let sellScore = 0;
     const sellChecks: string[] = [];
+    sellChecks.push(currentPrice < ema ? '✅ Price < EMA' : '❌ Price > EMA'); if (currentPrice < ema) sellScore++;
+    sellChecks.push(st.trend === 'bearish' ? '✅ Supertrend is Bearish' : '❌ Supertrend is Bullish'); if (st.trend === 'bearish') sellScore++;
+    sellChecks.push(currentPrice < psar ? '✅ PSAR confirms downtrend' : '❌ PSAR not confirming downtrend'); if (currentPrice < psar) sellScore++;
+    sellChecks.push(prevStochRsi.stochRSI > params.scalp_stochRsiOverbought && stochRsi.stochRSI <= params.scalp_stochRsiOverbought ? `✅ StochRSI pullback entry (+2)` : `❌ No StochRSI pullback entry`); if (prevStochRsi.stochRSI > params.scalp_stochRsiOverbought && stochRsi.stochRSI <= params.scalp_stochRsiOverbought) sellScore += 2;
+    sellChecks.push(divergence.bearish ? `✅ Bearish OBV Divergence (+${params.scalp_obvScore}pts)` : `❌ No Bearish OBV Divergence`); if (divergence.bearish) sellScore += params.scalp_obvScore;
 
-    // Trend conditions
-    if (currentPrice < ema) { sellScore++; sellChecks.push('✅ Price < EMA'); } else { sellChecks.push('❌ Price > EMA'); }
-    if (st.trend === 'bearish') { sellScore++; sellChecks.push('✅ Supertrend is Bearish'); } else { sellChecks.push('❌ Supertrend is Bullish'); }
-
-    // Entry conditions
-    if (currentPrice < psar) { sellScore++; sellChecks.push('✅ PSAR confirms downtrend'); } else { sellChecks.push('❌ PSAR not confirming downtrend'); }
-    if (prevStochRsi.stochRSI > params.scalp_stochRsiOverbought && stochRsi.stochRSI <= params.scalp_stochRsiOverbought) {
-        sellScore += 2; sellChecks.push(`✅ StochRSI pullback entry (+2)`);
-    } else { 
-        sellChecks.push(`❌ No StochRSI pullback entry`); 
-    }
-    if (divergence.bearish) { 
-        sellScore += params.scalp_obvScore; sellChecks.push(`✅ Bearish OBV Divergence (+${params.scalp_obvScore}pts)`);
-    }
-
-    // Check for SELL signal
     if (sellScore >= params.scalp_scoreThreshold) {
-        const finalReasons = sellChecks.filter(r => r.startsWith('✅'));
-        return { signal: 'SELL', reasons: [`Sell score ${sellScore} >= ${params.scalp_scoreThreshold}.`, ...finalReasons] };
+        return { signal: 'SELL', reasons: [`ℹ️ Sell score ${sellScore} >= ${params.scalp_scoreThreshold}.`, ...sellChecks] };
     }
 
-    // Default HOLD if neither score is high enough
-    return { signal: 'HOLD', reasons: [`Awaiting Signal (Buy: ${buyScore}/${params.scalp_scoreThreshold}, Sell: ${sellScore}/${params.scalp_scoreThreshold})`] };
+    return { signal: 'HOLD', reasons: [`ℹ️ Awaiting Signal (Buy: ${buyScore}/${params.scalp_scoreThreshold}, Sell: ${sellScore}/${params.scalp_scoreThreshold})`, ...buyChecks, ...sellChecks] };
 }
+
+// --- Agent 7: Market Structure Maven [NEW] ---
+const getMarketStructureMavenSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
+    const minKlines = Math.max(params.msm_htfEmaPeriod, params.msm_swingPointLookback * 2 + 1);
+    if (klines.length < minKlines) {
+        return { signal: 'HOLD', reasons: [`Need ${minKlines} klines for Market Structure Maven.`] };
+    }
+
+    const closes = klines.map(k => k.close);
+    const highs = klines.map(k => k.high);
+    const lows = klines.map(k => k.low);
+    const currentPrice = closes[closes.length - 1];
+    const lastCandle = klines[klines.length - 1];
+
+    // Trend Bias
+    const htfEma = getLast(EMA.calculate({ period: params.msm_htfEmaPeriod, values: closes }));
+    if (typeof htfEma !== 'number') {
+        return { signal: 'HOLD', reasons: ['Calculating bias EMA...'] };
+    }
+
+    const checks: string[] = [];
+    const isBullishBias = currentPrice > htfEma;
+    const isBearishBias = currentPrice < htfEma;
+    checks.push(isBullishBias ? `✅ Bias: Bullish (Price > ${params.msm_htfEmaPeriod} EMA)` : `❌ Bias: Not Bullish`);
+
+    if (isBullishBias) {
+        const pivots = findPivotsGeneric(lows, params.msm_swingPointLookback);
+        const recentSwingLows = pivots.lows.filter(p => p.index > klines.length - 50);
+        const lastSwingLow = recentSwingLows.pop()?.value;
+        checks.push(lastSwingLow ? `ℹ️ Last swing low at ${lastSwingLow.toFixed(2)}` : `❌ No recent swing lows found`);
+        if (lastSwingLow) {
+            const pullbackLookback = 3;
+            const recentLowsSlice = lows.slice(-pullbackLookback);
+            const priceTouchedSupport = recentLowsSlice.some(l => Math.abs(l - lastSwingLow) / lastSwingLow < 0.005);
+            checks.push(priceTouchedSupport ? `✅ Pullback: Price recently touched support` : `❌ Pullback: Price has not touched support`);
+            const isConfirmationCandle = lastCandle.close > lastCandle.open;
+            checks.push(isConfirmationCandle ? `✅ Confirmation: Last candle was bullish` : `❌ Confirmation: Awaiting bullish candle`);
+            if (priceTouchedSupport && isConfirmationCandle) {
+                return { signal: 'BUY', reasons: checks };
+            }
+        }
+    } else if (isBearishBias) {
+        checks[0] = `✅ Bias: Bearish (Price < ${params.msm_htfEmaPeriod} EMA)`;
+        const pivots = findPivotsGeneric(highs, params.msm_swingPointLookback);
+        const recentSwingHighs = pivots.highs.filter(p => p.index > klines.length - 50);
+        const lastSwingHigh = recentSwingHighs.pop()?.value;
+        checks.push(lastSwingHigh ? `ℹ️ Last swing high at ${lastSwingHigh.toFixed(2)}` : `❌ No recent swing highs found`);
+        if (lastSwingHigh) {
+            const pullbackLookback = 3;
+            const recentHighsSlice = highs.slice(-pullbackLookback);
+            const priceTouchedResistance = recentHighsSlice.some(h => Math.abs(h - lastSwingHigh) / lastSwingHigh < 0.005);
+            checks.push(priceTouchedResistance ? `✅ Pullback: Price recently touched resistance` : `❌ Pullback: Price has not touched resistance`);
+            const isConfirmationCandle = lastCandle.close < lastCandle.open;
+            checks.push(isConfirmationCandle ? `✅ Confirmation: Last candle was bearish` : `❌ Confirmation: Awaiting bearish candle`);
+            if (priceTouchedResistance && isConfirmationCandle) {
+                return { signal: 'SELL', reasons: checks };
+            }
+        }
+    }
+
+    return { signal: 'HOLD', reasons: checks };
+};
 
 // --- Agent 9: Quantum Scalper (Corrected logic from previous fix, remains valid) ---
 const getQuantumScalperSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
@@ -351,17 +440,13 @@ const getQuantumScalperSignal = (klines: Kline[], params: Required<AgentParams>)
     const lows = klines.map(k => k.low);
     const currentPrice = closes[closes.length - 1];
 
-    // Regime Detection
     const adxResult = getLast(ADX.calculate({ close: closes, high: highs, low: lows, period: params.qsc_adxPeriod })) as ADXOutput | undefined;
     const emaFast = getLast(EMA.calculate({ period: params.qsc_fastEmaPeriod, values: closes }));
     const emaSlow = getLast(EMA.calculate({ period: params.qsc_slowEmaPeriod, values: closes }));
     const bb = getLast(BollingerBands.calculate({ period: params.qsc_bbPeriod, stdDev: params.qsc_bbStdDev, values: closes }));
-
-    // Entry Signal Indicators
     const stochRsiResult = StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: params.qsc_stochRsiPeriod, kPeriod: 3, dPeriod: 3 });
     const stochRsi = getLast(stochRsiResult);
     const prevStochRsi = stochRsiResult.length > 1 ? stochRsiResult[stochRsiResult.length - 2] : undefined;
-    
     const macd = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false }));
     const supertrend = calculateSuperTrend(klines, params.qsc_superTrendPeriod, params.qsc_superTrendMultiplier);
 
@@ -370,68 +455,41 @@ const getQuantumScalperSignal = (klines: Kline[], params: Required<AgentParams>)
     }
 
     let regime: 'BullishTrend' | 'BearishTrend' | 'Ranging' = 'Ranging';
-    let regimeReason = `Regime: Ranging (ADX ${adxResult.adx.toFixed(1)} < ${params.qsc_adxThreshold}).`;
-
     if (adxResult.adx > params.qsc_adxThreshold) {
-        if (emaFast > emaSlow && adxResult.pdi > adxResult.mdi) {
-            regime = 'BullishTrend';
-            regimeReason = `Regime: Bullish Trend (ADX ${adxResult.adx.toFixed(1)}, EMAs aligned).`;
-        } else if (emaFast < emaSlow && adxResult.mdi > adxResult.pdi) {
-            regime = 'BearishTrend';
-            regimeReason = `Regime: Bearish Trend (ADX ${adxResult.adx.toFixed(1)}, EMAs aligned).`;
-        }
+        if (emaFast > emaSlow && adxResult.pdi > adxResult.mdi) regime = 'BullishTrend';
+        else if (emaFast < emaSlow && adxResult.mdi > adxResult.pdi) regime = 'BearishTrend';
     }
     
-    let score = 0;
-    const checks: string[] = [];
-
+    const checks: string[] = [`ℹ️ Regime: ${regime} (ADX ${adxResult.adx.toFixed(1)})`];
+    
     if (regime === 'BullishTrend') {
+        let score = 0;
         if (prevStochRsi.stochRSI < params.qsc_stochRsiOversold && stochRsi.stochRSI >= params.qsc_stochRsiOversold) { score += 2; checks.push(`✅ StochRSI crossed up from oversold`); } else { checks.push(`❌ StochRSI not crossing up from oversold`); }
         if (macd.histogram > 0) { score++; checks.push(`✅ MACD is Bullish`); } else { checks.push(`❌ MACD not Bullish`); }
         if (supertrend.trend === 'bullish') { score++; checks.push(`✅ Supertrend is Bullish`); } else { checks.push(`❌ Supertrend not Bullish`); }
-
-        if (score >= params.qsc_trendScoreThreshold) {
-            const metConditions = checks.filter(c => c.startsWith('✅'));
-            return { signal: 'BUY', reasons: [regimeReason, `Score ${score} >= ${params.qsc_trendScoreThreshold}`, ...metConditions] };
-        }
-        return { signal: 'HOLD', reasons: [regimeReason, `Score ${score} < ${params.qsc_trendScoreThreshold}`, ...checks] };
-
+        if (score >= params.qsc_trendScoreThreshold) return { signal: 'BUY', reasons: [`ℹ️ Trend Buy Score: ${score}/${params.qsc_trendScoreThreshold}`, ...checks] };
     } else if (regime === 'BearishTrend') {
+        let score = 0;
         if (prevStochRsi.stochRSI > params.qsc_stochRsiOverbought && stochRsi.stochRSI <= params.qsc_stochRsiOverbought) { score += 2; checks.push(`✅ StochRSI crossed down from overbought`); } else { checks.push(`❌ StochRSI not crossing down from overbought`); }
         if (macd.histogram < 0) { score++; checks.push(`✅ MACD is Bearish`); } else { checks.push(`❌ MACD not Bearish`); }
-        if (supertrend.trend === 'bearish') { score++; checks.push(`✅ Supertrend is Bearish`); } else { checks.push(`❌ Supertrend not Bearish`); }
-        
-        if (score >= params.qsc_trendScoreThreshold) {
-            const metConditions = checks.filter(c => c.startsWith('✅'));
-            return { signal: 'SELL', reasons: [regimeReason, `Score ${score} >= ${params.qsc_trendScoreThreshold}`, ...metConditions] };
-        }
-        return { signal: 'HOLD', reasons: [regimeReason, `Score ${score} < ${params.qsc_trendScoreThreshold}`, ...checks] };
-    
+        if (supertrend.trend === 'bearish') { score++; checks.push(`✅ Supertrend is Bearish`); } else { checks.push(`❌ Supertrend not Bullish`); }
+        if (score >= params.qsc_trendScoreThreshold) return { signal: 'SELL', reasons: [`ℹ️ Trend Sell Score: ${score}/${params.qsc_trendScoreThreshold}`, ...checks] };
     } else { // Ranging
         let buyScore = 0;
         const buyChecks: string[] = [];
         if (currentPrice < bb.lower) { buyScore = 2; buyChecks.push(`✅ Price below Lower BB`); } else { buyChecks.push(`❌ Price not below Lower BB`); }
         if (stochRsi.stochRSI < params.qsc_stochRsiOversold) { buyScore++; buyChecks.push(`✅ StochRSI is Oversold`); } else { buyChecks.push(`❌ StochRSI not Oversold`); }
-
-        if (buyScore >= params.qsc_rangeScoreThreshold) {
-             const metConditions = buyChecks.filter(c => c.startsWith('✅'));
-            return { signal: 'BUY', reasons: [regimeReason, `Range Buy score ${buyScore} >= ${params.qsc_rangeScoreThreshold}`, ...metConditions] };
-        }
+        if (buyScore >= params.qsc_rangeScoreThreshold) return { signal: 'BUY', reasons: [`ℹ️ Range Buy Score: ${buyScore}/${params.qsc_rangeScoreThreshold}`, ...checks, ...buyChecks] };
 
         let sellScore = 0;
         const sellChecks: string[] = [];
         if (currentPrice > bb.upper) { sellScore = 2; sellChecks.push(`✅ Price above Upper BB`); } else { sellChecks.push(`❌ Price not above Upper BB`); }
         if (stochRsi.stochRSI > params.qsc_stochRsiOverbought) { sellScore++; sellChecks.push(`✅ StochRSI is Overbought`); } else { sellChecks.push(`❌ StochRSI not Overbought`); }
-        
-        if (sellScore >= params.qsc_rangeScoreThreshold) {
-            const metConditions = sellChecks.filter(c => c.startsWith('✅'));
-            return { signal: 'SELL', reasons: [regimeReason, `Range Sell score ${sellScore} >= ${params.qsc_rangeScoreThreshold}`, ...metConditions] };
-        }
-        
-        return { signal: 'HOLD', reasons: [regimeReason, `Awaiting Range entry...`, ...buyChecks, ...sellChecks]};
+        if (sellScore >= params.qsc_rangeScoreThreshold) return { signal: 'SELL', reasons: [`ℹ️ Range Sell Score: ${sellScore}/${params.qsc_rangeScoreThreshold}`, ...checks, ...sellChecks] };
     }
-};
 
+    return { signal: 'HOLD', reasons: checks };
+};
 
 // --- Main Signal Dispatcher ---
 export const getTradingSignal = async (
@@ -453,25 +511,21 @@ export const getTradingSignal = async (
         case 2:
             return getTrendRiderSignal(klines, finalParams);
         case 4:
-        case 6: // Profit Locker uses Scalping Expert's entry logic
-            return getScalpingExpertSignal(klines, finalParams);
-        case 5:
-            return { signal: 'HOLD', reasons: ['Agent "Market Phase Adaptor" is not yet implemented.'] };
+            return getScalpingExpertV2Signal(klines, finalParams);
+        case 6: // Profit Locker uses the old score-based scalping logic for entry
+            return getProfitLockerSignal(klines, finalParams);
         case 7:
-             return { signal: 'HOLD', reasons: ['Agent "Market Structure Maven" is not yet implemented.'] };
-        case 8:
-             return { signal: 'HOLD', reasons: ['Agent "Institutional Scalper" is not yet implemented.'] };
+            return getMarketStructureMavenSignal(klines, finalParams);
         case 9:
             return getQuantumScalperSignal(klines, finalParams);
         default:
-            return { signal: 'HOLD', reasons: ['Agent not found.'] };
+            return { signal: 'HOLD', reasons: [`Agent (ID: ${agent.id}) not found or is disabled.`] };
     }
 };
 
 /**
  * Calculates initial "smart" Stop Loss and Take Profit targets based on market volatility (ATR).
  * Includes "whipsaw protection" to ensure the stop is never too tight.
- * Now also returns partial TP and trail start info for supported agents.
  */
 export const getInitialAgentTargets = (
     klines: Kline[],
@@ -500,21 +554,50 @@ export const getInitialAgentTargets = (
     
     atrStopLossPrice = isLong ? entryPrice - defaultStopDistance : entryPrice + defaultStopDistance;
     takeProfitPrice = isLong ? entryPrice + defaultProfitDistance : entryPrice - (defaultProfitDistance);
+
+    if (![6, 9].includes(agentId)) { 
+        const srLevels = calculateSupportResistance(klines, 15, 0.005);
+        if (isLong && srLevels.resistances.length > 0) {
+            const nextResistance = srLevels.resistances.find(r => r > entryPrice);
+            if (nextResistance && nextResistance < takeProfitPrice) {
+                takeProfitPrice = nextResistance;
+            }
+        } else if (!isLong && srLevels.supports.length > 0) {
+            const nextSupport = [...srLevels.supports].reverse().find(s => s < entryPrice);
+            if (nextSupport && nextSupport > takeProfitPrice) {
+                takeProfitPrice = nextSupport;
+            }
+        }
+    }
     
-    // --- Whipsaw Protection (applied to all) ---
     const minStopDistance = entryPrice * (MIN_STOP_LOSS_PERCENT / 100);
     let finalStopLossPrice = isLong ? Math.min(atrStopLossPrice, entryPrice - minStopDistance) : Math.max(atrStopLossPrice, entryPrice + minStopDistance);
 
-    // --- Agent-Specific Logic ---
-    // Agent 9 (Quantum Scalper): Custom SL, distant TP
-    if (agentId === 9) {
-        const stopDistance = (typeof atr === 'number' && atr > 0) ? (atr * params.qsc_atrMultiplier) : (entryPrice * 0.02);
+    if (agentId === 7) {
+        const lookback = params.msm_swingPointLookback;
+        let slLevel: number | undefined;
+
+        if (isLong) {
+            const pivots = findPivotsGeneric(klines.map(k => k.low), lookback);
+            slLevel = pivots.lows.pop()?.value;
+        } else {
+            const pivots = findPivotsGeneric(klines.map(k => k.high), lookback);
+            slLevel = pivots.highs.pop()?.value;
+        }
+
+        if (slLevel) {
+            const buffer = entryPrice * 0.001;
+            const structureSl = isLong ? slLevel - buffer : slLevel + buffer;
+            finalStopLossPrice = isLong ? Math.min(finalStopLossPrice, structureSl) : Math.max(finalStopLossPrice, structureSl);
+        }
+    }
+    else if (agentId === 9) {
+        const stopDistance = (typeof atr === 'number' && atr > 0) ? (atr * params.qsc_atrMultiplier!) : (entryPrice * 0.02);
         const qscStopLossPrice = isLong ? entryPrice - stopDistance : entryPrice + stopDistance;
         finalStopLossPrice = isLong ? Math.min(qscStopLossPrice, entryPrice - minStopDistance) : Math.max(qscStopLossPrice, entryPrice + minStopDistance);
-        takeProfitPrice = isLong ? entryPrice + (stopDistance * 100) : entryPrice - (stopDistance * 100); // Distant TP
+        takeProfitPrice = isLong ? entryPrice + (stopDistance * 100) : entryPrice - (stopDistance * 100);
     }
-    // Agent 4 & 6 (Scalping/Locker): Partial TPs
-    else if (agentId === 4 || agentId === 6) {
+    else if (agentId === 6) {
         if (typeof atr === 'number' && atr > 0) {
             const atrMultipliers = [0.5, 1.0, 1.5];
             const partialTps = atrMultipliers.map(mult => ({
@@ -523,26 +606,15 @@ export const getInitialAgentTargets = (
                 sizeFraction: 0.25
             }));
             const trailStartPrice = partialTps[2].price;
-            takeProfitPrice = trailStartPrice; // The final effective TP is the last partial TP
+            takeProfitPrice = trailStartPrice;
 
             return { stopLossPrice: finalStopLossPrice, takeProfitPrice, partialTps, trailStartPrice };
         }
     }
 
-    // Default R:R adjustment if whipsaw protection was tighter
-    if (finalStopLossPrice !== atrStopLossPrice) {
-        const finalRiskDistance = Math.abs(entryPrice - finalStopLossPrice);
-        const adjustedProfitDistance = finalRiskDistance * atrConfig.riskRewardRatio;
-        takeProfitPrice = isLong ? entryPrice + adjustedProfitDistance : entryPrice - adjustedProfitDistance;
-    }
-
     return { stopLossPrice: finalStopLossPrice, takeProfitPrice };
 };
 
-/**
- * Actively checks for signs of trend weakness after a profitable trade.
- * @returns A veto decision and the reasons for it.
- */
 export const analyzeTrendExhaustion = (
     klines: Kline[],
     direction: 'LONG' | 'SHORT',
@@ -570,14 +642,12 @@ export const analyzeTrendExhaustion = (
 
     const recentMacd = macdHistograms.slice(-lookback);
     const lastKline = klines[klines.length - 1];
-    const prevKline = klines[klines.length - 2];
     const lastVolume = volumes[volumes.length - 1];
     const avgVolume = volumeSma[volumeSma.length - 1];
 
     let exhaustionScore = 0;
     const reasons: string[] = [];
 
-    // Check 1: Fading Momentum (MACD Histogram)
     if (direction === 'LONG') {
         const isMacdFading = recentMacd[lookback - 1] < recentMacd[lookback - 2];
         if (isMacdFading && macdHistograms[macdHistograms.length-1] > 0) {
@@ -592,16 +662,14 @@ export const analyzeTrendExhaustion = (
         }
     }
 
-    // Check 2: Reversal Price Action
-    if (direction === 'LONG' && lastKline.close < lastKline.open) { // Red candle
+    if (direction === 'LONG' && lastKline.close < lastKline.open) {
         exhaustionScore++;
         reasons.push('Reversal price action');
-    } else if (direction === 'SHORT' && lastKline.close > lastKline.open) { // Green candle
+    } else if (direction === 'SHORT' && lastKline.close > lastKline.open) {
         exhaustionScore++;
         reasons.push('Reversal price action');
     }
 
-    // Check 3: Declining Volume
     if (lastVolume < avgVolume) {
         exhaustionScore++;
         reasons.push('Declining volume');
@@ -611,188 +679,187 @@ export const analyzeTrendExhaustion = (
     return { veto, reasons: veto ? reasons : [] };
 };
 
-
-// --- Proactive Trade Management ---
-
-/**
- * [NEW] Implements the partial take-profit and trailing stop logic for agents 4 and 6.
- */
-const getAtrTpTrailSignal = (
+const getProfitLockAndTrailSignal = (
     position: Position,
-    klines: Kline[],
-    livePrice: number,
-    params: Required<AgentParams>
-): TradeManagementSignal => {
-    if (!position.partialTps || typeof position.trailStartPrice !== 'number') {
-        return { reasons: ['Position not configured for partial TPs.'] };
-    }
-
+    livePrice: number
+): { newStopLoss?: number; newTakeProfit?: number; reason?: string } => {
+    const { TAKER_FEE_RATE } = constants;
     const isLong = position.direction === 'LONG';
+    const positionValue = position.entryPrice * position.size;
+    
+    const feeInQuote = positionValue * TAKER_FEE_RATE * 2; // For entry and exit
+    
+    const unrealizedPnl = (livePrice - position.entryPrice) * position.size * (isLong ? 1 : -1);
 
-    // 1. Check for partial TP hits
-    for (let i = 0; i < position.partialTps.length; i++) {
-        const tp = position.partialTps[i];
-        if (!tp.hit) {
-            const priceConditionMet = isLong ? livePrice >= tp.price : livePrice <= tp.price;
-            if (priceConditionMet) {
-                return {
-                    partialClose: {
-                        tpIndex: i,
-                        reason: `Partial Take Profit ${i + 1} hit at ${tp.price.toFixed(position.pricePrecision)}`,
-                    },
-                    reasons: [`Triggering partial close for TP${i + 1}.`],
-                };
-            }
-            // If we haven't hit this TP, we can't hit subsequent ones yet.
-            // This ensures we take profits in order.
-            break; 
-        }
-    }
+    if (unrealizedPnl > feeInQuote * 3) {
+        const lockableProfit = unrealizedPnl - feeInQuote;
+        const priceChangeForProfit = lockableProfit / position.size;
 
-    // 2. Check for trailing stop activation on the final portion of the trade
-    const trailConditionMet = isLong ? livePrice >= position.trailStartPrice : livePrice <= position.trailStartPrice;
-
-    if (trailConditionMet) {
-        const atr = getLast(ATR.calculate({ high: klines.map(k => k.high), low: klines.map(k => k.low), close: klines.map(k => k.close), period: params.atrPeriod }));
-        if (typeof atr === 'number' && atr > 0) {
-            const trailDistance = atr * 0.5;
-            const newStopLoss = isLong ? livePrice - trailDistance : livePrice + trailDistance;
-            
-            const isImprovement = (isLong && newStopLoss > position.stopLossPrice) || (!isLong && newStopLoss < position.stopLossPrice);
-            if (isImprovement) {
-                return {
-                    newStopLoss,
-                    reasons: [`Trailing stop activated/updated to ${newStopLoss.toFixed(position.pricePrecision)}.`]
-                };
-            }
-        }
-    }
-
-    return { reasons: ['Holding position, no partial TP or trailing conditions met.'] };
-};
-
-/**
- * [NEW] A centralized, robust function to protect profits based on a minimum gross PNL target.
- * This is now the core logic for the "Profit Locker" agent and a safety feature for the "Quantum Scalper".
- */
-const getMinimumGrossProfitProtectionSignal = (
-    position: Position,
-    livePrice: number,
-    botConfig: BotConfig,
-    currentStopLoss: number
-): { newStopLoss?: number; reason?: string } => {
-    if (botConfig.minimumGrossProfit <= 0) return {};
-
-    const isLong = position.direction === 'LONG';
-    const grossPnl = (livePrice - position.entryPrice) * position.size * (isLong ? 1 : -1);
-
-    if (grossPnl >= botConfig.minimumGrossProfit) {
-        const priceChangeForProfit = botConfig.minimumGrossProfit / position.size;
-
-        const profitProtectStopLoss = isLong
+        const newStopLoss = isLong
             ? position.entryPrice + priceChangeForProfit
             : position.entryPrice - priceChangeForProfit;
 
-        const isImprovement = (isLong && profitProtectStopLoss > currentStopLoss) || (!isLong && profitProtectStopLoss < currentStopLoss);
+        const isImprovement = (isLong && newStopLoss > position.stopLossPrice) || (!isLong && newStopLoss < position.stopLossPrice);
         if (isImprovement) {
-            return {
-                newStopLoss: profitProtectStopLoss,
-                reason: `Profit protection active (Gross PNL ~$${grossPnl.toFixed(2)} > Target $${botConfig.minimumGrossProfit})`,
-            };
+            // Maintain R:R
+            const initialRiskDistance = Math.abs(position.entryPrice - position.initialStopLossPrice);
+            const initialRewardDistance = Math.abs(position.initialTakeProfitPrice - position.entryPrice);
+            
+            if (initialRiskDistance > 0) {
+                const initialRR = initialRewardDistance / initialRiskDistance;
+                const newRiskDistance = Math.abs(position.entryPrice - newStopLoss);
+                const newRewardDistance = newRiskDistance * initialRR;
+                const newTakeProfit = isLong 
+                    ? position.entryPrice + newRewardDistance 
+                    : position.entryPrice - newRewardDistance;
+                
+                return {
+                    newStopLoss,
+                    newTakeProfit,
+                    reason: `Profit lock active. PNL ~$${unrealizedPnl.toFixed(2)} > 3x Fees.`,
+                };
+            }
         }
     }
+
     return {};
-};
+}
 
-
-const getQuantumScalperTrailSignal = (
-    position: Position,
-    klines: Kline[],
-    livePrice: number,
-    botConfig: BotConfig,
-    params: Required<AgentParams>
-): TradeManagementSignal => {
-    const reasons: string[] = [];
-    const isLong = position.direction === 'LONG';
-    let finalNewStopLoss: number | undefined = undefined;
-
-    // Part 1: PSAR Trailing Stop (Primary Trail)
-    const psarResult = PSAR.calculate({ high: klines.map(k => k.high), low: klines.map(k => k.low), step: params.qsc_psarStep, max: params.qsc_psarMax });
-    const psarStopLoss = (psarResult.length >= 2) ? psarResult[psarResult.length - 2] : undefined;
-
-    if (psarStopLoss) {
-        const isPsarImprovement = (isLong && psarStopLoss > position.stopLossPrice) || (!isLong && psarStopLoss < position.stopLossPrice);
-        if (isPsarImprovement) {
-            finalNewStopLoss = psarStopLoss;
-            reasons.push(`PSAR trail updated to ${psarStopLoss.toFixed(position.pricePrecision)}.`);
-        }
-    }
-
-    // Part 2: Minimum Profit Protection (Safety Net) [Uses new centralized function]
-    const currentSLForCheck = finalNewStopLoss ?? position.stopLossPrice;
-    const profitProtectResult = getMinimumGrossProfitProtectionSignal(position, livePrice, botConfig, currentSLForCheck);
-
-    if (profitProtectResult.newStopLoss) {
-        // If the profit protection SL is tighter than the PSAR SL, use it instead.
-        const isTighter = (isLong && profitProtectResult.newStopLoss > (finalNewStopLoss ?? -Infinity)) || (!isLong && profitProtectResult.newStopLoss < (finalNewStopLoss ?? Infinity));
-        if (isTighter) {
-            finalNewStopLoss = profitProtectResult.newStopLoss;
-            // Replace the PSAR reason with the more important profit lock reason.
-            if(reasons.some(r => r.startsWith('PSAR'))) reasons.shift();
-            reasons.unshift(profitProtectResult.reason!);
-        }
-    }
-
-    if (finalNewStopLoss !== undefined) {
-        const isFinalImprovement = (isLong && finalNewStopLoss > position.stopLossPrice) || (!isLong && finalNewStopLoss < position.stopLossPrice);
-        if (isFinalImprovement) {
-             return { newStopLoss: finalNewStopLoss, reasons };
-        }
-    }
-
-    return { reasons: ['Holding current stop. No profitable trail update available.'] };
-};
-
+// --- Proactive Trade Management ---
 export const getTradeManagementSignal = async (
     position: Position,
     klines: Kline[],
     livePrice: number,
     botConfig: BotConfig
 ): Promise<TradeManagementSignal> => {
-    
-    const positionDirection = position.direction;
     const finalParams = { ...constants.DEFAULT_AGENT_PARAMS, ...botConfig.agentParams };
 
-    // --- Priority 1: Check for signal reversal to close position ---
-    // Agent 9 (Quantum Scalper) is excluded because its PSAR trail is its primary exit signal.
-    // All other agents will now close on a reversal signal.
-    if (![9].includes(botConfig.agent.id)) {
+    // --- PRIORITY 1: Universal Profit Locking (unconditional) ---
+    const profitLockSignal = getProfitLockAndTrailSignal(position, livePrice);
+    if (profitLockSignal.newStopLoss && profitLockSignal.newTakeProfit) {
+        return {
+            newStopLoss: profitLockSignal.newStopLoss,
+            newTakeProfit: profitLockSignal.newTakeProfit,
+            reasons: [profitLockSignal.reason!],
+        };
+    }
+
+    // --- PRIORITY 2: Check for agent signal reversal to close position ---
+    if (![4, 9].includes(botConfig.agent.id)) {
         const latestSignal = await getTradingSignal(botConfig.agent, klines, botConfig.timeFrame, botConfig.agentParams);
-        
         if (
-            (positionDirection === 'LONG' && latestSignal.signal === 'SELL') ||
-            (positionDirection === 'SHORT' && latestSignal.signal === 'BUY')
+            (position.direction === 'LONG' && latestSignal.signal === 'SELL') ||
+            (position.direction === 'SHORT' && latestSignal.signal === 'BUY')
         ) {
             return {
                 closePosition: true,
-                reasons: [`Signal reversed to ${latestSignal.signal}. Closing position.`]
+                reasons: [`Signal reversed to ${latestSignal.signal}. Closing position.`],
             };
         }
     }
 
-    // --- Priority 2: Agent-specific trailing logic ---
-    if (!botConfig.isStopLossLocked) {
-        switch(botConfig.agent.id) {
-            case 4: // Scalping Expert
-            case 6: // Profit Locker
-                return getAtrTpTrailSignal(position, klines, livePrice, finalParams);
-            case 9: // Quantum Scalper
-                return getQuantumScalperTrailSignal(position, klines, livePrice, botConfig, finalParams);
+    // --- PRIORITY 3: Agent-specific trailing logic ---
+    // This logic runs if the higher-priority signals didn't trigger.
+    switch (botConfig.agent.id) {
+        case 4: // Scalping Expert V2
+            return getScalpingExpertV2ManagementSignal(position, klines, livePrice, finalParams);
+        case 6: // Profit Locker (ATR TPs)
+            return getAtrTpTrailSignal(position, klines, livePrice, finalParams);
+        case 9: // Quantum Scalper
+            return getQuantumScalperTrailSignal(position, klines, finalParams);
+    }
+
+    return { reasons: ["Holding initial targets."] };
+};
+
+
+const getScalpingExpertV2ManagementSignal = (
+    position: Position,
+    klines: Kline[],
+    livePrice: number,
+    params: Required<AgentParams>
+): TradeManagementSignal => {
+    const isLong = position.direction === 'LONG';
+    const closes = klines.map(k => k.close);
+
+    const macdValues = MACD.calculate({ values: closes, fastPeriod: params.se_macdFastPeriod!, slowPeriod: params.se_macdSlowPeriod!, signalPeriod: params.se_macdSignalPeriod!, SimpleMAOscillator: false, SimpleMASignal: false });
+    if (macdValues.length >= 3) {
+        const lastMacd = macdValues[macdValues.length - 1];
+        const prevMacd = macdValues[macdValues.length - 2];
+        if (isLong && lastMacd.histogram! > 0 && lastMacd.histogram! < prevMacd.histogram!) return { closePosition: true, reasons: ['MACD histogram momentum is fading.'] };
+        if (!isLong && lastMacd.histogram! < 0 && lastMacd.histogram! > prevMacd.histogram!) return { closePosition: true, reasons: ['MACD histogram momentum is fading.'] };
+    }
+
+    const emaFast = getLast(EMA.calculate({ period: params.se_emaFastPeriod!, values: closes }));
+    const emaSlow = getLast(EMA.calculate({ period: params.se_emaSlowPeriod!, values: closes }));
+    if (typeof emaFast === 'number' && typeof emaSlow === 'number') {
+        if (isLong && emaFast < emaSlow) return { closePosition: true, reasons: ['Bearish EMA cross occurred.'] };
+        if (!isLong && emaFast > emaSlow) return { closePosition: true, reasons: ['Bullish EMA cross occurred.'] };
+    }
+
+    const atr = getLast(ATR.calculate({ high: klines.map(k => k.high), low: klines.map(k => k.low), close: closes, period: params.se_atrPeriod! }));
+    if (typeof atr === 'number' && atr > 0) {
+        const trailDistance = atr * 1.5; 
+        const newStopLoss = isLong ? livePrice - trailDistance : livePrice + trailDistance;
+        const isImprovement = (isLong && newStopLoss > position.stopLossPrice) || (!isLong && newStopLoss < position.stopLossPrice);
+        if (isImprovement) return { newStopLoss, reasons: [`ATR Trailing Stop updated to ${newStopLoss.toFixed(position.pricePrecision)}.`] };
+    }
+
+    return { reasons: ['Holding position, no exit conditions met.'] };
+};
+
+const getAtrTpTrailSignal = (
+    position: Position,
+    klines: Kline[],
+    livePrice: number,
+    params: Required<AgentParams>
+): TradeManagementSignal => {
+    if (!position.partialTps || typeof position.trailStartPrice !== 'number') return { reasons: ['Position not configured for partial TPs.'] };
+
+    const isLong = position.direction === 'LONG';
+
+    for (let i = 0; i < position.partialTps.length; i++) {
+        const tp = position.partialTps[i];
+        if (!tp.hit) {
+            const priceConditionMet = isLong ? livePrice >= tp.price : livePrice <= tp.price;
+            if (priceConditionMet) {
+                return { partialClose: { tpIndex: i, reason: `Partial Take Profit ${i + 1} hit` }, reasons: [`Triggering partial close for TP${i + 1}.`] };
+            }
+            break; 
+        }
+    }
+
+    const trailConditionMet = isLong ? livePrice >= position.trailStartPrice : livePrice <= position.trailStartPrice;
+    if (trailConditionMet) {
+        const atr = getLast(ATR.calculate({ high: klines.map(k => k.high), low: klines.map(k => k.low), close: klines.map(k => k.close), period: params.atrPeriod }));
+        if (typeof atr === 'number' && atr > 0) {
+            const trailDistance = atr * 0.5;
+            const newStopLoss = isLong ? livePrice - trailDistance : livePrice + trailDistance;
+            const isImprovement = (isLong && newStopLoss > position.stopLossPrice) || (!isLong && newStopLoss < position.stopLossPrice);
+            if (isImprovement) return { newStopLoss, reasons: [`Trailing stop activated/updated.`] };
+        }
+    }
+
+    return { reasons: ['Holding position.'] };
+};
+
+const getQuantumScalperTrailSignal = (
+    position: Position,
+    klines: Kline[],
+    params: Required<AgentParams>
+): TradeManagementSignal => {
+    const reasons: string[] = [];
+    const isLong = position.direction === 'LONG';
+
+    const psarResult = PSAR.calculate({ high: klines.map(k => k.high), low: klines.map(k => k.low), step: params.qsc_psarStep!, max: params.qsc_psarMax! });
+    const psarStopLoss = (psarResult.length >= 2) ? psarResult[psarResult.length - 2] : undefined;
+
+    if (psarStopLoss) {
+        const isImprovement = (isLong && psarStopLoss > position.stopLossPrice) || (!isLong && psarStopLoss < position.stopLossPrice);
+        if (isImprovement) {
+            return { newStopLoss: psarStopLoss, reasons: [`PSAR trail updated to ${psarStopLoss.toFixed(position.pricePrecision)}.`] };
         }
     }
     
-    // --- Default: No action needed ---
-    return {
-        reasons: ["Holding initial targets."],
-    };
+    return { reasons: ['Holding current stop.'] };
 };

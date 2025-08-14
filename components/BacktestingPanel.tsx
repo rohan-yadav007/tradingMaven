@@ -347,7 +347,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     const [isParamsOpen, setIsParamsOpen] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [testPeriodDays, setTestPeriodDays] = useState(30);
+    const [testPeriodDays, setTestPeriodDays] = useState(1);
 
     // This effect makes the UI aware of the timeframe-adaptive settings.
     useEffect(() => {
@@ -593,7 +593,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                         {localConfig.tradingMode === TradingMode.USDSM_Futures && (
                             <ParamSlider label="Leverage" value={localConfig.leverage} min={1} max={125} step={1} onChange={v => setLocalConfig(p => ({...p, leverage: v}))} />
                         )}
-                        <ParamSlider label="Test Period (Days)" value={testPeriodDays} min={1} max={180} step={1} onChange={setTestPeriodDays} />
+                        <ParamSlider label="Test Period (Days)" value={testPeriodDays} min={1} max={7} step={1} onChange={setTestPeriodDays} />
                         
                         <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-1"></div>
 

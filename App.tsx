@@ -144,18 +144,29 @@ const AppContent: React.FC = () => {
                 setLiveTicker(ticker);
             }
         };
+
         const klineCallback = (newKline: Kline) => {
-             setKlines(prevKlines => {
-                if (prevKlines.length === 0) return [newKline];
-                const lastKline = prevKlines[prevKlines.length - 1];
-                if (lastKline && newKline.time === lastKline.time) {
-                    const updatedKlines = [...prevKlines];
-                    updatedKlines[prevKlines.length - 1] = newKline;
-                    return updatedKlines;
-                } else {
-                    return [...prevKlines.slice(1), newKline];
-                }
-            });
+            // Only update the main klines state if the candle is FINAL.
+            // This prevents re-rendering the whole chart on every tick.
+            // The smooth animation is handled by the livePrice prop from the ticker stream.
+            if (newKline.isFinal) {
+                setKlines(prevKlines => {
+                    if (prevKlines.length === 0) return [newKline];
+                    const lastKline = prevKlines[prevKlines.length - 1];
+                    // If the new kline is the final version of the last one, replace it.
+                    if (lastKline && newKline.time === lastKline.time) {
+                        const updatedKlines = [...prevKlines];
+                        updatedKlines[prevKlines.length - 1] = newKline;
+                        return updatedKlines;
+                    } 
+                    // Otherwise, it's a new candle, so add it and shift the array.
+                    else if (lastKline && newKline.time > lastKline.time) {
+                        return [...prevKlines.slice(1), newKline];
+                    }
+                    // If for some reason we get an old kline, ignore it.
+                    return prevKlines;
+                });
+            }
         };
         
         botManagerService.subscribeToTickerUpdates(formattedPair, tradingMode, tickerCallback);

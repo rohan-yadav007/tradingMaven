@@ -1,4 +1,5 @@
 
+
 import React, { useState } from 'react';
 import { Trade, TradingMode } from '../types';
 import { HistoryIcon, ChevronDown, ChevronUp } from './icons';
@@ -19,11 +20,7 @@ const formatDisplayDate = (dateString: Date): string => {
     });
 };
 
-const TradeRow: React.FC<{ 
-    trade: Trade; 
-    isOpen: boolean; 
-    onToggle: () => void;
-}> = ({ trade, isOpen, onToggle }) => {
+const TradeRow: React.FC<{ trade: Trade; isOpen: boolean; onToggle: () => void; }> = ({ trade, isOpen, onToggle }) => {
     const isLong = trade.direction === 'LONG';
     const isProfit = trade.pnl >= 0;
     
@@ -33,7 +30,7 @@ const TradeRow: React.FC<{
 
     return (
         <>
-            <tr onClick={onToggle} className={`border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer text-sm`}>
+            <tr onClick={onToggle} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer text-sm">
                 <td className="px-4 py-3 align-middle">
                      <div className="flex items-center gap-3">
                         <span className="text-slate-400">
@@ -106,18 +103,13 @@ export const TradingLog: React.FC<TradingLogProps> = ({ tradeHistory }) => {
                             <th scope="col" className="px-4 py-2 font-medium">Market</th>
                             <th scope="col" className="px-4 py-2 font-medium">Direction</th>
                             <th scope="col" className="px-4 py-2 font-medium">Exit Time</th>
-                            <th scope="col" className="px-4 py-2 font-medium">P/L ($)</th>
+                            <th scope="col" className="px-4 py-2 font-medium" title="Profit/Loss after estimated trading fees">Net P/L ($)</th>
                             <th scope="col" className="px-4 py-2 font-medium">Agent</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                         {tradeHistory.length > 0 ? (
-                            tradeHistory.map((trade) => <TradeRow 
-                                key={trade.id} 
-                                trade={trade} 
-                                isOpen={expandedRowId === trade.id} 
-                                onToggle={() => handleToggleRow(trade.id)}
-                            />)
+                            tradeHistory.map((trade) => <TradeRow key={trade.id} trade={trade} isOpen={expandedRowId === trade.id} onToggle={() => handleToggleRow(trade.id)}/>)
                         ) : (
                             <tr><td colSpan={5} className="text-center p-8 text-slate-500">No trade history recorded yet.</td></tr>
                         )}

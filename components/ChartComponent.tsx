@@ -1,10 +1,20 @@
-
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Kline, LiveTicker } from '../types';
+import React, { useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react';
+import { type Kline, type LiveTicker } from '../types';
 import { ChartIcon } from './icons';
 import * as constants from '../constants';
-import { calculateSupportResistance, SupportResistance } from '../services/chartAnalysisService';
+import { calculateSupportResistance, type SupportResistance } from '../services/chartAnalysisService';
 import { SearchableDropdown } from './SearchableDropdown';
+import { 
+    createChart, 
+    ColorType, 
+    LineStyle, 
+    type IChartApi, 
+    type ISeriesApi, 
+    type CandlestickData, 
+    type UTCTimestamp, 
+    type PriceLineOptions,
+    type IPriceLine 
+} from 'lightweight-charts';
 
 interface ChartComponentProps {
     data: Kline[];
@@ -22,20 +32,49 @@ interface ChartComponentProps {
     theme: 'light' | 'dark';
 }
 
-const ChartCandle: React.FC<{ kline: Kline, x: number, y_scale: (val: number) => number, barWidth: number, theme: 'light' | 'dark' }> = ({ kline, x, y_scale, barWidth, theme }) => {
-    const isUp = kline.close >= kline.open;
-    const upColor = theme === 'dark' ? '#22c55e' : '#16a34a'; // emerald-500, green-600
-    const downColor = theme === 'dark' ? '#f43f5e' : '#ef4444'; // rose-500, red-500
-    const candleColor = isUp ? upColor : downColor;
+const getTimeframeDurationMs = (timeframe: string): number => {
+    const unit = timeframe.slice(-1);
+    const value = parseInt(timeframe.slice(0, -1));
+    if (isNaN(value)) return 0;
 
-    const body_y = y_scale(Math.max(kline.open, kline.close));
-    const body_height = Math.abs(y_scale(kline.open) - y_scale(kline.close)) || 1;
+    switch (unit) {
+        case 'm': return value * 60 * 1000;
+        case 'h': return value * 60 * 60 * 1000;
+        case 'd': return value * 24 * 60 * 60 * 1000;
+        default: return 0;
+    }
+};
+
+const CountdownTimer: React.FC<{ lastKline: Kline; timeframe: string }> = ({ lastKline, timeframe }) => {
+    const [countdown, setCountdown] = useState('');
+    const timeframeMs = getTimeframeDurationMs(timeframe);
+
+    useEffect(() => {
+        if (!timeframeMs || !lastKline) return;
+
+        const interval = setInterval(() => {
+            const lastTime = lastKline.time;
+            const nextCloseTime = Math.floor(lastTime / timeframeMs) * timeframeMs + timeframeMs;
+            const remaining = nextCloseTime - Date.now();
+            
+            if (remaining <= 0) {
+                setCountdown('00:00');
+            } else {
+                const minutes = Math.floor((remaining / 1000) / 60);
+                const seconds = Math.floor((remaining / 1000) % 60);
+                setCountdown(`${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`);
+            }
+        }, 500);
+
+        return () => clearInterval(interval);
+    }, [lastKline, timeframe, timeframeMs]);
     
+    if(!lastKline) return null;
+
     return (
-        <g>
-            <line x1={x + barWidth / 2} y1={y_scale(kline.high)} x2={x + barWidth / 2} y2={y_scale(kline.low)} stroke={candleColor} strokeWidth="1" />
-            <rect x={x} y={body_y} width={barWidth} height={body_height} fill={candleColor} />
-        </g>
+         <div className="absolute top-4 left-4 z-20 bg-slate-100/80 dark:bg-slate-900/80 backdrop-blur-sm px-2 py-1 rounded-md text-slate-700 dark:text-slate-200 text-xs font-mono">
+             Candle closes in: <span className="font-bold">{countdown}</span>
+        </div>
     );
 };
 
@@ -53,46 +92,30 @@ const TimeFrameSelector: React.FC<{selected: string, onSelect: (tf: string) => v
     </div>
 );
 
-const formatTimestamp = (timestamp: number, timeframe: string): string => {
-    const date = new Date(timestamp);
-    if (['1m', '5m', '15m'].includes(timeframe)) {
-        return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-    }
-    if (['1h', '4h'].includes(timeframe)) {
-         return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
-    }
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-};
 
-interface CrosshairData {
-    x: number;
-    y: number;
-    time: number;
-    price: number;
-}
-
-export const ChartComponent: React.FC<ChartComponentProps> = ({ data, pair, isLoading, pricePrecision, livePrice, liveTicker, chartTimeFrame, onTimeFrameChange, allPairs, onPairChange, onLoadMoreData, isFetchingMoreData, theme }) => {
+export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
+    const { 
+        data, pair, isLoading, pricePrecision, livePrice, 
+        chartTimeFrame, onTimeFrameChange, allPairs, onPairChange,
+        onLoadMoreData, isFetchingMoreData, theme 
+    } = props;
+    
+    const chartContainerRef = useRef<HTMLDivElement>(null);
+    const chartRef = useRef<IChartApi | null>(null);
+    const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+    const priceLineRefs = useRef<IPriceLine[]>([]);
+    
     const [priceChange, setPriceChange] = useState<'up' | 'down' | 'none'>('none');
     const prevPriceRef = useRef(livePrice);
-    const [crosshair, setCrosshair] = useState<CrosshairData | null>(null);
-    const svgRef = useRef<SVGSVGElement>(null);
-    const [srLevels, setSrLevels] = useState<SupportResistance>({ supports: [], resistances: [] });
-
-    // --- Chart Interaction State ---
-    const [view, setView] = useState({ startIndex: 0, visibleCandles: 120 });
-    const [isPanning, setIsPanning] = useState(false);
-    const [panStart, setPanStart] = useState({ x: 0, startIndex: 0 });
-    const prevDataLengthRef = useRef(data.length);
-    const isFullReloadRef = useRef(true); // Ref to track if a full data reload is needed
-
-    // --- Constants ---
-    const PADDING = { top: 20, right: 80, bottom: 40, left: 10 };
-    const SVG_WIDTH = 800;
-    const SVG_HEIGHT = 400;
-    const RIGHT_PADDING_CANDLES = 15; // Number of candles worth of space on the right
     
-    // --- Effects for managing chart state ---
-
+    const [srLevels, setSrLevels] = useState<SupportResistance>({ supports: [], resistances: [] });
+    
+    // Use refs for callbacks and state inside the single-run effect to avoid stale closures
+    const onLoadMoreDataRef = useRef(onLoadMoreData);
+    onLoadMoreDataRef.current = onLoadMoreData;
+    const isFetchingMoreDataRef = useRef(isFetchingMoreData);
+    isFetchingMoreDataRef.current = isFetchingMoreData;
+    
     // Effect for live price ticker color
     useEffect(() => {
         if (livePrice > prevPriceRef.current) setPriceChange('up');
@@ -101,286 +124,154 @@ export const ChartComponent: React.FC<ChartComponentProps> = ({ data, pair, isLo
         const timeout = setTimeout(() => setPriceChange('none'), 500);
         return () => clearTimeout(timeout);
     }, [livePrice]);
-    
-    // Flag for a full reload when pair or timeframe changes
-    useEffect(() => {
-        isFullReloadRef.current = true;
-    }, [pair, chartTimeFrame]);
 
-    // This is the main effect to handle view changes based on data updates.
-    useEffect(() => {
-        if (data.length === 0) return;
+    // --- Chart Initialization (runs only once to prevent flickering) ---
+    useLayoutEffect(() => {
+        if (!chartContainerRef.current) return;
 
-        if (isFullReloadRef.current) {
-            const initialVisibleCandles = 120;
-            setView({
-                startIndex: Math.max(0, data.length - initialVisibleCandles),
-                visibleCandles: initialVisibleCandles,
-            });
-            isFullReloadRef.current = false;
-        } 
-        else if (data.length > prevDataLengthRef.current) {
-            const newCandlesCount = data.length - prevDataLengthRef.current;
-            const isHistoricalLoad = newCandlesCount > 2;
-            
-            if (isHistoricalLoad) {
-                setView(prev => ({
-                    ...prev,
-                    startIndex: prev.startIndex + newCandlesCount,
-                }));
-            } 
-            else {
-                const isViewingEnd = view.startIndex + view.visibleCandles >= prevDataLengthRef.current - 2;
-                if (isViewingEnd) {
-                    setView(prev => ({
-                        ...prev,
-                        startIndex: prev.startIndex + newCandlesCount,
-                    }));
-                }
-            }
-        }
+        const chart = createChart(chartContainerRef.current, {
+            autoSize: true,
+            timeScale: {
+                timeVisible: true,
+                secondsVisible: false,
+            },
+        });
         
-        prevDataLengthRef.current = data.length;
+        const candlestickSeries = chart.addCandlestickSeries({});
+        
+        chartRef.current = chart;
+        candlestickSeriesRef.current = candlestickSeries;
+
+        // Subscribe to scroll events for infinite scroll using stable refs
+        chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+            if (range && range.from < 10 && !isFetchingMoreDataRef.current) {
+                 onLoadMoreDataRef.current();
+            }
+        });
+        
+        return () => {
+            chart.remove();
+            chartRef.current = null;
+        };
+    }, []); // <-- Empty dependency array is CRITICAL to prevent re-creation
+
+    // --- Chart Theme Update ---
+    useEffect(() => {
+        if (!chartRef.current) return;
+
+        const isDark = theme === 'dark';
+        chartRef.current.applyOptions({
+            layout: {
+                background: { type: ColorType.Solid, color: isDark ? '#1e293b' : '#ffffff' },
+                textColor: isDark ? '#d1d5db' : '#374151',
+            },
+            grid: {
+                vertLines: { color: isDark ? '#334155' : '#e5e7eb' },
+                horzLines: { color: isDark ? '#334155' : '#e5e7eb' },
+            },
+            rightPriceScale: {
+                borderColor: isDark ? '#334155' : '#e5e7eb',
+            },
+            timeScale: {
+                borderColor: isDark ? '#334155' : '#e5e7eb',
+            },
+        });
+        candlestickSeriesRef.current?.applyOptions({
+            upColor: isDark ? '#22c55e' : '#16a34a',
+            downColor: isDark ? '#ef4444' : '#dc2626',
+            borderVisible: false,
+            wickUpColor: isDark ? '#22c55e' : '#16a34a',
+            wickDownColor: isDark ? '#ef4444' : '#dc2626',
+        });
+    }, [theme]);
+    
+    // --- Data Management ---
+    useEffect(() => {
+        if (!candlestickSeriesRef.current || data.length === 0) return;
+        
+        const formattedData: CandlestickData[] = data.map(k => ({
+            time: (k.time / 1000) as UTCTimestamp,
+            open: k.open,
+            high: k.high,
+            low: k.low,
+            close: k.close,
+        }));
+        
+        candlestickSeriesRef.current.setData(formattedData);
+
     }, [data]);
     
-    // Derived values for rendering
-    // Step 1: Get the visible kline data. This is memoized separately to prevent re-calculation when only livePrice changes.
-    const visibleData = useMemo(() => {
-        return data.slice(
-            Math.max(0, Math.floor(view.startIndex)),
-            Math.min(data.length, Math.floor(view.startIndex + view.visibleCandles))
-        );
-    }, [data, view.startIndex, view.visibleCandles]);
-
-    // Step 2: Calculate chart metrics based on the stable visible data and the live price.
-    const {
-        chartWidth, chartHeight,
-        minPrice, maxPrice, priceRange,
-        y_scale, y_invert, totalVirtualCandles
-    } = useMemo(() => {
-        const _chartWidth = SVG_WIDTH - PADDING.left - PADDING.right;
-        const _chartHeight = SVG_HEIGHT - PADDING.top - PADDING.bottom;
-
-        const visiblePrices = visibleData.flatMap(d => [d.low, d.high]);
-        if (livePrice > 0) visiblePrices.push(livePrice);
-
-        const _minPriceRaw = visiblePrices.length > 0 ? Math.min(...visiblePrices) : 0;
-        const _maxPriceRaw = visiblePrices.length > 0 ? Math.max(...visiblePrices) : 1;
-        
-        // Add vertical buffer
-        const priceBuffer = (_maxPriceRaw - _minPriceRaw) * 0.05;
-        const _minPrice = _minPriceRaw - priceBuffer;
-        const _maxPrice = _maxPriceRaw + priceBuffer;
-        
-        const _priceRange = _maxPrice - _minPrice;
-
-        const _y_scale = (price: number) => PADDING.top + _chartHeight - ((price - _minPrice) / _priceRange) * _chartHeight;
-        const _y_invert = (y: number) => _minPrice + ((PADDING.top + _chartHeight - y) / _chartHeight) * _priceRange;
-        const _totalVirtualCandles = view.visibleCandles + RIGHT_PADDING_CANDLES;
-
-        return {
-            chartWidth: _chartWidth, chartHeight: _chartHeight,
-            minPrice: _minPrice, maxPrice: _maxPrice, priceRange: _priceRange,
-            y_scale: _y_scale, y_invert: _y_invert, totalVirtualCandles: _totalVirtualCandles
-        };
-    }, [visibleData, livePrice, theme, PADDING.right, view.visibleCandles]);
-    
-    // S/R Calculation
+    // Update live price
     useEffect(() => {
-        if (visibleData.length > 50) {
-            const levels = calculateSupportResistance(visibleData);
+        if (!candlestickSeriesRef.current || !data.length || !livePrice) return;
+        const lastKline = data[data.length - 1];
+        
+        candlestickSeriesRef.current.update({
+            time: (lastKline.time / 1000) as UTCTimestamp,
+            open: lastKline.open,
+            high: Math.max(lastKline.high, livePrice),
+            low: Math.min(lastKline.low, livePrice),
+            close: livePrice,
+        });
+    }, [livePrice, data]);
+
+    // Calculate and draw S/R levels
+    useEffect(() => {
+        if (data.length > 50) {
+            const levels = calculateSupportResistance(data);
             setSrLevels(levels);
         } else {
             setSrLevels({ supports: [], resistances: [] });
         }
-    }, [visibleData]);
+    }, [data]);
+    
+    useEffect(() => {
+        const series = candlestickSeriesRef.current;
+        if (!series) return;
 
+        // Clear previous lines
+        priceLineRefs.current.forEach(line => series.removePriceLine(line));
+        priceLineRefs.current = [];
+
+        const createPriceLine = (price: number, color: string, title: string) => {
+            const lineOptions: PriceLineOptions = {
+                price,
+                color,
+                lineWidth: 1,
+                lineStyle: LineStyle.Dashed,
+                axisLabelVisible: true,
+                title,
+                lineVisible: true,
+                axisLabelColor: color,
+                axisLabelTextColor: theme === 'dark' ? '#000000' : '#ffffff',
+            };
+            priceLineRefs.current.push(series.createPriceLine(lineOptions));
+        };
+
+        srLevels.supports.slice(0, 3).forEach(level => createPriceLine(level, '#22c55e', 'Support'));
+        srLevels.resistances.slice(0, 3).forEach(level => createPriceLine(level, '#ef4444', 'Resistance'));
+
+    }, [srLevels, theme]);
 
     const livePriceColor = priceChange === 'up' ? 'text-emerald-500' : priceChange === 'down' ? 'text-rose-500' : 'text-slate-800 dark:text-slate-200';
-    const livePriceStrokeColor = priceChange === 'up' ? '#22c55e' : priceChange === 'down' ? '#f43f5e' : (theme === 'dark' ? '#94a3b8' : '#64748b');
-
-    const handleWheel = useCallback((event: WheelEvent) => {
-        event.preventDefault();
-        if (!svgRef.current) return;
-
-        const zoomIntensity = 0.1;
-        const zoomFactor = event.deltaY > 0 ? 1 - zoomIntensity : 1 + zoomIntensity;
-        const newVisibleCandles = view.visibleCandles * zoomFactor;
-        const clampedVisibleCandles = Math.max(20, Math.min(data.length, newVisibleCandles));
-
-        const rect = svgRef.current.getBoundingClientRect();
-        const mouseX = event.clientX - rect.left - PADDING.left;
-        const ratio = Math.max(0, Math.min(1, mouseX / chartWidth));
-
-        const cursorIndexInData = view.startIndex + (view.visibleCandles * ratio);
-        const newStartIndex = cursorIndexInData - (clampedVisibleCandles * ratio);
-        
-        setView({
-            startIndex: Math.max(0, newStartIndex),
-            visibleCandles: clampedVisibleCandles,
-        });
-    }, [view, data.length, setView, chartWidth, PADDING.left]);
-
-    const handleMouseDown = (event: React.MouseEvent<SVGSVGElement>) => {
-        setIsPanning(true);
-        setPanStart({ x: event.clientX, startIndex: view.startIndex });
-        if(svgRef.current) svgRef.current.style.cursor = 'grabbing';
-    };
-
-    const handleMouseMove = (event: React.MouseEvent<SVGSVGElement>) => {
-        if (!svgRef.current || visibleData.length === 0) return;
-        
-        const rect = svgRef.current.getBoundingClientRect();
-        const x = event.clientX - rect.left;
-        const y = event.clientY - rect.top;
-
-        if (isPanning) {
-            const barWidth = Math.max(1, chartWidth / totalVirtualCandles * 0.7);
-            const candlesPerPixel = view.visibleCandles / (chartWidth - RIGHT_PADDING_CANDLES * (barWidth / 0.7));
-            
-            const deltaX = event.clientX - panStart.x;
-            const candleDelta = deltaX * candlesPerPixel;
-            
-            const newStartIndex = panStart.startIndex - candleDelta;
-            const clampedStartIndex = Math.max(0, Math.min(newStartIndex, data.length - view.visibleCandles));
-
-            setView(prev => ({ ...prev, startIndex: clampedStartIndex }));
-
-            if (clampedStartIndex < 10 && !isFetchingMoreData) {
-                onLoadMoreData();
-            }
-        }
-
-        if (x > PADDING.left && x < SVG_WIDTH - PADDING.right && y > PADDING.top && y < PADDING.top + chartHeight) {
-            const candleSlotWidth = chartWidth / totalVirtualCandles;
-            const index = Math.floor((x - PADDING.left) / candleSlotWidth);
-            
-            if (index >= 0 && index < visibleData.length) {
-                const kline = visibleData[index];
-                if(kline) {
-                    setCrosshair({
-                        x: x,
-                        y: y,
-                        time: kline.time,
-                        price: y_invert(y),
-                    });
-                }
-            } else {
-                 setCrosshair(null);
-            }
-        } else {
-            setCrosshair(null);
-        }
-    };
-
-    const handleMouseUpOrLeave = () => {
-        setIsPanning(false);
-        if(svgRef.current) svgRef.current.style.cursor = 'crosshair';
-        setCrosshair(null);
-    };
-
-    useEffect(() => {
-        const element = svgRef.current;
-        if (element) {
-            element.addEventListener('wheel', handleWheel, { passive: false });
-            return () => {
-                element.removeEventListener('wheel', handleWheel);
-            };
-        }
-    }, [handleWheel]);
-
-    const renderChartContent = () => {
-        const isDark = theme === 'dark';
+    
+    const renderContent = () => {
         if (isLoading) {
             return <div style={{height: '400px'}} className="flex items-center justify-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500"></div></div>;
         }
-        if (!visibleData || visibleData.length === 0) {
-            return <div style={{height: '400px'}} className="flex items-center justify-center text-rose-500">Could not load chart data.</div>;
+         if (data.length === 0 && !isLoading) {
+            return <div style={{height: '400px'}} className="flex items-center justify-center text-rose-500">Could not load chart data for this pair.</div>;
         }
-
-        const barWidth = Math.max(1, chartWidth / totalVirtualCandles * 0.7);
-        const priceLevels = Array.from({ length: 5 }, (_, i) => minPrice + (priceRange / 4) * i);
-        const timeLabelsCount = Math.min(10, Math.floor(chartWidth / 80));
-        const timeLabelStep = Math.max(1, Math.floor(visibleData.length / timeLabelsCount));
-        
         return (
-            <div className="w-full overflow-hidden relative">
-                {isFetchingMoreData && (
-                    <div className="absolute left-4 top-1/2 -translate-y-1/2 z-20 p-2 rounded-full">
+             <div ref={chartContainerRef} className="w-full h-[400px] relative">
+                 {isFetchingMoreData && (
+                    <div className="absolute top-1/2 left-4 z-20 p-2 rounded-full bg-slate-100/50 dark:bg-slate-800/50">
                         <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-sky-500"></div>
                     </div>
                 )}
-                <svg 
-                    ref={svgRef} 
-                    width="100%" 
-                    height={SVG_HEIGHT} 
-                    viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`} 
-                    preserveAspectRatio="xMidYMid meet" 
-                    onMouseDown={handleMouseDown}
-                    onMouseMove={handleMouseMove}
-                    onMouseUp={handleMouseUpOrLeave}
-                    onMouseLeave={handleMouseUpOrLeave}
-                    style={{ cursor: isPanning ? 'grabbing' : 'crosshair', userSelect: 'none', background: isDark ? '#1e293b' : '#f8fafc' }}
-                >
-                    {/* Y-axis Gridlines & Labels */}
-                    {priceLevels.map(price => (
-                        <g key={`price-grid-${price}`}>
-                            <line x1={PADDING.left} y1={y_scale(price)} x2={SVG_WIDTH - PADDING.right} y2={y_scale(price)} className="stroke-slate-200 dark:stroke-slate-700" strokeDasharray="3,3" strokeWidth="0.5" />
-                            <text x={SVG_WIDTH - PADDING.right + 5} y={y_scale(price)} className="fill-slate-500 dark:fill-slate-400 text-xs" dominantBaseline="middle">{price.toFixed(pricePrecision)}</text>
-                        </g>
-                    ))}
-                    
-                    {/* S/R Levels */}
-                    {srLevels.supports.map(level => (
-                        <g key={`support-${level}`}>
-                            <line x1={PADDING.left} y1={y_scale(level)} x2={SVG_WIDTH - PADDING.right} y2={y_scale(level)} className="stroke-emerald-500" strokeDasharray="5,5" strokeWidth="1" />
-                            <text x={SVG_WIDTH - PADDING.right + 5} y={y_scale(level)} className="fill-emerald-500 text-xs" dominantBaseline="middle">{level.toFixed(pricePrecision)}</text>
-                        </g>
-                    ))}
-                    {srLevels.resistances.map(level => (
-                        <g key={`resistance-${level}`}>
-                            <line x1={PADDING.left} y1={y_scale(level)} x2={SVG_WIDTH - PADDING.right} y2={y_scale(level)} className="stroke-rose-500" strokeDasharray="5,5" strokeWidth="1" />
-                            <text x={SVG_WIDTH - PADDING.right + 5} y={y_scale(level)} className="fill-rose-500 text-xs" dominantBaseline="middle">{level.toFixed(pricePrecision)}</text>
-                        </g>
-                    ))}
-
-                    {/* Candles & Time Labels */}
-                    {visibleData.map((kline, i) => {
-                         const x = PADDING.left + (chartWidth / totalVirtualCandles) * i;
-                         const showTimeLabel = i % timeLabelStep === 0;
-                         return (
-                            <React.Fragment key={kline.time}>
-                                <ChartCandle kline={kline} x={x + barWidth*0.15} y_scale={y_scale} barWidth={barWidth} theme={theme}/>
-                                {showTimeLabel && (
-                                    <text x={x + barWidth / 2} y={SVG_HEIGHT - PADDING.bottom + 15} className="fill-slate-500 dark:fill-slate-400 text-xs" textAnchor="middle">{formatTimestamp(kline.time, chartTimeFrame)}</text>
-                                )}
-                            </React.Fragment>
-                         );
-                    })}
-                    
-                    {/* Live Price Line */}
-                    {livePrice > 0 && y_scale(livePrice) > PADDING.top && y_scale(livePrice) < (PADDING.top + chartHeight) && (
-                        <g>
-                             <line x1={PADDING.left} y1={y_scale(livePrice)} x2={SVG_WIDTH - PADDING.right} y2={y_scale(livePrice)} stroke={livePriceStrokeColor} strokeDasharray="6,3" strokeWidth="1" />
-                             <rect x={SVG_WIDTH - PADDING.right} y={y_scale(livePrice) - 10} width={PADDING.right} height="20" fill={livePriceStrokeColor} />
-                             <text x={SVG_WIDTH - PADDING.right + 5} y={y_scale(livePrice)} className="fill-white text-xs font-bold" dominantBaseline="middle">{livePrice.toFixed(pricePrecision)}</text>
-                        </g>
-                    )}
-
-                    {/* Crosshair */}
-                    {crosshair && (
-                        <g className="pointer-events-none">
-                            <line x1={crosshair.x} y1={PADDING.top} x2={crosshair.x} y2={PADDING.top + chartHeight} className="stroke-slate-500 dark:stroke-slate-400" strokeDasharray="4,2" strokeWidth="1" />
-                            <line x1={PADDING.left} y1={crosshair.y} x2={SVG_WIDTH - PADDING.right} y2={crosshair.y} className="stroke-slate-500 dark:stroke-slate-400" strokeDasharray="4,2" strokeWidth="1" />
-                            <rect x={SVG_WIDTH - PADDING.right} y={crosshair.y - 10} width={PADDING.right} height="20" className="fill-slate-800 dark:fill-slate-700" />
-                            <text x={SVG_WIDTH - PADDING.right + 5} y={crosshair.y} className="fill-white text-xs" dominantBaseline="middle">{crosshair.price.toFixed(pricePrecision)}</text>
-                            <rect x={crosshair.x - 30} y={SVG_HEIGHT - PADDING.bottom} width={60} height="20" className="fill-slate-800 dark:fill-slate-700" />
-                            <text x={crosshair.x} y={SVG_HEIGHT - PADDING.bottom + 10} className="fill-white text-xs" textAnchor="middle" dominantBaseline="middle">{formatTimestamp(crosshair.time, chartTimeFrame)}</text>
-                        </g>
-                    )}
-                </svg>
+                {data.length > 0 && <CountdownTimer lastKline={data[data.length - 1]} timeframe={chartTimeFrame} />}
             </div>
-        );
+        )
     };
     
     return (
@@ -403,7 +294,7 @@ export const ChartComponent: React.FC<ChartComponentProps> = ({ data, pair, isLo
                     </div>
                     <TimeFrameSelector selected={chartTimeFrame} onSelect={onTimeFrameChange} />
                 </div>
-                {renderChartContent()}
+                {renderContent()}
             </div>
         </div>
     );

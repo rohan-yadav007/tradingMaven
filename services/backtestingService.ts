@@ -1,5 +1,4 @@
 
-
 import { Kline, BotConfig, BacktestResult, SimulatedTrade, AgentParams, Position, RiskMode, TradingMode } from '../types';
 import * as binanceService from './binanceService';
 import { getTradingSignal, getTradeManagementSignal, getInitialAgentTargets, analyzeTrendExhaustion } from './localAgentService';
@@ -78,6 +77,7 @@ export async function runBacktest(
     for (let i = minCandles; i < mainKlines.length; i++) {
         const entrySignalCandle = mainKlines[i-1];
         const historySlice = mainKlines.slice(0, i);
+        let hasTradedInThisCandle = false; // "One Trade Per Candle" Rule
 
         if (openPosition) {
             const isLong = openPosition.direction === 'LONG';
@@ -99,7 +99,11 @@ export async function runBacktest(
                     tp_crossed = managementCandle.low <= openPosition.takeProfitPrice;
                 }
 
-                if (sl_crossed) {
+                if (sl_crossed && tp_crossed) {
+                    // If both are hit in the same candle, assume SL is hit first for risk management
+                    exitPrice = openPosition.stopLossPrice;
+                    exitReason = openPosition.activeStopLossReason === 'Universal Trail' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
+                } else if (sl_crossed) {
                     exitPrice = openPosition.stopLossPrice;
                     exitReason = openPosition.activeStopLossReason === 'Universal Trail' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
                 } else if (tp_crossed) {
@@ -108,24 +112,30 @@ export async function runBacktest(
                 }
 
                 if (exitPrice !== undefined && exitReason !== undefined) {
-                    const pnl = (exitPrice - openPosition.entryPrice) * openPosition.size * (isLong ? 1 : -1);
-                    equity += pnl;
+                    const grossPnl = (exitPrice - openPosition.entryPrice) * openPosition.size * (isLong ? 1 : -1);
+                    const entryValue = openPosition.entryPrice * openPosition.size;
+                    const exitValue = exitPrice * openPosition.size;
+                    const fees = (entryValue + exitValue) * constants.TAKER_FEE_RATE;
+                    const netPnl = grossPnl - fees;
+
+                    equity += netPnl;
 
                     const closedTrade: SimulatedTrade = {
                         id: trades.length + 1, pair: openPosition.pair, direction: openPosition.direction,
                         entryPrice: openPosition.entryPrice, exitPrice: exitPrice, entryTime: openPosition.entryTime,
-                        exitTime: managementCandle.time, size: openPosition.size, investedAmount: config.investmentAmount, pnl,
+                        exitTime: managementCandle.time, size: openPosition.size, investedAmount: config.investmentAmount, pnl: netPnl,
                         exitReason, entryReason: openPosition.entryReason
                     };
                     trades.push(closedTrade);
                     
-                    if (config.isCooldownEnabled && pnl > 0) {
+                    if (config.isCooldownEnabled && netPnl > 0) {
                         inPostProfitAnalysis = true;
                         lastProfitableDirection = closedTrade.direction;
                     }
 
                     openPosition = null;
-                    break;
+                    hasTradedInThisCandle = true; // Mark that a trade occurred in this main candle
+                    break; // Exit the management kline loop for this main candle
                 }
 
                  if (openPosition) { 
@@ -135,6 +145,25 @@ export async function runBacktest(
 
                     const managementHistorySlice = managementKlines.slice(0, managementKlineIndex + 1);
                     const mgmtSignal = await getTradeManagementSignal(tempPositionForSignal, managementHistorySlice, livePriceForTrail, config);
+
+                    if (mgmtSignal.closePosition) {
+                         const grossPnl = (livePriceForTrail - openPosition.entryPrice) * openPosition.size * (isLong ? 1 : -1);
+                         const entryValue = openPosition.entryPrice * openPosition.size;
+                         const exitValue = livePriceForTrail * openPosition.size;
+                         const fees = (entryValue + exitValue) * constants.TAKER_FEE_RATE;
+                         const netPnl = grossPnl - fees;
+                         
+                         equity += netPnl;
+                         trades.push({
+                            id: trades.length + 1, pair: openPosition.pair, direction: openPosition.direction,
+                            entryPrice: openPosition.entryPrice, exitPrice: livePriceForTrail, entryTime: openPosition.entryTime,
+                            exitTime: managementCandle.time, size: openPosition.size, investedAmount: config.investmentAmount, pnl: netPnl,
+                            exitReason: `Proactive Exit: ${mgmtSignal.reasons.join(' ')}`, entryReason: openPosition.entryReason
+                         });
+                         openPosition = null;
+                         hasTradedInThisCandle = true;
+                         break;
+                    }
 
                     if (mgmtSignal.newStopLoss && mgmtSignal.newStopLoss !== openPosition.stopLossPrice) {
                         openPosition.stopLossPrice = mgmtSignal.newStopLoss;
@@ -146,12 +175,13 @@ export async function runBacktest(
                 managementKlineIndex++;
             }
         } else {
+             // Ensure managementKlineIndex is caught up even if there was no position
             while (managementKlineIndex < managementKlines.length && managementKlines[managementKlineIndex].time <= entrySignalCandle.time) {
                 managementKlineIndex++;
             }
         }
         
-        if (!openPosition) {
+        if (!openPosition && !hasTradedInThisCandle) { // Check the "One Trade Per Candle" rule
             let htfHistorySlice: Kline[] | undefined = undefined;
             if (allHtfKlines) {
                 const currentCandleTime = historySlice[historySlice.length - 1].time;
@@ -180,8 +210,7 @@ export async function runBacktest(
                     if (config.investmentAmount > 0 && entryPrice > 0) {
                         const agentTargets = getInitialAgentTargets(historySlice, entryPrice, isLong ? 'LONG' : 'SHORT', config.timeFrame, { ...constants.DEFAULT_AGENT_PARAMS, ...config.agentParams }, config.agent.id);
                         
-                        const agentStopLoss = agentTargets.stopLossPrice;
-                        let stopLossPrice = agentStopLoss;
+                        let stopLossPrice = agentTargets.stopLossPrice;
                         let slReason: 'Agent Logic' | 'Hard Cap' = 'Agent Logic';
                         
                         let takeProfitPrice = agentTargets.takeProfitPrice;
@@ -197,7 +226,7 @@ export async function runBacktest(
                            }
                         }
                         
-                        // REVISED SL HIERARCHY LOGIC to MINIMIZE LOSS
+                        // SL HIERARCHY LOGIC to MINIMIZE LOSS
                         const positionValueForCap = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
                         const tradeSizeForCap = positionValueForCap / entryPrice;
                         if (tradeSizeForCap > 0) {
@@ -207,19 +236,16 @@ export async function runBacktest(
                             }
                             const hardCapStopLossPrice = isLong ? entryPrice - (maxLossAmount / tradeSizeForCap) : entryPrice + (maxLossAmount / tradeSizeForCap);
                             
-                            // Determine the SL that minimizes potential loss (closer to entry price)
                             const tighterSl = isLong 
                                 ? Math.max(stopLossPrice, hardCapStopLossPrice)
                                 : Math.min(stopLossPrice, hardCapStopLossPrice);
 
-                            const agentIsRiskier = (isLong && agentStopLoss < hardCapStopLossPrice) || (!isLong && agentStopLoss > hardCapStopLossPrice);
-                            if (agentIsRiskier) {
+                            if (tighterSl !== stopLossPrice) {
                                 slReason = 'Hard Cap';
                             }
                             
                             stopLossPrice = tighterSl;
                         }
-
 
                         const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
                         const tradeSize = positionValue / entryPrice;
@@ -230,7 +256,7 @@ export async function runBacktest(
                                 entryPrice, size: tradeSize, leverage: config.leverage, entryTime: entrySignalCandle.time,
                                 entryReason: signal.reasons.join(' '), agentName: config.agent.name, takeProfitPrice,
                                 stopLossPrice,
-                                initialStopLossPrice: agentStopLoss,
+                                initialStopLossPrice: agentTargets.stopLossPrice,
                                 initialTakeProfitPrice: takeProfitPrice,
                                 pricePrecision: config.pricePrecision, timeFrame: config.timeFrame,
                                 marginType: config.marginType,
@@ -257,12 +283,17 @@ export async function runBacktest(
     if (openPosition) {
         const lastKline = managementKlines[managementKlines.length - 1] || mainKlines[mainKlines.length - 1];
         const exitPrice = lastKline.close;
-        const pnl = (exitPrice - openPosition.entryPrice) * openPosition.size * (openPosition.direction === 'LONG' ? 1 : -1);
+        
+        const grossPnl = (exitPrice - openPosition.entryPrice) * openPosition.size * (openPosition.direction === 'LONG' ? 1 : -1);
+        const entryValue = openPosition.entryPrice * openPosition.size;
+        const exitValue = exitPrice * openPosition.size;
+        const fees = (entryValue + exitValue) * constants.TAKER_FEE_RATE;
+        const netPnl = grossPnl - fees;
 
         trades.push({
             id: trades.length + 1, pair: openPosition.pair, direction: openPosition.direction,
             entryPrice: openPosition.entryPrice, exitPrice, entryTime: openPosition.entryTime, exitTime: lastKline.time,
-            size: openPosition.size, pnl, investedAmount: config.investmentAmount,
+            size: openPosition.size, pnl: netPnl, investedAmount: config.investmentAmount,
             exitReason: 'End of backtest', entryReason: openPosition.entryReason,
         });
     }

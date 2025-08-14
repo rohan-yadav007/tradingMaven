@@ -46,12 +46,6 @@ export const AGENTS: Agent[] = [
         indicators: ['Bollinger Bands', 'Volume SMA', 'EMA (Bias)']
     },
     {
-        id: 6,
-        name: 'Profit Locker',
-        description: "Uses a score-based entry to find reliable scalp opportunities, targeting a single take-profit level to lock in gains.",
-        indicators: ["Score-Based Entry", "Single TP Exit"]
-    },
-    {
         id: 7,
         name: 'Market Structure Maven',
         description: 'Identifies the main trend with a long-term EMA, then enters on a pullback to a high-significance, volume-confirmed support/resistance level.',
@@ -149,7 +143,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     qsc_fastEmaPeriod: 9,
     qsc_slowEmaPeriod: 21,
     qsc_adxPeriod: 10,
-    qsc_adxThreshold: 20,
+    qsc_adxThreshold: 25,
     qsc_bbPeriod: 20,
     qsc_bbStdDev: 2,
     qsc_bbwSqueezeThreshold: 0.01,
@@ -162,8 +156,8 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     qsc_psarMax: 0.2,
     qsc_atrPeriod: 14,
     qsc_atrMultiplier: 1.5,
-    qsc_trendScoreThreshold: 3,
-    qsc_rangeScoreThreshold: 2,
+    qsc_trendScoreThreshold: 4,
+    qsc_rangeScoreThreshold: 1,
 };
 
 
@@ -226,7 +220,7 @@ export const MOCK_PAPER_FUTURES_WALLET: WalletBalance[] = [
  * This is the maximum percentage of the *investment amount* that a trade is allowed to lose.
  * E.g., a value of 5 means a maximum loss of 5%, which is $5 on a $100 investment.
  */
-export const MAX_STOP_LOSS_PERCENT_OF_INVESTMENT = 1;
+export const MAX_STOP_LOSS_PERCENT_OF_INVESTMENT = 5;
 
 // New, wider ATR multipliers for initial stop loss placement to give trades more "breathing room"
 export const TIMEFRAME_ATR_CONFIG: Record<string, { atrMultiplier: number, riskRewardRatio: number }> = {

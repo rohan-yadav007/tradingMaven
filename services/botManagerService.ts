@@ -274,28 +274,26 @@ class BotInstance {
         const tradeSizeForCap = positionValueForCap / currentPrice;
 
         if (tradeSizeForCap > 0) {
+            // 1. Calculate max loss amount, scaled by leverage for futures.
             let maxLossAmount = this.bot.config.investmentAmount * (MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
             if (this.bot.config.mode === TradingMode.USDSM_Futures) {
                 maxLossAmount *= this.bot.config.leverage;
             }
 
+            // 2. Calculate the price for this hard cap.
             const hardCapStopLossPrice = signal.signal === 'BUY' 
                 ? currentPrice - (maxLossAmount / tradeSizeForCap) 
                 : currentPrice + (maxLossAmount / tradeSizeForCap);
 
-            // Determine the SL that minimizes potential loss (closer to entry price)
+            // 3. CORRECTLY determine the SL that minimizes loss (closer to entry price).
             const tighterSl = signal.signal === 'BUY' 
-                ? Math.max(finalSl, hardCapStopLossPrice)
-                : Math.min(finalSl, hardCapStopLossPrice);
+                ? Math.max(finalSl, hardCapStopLossPrice) // For LONG, closer to entry is the HIGHER price
+                : Math.min(finalSl, hardCapStopLossPrice); // For SHORT, closer to entry is the LOWER price
 
-            // The agent's logic is considered riskier (and thus overridden by Hard Cap) 
-            // if its SL is further from the entry price than the hard cap's SL.
-            const agentIsRiskier = (signal.signal === 'BUY' && agentStopLoss < hardCapStopLossPrice) || (signal.signal === 'SELL' && agentStopLoss > hardCapStopLossPrice);
-
-            if (agentIsRiskier) {
+            // 4. Update reason if the hard cap was tighter than the agent's suggestion.
+            if (tighterSl !== finalSl) {
                 slReason = 'Hard Cap';
             }
-            
             finalSl = tighterSl;
         }
 

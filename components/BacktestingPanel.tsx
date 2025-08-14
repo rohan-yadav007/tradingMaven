@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, Kline, SimulatedTrade, RiskMode } from '../types';
 import * as constants from '../constants';
@@ -265,7 +266,7 @@ const AgentParameterEditor: React.FC<{
                     <h4 className="font-semibold text-sm -mb-2">Regime Detection</h4>
                     <ParamSlider label="Fast EMA" value={P.qsc_fastEmaPeriod!} min={5} max={15} step={1} onChange={v => onChange('qsc_fastEmaPeriod', v)} />
                     <ParamSlider label="Slow EMA" value={P.qsc_slowEmaPeriod!} min={18} max={30} step={1} onChange={v => onChange('qsc_slowEmaPeriod', v)} />
-                    <ParamSlider label="ADX Threshold" value={P.qsc_adxThreshold!} min={15} max={25} step={1} onChange={v => onChange('qsc_adxThreshold', v)} />
+                    <ParamSlider label="ADX Threshold" value={P.qsc_adxThreshold!} min={15} max={40} step={1} onChange={v => onChange('qsc_adxThreshold', v)} />
                     <h4 className="font-semibold text-sm -mb-2">Entry Scoring</h4>
                     <ParamSlider label="Trend Score Threshold" value={P.qsc_trendScoreThreshold!} min={2} max={4} step={1} onChange={v => onChange('qsc_trendScoreThreshold', v)} />
                     <ParamSlider label="Range Score Threshold" value={P.qsc_rangeScoreThreshold!} min={1} max={3} step={1} onChange={v => onChange('qsc_rangeScoreThreshold', v)} />
@@ -499,7 +500,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                     </button>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-                    <ResultMetric label="Total PNL" value={`$${backtestResult.totalPnl.toFixed(2)}`} className={pnlIsProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}/>
+                    <ResultMetric label="Total Net PNL" value={`$${backtestResult.totalPnl.toFixed(2)}`} className={pnlIsProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}/>
                     <ResultMetric label="Win Rate" value={`${backtestResult.winRate.toFixed(1)}%`} className={winRateIsGood ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'} />
                     <ResultMetric label="Trades (W/L/B)" value={`${backtestResult.wins}/${backtestResult.losses}/${backtestResult.breakEvens}`} />
                     <ResultMetric label="Profit Factor" value={backtestResult.profitFactor.toFixed(2)} />

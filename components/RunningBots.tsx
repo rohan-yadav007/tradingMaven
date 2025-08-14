@@ -1,10 +1,10 @@
 
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, TradeSignal, TradingMode, RiskMode, LogType } from '../types';
 import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, LockIcon, UnlockIcon, InfoIcon, ZapIcon } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
-import { MAX_STOP_LOSS_PERCENT_OF_INVESTMENT } from '../constants';
+import { MAX_STOP_LOSS_PERCENT_OF_INVESTMENT, TAKER_FEE_RATE } from '../constants';
 
 
 interface RunningBotsProps {
@@ -156,8 +156,13 @@ const PositionPnlProgress: React.FC<{position: Position; livePrice: number}> = (
 
     const clampedProgress = Math.min(100, Math.max(0, progressPercent));
 
-    const pnl = (livePrice - entryPrice) * position.size * (isLong ? 1 : -1);
-    const pnlIsProfit = pnl >= 0;
+    const grossPnl = (livePrice - entryPrice) * position.size * (isLong ? 1 : -1);
+    const entryValue = position.entryPrice * position.size;
+    const currentValue = livePrice * position.size;
+    const estimatedFees = (entryValue + currentValue) * TAKER_FEE_RATE;
+    const netPnl = grossPnl - estimatedFees;
+    
+    const pnlIsProfit = netPnl >= 0;
 
     return (
         <div className="flex flex-col gap-1.5 pt-2">
@@ -175,7 +180,7 @@ const PositionPnlProgress: React.FC<{position: Position; livePrice: number}> = (
                     <div className={`absolute top-5 whitespace-nowrap px-1.5 py-0.5 rounded text-xs font-bold shadow-md ${pnlIsProfit ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}`}
                          style={{ transform: 'translateX(-50%)' }}
                     >
-                         {pnlIsProfit ? '+' : ''}${pnl.toFixed(2)}
+                         {pnlIsProfit ? '+' : ''}${netPnl.toFixed(2)}
                     </div>
                 </div>
             </div>
@@ -313,7 +318,7 @@ const BotPerformanceSummary: React.FC<{ bot: RunningBot }> = ({ bot }) => {
         <div>
             <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Performance</h4>
              <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <InfoItem label="Total PNL" value={`$${totalPnl.toFixed(2)}`} valueClassName={`font-bold font-mono text-lg ${pnlIsProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`} />
+                <InfoItem label="Total Net PNL" value={`$${totalPnl.toFixed(2)}`} valueClassName={`font-bold font-mono text-lg ${pnlIsProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`} />
                 <InfoItem label="Closed Trades" value={bot.closedTradesCount} valueClassName="text-lg" />
                 <InfoItem label="Win Rate" value={`${winRate.toFixed(1)}%`} valueClassName={`text-lg ${winRate >= 50 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`} />
                 <InfoItem label="Profit Factor" value={profitFactor === Infinity ? '∞' : profitFactor.toFixed(2)} valueClassName={`text-lg ${profitFactor >= 1 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`} />
@@ -391,8 +396,17 @@ const BotRow: React.FC<BotRowProps> = (props) => {
     const { bot, onClosePosition, onPauseBot, onResumeBot, onStopBot, onDeleteBot, onUpdateBotConfig, onToggle, isOpen } = props;
     const { config, status, id, livePrice, openPosition } = bot;
     
-    const pnl = (openPosition && livePrice) ? (livePrice - openPosition.entryPrice) * openPosition.size * (openPosition.direction === 'LONG' ? 1 : -1) : 0;
-    
+    const pnl = useMemo(() => {
+        if (openPosition && livePrice) {
+            const grossPnl = (livePrice - openPosition.entryPrice) * openPosition.size * (openPosition.direction === 'LONG' ? 1 : -1);
+            const entryValue = openPosition.entryPrice * openPosition.size;
+            const currentValue = livePrice * openPosition.size;
+            const fees = (entryValue + currentValue) * TAKER_FEE_RATE;
+            return grossPnl - fees;
+        }
+        return 0;
+    }, [openPosition, livePrice]);
+
     const pnlIsProfit = pnl >= 0;
     const duration = useDuration(bot);
     const statusInfo = getStatusInfo(status);
@@ -450,7 +464,7 @@ const BotRow: React.FC<BotRowProps> = (props) => {
                 {/* Middle Column: Status or PNL */}
                 <div className="text-center min-h-[42px] flex flex-col justify-center">
                     {openPosition && livePrice ? (
-                        <InfoItem label="Unrealized PNL" value={`${pnlIsProfit ? '+' : ''}$${pnl?.toFixed(2)}`} valueClassName={`text-lg ${pnlIsProfit ? 'text-emerald-500' : 'text-rose-500'}`} labelClassName="text-center" />
+                        <InfoItem label="Unrealized PNL (Net)" value={`${pnlIsProfit ? '+' : ''}$${pnl?.toFixed(2)}`} valueClassName={`text-lg ${pnlIsProfit ? 'text-emerald-500' : 'text-rose-500'}`} labelClassName="text-center" />
                     ) : (
                          <div className={`flex items-center justify-center gap-2 text-xs font-semibold px-3 py-1 rounded-full ${statusInfo.bg} ${statusInfo.text_color} ${statusInfo.pulse ? 'animate-pulse' : ''}`} title={primaryStatusText}>
                             {statusInfo.icon}

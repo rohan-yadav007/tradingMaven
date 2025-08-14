@@ -132,44 +132,35 @@ export async function getTradeManagementSignal(
     currentPrice: number,
     config: BotConfig
 ): Promise<TradeManagementSignal> {
-    const { isAtrTrailingStopEnabled } = config;
-    const reasons: string[] = [];
-    let newStopLoss: number | undefined;
+    const { isAtrTrailingStopEnabled, agent } = config;
 
-    // --- Universal Fee-Based Trailing Stop (High Priority) ---
+    // --- MASTER OVERRIDE: Universal Fee-Based Trailing Stop ---
+    // If enabled, this logic takes precedence over any agent-specific exit.
     if (isAtrTrailingStopEnabled) {
+        const reasons: string[] = [];
+        let newStopLoss: number | undefined;
         const isLong = position.direction === 'LONG';
         const entryPrice = position.entryPrice;
         
-        // 1. Calculate the price-equivalent of the round-trip trading fee
-        const positionValue = position.size * entryPrice; // This includes leverage
+        const positionValue = position.size * entryPrice;
         const roundTripFee = positionValue * TAKER_FEE_RATE * 2;
         const feeInPrice = roundTripFee / position.size;
 
         if (feeInPrice > 0) {
-             // 2. Calculate current profit in terms of price movement
             const profitInPrice = (currentPrice - entryPrice) * (isLong ? 1 : -1);
             let potentialNewStop: number | undefined;
 
-            // 3. Breakeven Trigger: If profit covers 2x fee and SL is still in loss territory
             const isStopInLoss = (isLong && position.stopLossPrice < entryPrice) || (!isLong && position.stopLossPrice > entryPrice);
             if (profitInPrice >= (feeInPrice * 2) && isStopInLoss) {
                 potentialNewStop = entryPrice;
                 reasons.push('Breakeven Trigger');
             }
 
-            // 4. Profit-Securing "Ratchet" Trigger
-            // For every multiple of 3x fee in profit, secure 2x fee
             if (profitInPrice > 0) {
-                // Calculate how many "3x fee" chunks of profit we have
                 const profitChunks = Math.floor(profitInPrice / (feeInPrice * 3));
-                
                 if (profitChunks > 0) {
-                    // Calculate the amount of profit to lock in
                     const securedProfitInPrice = profitChunks * feeInPrice * 2;
                     const stopAtProfitLevel = entryPrice + (securedProfitInPrice * (isLong ? 1 : -1));
-
-                    // If this new stop is better than the current one (or the breakeven one we just calculated), use it.
                     if (!potentialNewStop || (isLong && stopAtProfitLevel > potentialNewStop) || (!isLong && stopAtProfitLevel < potentialNewStop)) {
                         potentialNewStop = stopAtProfitLevel;
                         reasons.push(`Profit Lock at ${profitChunks * 2}x Fee`);
@@ -177,31 +168,65 @@ export async function getTradeManagementSignal(
                 }
             }
 
-            // 5. Final check: never move stop-loss backwards
             if (potentialNewStop !== undefined) {
                 if ((isLong && potentialNewStop > position.stopLossPrice) || (!isLong && potentialNewStop < position.stopLossPrice)) {
                     newStopLoss = potentialNewStop;
                 }
             }
         }
-
+        return { newStopLoss, reasons };
     }
-    // --- Agent-Specific Trails (Only run if Universal is OFF) ---
-    else if (config.agent.id === 9) {
-        // This is the original logic. Agent 9 has a special exit.
-        const psarInput = { high: klines.map(k => k.high), low: klines.map(k => k.low), step: config.agentParams?.qsc_psarStep ?? 0.02, max: config.agentParams?.qsc_psarMax ?? 0.2 };
-        if (psarInput.high.length >= 2) {
-            const psar = PSAR.calculate(psarInput);
-            const lastPsar = getLast(psar) as number | undefined;
-            if (lastPsar) {
-                newStopLoss = lastPsar;
-                reasons.push('Agent PSAR Trail');
+
+    // --- AGENT-SPECIFIC MANAGEMENT (If Universal is OFF) ---
+    const reasons: string[] = [];
+    let newStopLoss: number | undefined;
+    let closePosition: boolean | undefined;
+
+    switch (agent.id) {
+        case 4: // Scalping Expert: Exit on MACD momentum fade
+            const closes = klines.map(k => k.close);
+            if (closes.length > 30) {
+                const macdResult = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
+                const macd = getLast(macdResult) as MACDOutput | undefined;
+                const prevMacd = getPenultimate(macdResult) as MACDOutput | undefined;
+                if (macd?.histogram && prevMacd?.histogram) {
+                    const isLong = position.direction === 'LONG';
+                    const momentumFading = isLong
+                        ? macd.histogram > 0 && macd.histogram < prevMacd.histogram
+                        : macd.histogram < 0 && macd.histogram > prevMacd.histogram;
+                    
+                    if (momentumFading) {
+                        closePosition = true;
+                        reasons.push('Proactive Exit: MACD momentum is fading.');
+                    }
+                }
             }
-        }
+            break;
+
+        case 9: // Quantum Scalper: PSAR-based trailing stop
+            const psarInput = { high: klines.map(k => k.high), low: klines.map(k => k.low), step: config.agentParams?.qsc_psarStep ?? 0.02, max: config.agentParams?.qsc_psarMax ?? 0.2 };
+            if (psarInput.high.length >= 2) {
+                const psar = PSAR.calculate(psarInput);
+                const lastPsar = getLast(psar) as number | undefined;
+                if (lastPsar) {
+                    const isLong = position.direction === 'LONG';
+                    // Only trail in the direction of the trade
+                    if ((isLong && lastPsar > position.stopLossPrice) || (!isLong && lastPsar < position.stopLossPrice)) {
+                        newStopLoss = lastPsar;
+                        reasons.push('Agent PSAR Trail');
+                    }
+                }
+            }
+            break;
+        
+        default:
+            // Other agents do not have proactive exit logic; they rely on their initial SL/TP.
+            break;
     }
     
-    return { newStopLoss, reasons };
+    return { newStopLoss, closePosition, reasons };
 }
+
 
 // ----------------------------------------------------------------------------------
 // --- #3: AGENT-SPECIFIC ENTRY SIGNAL LOGIC ---
@@ -250,40 +275,49 @@ const getMomentumMasterSignal = (klines: Kline[], params: Required<AgentParams>)
     return { signal: 'HOLD', reasons };
 };
 
-// --- Agent 2: Trend Rider (Upgraded) ---
+// --- Agent 2: Trend Rider (Upgraded with Breakout Confirmation) ---
 const getTrendRiderSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
-    const minKlines = Math.max(params.tr_emaSlowPeriod, params.tr_volumeSmaPeriod!);
+    const minKlines = Math.max(params.tr_emaSlowPeriod!, params.tr_breakoutPeriod!, params.tr_volumeSmaPeriod!);
     if (klines.length < minKlines) return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data'] };
 
     const closes = klines.map(k => k.close);
+    const highs = klines.map(k => k.high);
+    const lows = klines.map(k => k.low);
     const volumes = klines.map(k => k.volume || 0);
+    const lastKline = klines[klines.length - 1];
     const reasons: string[] = [];
 
     const emaFast = getLast(EMA.calculate({ period: params.tr_emaFastPeriod!, values: closes }))! as number;
     const emaSlow = getLast(EMA.calculate({ period: params.tr_emaSlowPeriod!, values: closes }))! as number;
-    reasons.push(emaFast > emaSlow ? `✅ Trend: Bullish` : `❌ Trend: Bearish`);
-
-    const adx = getLast(ADX.calculate({ high: klines.map(k => k.high), low: klines.map(k => k.low), close: closes, period: params.adxPeriod }))! as ADXOutput;
-    reasons.push(adx.adx > params.adxTrendThreshold ? `✅ Trend Strength: Strong (ADX ${adx.adx.toFixed(1)})` : `❌ Trend Strength: Weak (ADX ${adx.adx.toFixed(1)})`);
+    const isUptrend = emaFast > emaSlow;
+    reasons.push(isUptrend ? `✅ Trend: Bullish` : `❌ Trend: Bearish`);
 
     const volumeSma = getLast(SMA.calculate({ period: params.tr_volumeSmaPeriod!, values: volumes }))! as number;
-    const currentVolume = getLast(volumes)!;
-    reasons.push(currentVolume > volumeSma * params.tr_volumeMultiplier! ? `✅ Volume: High (${(currentVolume / volumeSma).toFixed(1)}x)` : `❌ Volume: Low`);
+    const isHighVolume = lastKline.volume! > volumeSma * params.tr_volumeMultiplier!;
+    reasons.push(isHighVolume ? `✅ Volume: High` : `❌ Volume: Low`);
 
-    const rsi = getLast(RSI.calculate({ values: closes, period: params.rsiPeriod }))! as number;
-    reasons.push(rsi > params.tr_rsiMomentumBullish! || rsi < params.tr_rsiMomentumBearish! ? `✅ Momentum: Strong (RSI ${rsi.toFixed(1)})` : `❌ Momentum: Weak`);
+    // Breakout Confirmation Logic
+    const breakoutLookback = highs.slice(-params.tr_breakoutPeriod! - 1, -1);
+    const recentHigh = Math.max(...breakoutLookback);
+    const recentLow = Math.min(...lows.slice(-params.tr_breakoutPeriod! - 1, -1));
 
-    // BUY Signal
-    if (emaFast > emaSlow && adx.adx > params.adxTrendThreshold && rsi > params.tr_rsiMomentumBullish! && currentVolume > volumeSma * params.tr_volumeMultiplier!) {
+    const isBreakoutUp = lastKline.close > recentHigh;
+    const isBreakoutDown = lastKline.close < recentLow;
+    reasons.push(isBreakoutUp ? `✅ Breakout: Price closed above recent high of ${recentHigh.toFixed(2)}` : `ℹ️ No bullish breakout`);
+    reasons.push(isBreakoutDown ? `✅ Breakout: Price closed below recent low of ${recentLow.toFixed(2)}` : `ℹ️ No bearish breakout`);
+
+    // BUY Signal: Uptrend + High Volume Breakout
+    if (isUptrend && isHighVolume && isBreakoutUp) {
         return { signal: 'BUY', reasons };
     }
-    // SELL Signal
-    if (emaFast < emaSlow && adx.adx > params.adxTrendThreshold && rsi < params.tr_rsiMomentumBearish! && currentVolume > volumeSma * params.tr_volumeMultiplier!) {
+    // SELL Signal: Downtrend + High Volume Breakout
+    if (!isUptrend && isHighVolume && isBreakoutDown) {
         return { signal: 'SELL', reasons };
     }
 
     return { signal: 'HOLD', reasons };
 };
+
 
 // --- Agent 3: Mean Reversionist (Upgraded) ---
 const getMeanReversionistSignal = (klines: Kline[], params: Required<AgentParams>, htfKlines?: Kline[]): TradeSignal => {
@@ -338,7 +372,7 @@ const getMeanReversionistSignal = (klines: Kline[], params: Required<AgentParams
     return { signal: 'HOLD', reasons };
 };
 
-// --- Agent 4: Scalping Expert (Upgraded) ---
+// --- Agent 4: Scalping Expert (Upgraded with Precision Trigger) ---
 const getScalpingExpertSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
     const minKlines = 50;
     if (klines.length < minKlines) return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data'] };
@@ -346,7 +380,8 @@ const getScalpingExpertSignal = (klines: Kline[], params: Required<AgentParams>)
     const closes = klines.map(k => k.close);
     const currentPrice = getLast(closes)!;
     const reasons: string[] = [];
-    let score = 0;
+    let bullishScore = 0;
+    let bearishScore = 0;
 
     // Condition 1: Trend (EMA)
     const emaFast = getLast(EMA.calculate({ period: params.se_emaFastPeriod!, values: closes }))! as number;
@@ -356,9 +391,13 @@ const getScalpingExpertSignal = (klines: Kline[], params: Required<AgentParams>)
     reasons.push(isUptrend ? '✅ Trend: Up' : isDowntrend ? '✅ Trend: Down' : '❌ Trend: Sideways');
 
     // Condition 2: Momentum (MACD)
-    const macd = getLast(MACD.calculate({ values: closes, fastPeriod: params.se_macdFastPeriod!, slowPeriod: params.se_macdSlowPeriod!, signalPeriod: params.se_macdSignalPeriod!, SimpleMAOscillator: false, SimpleMASignal: false }))! as MACDOutput;
+    const macdResult = MACD.calculate({ values: closes, fastPeriod: params.se_macdFastPeriod!, slowPeriod: params.se_macdSlowPeriod!, signalPeriod: params.se_macdSignalPeriod!, SimpleMAOscillator: false, SimpleMASignal: false });
+    const macd = getLast(macdResult)! as MACDOutput;
+    const prevMacd = getPenultimate(macdResult)! as MACDOutput;
     const isMacdBullish = macd.MACD! > macd.signal! && macd.histogram! > 0;
     const isMacdBearish = macd.MACD! < macd.signal! && macd.histogram! < 0;
+    const isMacdCrossUp = macd.histogram! > 0 && prevMacd.histogram! <= 0;
+    const isMacdCrossDown = macd.histogram! < 0 && prevMacd.histogram! >= 0;
     reasons.push(isMacdBullish ? '✅ MACD: Bullish' : isMacdBearish ? '✅ MACD: Bearish' : '❌ MACD: Neutral');
 
     // Condition 3: Pullback/Exhaustion (RSI)
@@ -373,23 +412,29 @@ const getScalpingExpertSignal = (klines: Kline[], params: Required<AgentParams>)
     const isVolatile = volatilityPercent > params.se_atrVolatilityThreshold!;
     reasons.push(isVolatile ? `✅ Volatility: Active (${volatilityPercent.toFixed(2)}%)` : `❌ Volatility: Too Low`);
     
-    // Calculate Score & Signal
-    if (isUptrend) score++;
-    if (isMacdBullish) score++;
-    if (isRsiBullish) score++;
-    if (isVolatile) score++;
-    reasons.push(`ℹ️ Bullish Score: ${score}/${params.se_scoreThreshold}`);
-    if (isUptrend && isMacdBullish && isRsiBullish && isVolatile && score >= params.se_scoreThreshold!) {
+    // Calculate Bullish Score
+    if (isUptrend) bullishScore++;
+    if (isMacdBullish) bullishScore++;
+    if (isRsiBullish) bullishScore++;
+    if (isVolatile) bullishScore++;
+    reasons.push(`ℹ️ Bullish Score: ${bullishScore}/${params.se_scoreThreshold}`);
+    
+    // Final Bullish Trigger
+    if (bullishScore >= params.se_scoreThreshold! && isMacdCrossUp) {
+        reasons.push('🔥 TRIGGER: MACD Histogram crossed up.');
         return { signal: 'BUY', reasons };
     }
 
-    score = 0;
-    if (isDowntrend) score++;
-    if (isMacdBearish) score++;
-    if (isRsiBearish) score++;
-    if (isVolatile) score++;
-    reasons.push(`ℹ️ Bearish Score: ${score}/${params.se_scoreThreshold}`);
-    if (isDowntrend && isMacdBearish && isRsiBearish && isVolatile && score >= params.se_scoreThreshold!) {
+    // Calculate Bearish Score
+    if (isDowntrend) bearishScore++;
+    if (isMacdBearish) bearishScore++;
+    if (isRsiBearish) bearishScore++;
+    if (isVolatile) bearishScore++;
+    reasons.push(`ℹ️ Bearish Score: ${bearishScore}/${params.se_scoreThreshold}`);
+
+    // Final Bearish Trigger
+    if (bearishScore >= params.se_scoreThreshold! && isMacdCrossDown) {
+        reasons.push('🔥 TRIGGER: MACD Histogram crossed down.');
         return { signal: 'SELL', reasons };
     }
 
@@ -438,18 +483,10 @@ const getMarketIgnitionSignal = (klines: Kline[], params: Required<AgentParams>)
     return { signal: 'HOLD', reasons };
 };
 
-// --- Agent 6: Profit Locker (uses its structure-based TP logic) ---
-// The entry logic is similar to the old scalper. The exit logic is its key feature.
-const getProfitLockerSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
-    // This agent's primary feature was its market-structure TP, which has been removed.
-    // It now functions as a standard scalper, using Trend Rider logic for entry.
-    return getTrendRiderSignal(klines, params);
-};
 
-
-// --- Agent 7: Market Structure Maven (Upgraded) ---
+// --- Agent 7: Market Structure Maven (Upgraded with Volatility Adaptation) ---
 const getMarketStructureMavenSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
-    const minKlines = params.msm_htfEmaPeriod!;
+    const minKlines = Math.max(params.msm_htfEmaPeriod!, params.atrPeriod);
     if (klines.length < minKlines) return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data'] };
     
     const closes = klines.map(k => k.close);
@@ -461,67 +498,120 @@ const getMarketStructureMavenSignal = (klines: Kline[], params: Required<AgentPa
     const isBullishBias = currentPrice > emaBias;
     reasons.push(isBullishBias ? `✅ Bias: Bullish` : `✅ Bias: Bearish`);
 
-    // Get S/R levels from the chart analysis service (now with volume scoring)
+    // Get S/R levels
     const { supports, resistances } = calculateSupportResistance(klines, params.msm_swingPointLookback);
     
+    // Volatility-adaptive zone
+    const atr = getLast(ATR.calculate({ high: klines.map(k => k.high), low: klines.map(k => k.low), close: closes, period: params.atrPeriod }))! as number;
+    const proximityZone = atr * 0.5; // Zone is 50% of ATR
+
     // BUY Signal: Price pulls back to a significant support level in an uptrend
     if (isBullishBias && supports.length > 0) {
-        const closestSupport = supports[0]; // Highest scored support
-        const isNearSupport = Math.abs(currentPrice - closestSupport) / currentPrice < 0.005; // Within 0.5% of support
-        reasons.push(isNearSupport ? `✅ Price near support ${closestSupport.toFixed(2)}` : `❌ Price not near key support`);
+        const closestSupport = supports[0];
+        const isNearSupport = Math.abs(currentPrice - closestSupport) <= proximityZone;
+        reasons.push(isNearSupport ? `✅ Price in support zone (${(proximityZone).toFixed(4)}) near ${closestSupport.toFixed(2)}` : `❌ Price not near key support`);
         if (isNearSupport) return { signal: 'BUY', reasons };
     }
 
     // SELL Signal: Price pulls back to a significant resistance level in a downtrend
     if (!isBullishBias && resistances.length > 0) {
         const closestResistance = resistances[0];
-        const isNearResistance = Math.abs(currentPrice - closestResistance) / currentPrice < 0.005;
-        reasons.push(isNearResistance ? `✅ Price near resistance ${closestResistance.toFixed(2)}` : `❌ Price not near key resistance`);
+        const isNearResistance = Math.abs(currentPrice - closestResistance) <= proximityZone;
+        reasons.push(isNearResistance ? `✅ Price in resistance zone (${(proximityZone).toFixed(4)}) near ${closestResistance.toFixed(2)}` : `❌ Price not near key resistance`);
         if (isNearResistance) return { signal: 'SELL', reasons };
     }
 
     return { signal: 'HOLD', reasons };
 };
 
-// --- Agent 9: Quantum Scalper (Upgraded) ---
+// --- Agent 9: Quantum Scalper (FIXED LOGIC) ---
 const getQuantumScalperSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
     const minKlines = 50;
     if (klines.length < minKlines) return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data'] };
     
     const closes = klines.map(k => k.close);
+    const currentPrice = getLast(closes)!;
     const reasons: string[] = [];
-    let score = 0;
-
-    // Regime Detection
+    
+    // --- Regime Detection ---
     const emaFast = getLast(EMA.calculate({ period: params.qsc_fastEmaPeriod!, values: closes }))! as number;
     const emaSlow = getLast(EMA.calculate({ period: params.qsc_slowEmaPeriod!, values: closes }))! as number;
     const adx = getLast(ADX.calculate({ high: klines.map(k => k.high), low: klines.map(k => k.low), close: closes, period: params.qsc_adxPeriod! }))! as ADXOutput;
     const isTrending = adx.adx > params.qsc_adxThreshold!;
     reasons.push(isTrending ? `ℹ️ Regime: Trending (ADX ${adx.adx.toFixed(1)})` : `ℹ️ Regime: Ranging (ADX ${adx.adx.toFixed(1)})`);
     
-    // Shared Indicators
+    // --- Shared Indicators ---
     const stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: params.qsc_stochRsiPeriod!, stochasticPeriod: params.qsc_stochRsiPeriod!, kPeriod: 3, dPeriod: 3 }))! as StochasticRSIOutput;
     
     if (isTrending) {
-        // Trending Logic
+        // --- Trending Logic ---
+        let bullishScore = 0;
+        let bearishScore = 0;
+
         const isUptrend = emaFast > emaSlow;
-        if (isUptrend && stochRsi.k > stochRsi.d) score++;
-        if (!isUptrend && stochRsi.k < stochRsi.d) score++;
+        const isDowntrend = emaFast < emaSlow;
+        reasons.push(isUptrend ? '✅ Trend: Up' : isDowntrend ? '✅ Trend: Down' : 'ℹ️ Trend: Neutral');
         
-        if (score >= params.qsc_trendScoreThreshold!) {
-            return { signal: isUptrend ? 'BUY' : 'SELL', reasons: [...reasons, '✅ Trending conditions met'] };
+        const isStochBullish = stochRsi.k > stochRsi.d;
+        const isStochBearish = stochRsi.k < stochRsi.d;
+        reasons.push(isStochBullish ? '✅ Momentum: Bullish' : isStochBearish ? '✅ Momentum: Bearish' : 'ℹ️ Momentum: Neutral');
+
+        const isAdxBullish = adx.pdi > adx.mdi;
+        const isAdxBearish = adx.mdi > adx.pdi;
+        reasons.push(isAdxBullish ? '✅ Strength: Bulls in control' : isAdxBearish ? '✅ Strength: Bears in control' : 'ℹ️ Strength: Indecisive');
+
+        // Bullish Confluence
+        if (isUptrend) bullishScore++;
+        if (isStochBullish) bullishScore++;
+        if (isAdxBullish) bullishScore++;
+        reasons.push(`ℹ️ Bullish Score: ${bullishScore}/${params.qsc_trendScoreThreshold!}`);
+
+        if (bullishScore >= params.qsc_trendScoreThreshold!) {
+            return { signal: 'BUY', reasons };
         }
+
+        // Bearish Confluence
+        if (isDowntrend) bearishScore++;
+        if (isStochBearish) bearishScore++;
+        if (isAdxBearish) bearishScore++;
+        reasons.push(`ℹ️ Bearish Score: ${bearishScore}/${params.qsc_trendScoreThreshold!}`);
+
+        if (bearishScore >= params.qsc_trendScoreThreshold!) {
+            return { signal: 'SELL', reasons };
+        }
+
     } else {
-        // Ranging Logic
+        // --- Ranging (Mean Reversion) Logic ---
+        let bullishScore = 0;
+        let bearishScore = 0;
+
         const bb = getLast(BollingerBands.calculate({ period: params.qsc_bbPeriod!, stdDev: params.qsc_bbStdDev!, values: closes }))! as BollingerBandsOutput;
-        const isOversold = getLast(closes)! < bb.lower && stochRsi.stochRSI < params.qsc_stochRsiOversold!;
-        const isOverbought = getLast(closes)! > bb.upper && stochRsi.stochRSI > params.qsc_stochRsiOverbought!;
         
-        if (isOversold) score++;
-        if (isOverbought) score++;
+        const isPriceOversold = currentPrice < bb.lower;
+        const isStochOversold = stochRsi.stochRSI < params.qsc_stochRsiOversold!;
+        reasons.push(isPriceOversold ? '✅ Price: Below Lower BB' : 'ℹ️ Price: Not below Lower BB');
+        reasons.push(isStochOversold ? `✅ StochRSI: Oversold (<${params.qsc_stochRsiOversold!})` : 'ℹ️ StochRSI: Not Oversold');
         
-        if (isOversold && score >= params.qsc_rangeScoreThreshold!) return { signal: 'BUY', reasons: [...reasons, '✅ Ranging (oversold) conditions met'] };
-        if (isOverbought && score >= params.qsc_rangeScoreThreshold!) return { signal: 'SELL', reasons: [...reasons, '✅ Ranging (overbought) conditions met'] };
+        if (isPriceOversold) bullishScore++;
+        if (isStochOversold) bullishScore++;
+        reasons.push(`ℹ️ Reversal Buy Score: ${bullishScore}/${params.qsc_rangeScoreThreshold!}`);
+
+        if (bullishScore >= params.qsc_rangeScoreThreshold!) {
+            return { signal: 'BUY', reasons };
+        }
+
+        const isPriceOverbought = currentPrice > bb.upper;
+        const isStochOverbought = stochRsi.stochRSI > params.qsc_stochRsiOverbought!;
+        reasons.push(isPriceOverbought ? '✅ Price: Above Upper BB' : 'ℹ️ Price: Not above Upper BB');
+        reasons.push(isStochOverbought ? `✅ StochRSI: Overbought (>${params.qsc_stochRsiOverbought!})` : 'ℹ️ StochRSI: Not Overbought');
+
+        if (isPriceOverbought) bearishScore++;
+        if (isStochOverbought) bearishScore++;
+        reasons.push(`ℹ️ Reversal Sell Score: ${bearishScore}/${params.qsc_rangeScoreThreshold!}`);
+
+        if (bearishScore >= params.qsc_rangeScoreThreshold!) {
+            return { signal: 'SELL', reasons };
+        }
     }
 
     return { signal: 'HOLD', reasons };
@@ -541,18 +631,49 @@ export async function getTradingSignal(
     const timeframeAdaptiveParams = constants.TIMEFRAME_ADAPTIVE_SETTINGS[config.timeFrame] || {};
     const finalParams: Required<AgentParams> = { ...constants.DEFAULT_AGENT_PARAMS, ...timeframeAdaptiveParams, ...config.agentParams };
 
+    let agentSignal: TradeSignal;
+
     switch (agent.id) {
-        case 1: return getMomentumMasterSignal(klines, finalParams);
-        case 2: return getTrendRiderSignal(klines, finalParams);
-        case 3: return getMeanReversionistSignal(klines, finalParams, htfKlines);
-        case 4: return getScalpingExpertSignal(klines, finalParams);
-        case 5: return getMarketIgnitionSignal(klines, finalParams);
-        case 6: return getProfitLockerSignal(klines, finalParams);
-        case 7: return getMarketStructureMavenSignal(klines, finalParams);
-        case 9: return getQuantumScalperSignal(klines, finalParams);
+        case 1: agentSignal = getMomentumMasterSignal(klines, finalParams); break;
+        case 2: agentSignal = getTrendRiderSignal(klines, finalParams); break;
+        case 3: agentSignal = getMeanReversionistSignal(klines, finalParams, htfKlines); break;
+        case 4: agentSignal = getScalpingExpertSignal(klines, finalParams); break;
+        case 5: agentSignal = getMarketIgnitionSignal(klines, finalParams); break;
+        case 7: agentSignal = getMarketStructureMavenSignal(klines, finalParams); break;
+        case 9: agentSignal = getQuantumScalperSignal(klines, finalParams); break;
         default:
             return { signal: 'HOLD', reasons: ['Agent not found'] };
     }
+
+    // --- Universal HTF Confirmation Filter ---
+    // Apply this filter to all agents except those with their own specific HTF logic (like Agent 3).
+    if (config.isHtfConfirmationEnabled && htfKlines && htfKlines.length > 50 && agent.id !== 3) {
+        if (agentSignal.signal !== 'HOLD') {
+            const htfEmaPeriod = 50; // A robust period for HTF trend direction.
+            const htfCloses = htfKlines.map(k => k.close);
+            const htfEma = getLast(EMA.calculate({ period: htfEmaPeriod, values: htfCloses })) as number | undefined;
+            const currentPrice = getLast(klines.map(k => k.close))!;
+
+            if (htfEma) {
+                const isHtfBullish = currentPrice > htfEma;
+                const isHtfBearish = currentPrice < htfEma;
+
+                const signalDirection = agentSignal.signal === 'BUY' ? 'LONG' : 'SHORT';
+
+                if (isHtfBearish && signalDirection === 'LONG') {
+                    agentSignal.signal = 'HOLD';
+                    agentSignal.reasons.push(`❌ [HTF VETO] Signal contradicts bearish HTF trend (Price < ${htfEmaPeriod}-EMA).`);
+                } else if (isHtfBullish && signalDirection === 'SHORT') {
+                    agentSignal.signal = 'HOLD';
+                    agentSignal.reasons.push(`❌ [HTF VETO] Signal contradicts bullish HTF trend (Price > ${htfEmaPeriod}-EMA).`);
+                } else {
+                    agentSignal.reasons.push(`✅ [HTF CONFIRMED] Signal aligns with ${isHtfBullish ? 'bullish' : 'bearish'} HTF trend.`);
+                }
+            }
+        }
+    }
+
+    return agentSignal;
 }
 
 export const analyzeTrendExhaustion = (klines: Kline[], direction: 'LONG' | 'SHORT'): { veto: boolean, reasons: string[] } => {

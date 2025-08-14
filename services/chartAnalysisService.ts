@@ -1,7 +1,4 @@
-
-
-import { Kline } from '../types';
-import { ADX, EMA } from 'technicalindicators';
+import type { Kline } from '../types';
 
 export interface SupportResistance {
     supports: number[];

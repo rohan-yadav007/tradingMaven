@@ -54,7 +54,7 @@ export interface Position {
     initialStopLossPrice: number;
     initialTakeProfitPrice: number;
     // For SL transparency
-    activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Universal Trail';
+    activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Universal Trail' | 'Agent Trail';
 }
 
 export interface Trade extends Position {

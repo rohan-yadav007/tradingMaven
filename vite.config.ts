@@ -1,3 +1,4 @@
+
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -20,7 +21,7 @@ export default defineConfig({
       },
       // Proxy for WebSocket Streams to fix cross-origin issues in dev
       '/proxy-spot-ws': {
-        target: 'wss://stream.binance.com:9443',
+        target: 'wss://stream.binance.com',
         ws: true,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/proxy-spot-ws/, ''),

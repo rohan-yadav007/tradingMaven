@@ -1,4 +1,3 @@
-
 import { Kline, SymbolInfo, SymbolFilter, WalletBalance, RawWalletBalance, AccountInfo, LeverageBracket, BinanceOrderResponse, TradingMode } from '../types';
 
 // --- Configuration ---
@@ -437,7 +436,7 @@ export const getPricePrecision = (symbolInfo?: SymbolInfo): number => {
         const tickSize = parseFloat(priceFilter.tickSize);
         if (tickSize > 0) return Math.abs(Math.log10(tickSize));
     }
-    return 2;
+    return 4; // Use a more sensible default for crypto
 };
 
 export const getQuantityPrecision = (symbolInfo?: SymbolInfo): number => {

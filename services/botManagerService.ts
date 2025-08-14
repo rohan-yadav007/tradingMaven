@@ -274,23 +274,20 @@ class BotInstance {
         const tradeSizeForCap = positionValueForCap / currentPrice;
 
         if (tradeSizeForCap > 0) {
-            // 1. Calculate max loss amount, scaled by leverage for futures.
             let maxLossAmount = this.bot.config.investmentAmount * (MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
             if (this.bot.config.mode === TradingMode.USDSM_Futures) {
                 maxLossAmount *= this.bot.config.leverage;
             }
 
-            // 2. Calculate the price for this hard cap.
             const hardCapStopLossPrice = signal.signal === 'BUY' 
                 ? currentPrice - (maxLossAmount / tradeSizeForCap) 
                 : currentPrice + (maxLossAmount / tradeSizeForCap);
 
-            // 3. CORRECTLY determine the SL that minimizes loss (closer to entry price).
+            // CORRECTED LOGIC: Determine the SL that minimizes loss (closer to entry price).
             const tighterSl = signal.signal === 'BUY' 
                 ? Math.max(finalSl, hardCapStopLossPrice) // For LONG, closer to entry is the HIGHER price
                 : Math.min(finalSl, hardCapStopLossPrice); // For SHORT, closer to entry is the LOWER price
 
-            // 4. Update reason if the hard cap was tighter than the agent's suggestion.
             if (tighterSl !== finalSl) {
                 slReason = 'Hard Cap';
             }
@@ -330,7 +327,7 @@ class BotInstance {
             const tpCondition = isLong ? livePrice >= openPosition.takeProfitPrice : livePrice <= openPosition.takeProfitPrice;
             if (slCondition) {
                 exitPrice = openPosition.stopLossPrice;
-                exitReason = openPosition.activeStopLossReason === 'Universal Trail' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
+                exitReason = openPosition.activeStopLossReason === 'Universal Trail' || openPosition.activeStopLossReason === 'Agent Trail' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
             } else if (tpCondition) {
                 exitPrice = openPosition.takeProfitPrice;
                 exitReason = 'Take Profit Hit';
@@ -342,7 +339,7 @@ class BotInstance {
             const tpCondition = isLong ? kline.high >= openPosition.takeProfitPrice : kline.low <= openPosition.takeProfitPrice;
             if (slCondition) {
                 exitPrice = openPosition.stopLossPrice;
-                exitReason = openPosition.activeStopLossReason === 'Universal Trail' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
+                exitReason = openPosition.activeStopLossReason === 'Universal Trail' || openPosition.activeStopLossReason === 'Agent Trail' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
             } else if (tpCondition) {
                 exitPrice = openPosition.takeProfitPrice;
                 exitReason = 'Take Profit Hit';
@@ -368,7 +365,8 @@ class BotInstance {
             if (mgmtSignal.newStopLoss && mgmtSignal.newStopLoss !== openPosition.stopLossPrice) {
                 this.addLog(`Trailing stop updated to ${mgmtSignal.newStopLoss.toFixed(config.pricePrecision)}. Reason: ${mgmtSignal.reasons.join(' ')}`, LogType.Info);
                 openPosition.stopLossPrice = mgmtSignal.newStopLoss;
-                openPosition.activeStopLossReason = 'Universal Trail'; // Update the reason
+                // CORRECTLY set the reason based on which trail is active.
+                openPosition.activeStopLossReason = config.isAtrTrailingStopEnabled ? 'Universal Trail' : 'Agent Trail';
             }
             if (mgmtSignal.newTakeProfit && mgmtSignal.newTakeProfit !== openPosition.takeProfitPrice) {
                 this.addLog(`Take profit updated to ${mgmtSignal.newTakeProfit.toFixed(config.pricePrecision)}. Reason: ${mgmtSignal.reasons.join(' ')}`, LogType.Info);
@@ -432,7 +430,7 @@ class BotManagerService {
     private getWebSocketUrl(mode: TradingMode): string {
         const isProd = import.meta.env?.PROD;
         if (isProd) {
-            return mode === TradingMode.USDSM_Futures ? 'wss://fstream.binance.com' : 'wss://stream.binance.com:9443';
+            return mode === TradingMode.USDSM_Futures ? 'wss://fstream.binance.com' : 'wss://stream.binance.com';
         }
 
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

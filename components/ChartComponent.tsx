@@ -2,19 +2,8 @@ import React, { useState, useEffect, useRef, useLayoutEffect, useCallback } from
 import { type Kline, type LiveTicker } from '../types';
 import { ChartIcon } from './icons';
 import * as constants from '../constants';
-import { calculateSupportResistance, type SupportResistance } from '../services/chartAnalysisService';
 import { SearchableDropdown } from './SearchableDropdown';
-import { 
-    createChart, 
-    ColorType, 
-    LineStyle, 
-    type IChartApi, 
-    type ISeriesApi, 
-    type CandlestickData, 
-    type UTCTimestamp, 
-    type PriceLineOptions,
-    type IPriceLine 
-} from 'lightweight-charts';
+import { createChart, ColorType, type UTCTimestamp, type CandlestickData, type IChartApi, type ISeriesApi } from 'lightweight-charts';
 
 interface ChartComponentProps {
     data: Kline[];
@@ -103,20 +92,15 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
-    const priceLineRefs = useRef<IPriceLine[]>([]);
     
     const [priceChange, setPriceChange] = useState<'up' | 'down' | 'none'>('none');
     const prevPriceRef = useRef(livePrice);
     
-    const [srLevels, setSrLevels] = useState<SupportResistance>({ supports: [], resistances: [] });
-    
-    // Use refs for callbacks and state inside the single-run effect to avoid stale closures
     const onLoadMoreDataRef = useRef(onLoadMoreData);
     onLoadMoreDataRef.current = onLoadMoreData;
     const isFetchingMoreDataRef = useRef(isFetchingMoreData);
     isFetchingMoreDataRef.current = isFetchingMoreData;
     
-    // Effect for live price ticker color
     useEffect(() => {
         if (livePrice > prevPriceRef.current) setPriceChange('up');
         else if (livePrice < prevPriceRef.current) setPriceChange('down');
@@ -125,12 +109,15 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
         return () => clearTimeout(timeout);
     }, [livePrice]);
 
-    // --- Chart Initialization (runs only once to prevent flickering) ---
     useLayoutEffect(() => {
         if (!chartContainerRef.current) return;
+        const chartContainer = chartContainerRef.current;
 
-        const chart = createChart(chartContainerRef.current, {
-            autoSize: true,
+        const chart = createChart(chartContainer, {
+            autoSize: false, // Set to false to allow ResizeObserver to handle it reliably
+            localization: {
+                locale: navigator.language, // Use browser locale for time/price formatting
+            },
             timeScale: {
                 timeVisible: true,
                 secondsVisible: false,
@@ -142,24 +129,33 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
         chartRef.current = chart;
         candlestickSeriesRef.current = candlestickSeries;
 
-        // Subscribe to scroll events for infinite scroll using stable refs
         chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
             if (range && range.from < 10 && !isFetchingMoreDataRef.current) {
                  onLoadMoreDataRef.current();
             }
         });
         
+        const resizeObserver = new ResizeObserver(entries => {
+            if (entries.length === 0 || entries[0].target !== chartContainer) { return; }
+            const { width, height } = entries[0].contentRect;
+            chart.resize(width, height);
+        });
+
+        resizeObserver.observe(chartContainer);
+        
         return () => {
+            resizeObserver.disconnect();
             chart.remove();
             chartRef.current = null;
         };
-    }, []); // <-- Empty dependency array is CRITICAL to prevent re-creation
+    }, []);
 
-    // --- Chart Theme Update ---
     useEffect(() => {
-        if (!chartRef.current) return;
+        if (!chartRef.current || !candlestickSeriesRef.current) return;
 
         const isDark = theme === 'dark';
+        const minMove = 1 / Math.pow(10, pricePrecision);
+
         chartRef.current.applyOptions({
             layout: {
                 background: { type: ColorType.Solid, color: isDark ? '#1e293b' : '#ffffff' },
@@ -176,16 +172,21 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
                 borderColor: isDark ? '#334155' : '#e5e7eb',
             },
         });
-        candlestickSeriesRef.current?.applyOptions({
+
+        candlestickSeriesRef.current.applyOptions({
             upColor: isDark ? '#22c55e' : '#16a34a',
             downColor: isDark ? '#ef4444' : '#dc2626',
             borderVisible: false,
             wickUpColor: isDark ? '#22c55e' : '#16a34a',
             wickDownColor: isDark ? '#ef4444' : '#dc2626',
+            priceFormat: {
+                type: 'price',
+                precision: pricePrecision,
+                minMove: minMove,
+            },
         });
-    }, [theme]);
+    }, [theme, pricePrecision]);
     
-    // --- Data Management ---
     useEffect(() => {
         if (!candlestickSeriesRef.current || data.length === 0) return;
         
@@ -201,7 +202,6 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
 
     }, [data]);
     
-    // Update live price
     useEffect(() => {
         if (!candlestickSeriesRef.current || !data.length || !livePrice) return;
         const lastKline = data[data.length - 1];
@@ -215,43 +215,6 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
         });
     }, [livePrice, data]);
 
-    // Calculate and draw S/R levels
-    useEffect(() => {
-        if (data.length > 50) {
-            const levels = calculateSupportResistance(data);
-            setSrLevels(levels);
-        } else {
-            setSrLevels({ supports: [], resistances: [] });
-        }
-    }, [data]);
-    
-    useEffect(() => {
-        const series = candlestickSeriesRef.current;
-        if (!series) return;
-
-        // Clear previous lines
-        priceLineRefs.current.forEach(line => series.removePriceLine(line));
-        priceLineRefs.current = [];
-
-        const createPriceLine = (price: number, color: string, title: string) => {
-            const lineOptions: PriceLineOptions = {
-                price,
-                color,
-                lineWidth: 1,
-                lineStyle: LineStyle.Dashed,
-                axisLabelVisible: true,
-                title,
-                lineVisible: true,
-                axisLabelColor: color,
-                axisLabelTextColor: theme === 'dark' ? '#000000' : '#ffffff',
-            };
-            priceLineRefs.current.push(series.createPriceLine(lineOptions));
-        };
-
-        srLevels.supports.slice(0, 3).forEach(level => createPriceLine(level, '#22c55e', 'Support'));
-        srLevels.resistances.slice(0, 3).forEach(level => createPriceLine(level, '#ef4444', 'Resistance'));
-
-    }, [srLevels, theme]);
 
     const livePriceColor = priceChange === 'up' ? 'text-emerald-500' : priceChange === 'down' ? 'text-rose-500' : 'text-slate-800 dark:text-slate-200';
     

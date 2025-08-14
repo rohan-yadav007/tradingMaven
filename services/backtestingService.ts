@@ -1,4 +1,5 @@
 
+
 import { Kline, BotConfig, BacktestResult, SimulatedTrade, AgentParams, Position, RiskMode, TradingMode } from '../types';
 import * as binanceService from './binanceService';
 import { getTradingSignal, getTradeManagementSignal, getInitialAgentTargets, analyzeTrendExhaustion } from './localAgentService';
@@ -6,7 +7,7 @@ import * as constants from '../constants';
 
 interface SimulatedPosition extends Omit<Position, 'id' | 'entryTime' | 'botId' | 'orderId' | 'exitReason' | 'pnl' | 'exitTime' | 'activeStopLossReason'> {
     entryTime: number; // Use timestamp for easier comparison
-    activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Universal Trail';
+    activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Universal Trail' | 'Agent Trail';
 }
 
 function formatDuration(ms: number): string {
@@ -102,10 +103,10 @@ export async function runBacktest(
                 if (sl_crossed && tp_crossed) {
                     // If both are hit in the same candle, assume SL is hit first for risk management
                     exitPrice = openPosition.stopLossPrice;
-                    exitReason = openPosition.activeStopLossReason === 'Universal Trail' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
+                    exitReason = openPosition.activeStopLossReason === 'Universal Trail' || openPosition.activeStopLossReason === 'Agent Trail' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
                 } else if (sl_crossed) {
                     exitPrice = openPosition.stopLossPrice;
-                    exitReason = openPosition.activeStopLossReason === 'Universal Trail' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
+                    exitReason = openPosition.activeStopLossReason === 'Universal Trail' || openPosition.activeStopLossReason === 'Agent Trail' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
                 } else if (tp_crossed) {
                     exitPrice = openPosition.takeProfitPrice;
                     exitReason = 'Take Profit Hit';
@@ -167,7 +168,7 @@ export async function runBacktest(
 
                     if (mgmtSignal.newStopLoss && mgmtSignal.newStopLoss !== openPosition.stopLossPrice) {
                         openPosition.stopLossPrice = mgmtSignal.newStopLoss;
-                        openPosition.activeStopLossReason = 'Universal Trail';
+                        openPosition.activeStopLossReason = config.isAtrTrailingStopEnabled ? 'Universal Trail' : 'Agent Trail';
                     }
                     if (mgmtSignal.newTakeProfit) openPosition.takeProfitPrice = mgmtSignal.newTakeProfit;
                 }

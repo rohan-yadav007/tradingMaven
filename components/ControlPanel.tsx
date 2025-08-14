@@ -136,7 +136,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
     
     const {
         executionMode, availableBalance, tradingMode, allPairs, selectedPair,
-        leverage, chartTimeFrame: timeFrame, selectedAgent, investmentAmount,
+        isPairsLoading, leverage, chartTimeFrame: timeFrame, selectedAgent, investmentAmount,
         takeProfitMode, takeProfitValue,
         isTakeProfitLocked, isCooldownEnabled, agentParams,
         marginType, futuresSettingsError, isMultiAssetMode, multiAssetModeError,
@@ -266,6 +266,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     value={selectedPair}
                     onChange={setSelectedPair}
                     theme={theme}
+                    disabled={isPairsLoading}
                 />
             </div>
             

@@ -559,7 +559,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 <div className="bg-white dark:bg-slate-800 rounded-lg shadow">
                     <div className="p-3 border-b border-slate-200 dark:border-slate-700 font-semibold">Backtest Configuration</div>
                     <div className="p-4 flex flex-col gap-3">
-                        <div className={formGroupClass}><label className={formLabelClass}>Market</label><SearchableDropdown theme={theme} options={globalConfigState.allPairs} value={localConfig.selectedPair} onChange={v => setLocalConfig(p => ({...p, selectedPair: v}))}/></div>
+                        <div className={formGroupClass}><label className={formLabelClass}>Market</label><SearchableDropdown theme={theme} options={globalConfigState.allPairs} value={localConfig.selectedPair} onChange={v => setLocalConfig(p => ({...p, selectedPair: v}))} disabled={globalConfigState.isPairsLoading}/></div>
                         <div className={formGroupClass}>
                             <label className={formLabelClass}>Trading Mode</label>
                             <select value={localConfig.tradingMode} onChange={e => setLocalConfig(p => ({...p, tradingMode: e.target.value as TradingMode}))} className={formInputClass}>

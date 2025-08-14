@@ -1,8 +1,11 @@
 
+
 import React, { useState, useEffect } from 'react';
 import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, TradeSignal, TradingMode, RiskMode, LogType } from '../types';
 import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, LockIcon, UnlockIcon, InfoIcon, ZapIcon } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
+import { MAX_STOP_LOSS_PERCENT_OF_INVESTMENT } from '../constants';
+
 
 interface RunningBotsProps {
     bots: RunningBot[];
@@ -159,13 +162,11 @@ const PositionPnlProgress: React.FC<{position: Position; livePrice: number}> = (
     return (
         <div className="flex flex-col gap-1.5 pt-2">
             <div className="w-full bg-rose-200 dark:bg-rose-900/50 rounded-full h-4 relative">
-                {/* Progress Fill */}
                 <div 
                     className="bg-emerald-500 dark:bg-emerald-600 h-full rounded-full transition-all duration-300" 
                     style={{ width: `${clampedProgress}%`}}
                 ></div>
                 
-                {/* Live Price Marker & PNL */}
                 <div 
                     className="absolute top-0 h-full flex items-center" 
                     style={{ left: `calc(${clampedProgress}% - 8px)`}}
@@ -178,7 +179,6 @@ const PositionPnlProgress: React.FC<{position: Position; livePrice: number}> = (
                     </div>
                 </div>
             </div>
-            {/* Labels */}
             <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 font-mono">
                 <span>SL: {stopLossPrice.toFixed(pricePrecision)}</span>
                 <span>TP: {takeProfitPrice.toFixed(pricePrecision)}</span>
@@ -187,9 +187,93 @@ const PositionPnlProgress: React.FC<{position: Position; livePrice: number}> = (
     );
 };
 
-const PositionManager: React.FC<{ 
-    bot: RunningBot;
-}> = ({ bot }) => {
+interface StopLossDetailsProps {
+    position: Position;
+    config: BotConfig;
+}
+
+const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) => {
+    const { stopLossPrice, initialStopLossPrice, activeStopLossReason, pricePrecision } = position;
+
+    const activeIsAgent = activeStopLossReason === 'Agent Logic';
+    const activeIsHardCap = activeStopLossReason === 'Hard Cap';
+    const activeIsTrail = activeStopLossReason === 'Universal Trail';
+    const isTrailEnabled = config.isAtrTrailingStopEnabled;
+
+    const getStatusLabel = () => {
+        if (activeIsTrail) return { text: 'ACTIVE', className: 'bg-sky-500 text-white' };
+        if (isTrailEnabled) return { text: 'Enabled', className: 'bg-slate-500 dark:bg-slate-400 text-white dark:text-slate-900' };
+        return { text: 'Disabled', className: 'bg-slate-200 dark:bg-slate-600' };
+    };
+
+    const trailStatus = getStatusLabel();
+
+    // --- Hard Cap Clarification Logic ---
+    const isFutures = config.mode === TradingMode.USDSM_Futures;
+    let hardCapLabel = `Hard Cap (${MAX_STOP_LOSS_PERCENT_OF_INVESTMENT}%)`;
+    let hardCapDescription: string;
+
+    if (isFutures && config.leverage > 1) {
+        const marginLossPercent = (MAX_STOP_LOSS_PERCENT_OF_INVESTMENT * config.leverage);
+        hardCapLabel = `Hard Cap (${MAX_STOP_LOSS_PERCENT_OF_INVESTMENT}% of Position)`;
+        hardCapDescription = `Caps price move at ${MAX_STOP_LOSS_PERCENT_OF_INVESTMENT}%. With ${config.leverage}x leverage, this is a max loss of ≈${marginLossPercent.toFixed(0)}% of your margin.`;
+    } else {
+        hardCapDescription = `Caps max loss to ${MAX_STOP_LOSS_PERCENT_OF_INVESTMENT}% of your investment if the agent's logic is riskier.`;
+    }
+    // --- End Hard Cap Logic ---
+
+    return (
+        <div>
+            <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Stop-Loss Details</h4>
+            <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg space-y-3 text-sm">
+                <div className="flex justify-between items-center">
+                    <span className="font-bold">Active SL Price</span>
+                    <span className="font-bold font-mono bg-slate-200 dark:bg-slate-700 px-2 py-1 rounded-md">{formatPrice(stopLossPrice, pricePrecision)}</span>
+                </div>
+                
+                <div className={`p-2 rounded-md ${activeIsTrail ? 'bg-sky-100 dark:bg-sky-900 border border-sky-300 dark:border-sky-700' : isTrailEnabled ? 'bg-slate-200/70 dark:bg-slate-800' : ''}`}>
+                    <div className="flex justify-between items-center">
+                         <span className={activeIsTrail ? 'font-semibold text-sky-700 dark:text-sky-300' : 'font-medium'}>Universal Trail</span>
+                         <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${trailStatus.className}`}>
+                            {trailStatus.text}
+                         </span>
+                    </div>
+                    {isTrailEnabled && !activeIsTrail &&
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                           Will become active once the trade is in sufficient profit.
+                        </p>
+                    }
+                </div>
+
+                <div className={`p-2 rounded-md ${activeIsHardCap ? 'bg-amber-100 dark:bg-amber-900 border border-amber-300 dark:border-amber-700' : ''}`}>
+                    <div className="flex justify-between items-center">
+                         <span className={activeIsHardCap ? 'font-semibold text-amber-700 dark:text-amber-300' : ''}>{hardCapLabel}</span>
+                         <span className={`text-xs px-1.5 py-0.5 rounded-full ${activeIsHardCap ? 'bg-amber-500 text-white' : 'bg-slate-200 dark:bg-slate-600'}`}>
+                            {activeIsHardCap ? 'ACTIVE' : 'Overridden'}
+                         </span>
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                        {hardCapDescription}
+                    </p>
+                </div>
+
+                 <div className={`p-2 rounded-md ${activeIsAgent ? 'bg-emerald-100 dark:bg-emerald-900 border border-emerald-300 dark:border-emerald-700' : ''}`}>
+                    <div className="flex justify-between items-center">
+                         <span className={activeIsAgent ? 'font-semibold text-emerald-700 dark:text-emerald-300' : ''}>Agent Logic SL</span>
+                         <span className={`text-xs px-1.5 py-0.5 rounded-full ${activeIsAgent ? 'bg-emerald-500 text-white' : 'bg-slate-200 dark:bg-slate-600'}`}>
+                             {activeIsAgent ? 'ACTIVE' : 'Overridden'}
+                         </span>
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                        Original SL: <span className="font-mono">{formatPrice(initialStopLossPrice, pricePrecision)}</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const PositionManager: React.FC<{ bot: RunningBot }> = ({ bot }) => {
     const { openPosition, livePrice } = bot;
     if (!openPosition || !livePrice) return null;
 
@@ -307,7 +391,6 @@ const BotRow: React.FC<BotRowProps> = (props) => {
     const { bot, onClosePosition, onPauseBot, onResumeBot, onStopBot, onDeleteBot, onUpdateBotConfig, onToggle, isOpen } = props;
     const { config, status, id, livePrice, openPosition } = bot;
     
-    // Calculate unrealized PNL based on pure price movement (Gross PNL).
     const pnl = (openPosition && livePrice) ? (livePrice - openPosition.entryPrice) * openPosition.size * (openPosition.direction === 'LONG' ? 1 : -1) : 0;
     
     const pnlIsProfit = pnl >= 0;
@@ -416,9 +499,10 @@ const BotRow: React.FC<BotRowProps> = (props) => {
                             </div>
                         </div>
                         {openPosition && livePrice && (
-                            <PositionManager 
-                                bot={bot}
-                            />
+                            <PositionManager bot={bot} />
+                        )}
+                        {openPosition && (
+                            <StopLossDetails position={openPosition} config={config} />
                         )}
                         <BotPerformanceSummary bot={bot} />
                         <BotConfigDetails config={config} onUpdate={(partialConfig) => onUpdateBotConfig(bot.id, partialConfig)} />
@@ -437,18 +521,13 @@ const BotRow: React.FC<BotRowProps> = (props) => {
 export const RunningBots: React.FC<RunningBotsProps> = (props) => {
     const [openBotId, setOpenBotId] = useState<string | null>(null);
 
-    // This effect now correctly handles setting the initial open bot and
-    // gracefully handles the case where the currently open bot is deleted.
-    // It depends on a stable representation of the bot list's IDs.
     useEffect(() => {
         const botIds = props.bots.map(b => b.id);
         const firstBotId = botIds[0] || null;
 
-        // On initial load or if no bot is open, open the first one.
         if (!openBotId && firstBotId) {
             setOpenBotId(firstBotId);
         }
-        // If the currently open bot has been deleted, select the new first bot.
         else if (openBotId && !botIds.includes(openBotId)) {
             setOpenBotId(firstBotId);
         }

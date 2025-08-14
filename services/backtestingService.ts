@@ -5,8 +5,9 @@ import * as binanceService from './binanceService';
 import { getTradingSignal, getTradeManagementSignal, getInitialAgentTargets, analyzeTrendExhaustion } from './localAgentService';
 import * as constants from '../constants';
 
-interface SimulatedPosition extends Omit<Position, 'id' | 'entryTime' | 'botId' | 'orderId' | 'exitReason' | 'pnl' | 'exitTime'> {
+interface SimulatedPosition extends Omit<Position, 'id' | 'entryTime' | 'botId' | 'orderId' | 'exitReason' | 'pnl' | 'exitTime' | 'activeStopLossReason'> {
     entryTime: number; // Use timestamp for easier comparison
+    activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Universal Trail';
 }
 
 function formatDuration(ms: number): string {
@@ -87,7 +88,6 @@ export async function runBacktest(
                 let exitPrice: number | undefined;
                 let exitReason: string | undefined;
 
-                // High-fidelity, conservative exit check: Always check for stop loss first in a given candle.
                 let sl_crossed = false;
                 let tp_crossed = false;
 
@@ -100,13 +100,12 @@ export async function runBacktest(
                 }
 
                 if (sl_crossed) {
-                    exitPrice = openPosition.stopLossPrice; // Exit at the defined SL price for consistency
-                    exitReason = 'Stop Loss Hit';
+                    exitPrice = openPosition.stopLossPrice;
+                    exitReason = openPosition.activeStopLossReason === 'Universal Trail' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
                 } else if (tp_crossed) {
-                    exitPrice = openPosition.takeProfitPrice; // Exit at the defined TP price
+                    exitPrice = openPosition.takeProfitPrice;
                     exitReason = 'Take Profit Hit';
                 }
-
 
                 if (exitPrice !== undefined && exitReason !== undefined) {
                     const pnl = (exitPrice - openPosition.entryPrice) * openPosition.size * (isLong ? 1 : -1);
@@ -129,17 +128,18 @@ export async function runBacktest(
                     break;
                 }
 
-                 if (openPosition) { // Check if position still open before trailing
+                 if (openPosition) { 
                     const livePriceForTrail = isLong ? managementCandle.high : managementCandle.low;
                     
                     const tempPositionForSignal: Position = { ...openPosition, id: 0, botId: 'sim', orderId: null, entryTime: new Date(openPosition.entryTime) };
 
-                    // For trade management (like trailing stops), use the more granular 1-minute management klines
-                    // to allow for faster reactions, mimicking the live bot's behavior.
                     const managementHistorySlice = managementKlines.slice(0, managementKlineIndex + 1);
                     const mgmtSignal = await getTradeManagementSignal(tempPositionForSignal, managementHistorySlice, livePriceForTrail, config);
 
-                    if (mgmtSignal.newStopLoss) openPosition.stopLossPrice = mgmtSignal.newStopLoss;
+                    if (mgmtSignal.newStopLoss && mgmtSignal.newStopLoss !== openPosition.stopLossPrice) {
+                        openPosition.stopLossPrice = mgmtSignal.newStopLoss;
+                        openPosition.activeStopLossReason = 'Universal Trail';
+                    }
                     if (mgmtSignal.newTakeProfit) openPosition.takeProfitPrice = mgmtSignal.newTakeProfit;
                 }
                 
@@ -180,7 +180,9 @@ export async function runBacktest(
                     if (config.investmentAmount > 0 && entryPrice > 0) {
                         const agentTargets = getInitialAgentTargets(historySlice, entryPrice, isLong ? 'LONG' : 'SHORT', config.timeFrame, { ...constants.DEFAULT_AGENT_PARAMS, ...config.agentParams }, config.agent.id);
                         
-                        let stopLossPrice = agentTargets.stopLossPrice;
+                        const agentStopLoss = agentTargets.stopLossPrice;
+                        let stopLossPrice = agentStopLoss;
+                        let slReason: 'Agent Logic' | 'Hard Cap' = 'Agent Logic';
                         
                         let takeProfitPrice = agentTargets.takeProfitPrice;
                         if (config.isTakeProfitLocked) {
@@ -195,13 +197,29 @@ export async function runBacktest(
                            }
                         }
                         
+                        // REVISED SL HIERARCHY LOGIC to MINIMIZE LOSS
                         const positionValueForCap = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
                         const tradeSizeForCap = positionValueForCap / entryPrice;
                         if (tradeSizeForCap > 0) {
-                            const maxLossAmount = config.investmentAmount * (constants.MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
+                            let maxLossAmount = config.investmentAmount * (constants.MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
+                            if (config.mode === TradingMode.USDSM_Futures) {
+                                maxLossAmount *= config.leverage;
+                            }
                             const hardCapStopLossPrice = isLong ? entryPrice - (maxLossAmount / tradeSizeForCap) : entryPrice + (maxLossAmount / tradeSizeForCap);
-                            stopLossPrice = isLong ? Math.max(stopLossPrice, hardCapStopLossPrice) : Math.min(stopLossPrice, hardCapStopLossPrice);
+                            
+                            // Determine the SL that minimizes potential loss (closer to entry price)
+                            const tighterSl = isLong 
+                                ? Math.max(stopLossPrice, hardCapStopLossPrice)
+                                : Math.min(stopLossPrice, hardCapStopLossPrice);
+
+                            const agentIsRiskier = (isLong && agentStopLoss < hardCapStopLossPrice) || (!isLong && agentStopLoss > hardCapStopLossPrice);
+                            if (agentIsRiskier) {
+                                slReason = 'Hard Cap';
+                            }
+                            
+                            stopLossPrice = tighterSl;
                         }
+
 
                         const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
                         const tradeSize = positionValue / entryPrice;
@@ -212,10 +230,11 @@ export async function runBacktest(
                                 entryPrice, size: tradeSize, leverage: config.leverage, entryTime: entrySignalCandle.time,
                                 entryReason: signal.reasons.join(' '), agentName: config.agent.name, takeProfitPrice,
                                 stopLossPrice,
-                                initialStopLossPrice: stopLossPrice, // Store for R:R trailing
+                                initialStopLossPrice: agentStopLoss,
                                 initialTakeProfitPrice: takeProfitPrice,
                                 pricePrecision: config.pricePrecision, timeFrame: config.timeFrame,
                                 marginType: config.marginType,
+                                activeStopLossReason: slReason,
                             };
                         }
                     }

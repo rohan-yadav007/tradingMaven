@@ -362,6 +362,10 @@ const AppContent: React.FC = () => {
     const handleExecuteTrade = useCallback(async (
         execSignal: TradeSignal,
         botId: string,
+        executionDetails: {
+            agentStopLoss: number,
+            slReason: 'Agent Logic' | 'Hard Cap'
+        }
     ) => {
         const bot = botManagerService.getBot(botId);
         if (!bot) {
@@ -483,7 +487,7 @@ const AppContent: React.FC = () => {
             const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
             tradeSize = positionValue / finalEntryPrice;
         }
-
+        
         const newPosition: Position = {
             id: Date.now(),
             pair: config.pair,
@@ -500,7 +504,8 @@ const AppContent: React.FC = () => {
             takeProfitPrice,
             stopLossPrice,
             initialTakeProfitPrice: takeProfitPrice,
-            initialStopLossPrice: stopLossPrice,
+            initialStopLossPrice: executionDetails.agentStopLoss, // Use value from bot logic
+            activeStopLossReason: executionDetails.slReason, // Use reason from bot logic
             pricePrecision: config.pricePrecision,
             timeFrame: config.timeFrame,
             botId,

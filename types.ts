@@ -53,6 +53,8 @@ export interface Position {
     // For R:R based trailing
     initialStopLossPrice: number;
     initialTakeProfitPrice: number;
+    // For SL transparency
+    activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Universal Trail';
 }
 
 export interface Trade extends Position {

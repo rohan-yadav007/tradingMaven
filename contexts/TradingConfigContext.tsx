@@ -10,6 +10,7 @@ interface TradingConfigState {
     tradingMode: TradingMode;
     selectedPair: string;
     allPairs: string[];
+    isPairsLoading: boolean;
     leverage: number;
     marginType: 'ISOLATED' | 'CROSSED';
     chartTimeFrame: string;
@@ -92,6 +93,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [isMultiAssetMode, setIsMultiAssetMode] = useState(false);
 
     // Context-internal state
+    const [isPairsLoading, setIsPairsLoading] = useState(true);
     const [maxLeverage, setMaxLeverage] = useState(125);
     const [isLeverageLoading, setIsLeverageLoading] = useState(false);
     const [futuresSettingsError, setFuturesSettingsError] = useState<string | null>(null);
@@ -101,32 +103,44 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
 
     // Fetch tradable pairs when trading mode changes
     useEffect(() => {
+        let isCancelled = false;
+
         const fetchPairs = async () => {
-            // This logic should run regardless of API connection status, as it's a public endpoint.
+            setIsPairsLoading(true);
             const pairFetcher = tradingMode === TradingMode.USDSM_Futures 
                 ? binanceService.fetchFuturesPairs 
                 : binanceService.fetchSpotPairs;
             
             try {
                 const pairs = await pairFetcher();
-                if (pairs.length > 0) {
-                    setAllPairs(pairs);
-                    // If the currently selected pair isn't in the new list, select the first one.
-                    if (!pairs.includes(selectedPair)) {
-                        setSelectedPair(pairs[0] || 'BTC/USDT');
+                if (!isCancelled) {
+                    if (pairs.length > 0) {
+                        setAllPairs(pairs);
+                        if (!pairs.includes(selectedPair)) {
+                            setSelectedPair(pairs[0] || 'BTC/USDT');
+                        }
+                    } else {
+                        setAllPairs(constants.TRADING_PAIRS);
                     }
-                } else {
-                    // Fallback if API returns an empty list
-                    setAllPairs(constants.TRADING_PAIRS);
                 }
             } catch (err) {
-                console.error(`Could not fetch pairs for mode ${tradingMode}:`, err);
-                setAllPairs(constants.TRADING_PAIRS); // Fallback on error
+                 if (!isCancelled) {
+                    console.error(`Could not fetch pairs for mode ${tradingMode}:`, err);
+                    setAllPairs(constants.TRADING_PAIRS); // Fallback on error
+                 }
+            } finally {
+                if (!isCancelled) {
+                    setIsPairsLoading(false);
+                }
             }
         };
 
         fetchPairs();
-    }, [tradingMode]); // Only re-fetch when the trading mode (Spot/Futures) changes.
+
+        return () => {
+            isCancelled = true;
+        };
+    }, [tradingMode]);
 
 
     // Sync wallet view with trading mode
@@ -228,7 +242,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     }), [onSetMultiAssetMode]);
     
     const state = {
-        executionMode, tradingMode, selectedPair, allPairs, leverage, marginType, chartTimeFrame,
+        executionMode, tradingMode, selectedPair, allPairs, isPairsLoading, leverage, marginType, chartTimeFrame,
         selectedAgent, agentParams, investmentAmount, availableBalance,
         takeProfitMode, takeProfitValue, isTakeProfitLocked, isCooldownEnabled,
         isHtfConfirmationEnabled, isAtrTrailingStopEnabled, htfTimeFrame,

@@ -11,7 +11,7 @@ const getLast = <T>(arr: T[] | undefined): T | undefined => arr && arr.length > 
 const getPenultimate = <T>(arr: T[] | undefined): T | undefined => arr && arr.length > 1 ? arr[arr.length - 2] : undefined;
 
 const MIN_STOP_LOSS_PERCENT = 0.5; // Minimum 0.5% SL distance from entry price.
-const { TIMEFRAME_ATR_CONFIG } = constants;
+const { TIMEFRAME_ATR_CONFIG, TAKER_FEE_RATE } = constants;
 
 
 // ----------------------------------------------------------------------------------
@@ -95,20 +95,20 @@ export const getInitialAgentTargets = (
     }
     // NOTE: Agent 6 (Profit Locker) partial TP logic has been removed.
 
-    // --- Step 3: CRITICAL FINAL SAFETY CHECKS (This fixes the bug) ---
+    // --- Step 3: CRITICAL FINAL SAFETY CHECKS ---
     // A. Minimum percentage distance check.
     const minSlOffset = entryPrice * (MIN_STOP_LOSS_PERCENT / 100);
     const minSafeStopLoss = isLong ? entryPrice - minSlOffset : entryPrice + minSlOffset;
 
-    // B. Choose the SAFER stop loss: the one that is FURTHER from the entry price.
+    // B. Choose the stop loss that MINIMIZES loss (closer to entry price).
     const finalStopLoss = isLong
-        ? Math.min(suggestedStopLoss, minSafeStopLoss)
-        : Math.max(suggestedStopLoss, minSafeStopLoss);
+        ? Math.max(suggestedStopLoss, minSafeStopLoss)
+        : Math.min(suggestedStopLoss, minSafeStopLoss);
 
     // C. Sanity check: ensure SL and TP are on the correct sides of entry price and SL isn't through entry.
     let finalTakeProfit = suggestedTakeProfit;
     if ((isLong && finalStopLoss >= entryPrice) || (!isLong && finalStopLoss <= entryPrice)) {
-        // Catastrophic failure. Fallback to the safest SL possible.
+        // This can happen if the calculated stop is on the wrong side of entry. Fallback to the minimum safe distance.
         return { stopLossPrice: minSafeStopLoss, takeProfitPrice: isLong ? entryPrice + minSlOffset * 2 : entryPrice - minSlOffset * 2 };
     }
     if ((isLong && finalTakeProfit <= entryPrice) || (!isLong && finalTakeProfit >= entryPrice)) {
@@ -136,34 +136,69 @@ export async function getTradeManagementSignal(
     const reasons: string[] = [];
     let newStopLoss: number | undefined;
 
-    // --- Agent 9: Quantum Scalper (Specialized PSAR Exit) ---
-    if (config.agent.id === 9) {
-        const psar = PSAR.calculate({ high: klines.map(k => k.high), low: klines.map(k => k.low), step: config.agentParams!.qsc_psarStep!, max: config.agentParams!.qsc_psarMax! });
-        const lastPsar = getLast(psar) as number | undefined;
-        if (lastPsar) {
-            newStopLoss = lastPsar;
-            reasons.push('PSAR trail');
-        }
-    }
-    // --- Universal ATR Trailing Stop ---
-    else if (isAtrTrailingStopEnabled) {
-        const atr = getLast(ATR.calculate({ high: klines.map(k => k.high), low: klines.map(k => k.low), close: klines.map(k => k.close), period: 14 })) as number | undefined;
-        if (atr) {
-            const trailOffset = atr * 2.5;
-            if (position.direction === 'LONG') {
-                newStopLoss = Math.max(position.stopLossPrice, currentPrice - trailOffset);
-            } else {
-                newStopLoss = Math.min(position.stopLossPrice, currentPrice + trailOffset);
+    // --- Universal Fee-Based Trailing Stop (High Priority) ---
+    if (isAtrTrailingStopEnabled) {
+        const isLong = position.direction === 'LONG';
+        const entryPrice = position.entryPrice;
+        
+        // 1. Calculate the price-equivalent of the round-trip trading fee
+        const positionValue = position.size * entryPrice; // This includes leverage
+        const roundTripFee = positionValue * TAKER_FEE_RATE * 2;
+        const feeInPrice = roundTripFee / position.size;
+
+        if (feeInPrice > 0) {
+             // 2. Calculate current profit in terms of price movement
+            const profitInPrice = (currentPrice - entryPrice) * (isLong ? 1 : -1);
+            let potentialNewStop: number | undefined;
+
+            // 3. Breakeven Trigger: If profit covers 2x fee and SL is still in loss territory
+            const isStopInLoss = (isLong && position.stopLossPrice < entryPrice) || (!isLong && position.stopLossPrice > entryPrice);
+            if (profitInPrice >= (feeInPrice * 2) && isStopInLoss) {
+                potentialNewStop = entryPrice;
+                reasons.push('Breakeven Trigger');
             }
-            reasons.push('ATR trail');
+
+            // 4. Profit-Securing "Ratchet" Trigger
+            // For every multiple of 3x fee in profit, secure 2x fee
+            if (profitInPrice > 0) {
+                // Calculate how many "3x fee" chunks of profit we have
+                const profitChunks = Math.floor(profitInPrice / (feeInPrice * 3));
+                
+                if (profitChunks > 0) {
+                    // Calculate the amount of profit to lock in
+                    const securedProfitInPrice = profitChunks * feeInPrice * 2;
+                    const stopAtProfitLevel = entryPrice + (securedProfitInPrice * (isLong ? 1 : -1));
+
+                    // If this new stop is better than the current one (or the breakeven one we just calculated), use it.
+                    if (!potentialNewStop || (isLong && stopAtProfitLevel > potentialNewStop) || (!isLong && stopAtProfitLevel < potentialNewStop)) {
+                        potentialNewStop = stopAtProfitLevel;
+                        reasons.push(`Profit Lock at ${profitChunks * 2}x Fee`);
+                    }
+                }
+            }
+
+            // 5. Final check: never move stop-loss backwards
+            if (potentialNewStop !== undefined) {
+                if ((isLong && potentialNewStop > position.stopLossPrice) || (!isLong && potentialNewStop < position.stopLossPrice)) {
+                    newStopLoss = potentialNewStop;
+                }
+            }
+        }
+
+    }
+    // --- Agent-Specific Trails (Only run if Universal is OFF) ---
+    else if (config.agent.id === 9) {
+        // This is the original logic. Agent 9 has a special exit.
+        const psarInput = { high: klines.map(k => k.high), low: klines.map(k => k.low), step: config.agentParams?.qsc_psarStep ?? 0.02, max: config.agentParams?.qsc_psarMax ?? 0.2 };
+        if (psarInput.high.length >= 2) {
+            const psar = PSAR.calculate(psarInput);
+            const lastPsar = getLast(psar) as number | undefined;
+            if (lastPsar) {
+                newStopLoss = lastPsar;
+                reasons.push('Agent PSAR Trail');
+            }
         }
     }
-
-    // Partial TP logic has been removed.
-
-    // The ATR trailing stop logic (`Math.max` for longs, `Math.min` for shorts) inherently prevents the stop loss
-    // from moving against the trade. It will start trailing into profit as soon as it can. The old `trailStartPrice`
-    // logic is no longer needed.
     
     return { newStopLoss, reasons };
 }

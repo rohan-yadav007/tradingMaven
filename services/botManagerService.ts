@@ -9,7 +9,14 @@ const MAX_LOG_ENTRIES = 100;
 const RECONNECT_DELAY = 5000; // 5 seconds
 
 export interface BotHandlers {
-    onExecuteTrade: (signal: TradeSignal, botId: string) => Promise<void>;
+    onExecuteTrade: (
+        signal: TradeSignal, 
+        botId: string,
+        executionDetails: {
+            agentStopLoss: number,
+            slReason: 'Agent Logic' | 'Hard Cap'
+        }
+    ) => Promise<void>;
     onClosePosition: (position: Position, exitReason: string, exitPrice: number) => void;
 }
 
@@ -238,14 +245,12 @@ class BotInstance {
             return;
         }
 
-        // The entry price is the current market price, effectively the open of the next candle.
         const currentPrice = await this.getInitialPriceReliably();
         if (!currentPrice) {
             this.notifyTradeExecutionFailed("Could not determine a valid entry price.");
             return;
         }
 
-        // Analysis was based on the history including the last closed candle.
         const agentTargets = getInitialAgentTargets(this.klines, currentPrice, signal.signal === 'BUY' ? 'LONG' : 'SHORT', this.bot.config.timeFrame, { ...DEFAULT_AGENT_PARAMS, ...this.bot.config.agentParams }, this.bot.config.agent.id);
 
         let finalTp = agentTargets.takeProfitPrice;
@@ -259,17 +264,43 @@ class BotInstance {
                 finalTp = signal.signal === 'BUY' ? currentPrice + (this.bot.config.takeProfitValue / tradeSize) : currentPrice - (this.bot.config.takeProfitValue / tradeSize);
             }
         }
+        
+        // --- SL Hierarchy Logic to MINIMIZE LOSS ---
+        const agentStopLoss = agentTargets.stopLossPrice;
+        let finalSl = agentStopLoss;
+        let slReason: 'Agent Logic' | 'Hard Cap' = 'Agent Logic';
 
-        let finalSl = agentTargets.stopLossPrice;
         const positionValueForCap = this.bot.config.mode === TradingMode.USDSM_Futures ? this.bot.config.investmentAmount * this.bot.config.leverage : this.bot.config.investmentAmount;
         const tradeSizeForCap = positionValueForCap / currentPrice;
+
         if (tradeSizeForCap > 0) {
-            const maxLossAmount = this.bot.config.investmentAmount * (MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
-            const hardCapStopLossPrice = signal.signal === 'BUY' ? currentPrice - (maxLossAmount / tradeSizeForCap) : currentPrice + (maxLossAmount / tradeSizeForCap);
-            finalSl = signal.signal === 'BUY' ? Math.max(finalSl, hardCapStopLossPrice) : Math.min(finalSl, hardCapStopLossPrice);
+            let maxLossAmount = this.bot.config.investmentAmount * (MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
+            if (this.bot.config.mode === TradingMode.USDSM_Futures) {
+                maxLossAmount *= this.bot.config.leverage;
+            }
+
+            const hardCapStopLossPrice = signal.signal === 'BUY' 
+                ? currentPrice - (maxLossAmount / tradeSizeForCap) 
+                : currentPrice + (maxLossAmount / tradeSizeForCap);
+
+            // Determine the SL that minimizes potential loss (closer to entry price)
+            const tighterSl = signal.signal === 'BUY' 
+                ? Math.max(finalSl, hardCapStopLossPrice)
+                : Math.min(finalSl, hardCapStopLossPrice);
+
+            // The agent's logic is considered riskier (and thus overridden by Hard Cap) 
+            // if its SL is further from the entry price than the hard cap's SL.
+            const agentIsRiskier = (signal.signal === 'BUY' && agentStopLoss < hardCapStopLossPrice) || (signal.signal === 'SELL' && agentStopLoss > hardCapStopLossPrice);
+
+            if (agentIsRiskier) {
+                slReason = 'Hard Cap';
+            }
+            
+            finalSl = tighterSl;
         }
 
-        this.addLog(`Executing ${signal.signal} at ~${currentPrice.toFixed(this.bot.config.pricePrecision)}. SL: ${finalSl.toFixed(this.bot.config.pricePrecision)}, TP: ${finalTp.toFixed(this.bot.config.pricePrecision)}`, LogType.Action);
+
+        this.addLog(`Executing ${signal.signal} at ~${currentPrice.toFixed(this.bot.config.pricePrecision)}. SL: ${finalSl.toFixed(this.bot.config.pricePrecision)} (${slReason}), TP: ${finalTp.toFixed(this.bot.config.pricePrecision)}`, LogType.Action);
 
         const execSignal: TradeSignal = {
             ...signal,
@@ -277,8 +308,12 @@ class BotInstance {
             takeProfitPrice: finalTp,
             stopLossPrice: finalSl,
         };
-
-        this.handlersRef.current.onExecuteTrade(execSignal, this.bot.id);
+        
+        this.handlersRef.current.onExecuteTrade(
+            execSignal, 
+            this.bot.id,
+            { agentStopLoss, slReason }
+        );
     }
 
     private async manageOpenPosition() {
@@ -288,7 +323,6 @@ class BotInstance {
         const { onClosePosition } = this.handlersRef.current;
         const isLong = openPosition.direction === 'LONG';
         
-        // --- Exit Check ---
         let exitPrice: number | undefined;
         let exitReason: string | undefined;
 
@@ -298,7 +332,7 @@ class BotInstance {
             const tpCondition = isLong ? livePrice >= openPosition.takeProfitPrice : livePrice <= openPosition.takeProfitPrice;
             if (slCondition) {
                 exitPrice = openPosition.stopLossPrice;
-                exitReason = 'Stop Loss Hit';
+                exitReason = openPosition.activeStopLossReason === 'Universal Trail' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
             } else if (tpCondition) {
                 exitPrice = openPosition.takeProfitPrice;
                 exitReason = 'Take Profit Hit';
@@ -310,7 +344,7 @@ class BotInstance {
             const tpCondition = isLong ? kline.high >= openPosition.takeProfitPrice : kline.low <= openPosition.takeProfitPrice;
             if (slCondition) {
                 exitPrice = openPosition.stopLossPrice;
-                exitReason = 'Stop Loss Hit';
+                exitReason = openPosition.activeStopLossReason === 'Universal Trail' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
             } else if (tpCondition) {
                 exitPrice = openPosition.takeProfitPrice;
                 exitReason = 'Take Profit Hit';
@@ -320,10 +354,9 @@ class BotInstance {
         if (exitPrice !== undefined && exitReason !== undefined) {
             this.addLog(`${config.executionMode} trade: ${exitReason} triggered at ${exitPrice.toFixed(config.pricePrecision)}.`, LogType.Action);
             onClosePosition(openPosition, exitReason, exitPrice);
-            return; // Position is closing, no more management needed
+            return;
         }
         
-        // --- Trailing Logic ---
         const currentPriceForTrailing = livePrice || this.managementKlines[this.managementKlines.length-1].close;
         const mgmtHistorySlice = this.managementKlines.length > 0 ? this.managementKlines : this.klines;
         if (mgmtHistorySlice.length > 5) {
@@ -337,6 +370,7 @@ class BotInstance {
             if (mgmtSignal.newStopLoss && mgmtSignal.newStopLoss !== openPosition.stopLossPrice) {
                 this.addLog(`Trailing stop updated to ${mgmtSignal.newStopLoss.toFixed(config.pricePrecision)}. Reason: ${mgmtSignal.reasons.join(' ')}`, LogType.Info);
                 openPosition.stopLossPrice = mgmtSignal.newStopLoss;
+                openPosition.activeStopLossReason = 'Universal Trail'; // Update the reason
             }
             if (mgmtSignal.newTakeProfit && mgmtSignal.newTakeProfit !== openPosition.takeProfitPrice) {
                 this.addLog(`Take profit updated to ${mgmtSignal.newTakeProfit.toFixed(config.pricePrecision)}. Reason: ${mgmtSignal.reasons.join(' ')}`, LogType.Info);

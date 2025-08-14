@@ -1,3 +1,4 @@
+
 export enum TradingMode {
     Spot = 'Spot',
     USDSM_Futures = 'USDS-M Futures',
@@ -18,9 +19,6 @@ export interface TradeSignal {
     stopLossPrice?: number;
     takeProfitPrice?: number;
     entryPrice?: number;
-    // For partial TP strategy
-    partialTps?: { price: number; hit: boolean; sizeFraction: number }[];
-    trailStartPrice?: number;
 }
 
 // For proactive trade management
@@ -29,10 +27,6 @@ export interface TradeManagementSignal {
     newTakeProfit?: number;
     closePosition?: boolean;
     reasons: string[];
-    partialClose?: { // Signal to partially close the position
-        tpIndex: number;
-        reason: string;
-    };
 }
 
 
@@ -56,10 +50,6 @@ export interface Position {
     botId?: string; // Link back to the bot that opened this position
     orderId: number | null; // Store the real order ID from Binance
     liquidationPrice?: number; // For futures positions
-    // For partial TP strategy
-    initialSize?: number; 
-    partialTps?: { price: number; hit: boolean; sizeFraction: number }[];
-    trailStartPrice?: number;
     // For R:R based trailing
     initialStopLossPrice: number;
     initialTakeProfitPrice: number;
@@ -68,7 +58,7 @@ export interface Position {
 export interface Trade extends Position {
     exitPrice: number;
     exitTime: Date;
-    pnl: number; // Gross PNL (price movement only)
+    pnl: number; // Net PNL (after fees)
     exitReason: string;
 }
 
@@ -211,6 +201,9 @@ export interface BotConfig {
     // Proactive Management Toggles
     isTakeProfitLocked: boolean;
     isCooldownEnabled: boolean;
+    isHtfConfirmationEnabled: boolean;
+    isAtrTrailingStopEnabled: boolean;
+    htfTimeFrame?: 'auto' | string;
     agentParams?: AgentParams;
     // Precision data for self-contained bot logic
     pricePrecision: number;
@@ -303,6 +296,7 @@ export interface AgentParams {
     mom_rsiThresholdBearish?: number;
     mom_volumeSmaPeriod?: number;
     mom_volumeMultiplier?: number;
+    mom_atrVolatilityThreshold?: number;
     
     // Agent 2: Trend Rider
     tr_emaFastPeriod?: number;
@@ -310,6 +304,18 @@ export interface AgentParams {
     tr_rsiMomentumBullish?: number;
     tr_rsiMomentumBearish?: number;
     tr_breakoutPeriod?: number;
+    tr_volumeSmaPeriod?: number;
+    tr_volumeMultiplier?: number;
+
+    // Agent 3: Mean Reversionist
+    mr_adxPeriod?: number;
+    mr_adxThreshold?: number;
+    mr_bbPeriod?: number;
+    mr_bbStdDev?: number;
+    mr_rsiPeriod?: number;
+    mr_rsiOversold?: number;
+    mr_rsiOverbought?: number;
+    mr_htfEmaPeriod?: number;
 
     // Agent 4: Scalping Expert (NEW LOGIC)
     se_emaFastPeriod?: number;
@@ -324,6 +330,15 @@ export interface AgentParams {
     se_macdFastPeriod?: number;
     se_macdSlowPeriod?: number;
     se_macdSignalPeriod?: number;
+    se_scoreThreshold?: number;
+
+    // Agent 5: Market Ignition
+    mi_bbPeriod?: number;
+    mi_bbStdDev?: number;
+    mi_bbwSqueezeThreshold?: number;
+    mi_volumeLookback?: number;
+    mi_volumeMultiplier?: number;
+    mi_emaBiasPeriod?: number;
 
     // Agent 6: Profit Locker (uses old scalping logic)
     scalp_scoreThreshold?: number;
@@ -342,6 +357,7 @@ export interface AgentParams {
     // Agent 7: Market Structure Maven
     msm_htfEmaPeriod?: number;
     msm_swingPointLookback?: number;
+    msm_minPivotScore?: number;
 
     // Agent 9: Quantum Scalper
     qsc_fastEmaPeriod?: number;

@@ -1,4 +1,5 @@
 
+
 import { Kline, BotConfig, BacktestResult, SimulatedTrade, AgentParams, Position, RiskMode, TradingMode } from '../types';
 import * as binanceService from './binanceService';
 import { getTradingSignal, getTradeManagementSignal, getInitialAgentTargets, analyzeTrendExhaustion } from './localAgentService';
@@ -22,6 +23,19 @@ function formatDuration(ms: number): string {
     if (minutes > 0) return `${minutes}m ${seconds}s`;
     return `${seconds}s`;
 }
+
+const getTimeframeDuration = (timeframe: string): number => {
+    const unit = timeframe.slice(-1);
+    const value = parseInt(timeframe.slice(0, -1), 10);
+    if (isNaN(value)) return 0;
+
+    switch (unit) {
+        case 'm': return value * 60 * 1000;
+        case 'h': return value * 60 * 60 * 1000;
+        case 'd': return value * 24 * 60 * 60 * 1000;
+        default: return 0;
+    }
+};
 
 // High-Fidelity Backtesting Engine
 export async function runBacktest(
@@ -47,6 +61,19 @@ export async function runBacktest(
         };
     }
     
+    let allHtfKlines: Kline[] | undefined = undefined;
+    if (config.isHtfConfirmationEnabled) {
+        const htf = config.htfTimeFrame === 'auto' 
+            ? constants.TIME_FRAMES[constants.TIME_FRAMES.indexOf(config.timeFrame) + 1] 
+            : config.htfTimeFrame;
+
+        if (htf) {
+            const startTime = mainKlines[0].time;
+            const endTime = mainKlines[mainKlines.length - 1].time + getTimeframeDuration(config.timeFrame) - 1;
+            allHtfKlines = await binanceService.fetchFullKlines(config.pair.replace('/', ''), htf, startTime, endTime);
+        }
+    }
+
     for (let i = minCandles; i < mainKlines.length; i++) {
         const entrySignalCandle = mainKlines[i-1];
         const historySlice = mainKlines.slice(0, i);
@@ -59,42 +86,27 @@ export async function runBacktest(
                 
                 let exitPrice: number | undefined;
                 let exitReason: string | undefined;
-                
+
+                // High-fidelity, conservative exit check: Always check for stop loss first in a given candle.
+                let sl_crossed = false;
+                let tp_crossed = false;
+
                 if (isLong) {
-                    if (managementCandle.high >= openPosition.takeProfitPrice) {
-                        exitPrice = openPosition.takeProfitPrice;
-                        exitReason = 'Take Profit Hit';
-                    } else if (managementCandle.low <= openPosition.stopLossPrice) {
-                        const realisticExitPrice = managementCandle.open < openPosition.stopLossPrice ? managementCandle.open : openPosition.stopLossPrice;
-                        const pnlWithSlippage = (realisticExitPrice - openPosition.entryPrice) * openPosition.size;
-                        const maxLossAmount = config.investmentAmount * (constants.MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
-
-                        if (Math.abs(pnlWithSlippage) > maxLossAmount) {
-                            exitPrice = openPosition.entryPrice - (maxLossAmount / openPosition.size);
-                            exitReason = `Stop Loss Hit (Slippage Capped)`;
-                        } else {
-                            exitPrice = realisticExitPrice;
-                            exitReason = 'Stop Loss Hit';
-                        }
-                    }
+                    sl_crossed = managementCandle.low <= openPosition.stopLossPrice;
+                    tp_crossed = managementCandle.high >= openPosition.takeProfitPrice;
                 } else { // SHORT
-                    if (managementCandle.low <= openPosition.takeProfitPrice) {
-                        exitPrice = openPosition.takeProfitPrice;
-                        exitReason = 'Take Profit Hit';
-                    } else if (managementCandle.high >= openPosition.stopLossPrice) {
-                        const realisticExitPrice = managementCandle.open > openPosition.stopLossPrice ? managementCandle.open : openPosition.stopLossPrice;
-                        const pnlWithSlippage = (realisticExitPrice - openPosition.entryPrice) * openPosition.size * -1;
-                        const maxLossAmount = config.investmentAmount * (constants.MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
-
-                        if (pnlWithSlippage < -maxLossAmount) {
-                            exitPrice = openPosition.entryPrice + (maxLossAmount / openPosition.size);
-                            exitReason = 'Stop Loss Hit (Slippage Capped)';
-                        } else {
-                            exitPrice = realisticExitPrice;
-                            exitReason = 'Stop Loss Hit';
-                        }
-                    }
+                    sl_crossed = managementCandle.high >= openPosition.stopLossPrice;
+                    tp_crossed = managementCandle.low <= openPosition.takeProfitPrice;
                 }
+
+                if (sl_crossed) {
+                    exitPrice = openPosition.stopLossPrice; // Exit at the defined SL price for consistency
+                    exitReason = 'Stop Loss Hit';
+                } else if (tp_crossed) {
+                    exitPrice = openPosition.takeProfitPrice; // Exit at the defined TP price
+                    exitReason = 'Take Profit Hit';
+                }
+
 
                 if (exitPrice !== undefined && exitReason !== undefined) {
                     const pnl = (exitPrice - openPosition.entryPrice) * openPosition.size * (isLong ? 1 : -1);
@@ -118,12 +130,14 @@ export async function runBacktest(
                 }
 
                  if (openPosition) { // Check if position still open before trailing
-                    const mgmtHistorySlice = managementKlines.slice(0, managementKlineIndex + 1);
                     const livePriceForTrail = isLong ? managementCandle.high : managementCandle.low;
                     
                     const tempPositionForSignal: Position = { ...openPosition, id: 0, botId: 'sim', orderId: null, entryTime: new Date(openPosition.entryTime) };
 
-                    const mgmtSignal = await getTradeManagementSignal(tempPositionForSignal, mgmtHistorySlice, livePriceForTrail, config);
+                    // For trade management (like trailing stops), use the more granular 1-minute management klines
+                    // to allow for faster reactions, mimicking the live bot's behavior.
+                    const managementHistorySlice = managementKlines.slice(0, managementKlineIndex + 1);
+                    const mgmtSignal = await getTradeManagementSignal(tempPositionForSignal, managementHistorySlice, livePriceForTrail, config);
 
                     if (mgmtSignal.newStopLoss) openPosition.stopLossPrice = mgmtSignal.newStopLoss;
                     if (mgmtSignal.newTakeProfit) openPosition.takeProfitPrice = mgmtSignal.newTakeProfit;
@@ -138,7 +152,13 @@ export async function runBacktest(
         }
         
         if (!openPosition) {
-            const signal = await getTradingSignal(config.agent, historySlice, config.timeFrame, config.agentParams);
+            let htfHistorySlice: Kline[] | undefined = undefined;
+            if (allHtfKlines) {
+                const currentCandleTime = historySlice[historySlice.length - 1].time;
+                htfHistorySlice = allHtfKlines.filter(k => k.time <= currentCandleTime);
+            }
+
+            const signal = await getTradingSignal(config.agent, historySlice, config, htfHistorySlice);
              
             if (signal.signal !== 'HOLD') {
                 let canProceed = true;
@@ -163,7 +183,7 @@ export async function runBacktest(
                         let stopLossPrice = agentTargets.stopLossPrice;
                         
                         let takeProfitPrice = agentTargets.takeProfitPrice;
-                        if (config.isTakeProfitLocked && !agentTargets.partialTps) {
+                        if (config.isTakeProfitLocked) {
                            const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
                            const tradeSize = positionValue / entryPrice;
                            if(config.takeProfitMode === RiskMode.Percent) {
@@ -195,9 +215,6 @@ export async function runBacktest(
                                 initialStopLossPrice: stopLossPrice, // Store for R:R trailing
                                 initialTakeProfitPrice: takeProfitPrice,
                                 pricePrecision: config.pricePrecision, timeFrame: config.timeFrame,
-                                initialSize: tradeSize,
-                                partialTps: agentTargets.partialTps,
-                                trailStartPrice: agentTargets.trailStartPrice,
                                 marginType: config.marginType,
                             };
                         }

@@ -1,9 +1,9 @@
 
 
-import React, { useState, useEffect, useRef } from 'react';
-import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams } from '../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig } from '../types';
 import * as constants from '../constants';
-import { PlayIcon, LockIcon, UnlockIcon, CpuIcon, ChevronDown, ChevronUp } from './icons';
+import { PlayIcon, LockIcon, UnlockIcon, CpuIcon, ChevronDown, ChevronUp, ZapIcon } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
 import * as binanceService from './../services/binanceService';
 import { getTradingSignal, getInitialAgentTargets } from '../services/localAgentService';
@@ -131,62 +131,85 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         onStartBot, isBotCombinationActive, theme, klines
     } = props;
     
+    const config = useTradingConfigState();
+    const actions = useTradingConfigActions();
+    
     const {
         executionMode, availableBalance, tradingMode, allPairs, selectedPair,
         leverage, chartTimeFrame: timeFrame, selectedAgent, investmentAmount,
         takeProfitMode, takeProfitValue,
         isTakeProfitLocked, isCooldownEnabled, agentParams,
         marginType, futuresSettingsError, isMultiAssetMode, multiAssetModeError,
-        maxLeverage, isLeverageLoading
-    } = useTradingConfigState();
+        maxLeverage, isLeverageLoading, isHtfConfirmationEnabled, htfTimeFrame,
+        isAtrTrailingStopEnabled
+    } = config;
 
     const {
         setExecutionMode, setTradingMode, setSelectedPair, setLeverage, setTimeFrame,
         setSelectedAgent, setInvestmentAmount,
         setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
-        setIsCooldownEnabled, setMarginType, onSetMultiAssetMode, setAgentParams
-    } = useTradingConfigActions();
+        setIsCooldownEnabled, setMarginType, onSetMultiAssetMode, setAgentParams,
+        setIsHtfConfirmationEnabled, setHtfTimeFrame, setIsAtrTrailingStopEnabled
+    } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
 
     const [analysisSignal, setAnalysisSignal] = useState<TradeSignal | null>(null);
     const [isAnalysisLoading, setIsAnalysisLoading] = useState(false);
-    const [isAnalysisOpen, setIsAnalysisOpen] = useState(true);
+    const [isAnalysisOpen, setIsAnalysisOpen] = useState(true); // Open by default
 
-    // Create a stable key representing the core analysis configuration.
-    const analysisConfigKey = `${selectedAgent.id}-${timeFrame}-${JSON.stringify(agentParams)}`;
-    const analysisConfigChangedRef = useRef(true);
+    const higherTimeFrames = useMemo(() => {
+        const currentIndex = constants.TIME_FRAMES.indexOf(timeFrame);
+        if (currentIndex === -1) return [];
+        return constants.TIME_FRAMES.slice(currentIndex + 1);
+    }, [timeFrame]);
 
-    // Detect when the core configuration changes to trigger the loading state.
     useEffect(() => {
-        analysisConfigChangedRef.current = true;
-    }, [analysisConfigKey]);
+        // When the base timeframe changes, if the selected HTF is no longer valid, reset to 'auto'
+        if (htfTimeFrame !== 'auto' && !higherTimeFrames.includes(htfTimeFrame)) {
+            setHtfTimeFrame('auto');
+        }
+    }, [timeFrame, htfTimeFrame, higherTimeFrames, setHtfTimeFrame]);
 
     useEffect(() => {
         const fetchAnalysis = async () => {
             if (klines.length > 50) { // Check for sufficient data
-                // Show loader only if the configuration has changed since the last analysis.
-                if (analysisConfigChangedRef.current) {
-                    setIsAnalysisLoading(true);
-                }
-
+                setIsAnalysisLoading(true);
                 try {
-                    const signal = await getTradingSignal(selectedAgent, klines, timeFrame, agentParams);
+                    const previewConfig: BotConfig = {
+                        pair: config.selectedPair,
+                        mode: config.tradingMode,
+                        executionMode: config.executionMode,
+                        leverage: config.leverage,
+                        marginType: config.marginType,
+                        agent: selectedAgent,
+                        timeFrame: timeFrame,
+                        investmentAmount: config.investmentAmount,
+                        takeProfitMode: config.takeProfitMode,
+                        takeProfitValue: config.takeProfitValue,
+                        isTakeProfitLocked: config.isTakeProfitLocked,
+                        isCooldownEnabled: config.isCooldownEnabled,
+                        isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
+                        isAtrTrailingStopEnabled: config.isAtrTrailingStopEnabled,
+                        htfTimeFrame: config.htfTimeFrame,
+                        agentParams: agentParams,
+                        // Dummy precision data for preview analysis, not used for trade execution
+                        pricePrecision: 8,
+                        quantityPrecision: 8,
+                        stepSize: 0.00000001
+                    };
+                    const signal = await getTradingSignal(selectedAgent, klines, previewConfig);
                     setAnalysisSignal(signal);
-                    // Mark that an analysis for this config has run, so subsequent kline updates don't flicker.
-                    analysisConfigChangedRef.current = false;
                 } catch (e) {
                     console.error("Error fetching analysis signal:", e);
                     setAnalysisSignal({ signal: 'HOLD', reasons: ['Error fetching analysis.'] });
                 } finally {
-                    // Always turn off the loader after an attempt.
                     setIsAnalysisLoading(false);
                 }
             }
         };
         fetchAnalysis();
-    }, [selectedAgent, klines, timeFrame, agentParams, analysisConfigKey]);
-
+    }, [selectedAgent, klines, timeFrame, agentParams, config]);
 
     useEffect(() => {
         const updateSmartTargets = () => {
@@ -362,8 +385,6 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 <p className="text-xs text-slate-500 dark:text-slate-400">{selectedAgent.description}</p>
             </div>
             
-            <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
-
             <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
                 <button
                     onClick={() => setIsAnalysisOpen(!isAnalysisOpen)}
@@ -387,6 +408,31 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 )}
             </div>
 
+            <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
+
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="htf-toggle" className={formLabelClass}>
+                        Higher Timeframe Confirmation
+                    </label>
+                    <ToggleSwitch
+                        checked={isHtfConfirmationEnabled}
+                        onChange={setIsHtfConfirmationEnabled}
+                    />
+                </div>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Aligns trade signals with the dominant trend on a higher timeframe.
+                </p>
+                {isHtfConfirmationEnabled && higherTimeFrames.length > 0 && (
+                    <div className="flex flex-col gap-1.5 mt-2">
+                        <label className={formLabelClass}>Confirmation Timeframe</label>
+                        <select value={htfTimeFrame} onChange={e => setHtfTimeFrame(e.target.value)} className={formInputClass}>
+                            <option value="auto">Auto</option>
+                            {higherTimeFrames.map(tf => <option key={tf} value={tf}>{tf}</option>)}
+                        </select>
+                    </div>
+                )}
+            </div>
              <div className={formGroupClass}>
                 <div className="flex items-center justify-between">
                     <label htmlFor="cooldown-toggle" className={formLabelClass}>
@@ -399,6 +445,20 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 </div>
                  <p className="text-xs text-slate-500 dark:text-slate-400">
                     If enabled, the bot enters a persistent cautious state after a profit. It analyzes the next trade opportunity for trend exhaustion to protect gains.
+                </p>
+            </div>
+             <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="atr-trail-toggle" className={formLabelClass}>
+                        Universal ATR Trailing Stop
+                    </label>
+                    <ToggleSwitch
+                        checked={isAtrTrailingStopEnabled}
+                        onChange={setIsAtrTrailingStopEnabled}
+                    />
+                </div>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                    A fallback ATR-based trailing stop for all agents. Can be disabled for full agent-specific exit control.
                 </p>
             </div>
 

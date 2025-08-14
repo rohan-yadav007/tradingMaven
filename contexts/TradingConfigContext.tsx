@@ -20,6 +20,9 @@ interface TradingConfigState {
     takeProfitValue: number;
     isTakeProfitLocked: boolean;
     isCooldownEnabled: boolean;
+    isHtfConfirmationEnabled: boolean;
+    isAtrTrailingStopEnabled: boolean;
+    htfTimeFrame: 'auto' | string;
     agentParams: AgentParams;
     isApiConnected: boolean; // Managed from App.tsx but needed here
     walletViewMode: TradingMode;
@@ -47,6 +50,9 @@ interface TradingConfigActions {
     setTakeProfitValue: (value: number) => void;
     setIsTakeProfitLocked: (isLocked: boolean) => void;
     setIsCooldownEnabled: (isEnabled: boolean) => void;
+    setIsHtfConfirmationEnabled: (isEnabled: boolean) => void;
+    setIsAtrTrailingStopEnabled: (isEnabled: boolean) => void;
+    setHtfTimeFrame: (tf: 'auto' | string) => void;
     setAgentParams: (params: AgentParams) => void;
     setIsApiConnected: (isConnected: boolean) => void;
     setWalletViewMode: (mode: TradingMode) => void;
@@ -78,6 +84,9 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [takeProfitValue, setTakeProfitValue] = useState<number>(4);
     const [isTakeProfitLocked, setIsTakeProfitLocked] = useState<boolean>(false);
     const [isCooldownEnabled, setIsCooldownEnabled] = useState<boolean>(false);
+    const [isHtfConfirmationEnabled, setIsHtfConfirmationEnabled] = useState<boolean>(false);
+    const [isAtrTrailingStopEnabled, setIsAtrTrailingStopEnabled] = useState<boolean>(true);
+    const [htfTimeFrame, setHtfTimeFrame] = useState<'auto' | string>('auto');
     const [isApiConnected, setIsApiConnected] = useState(false);
     const [walletViewMode, setWalletViewMode] = useState<TradingMode>(TradingMode.Spot);
     const [isMultiAssetMode, setIsMultiAssetMode] = useState(false);
@@ -90,14 +99,10 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
 
     // --- Effects moved from App.tsx ---
 
-    // Fetch tradable pairs when trading mode or API connection changes
+    // Fetch tradable pairs when trading mode changes
     useEffect(() => {
         const fetchPairs = async () => {
-            if (!isApiConnected) {
-                setAllPairs(constants.TRADING_PAIRS);
-                return;
-            }
-
+            // This logic should run regardless of API connection status, as it's a public endpoint.
             const pairFetcher = tradingMode === TradingMode.USDSM_Futures 
                 ? binanceService.fetchFuturesPairs 
                 : binanceService.fetchSpotPairs;
@@ -106,18 +111,23 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
                 const pairs = await pairFetcher();
                 if (pairs.length > 0) {
                     setAllPairs(pairs);
+                    // If the currently selected pair isn't in the new list, select the first one.
                     if (!pairs.includes(selectedPair)) {
                         setSelectedPair(pairs[0] || 'BTC/USDT');
                     }
+                } else {
+                    // Fallback if API returns an empty list
+                    setAllPairs(constants.TRADING_PAIRS);
                 }
             } catch (err) {
                 console.error(`Could not fetch pairs for mode ${tradingMode}:`, err);
-                setAllPairs(constants.TRADING_PAIRS);
+                setAllPairs(constants.TRADING_PAIRS); // Fallback on error
             }
         };
 
         fetchPairs();
-    }, [tradingMode, isApiConnected, selectedPair]);
+    }, [tradingMode]); // Only re-fetch when the trading mode (Spot/Futures) changes.
+
 
     // Sync wallet view with trading mode
     useEffect(() => {
@@ -178,7 +188,8 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
                     if (bracketInfo && bracketInfo.brackets && bracketInfo.brackets.length > 0) {
                         const max = bracketInfo.brackets.find(b => b.initialLeverage > 1)?.initialLeverage || 125;
                         setMaxLeverage(max);
-                        if (leverage > max) setLeverage(max);
+                        // Use functional update to avoid adding 'leverage' as a dependency, preventing an infinite loop.
+                        setLeverage(currentLeverage => currentLeverage > max ? max : currentLeverage);
                     } else {
                         setMaxLeverage(125);
                     }
@@ -189,7 +200,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
                 })
                 .finally(() => setIsLeverageLoading(false));
         }
-    }, [selectedPair, tradingMode, leverage]);
+    }, [selectedPair, tradingMode]);
 
     // --- Action Definitions ---
 
@@ -212,14 +223,15 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         setLeverage, setMarginType, setTimeFrame, setSelectedAgent,
         setInvestmentAmount, setAvailableBalance,
         setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
-        setIsCooldownEnabled, setAgentParams, setIsApiConnected, setWalletViewMode,
-        setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError,
+        setIsCooldownEnabled, setIsHtfConfirmationEnabled, setHtfTimeFrame, setAgentParams, setIsApiConnected, setWalletViewMode,
+        setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError, setIsAtrTrailingStopEnabled,
     }), [onSetMultiAssetMode]);
     
     const state = {
         executionMode, tradingMode, selectedPair, allPairs, leverage, marginType, chartTimeFrame,
         selectedAgent, agentParams, investmentAmount, availableBalance,
         takeProfitMode, takeProfitValue, isTakeProfitLocked, isCooldownEnabled,
+        isHtfConfirmationEnabled, isAtrTrailingStopEnabled, htfTimeFrame,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
         futuresSettingsError, multiAssetModeError
     };

@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, Kline, SimulatedTrade, RiskMode } from '../types';
 import * as constants from '../constants';
 import * as binanceService from './../services/binanceService';
@@ -7,15 +7,32 @@ import { runBacktest } from '../services/backtestingService';
 import { getInitialAgentTargets } from '../services/localAgentService';
 import { FlaskIcon, ChevronUp, ChevronDown, LockIcon, UnlockIcon } from './icons';
 import { SearchableDropdown } from './SearchableDropdown';
+import { useTradingConfigState, useTradingConfigActions } from '../contexts/TradingConfigContext';
 
 interface BacktestingPanelProps {
     backtestResult: BacktestResult | null;
     setBacktestResult: (result: BacktestResult | null) => void;
     setActiveView: (view: 'trading' | 'backtesting') => void;
     klines: Kline[]; // Passed from App.tsx for suggestions
-    onApplyConfig: (config: BotConfig) => void;
     theme: 'light' | 'dark';
 }
+
+type BacktestConfig = {
+    tradingMode: TradingMode;
+    selectedPair: string;
+    chartTimeFrame: string;
+    selectedAgent: Agent;
+    investmentAmount: number;
+    takeProfitMode: RiskMode;
+    takeProfitValue: number;
+    isTakeProfitLocked: boolean;
+    isCooldownEnabled: boolean;
+    isHtfConfirmationEnabled: boolean;
+    isAtrTrailingStopEnabled: boolean;
+    htfTimeFrame: 'auto' | string;
+    agentParams: AgentParams;
+    leverage: number;
+};
 
 const formGroupClass = "flex flex-col gap-1.5";
 const formLabelClass = "text-sm font-medium text-slate-700 dark:text-slate-300";
@@ -156,13 +173,21 @@ const RiskInputWithLock: React.FC<{
 };
 
 
-const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onChange: (p: keyof AgentParams, v: number | boolean) => void}> = ({ agent, params, onChange }) => {
-    const P = { ...constants.DEFAULT_AGENT_PARAMS, ...params };
+const AgentParameterEditor: React.FC<{
+    agent: Agent,
+    params: AgentParams,
+    timeframe: string,
+    onChange: (p: keyof AgentParams, v: number | boolean) => void
+}> = ({ agent, params, timeframe, onChange }) => {
+    const timeframeAdaptiveParams = constants.TIMEFRAME_ADAPTIVE_SETTINGS[timeframe] || {};
+    const P = { ...constants.DEFAULT_AGENT_PARAMS, ...timeframeAdaptiveParams, ...params };
     
     const renderContent = () => {
         switch(agent.id) {
             case 1: // Momentum Master
                 return ( <>
+                        <h4 className="font-semibold text-sm -mb-2">Volatility Filter</h4>
+                         <ParamSlider label="ATR Volatility Threshold (%)" value={P.mom_atrVolatilityThreshold!} min={0.1} max={1.0} step={0.05} onChange={v => onChange('mom_atrVolatilityThreshold', v)} />
                         <h4 className="font-semibold text-sm -mb-2">Trend Confirmation</h4>
                         <ParamSlider label="ADX Period" value={P.adxPeriod} min={5} max={25} step={1} onChange={v => onChange('adxPeriod', v)} />
                         <ParamSlider label="ADX Trend Threshold" value={P.adxTrendThreshold} min={15} max={40} step={1} onChange={v => onChange('adxTrendThreshold', v)} />
@@ -170,65 +195,73 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onChang
                         <ParamSlider label="Fast EMA Period" value={P.mom_emaFastPeriod} min={10} max={50} step={2} onChange={v => onChange('mom_emaFastPeriod', v)} />
                         <h4 className="font-semibold text-sm -mb-2">Entry Logic</h4>
                         <ParamSlider label="RSI Period" value={P.rsiPeriod} min={7} max={21} step={1} onChange={v => onChange('rsiPeriod', v)} />
-                        <ParamSlider label="RSI Bullish Threshold" value={P.mom_rsiThresholdBullish} min={50} max={70} step={1} onChange={v => onChange('mom_rsiThresholdBullish', v)} />
-                        <ParamSlider label="RSI Bearish Threshold" value={P.mom_rsiThresholdBearish} min={30} max={50} step={1} onChange={v => onChange('mom_rsiThresholdBearish', v)} />
-                        <ParamSlider label="MACD Fast" value={P.macdFastPeriod} min={5} max={20} step={1} onChange={v => onChange('macdFastPeriod', v)} />
-                        <ParamSlider label="MACD Slow" value={P.macdSlowPeriod} min={20} max={50} step={1} onChange={v => onChange('macdSlowPeriod', v)} />
-                        <ParamSlider label="Volume SMA Period" value={P.mom_volumeSmaPeriod} min={10} max={30} step={1} onChange={v => onChange('mom_volumeSmaPeriod', v)} />
-                        <ParamSlider label="Volume Multiplier" value={P.mom_volumeMultiplier} min={1.1} max={3.0} step={0.1} onChange={v => onChange('mom_volumeMultiplier', v)} />
                     </> );
             case 2: // Trend Rider
                 return ( <>
                     <p className="text-xs text-center text-slate-500 dark:text-slate-400">Enters on strong breakouts in the direction of the trend. Does not wait for pullbacks.</p>
+                     <h4 className="font-semibold text-sm -mb-2">Breakout Confirmation</h4>
+                     <ParamSlider label="Volume SMA Period" value={P.tr_volumeSmaPeriod!} min={10} max={40} step={1} onChange={v => onChange('tr_volumeSmaPeriod', v)} />
+                     <ParamSlider label="Volume Multiplier" value={P.tr_volumeMultiplier!} min={1.1} max={3.0} step={0.1} onChange={v => onChange('tr_volumeMultiplier', v)} />
                     <h4 className="font-semibold text-sm -mb-2">Trend Confirmation</h4>
                     <ParamSlider label="ADX Period" value={P.adxPeriod} min={5} max={25} step={1} onChange={v => onChange('adxPeriod', v)} />
                     <ParamSlider label="ADX Trend Threshold" value={P.adxTrendThreshold} min={15} max={40} step={1} onChange={v => onChange('adxTrendThreshold', v)} />
                     <ParamSlider label="Slow EMA Period" value={P.tr_emaSlowPeriod} min={30} max={100} step={5} onChange={v => onChange('tr_emaSlowPeriod', v)} />
                     <ParamSlider label="Fast EMA Period" value={P.tr_emaFastPeriod} min={10} max={50} step={2} onChange={v => onChange('tr_emaFastPeriod', v)} />
+                </> );
+            case 3: // Mean Reversionist
+                return ( <>
+                    <p className="text-xs text-center text-slate-500 dark:text-slate-400">Trades reversals in ranging markets. Only active when ADX is low.</p>
+                    <h4 className="font-semibold text-sm -mb-2">Safety Filter</h4>
+                     <ParamSlider label="HTF Trend EMA" value={P.mr_htfEmaPeriod!} min={50} max={200} step={10} onChange={v => onChange('mr_htfEmaPeriod', v)} />
+                    <h4 className="font-semibold text-sm -mb-2">Range Filter</h4>
+                    <ParamSlider label="ADX Period" value={P.mr_adxPeriod!} min={7} max={25} step={1} onChange={v => onChange('mr_adxPeriod', v)} />
+                    <ParamSlider label="ADX Range Threshold" value={P.mr_adxThreshold!} min={15} max={30} step={1} onChange={v => onChange('mr_adxThreshold', v)} />
                     <h4 className="font-semibold text-sm -mb-2">Entry Logic</h4>
-                    <ParamSlider label="RSI Period" value={P.rsiPeriod} min={7} max={21} step={1} onChange={v => onChange('rsiPeriod', v)} />
-                    <ParamSlider label="RSI Bullish Momentum" value={P.tr_rsiMomentumBullish} min={55} max={75} step={1} onChange={v => onChange('tr_rsiMomentumBullish', v)} />
-                    <ParamSlider label="RSI Bearish Momentum" value={P.tr_rsiMomentumBearish} min={25} max={45} step={1} onChange={v => onChange('tr_rsiMomentumBearish', v)} />
-                    <ParamSlider label="Breakout Lookback" value={P.tr_breakoutPeriod} min={3} max={10} step={1} onChange={v => onChange('tr_breakoutPeriod', v)} />
+                    <ParamSlider label="Bollinger Bands Period" value={P.mr_bbPeriod!} min={15} max={30} step={1} onChange={v => onChange('mr_bbPeriod', v)} />
+                    <ParamSlider label="BB Standard Deviation" value={P.mr_bbStdDev!} min={1.5} max={3.0} step={0.1} onChange={v => onChange('mr_bbStdDev', v)} />
                 </> );
              case 4: // Scalping Expert
                 return ( <>
-                    <p className="text-xs text-center text-slate-500 dark:text-slate-400">Multi-indicator confirmation strategy. See agent description for logic.</p>
+                    <p className="text-xs text-center text-slate-500 dark:text-slate-400">Score-based confirmation strategy. See agent description for logic.</p>
+                    <ParamSlider label="Score Threshold" value={P.se_scoreThreshold!} min={2} max={4} step={1} onChange={v => onChange('se_scoreThreshold', v)} />
                     <h4 className="font-semibold text-sm -mb-2">Trend & Volatility</h4>
                     <ParamSlider label="Fast EMA Period" value={P.se_emaFastPeriod!} min={5} max={20} step={1} onChange={v => onChange('se_emaFastPeriod', v)} />
                     <ParamSlider label="Slow EMA Period" value={P.se_emaSlowPeriod!} min={20} max={50} step={1} onChange={v => onChange('se_emaSlowPeriod', v)} />
-                    <ParamSlider label="BB Period" value={P.se_bbPeriod!} min={15} max={30} step={1} onChange={v => onChange('se_bbPeriod', v)} />
                     <ParamSlider label="ATR Volatility Threshold (%)" value={P.se_atrVolatilityThreshold!} min={0.1} max={1.0} step={0.05} onChange={v => onChange('se_atrVolatilityThreshold', v)} />
                     <h4 className="font-semibold text-sm -mb-2">Momentum & Entry</h4>
-                    <ParamSlider label="RSI Period" value={P.se_rsiPeriod!} min={7} max={21} step={1} onChange={v => onChange('se_rsiPeriod', v)} />
-                    <ParamSlider label="RSI Oversold" value={P.se_rsiOversold!} min={25} max={40} step={1} onChange={v => onChange('se_rsiOversold', v)} />
-                    <ParamSlider label="RSI Overbought" value={P.se_rsiOverbought!} min={60} max={75} step={1} onChange={v => onChange('se_rsiOverbought', v)} />
                     <ParamSlider label="MACD Fast" value={P.se_macdFastPeriod!} min={5} max={20} step={1} onChange={v => onChange('se_macdFastPeriod', v)} />
                     <ParamSlider label="MACD Slow" value={P.se_macdSlowPeriod!} min={20} max={50} step={1} onChange={v => onChange('se_macdSlowPeriod', v)} />
-                    <ParamSlider label="MACD Signal" value={P.se_macdSignalPeriod!} min={5} max={15} step={1} onChange={v => onChange('se_macdSignalPeriod', v)} />
+                </> );
+            case 5: // Market Ignition
+                return ( <>
+                    <p className="text-xs text-center text-slate-500 dark:text-slate-400">Detects volatility squeeze then enters on a high-volume breakout.</p>
+                     <h4 className="font-semibold text-sm -mb-2">Directional Bias</h4>
+                     <ParamSlider label="Bias EMA Period" value={P.mi_emaBiasPeriod!} min={20} max={100} step={5} onChange={v => onChange('mi_emaBiasPeriod', v)} />
+                    <h4 className="font-semibold text-sm -mb-2">Squeeze Detection</h4>
+                    <ParamSlider label="BB Period" value={P.mi_bbPeriod!} min={15} max={30} step={1} onChange={v => onChange('mi_bbPeriod', v)} />
+                    <ParamSlider label="BBW Squeeze Threshold" value={P.mi_bbwSqueezeThreshold!} min={0.005} max={0.03} step={0.001} onChange={v => onChange('mi_bbwSqueezeThreshold', v)} />
+                    <h4 className="font-semibold text-sm -mb-2">Breakout Confirmation</h4>
+                    <ParamSlider label="Volume Lookback" value={P.mi_volumeLookback!} min={10} max={30} step={1} onChange={v => onChange('mi_volumeLookback', v)} />
+                    <ParamSlider label="Volume Multiplier" value={P.mi_volumeMultiplier!} min={1.25} max={3.0} step={0.05} onChange={v => onChange('mi_volumeMultiplier', v)} />
                 </> );
              case 6: // Profit Locker (uses old scalping logic)
                 return ( <>
-                    <p className="text-xs text-center text-slate-500 dark:text-slate-400">Score-based scalper. A trade is triggered when the combined score of indicators exceeds the threshold.</p>
+                    <p className="text-xs text-center text-slate-500 dark:text-slate-400">Score-based scalper. A trade is triggered when the combined score of indicators exceeds the threshold. Partial TPs are now market-structure based.</p>
                     <ParamSlider label="Score Threshold" value={P.scalp_scoreThreshold} min={2} max={5} step={1} onChange={v => onChange('scalp_scoreThreshold', v)} />
                     <h4 className="font-semibold text-sm -mb-2">Indicator Settings</h4>
                     <ParamSlider label="EMA Period" value={P.scalp_emaPeriod} min={20} max={100} step={5} onChange={v => onChange('scalp_emaPeriod', v)} />
                     <ParamSlider label="SuperTrend Period" value={P.scalp_superTrendPeriod} min={7} max={14} step={1} onChange={v => onChange('scalp_superTrendPeriod', v)} />
-                    <ParamSlider label="SuperTrend Multiplier" value={P.scalp_superTrendMultiplier} min={1} max={4} step={0.25} onChange={v => onChange('scalp_superTrendMultiplier', v)} />
-                    <ParamSlider label="PSAR Step" value={P.scalp_psarStep} min={0.01} max={0.05} step={0.01} onChange={v => onChange('scalp_psarStep', v)} />
-                    <ParamSlider label="PSAR Max" value={P.scalp_psarMax} min={0.1} max={0.5} step={0.05} onChange={v => onChange('scalp_psarMax', v)} />
-                    <ParamSlider label="StochRSI Oversold" value={P.scalp_stochRsiOversold} min={10} max={30} step={1} onChange={v => onChange('scalp_stochRsiOversold', v)} />
-                    <ParamSlider label="StochRSI Overbought" value={P.scalp_stochRsiOverbought} min={70} max={90} step={1} onChange={v => onChange('scalp_stochRsiOverbought', v)} />
                 </> )
             case 7: // Market Structure Maven
                 return ( <>
-                        <p className="text-xs text-center text-slate-500 dark:text-slate-400">This agent uses Price Action logic. Its primary parameter is a long-term EMA to establish a directional bias.</p>
-                        <ParamSlider label="HTF Bias EMA Period" value={P.msm_htfEmaPeriod} min={100} max={400} step={10} onChange={v => onChange('msm_htfEmaPeriod', v)} />
-                        <ParamSlider label="Swing Point Lookback" value={P.msm_swingPointLookback} min={2} max={10} step={1} onChange={v => onChange('msm_swingPointLookback', v)} />
+                        <p className="text-xs text-center text-slate-500 dark:text-slate-400">Trades from volume-confirmed support/resistance levels.</p>
+                         <ParamSlider label="Bias EMA Period" value={P.msm_htfEmaPeriod} min={100} max={400} step={10} onChange={v => onChange('msm_htfEmaPeriod', v)} />
+                         <ParamSlider label="Swing Point Lookback" value={P.msm_swingPointLookback} min={2} max={10} step={1} onChange={v => onChange('msm_swingPointLookback', v)} />
+                         <ParamSlider label="Min Pivot Score" value={P.msm_minPivotScore!} min={1} max={10} step={0.5} onChange={v => onChange('msm_minPivotScore', v)} />
                      </> );
             case 9: // Quantum Scalper
                  return ( <>
-                    <p className="text-xs text-center text-slate-500 dark:text-slate-400">Adaptive scalper. Uses regime detection and a PSAR trailing stop for exits.</p>
+                    <p className="text-xs text-center text-slate-500 dark:text-slate-400">Adaptive scalper. Now uses a PSAR-based exit. Risk is managed by the universal system.</p>
                     <h4 className="font-semibold text-sm -mb-2">Regime Detection</h4>
                     <ParamSlider label="Fast EMA" value={P.qsc_fastEmaPeriod!} min={5} max={15} step={1} onChange={v => onChange('qsc_fastEmaPeriod', v)} />
                     <ParamSlider label="Slow EMA" value={P.qsc_slowEmaPeriod!} min={18} max={30} step={1} onChange={v => onChange('qsc_slowEmaPeriod', v)} />
@@ -236,12 +269,6 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onChang
                     <h4 className="font-semibold text-sm -mb-2">Entry Scoring</h4>
                     <ParamSlider label="Trend Score Threshold" value={P.qsc_trendScoreThreshold!} min={2} max={4} step={1} onChange={v => onChange('qsc_trendScoreThreshold', v)} />
                     <ParamSlider label="Range Score Threshold" value={P.qsc_rangeScoreThreshold!} min={1} max={3} step={1} onChange={v => onChange('qsc_rangeScoreThreshold', v)} />
-                    <ParamSlider label="StochRSI Oversold" value={P.qsc_stochRsiOversold!} min={20} max={35} step={1} onChange={v => onChange('qsc_stochRsiOversold', v)} />
-                    <ParamSlider label="StochRSI Overbought" value={P.qsc_stochRsiOverbought!} min={65} max={80} step={1} onChange={v => onChange('qsc_stochRsiOverbought', v)} />
-                    <h4 className="font-semibold text-sm -mb-2">Risk & Exit</h4>
-                    <ParamSlider label="Initial SL (ATR Mult)" value={P.qsc_atrMultiplier!} min={1.0} max={3.0} step={0.1} onChange={v => onChange('qsc_atrMultiplier', v)} />
-                    <ParamSlider label="PSAR Trail Step" value={P.qsc_psarStep!} min={0.01} max={0.05} step={0.005} onChange={v => onChange('qsc_psarStep', v)} />
-                    <ParamSlider label="PSAR Trail Max" value={P.qsc_psarMax!} min={0.1} max={0.3} step={0.01} onChange={v => onChange('qsc_psarMax', v)} />
                 </> )
             default:
                 return <p className="text-xs text-center text-slate-500 dark:text-slate-400">This agent has no configurable parameters.</p>
@@ -292,136 +319,127 @@ const getTimeframeDuration = (timeframe: string): number => {
 export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     const { 
         backtestResult, setBacktestResult,
-        setActiveView, onApplyConfig, theme
+        setActiveView, theme
     } = props;
-    
-    const [localSelectedPair, setLocalSelectedPair] = useState('BTC/USDT');
-    const [tradablePairs, setTradablePairs] = useState<string[]>(constants.TRADING_PAIRS);
-    const [localTimeFrame, setLocalTimeFrame] = useState('3m');
-    const [localSelectedAgent, setLocalSelectedAgent] = useState<Agent>(constants.AGENTS.find(a => a.id === 9)!); // Default to Quantum Scalper
-    const [localTradingMode, setLocalTradingMode] = useState<TradingMode>(TradingMode.Spot);
-    const [localLeverage, setLocalLeverage] = useState(10);
-    const [localAgentParams, setLocalAgentParams] = useState<AgentParams>({});
-    
-    const [localInvestmentAmount, setLocalInvestmentAmount] = useState(100);
-    const [localTakeProfitMode, setLocalTakeProfitMode] = useState<RiskMode>(RiskMode.Percent);
-    const [localTakeProfitValue, setLocalTakeProfitValue] = useState<number>(4);
-    const [isLocalTakeProfitLocked, setIsLocalTakeProfitLocked] = useState<boolean>(false);
-    const [isLocalCooldownEnabled, setIsLocalCooldownEnabled] = useState(false);
 
+    const globalConfigState = useTradingConfigState();
+    const globalConfigActions = useTradingConfigActions();
 
+    const [localConfig, setLocalConfig] = useState<BacktestConfig>({
+        tradingMode: globalConfigState.tradingMode,
+        selectedPair: globalConfigState.selectedPair,
+        chartTimeFrame: globalConfigState.chartTimeFrame,
+        selectedAgent: globalConfigState.selectedAgent,
+        investmentAmount: globalConfigState.investmentAmount,
+        takeProfitMode: globalConfigState.takeProfitMode,
+        takeProfitValue: globalConfigState.takeProfitValue,
+        isTakeProfitLocked: globalConfigState.isTakeProfitLocked,
+        isCooldownEnabled: globalConfigState.isCooldownEnabled,
+        isHtfConfirmationEnabled: globalConfigState.isHtfConfirmationEnabled,
+        isAtrTrailingStopEnabled: globalConfigState.isAtrTrailingStopEnabled,
+        htfTimeFrame: globalConfigState.htfTimeFrame,
+        agentParams: globalConfigState.agentParams,
+        leverage: globalConfigState.leverage,
+    });
+    
+    // Local state for the backtesting panel ONLY
     const [isParamsOpen, setIsParamsOpen] = useState(false);
-
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [testPeriodDays, setTestPeriodDays] = useState(30);
 
+    // This effect makes the UI aware of the timeframe-adaptive settings.
     useEffect(() => {
-        const fetchPairs = async () => {
-            let pairFetcher: () => Promise<string[]>;
-            switch(localTradingMode) {
-                case TradingMode.Spot: pairFetcher = binanceService.fetchSpotPairs; break;
-                case TradingMode.USDSM_Futures: pairFetcher = binanceService.fetchFuturesPairs; break;
-                default: pairFetcher = binanceService.fetchSpotPairs;
-            }
+        setLocalConfig(prev => ({ ...prev, agentParams: {}, htfTimeFrame: 'auto' }));
+    }, [localConfig.selectedAgent, localConfig.chartTimeFrame]);
 
-            try {
-                const pairs = await pairFetcher();
-                 if (pairs.length > 0) {
-                    setTradablePairs(pairs);
-                    if (!pairs.includes(localSelectedPair)) {
-                        setLocalSelectedPair(pairs[0] || 'BTC/USDT');
-                    }
-                }
-            } catch (err) {
-                console.error(`Could not fetch pairs for backtesting mode ${localTradingMode}:`, err);
-                setTradablePairs(constants.TRADING_PAIRS);
-            }
-        };
-        fetchPairs();
-    }, [localTradingMode, localSelectedPair]);
 
     useEffect(() => {
         const updateSmartTargets = () => {
-            if (props.klines.length < 50 || !isLocalTakeProfitLocked) return;
+            if (props.klines.length < 50 || !localConfig.isTakeProfitLocked) return;
 
             const currentPrice = props.klines[props.klines.length - 1].close;
             if (currentPrice <= 0) return;
             
-            const timeframeAdaptiveParams = constants.TIMEFRAME_ADAPTIVE_SETTINGS[localTimeFrame] || {};
-            const finalParams: Required<AgentParams> = { ...constants.DEFAULT_AGENT_PARAMS, ...timeframeAdaptiveParams, ...localAgentParams };
+            const timeframeAdaptiveParams = constants.TIMEFRAME_ADAPTIVE_SETTINGS[localConfig.chartTimeFrame] || {};
+            const finalParams: Required<AgentParams> = { ...constants.DEFAULT_AGENT_PARAMS, ...timeframeAdaptiveParams, ...localConfig.agentParams };
 
-            const longTargets = getInitialAgentTargets(props.klines, currentPrice, 'LONG', localTimeFrame, finalParams, localSelectedAgent.id);
+            const longTargets = getInitialAgentTargets(props.klines, currentPrice, 'LONG', localConfig.chartTimeFrame, finalParams, localConfig.selectedAgent.id);
             
             const profitDistance = longTargets.takeProfitPrice - currentPrice;
             
-            if (!isLocalTakeProfitLocked) {
+            if (!localConfig.isTakeProfitLocked) {
                 let newTpValue: number;
-                if (localTakeProfitMode === RiskMode.Percent) {
+                if (localConfig.takeProfitMode === RiskMode.Percent) {
                     newTpValue = (profitDistance / currentPrice) * 100;
                 } else { // Amount
-                    newTpValue = localInvestmentAmount * (profitDistance / currentPrice);
+                    newTpValue = localConfig.investmentAmount * (profitDistance / currentPrice);
                 }
-                setLocalTakeProfitValue(parseFloat(newTpValue.toFixed(2)));
+                setLocalConfig(prev => ({...prev, takeProfitValue: parseFloat(newTpValue.toFixed(2))}));
             }
         };
 
         updateSmartTargets();
     }, [
-        props.klines, isLocalTakeProfitLocked, localSelectedAgent, localTimeFrame, localAgentParams, 
-        localInvestmentAmount, localTakeProfitMode, setLocalTakeProfitValue
+        props.klines, localConfig.isTakeProfitLocked, localConfig.selectedAgent, localConfig.chartTimeFrame, 
+        localConfig.agentParams, localConfig.investmentAmount, localConfig.takeProfitMode
     ]);
 
 
     const handleParamChange = (param: keyof AgentParams, value: number | boolean) => {
-        setLocalAgentParams(prev => ({...prev, [param]: value}));
+        setLocalConfig(prev => ({
+            ...prev, 
+            agentParams: { ...prev.agentParams, [param]: value }
+        }));
     };
 
     const runHighFidelityTest = async (testRunner: (mainKlines: Kline[], mgmtKlines: Kline[], config: BotConfig) => Promise<any>) => {
-        const formattedPair = localSelectedPair.replace('/', '');
+        const formattedPair = localConfig.selectedPair.replace('/', '');
         
-        // Fetch symbol info for precision data
-        const symbolInfo = localTradingMode === TradingMode.USDSM_Futures
+        const symbolInfo = localConfig.tradingMode === TradingMode.USDSM_Futures
             ? await binanceService.getFuturesSymbolInfo(formattedPair)
             : await binanceService.getSymbolInfo(formattedPair);
         
         if (!symbolInfo) {
-            throw new Error(`Could not fetch symbol info for ${localSelectedPair} to run backtest.`);
+            throw new Error(`Could not fetch symbol info for ${localConfig.selectedPair} to run backtest.`);
         }
         
-        const timeframeDurationMs = getTimeframeDuration(localTimeFrame);
+        const timeframeDurationMs = getTimeframeDuration(localConfig.chartTimeFrame);
         if (timeframeDurationMs === 0) {
             throw new Error("Invalid timeframe selected.");
         }
         const totalMsInPeriod = testPeriodDays * 24 * 60 * 60 * 1000;
         const candleLimit = Math.ceil(totalMsInPeriod / timeframeDurationMs);
 
-        // Fetch main timeframe klines for the calculated period
-        const mainKlines = await binanceService.fetchKlines(formattedPair, localTimeFrame, { limit: Math.min(candleLimit, 1500) });
+        const mainKlines = await binanceService.fetchKlines(formattedPair, localConfig.chartTimeFrame, { limit: Math.min(candleLimit, 1500) });
         if (mainKlines.length < 200) {
             throw new Error("Not enough historical data for a meaningful backtest. Need at least 200 candles.");
         }
         
-        // 2. Determine the full time range from the main klines
         const startTime = mainKlines[0].time;
-        const endTime = mainKlines[mainKlines.length - 1].time + getTimeframeDuration(localTimeFrame) - 1;
+        const endTime = mainKlines[mainKlines.length - 1].time + getTimeframeDuration(localConfig.chartTimeFrame) - 1;
 
-        // 3. Fetch all 1-minute klines for that exact range
         const managementKlines = await binanceService.fetchFullKlines(formattedPair, '1m', startTime, endTime);
         if (managementKlines.length === 0) {
             throw new Error("Could not fetch 1-minute management klines for the selected period.");
         }
 
         const config: BotConfig = {
-            pair: localSelectedPair, timeFrame: localTimeFrame, agent: localSelectedAgent,
+            pair: localConfig.selectedPair,
+            mode: localConfig.tradingMode,
             executionMode: 'paper',
-            investmentAmount: localInvestmentAmount,
-            takeProfitMode: localTakeProfitMode, takeProfitValue: localTakeProfitValue,
-            isTakeProfitLocked: isLocalTakeProfitLocked,
-            isCooldownEnabled: isLocalCooldownEnabled,
-            leverage: localTradingMode === TradingMode.USDSM_Futures ? localLeverage : 1, 
-            mode: localTradingMode,
-            agentParams: localAgentParams,
+            agent: localConfig.selectedAgent,
+            timeFrame: localConfig.chartTimeFrame,
+            investmentAmount: localConfig.investmentAmount,
+            takeProfitMode: localConfig.takeProfitMode,
+            takeProfitValue: localConfig.takeProfitValue,
+            isTakeProfitLocked: localConfig.isTakeProfitLocked,
+            isCooldownEnabled: localConfig.isCooldownEnabled,
+            isHtfConfirmationEnabled: localConfig.isHtfConfirmationEnabled,
+            isAtrTrailingStopEnabled: localConfig.isAtrTrailingStopEnabled,
+            htfTimeFrame: localConfig.htfTimeFrame,
+            agentParams: localConfig.agentParams,
+            leverage: localConfig.leverage,
             pricePrecision: binanceService.getPricePrecision(symbolInfo),
             quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
             stepSize: binanceService.getStepSize(symbolInfo),
@@ -442,40 +460,26 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         }
     };
     
-    const handleApplyCurrentConfig = async () => {
-        setIsLoading(true);
-        setError(null);
-        try {
-            const formattedPair = localSelectedPair.replace('/', '');
-            const symbolInfo = localTradingMode === TradingMode.USDSM_Futures
-                ? await binanceService.getFuturesSymbolInfo(formattedPair)
-                : await binanceService.getSymbolInfo(formattedPair);
-            
-            if (!symbolInfo) {
-                throw new Error(`Could not fetch symbol info for ${localSelectedPair} to apply configuration.`);
-            }
+    const applyConfigToGlobal = () => {
+        globalConfigActions.setTradingMode(localConfig.tradingMode);
+        globalConfigActions.setSelectedPair(localConfig.selectedPair);
+        globalConfigActions.setTimeFrame(localConfig.chartTimeFrame);
+        globalConfigActions.setSelectedAgent(localConfig.selectedAgent);
+        globalConfigActions.setInvestmentAmount(localConfig.investmentAmount);
+        globalConfigActions.setLeverage(localConfig.leverage);
+        globalConfigActions.setTakeProfitMode(localConfig.takeProfitMode);
+        globalConfigActions.setTakeProfitValue(localConfig.takeProfitValue);
+        globalConfigActions.setIsTakeProfitLocked(localConfig.isTakeProfitLocked);
+        globalConfigActions.setIsCooldownEnabled(localConfig.isCooldownEnabled);
+        globalConfigActions.setIsHtfConfirmationEnabled(localConfig.isHtfConfirmationEnabled);
+        globalConfigActions.setIsAtrTrailingStopEnabled(localConfig.isAtrTrailingStopEnabled);
+        globalConfigActions.setHtfTimeFrame(localConfig.htfTimeFrame);
+        globalConfigActions.setAgentParams(localConfig.agentParams);
+    };
 
-            const config: BotConfig = {
-                pair: localSelectedPair, mode: localTradingMode, 
-                executionMode: 'paper',
-                leverage: localTradingMode === TradingMode.USDSM_Futures ? localLeverage : 1,
-                agent: localSelectedAgent, timeFrame: localTimeFrame, 
-                investmentAmount: localInvestmentAmount,
-                takeProfitMode: localTakeProfitMode, takeProfitValue: localTakeProfitValue,
-                isTakeProfitLocked: isLocalTakeProfitLocked,
-                isCooldownEnabled: isLocalCooldownEnabled,
-                agentParams: localAgentParams,
-                pricePrecision: binanceService.getPricePrecision(symbolInfo),
-                quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
-                stepSize: binanceService.getStepSize(symbolInfo),
-            };
-            onApplyConfig(config);
-            setActiveView('trading');
-        } catch(e) {
-            setError(e instanceof Error ? e.message : 'An unknown error occurred while applying config.');
-        } finally {
-            setIsLoading(false);
-        }
+    const handleGoToTrading = () => {
+        applyConfigToGlobal();
+        setActiveView('trading');
     };
 
     const renderSingleResult = () => {
@@ -488,7 +492,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 <div className="flex justify-between items-center">
                     <h3 className="font-bold text-lg">Backtest Results</h3>
                     <button 
-                        onClick={handleApplyCurrentConfig}
+                        onClick={handleGoToTrading}
                         className="px-4 py-2 bg-sky-600 text-white font-semibold rounded-md shadow-sm hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500"
                     >
                         Use This Configuration
@@ -542,6 +546,12 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
             </div>
         );
     }
+    
+    const higherTimeFrames = useMemo(() => {
+        const currentIndex = constants.TIME_FRAMES.indexOf(localConfig.chartTimeFrame);
+        if (currentIndex === -1) return [];
+        return constants.TIME_FRAMES.slice(currentIndex + 1);
+    }, [localConfig.chartTimeFrame]);
 
     return (
         <div className="grid grid-cols-12 gap-4">
@@ -549,50 +559,89 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 <div className="bg-white dark:bg-slate-800 rounded-lg shadow">
                     <div className="p-3 border-b border-slate-200 dark:border-slate-700 font-semibold">Backtest Configuration</div>
                     <div className="p-4 flex flex-col gap-3">
-                        <div className={formGroupClass}><label className={formLabelClass}>Market</label><SearchableDropdown theme={theme} options={tradablePairs} value={localSelectedPair} onChange={setLocalSelectedPair}/></div>
+                        <div className={formGroupClass}><label className={formLabelClass}>Market</label><SearchableDropdown theme={theme} options={globalConfigState.allPairs} value={localConfig.selectedPair} onChange={v => setLocalConfig(p => ({...p, selectedPair: v}))}/></div>
                         <div className={formGroupClass}>
                             <label className={formLabelClass}>Trading Mode</label>
-                            <select value={localTradingMode} onChange={e => setLocalTradingMode(e.target.value as TradingMode)} className={formInputClass}>
+                            <select value={localConfig.tradingMode} onChange={e => setLocalConfig(p => ({...p, tradingMode: e.target.value as TradingMode}))} className={formInputClass}>
                                 {Object.values(TradingMode).map(mode => <option key={mode} value={mode}>{mode}</option>)}
                             </select>
                         </div>
-                        <div className={formGroupClass}><label className={formLabelClass}>Time Frame</label><select value={localTimeFrame} onChange={e => setLocalTimeFrame(e.target.value)} className={formInputClass}>{constants.TIME_FRAMES.map(tf => <option key={tf} value={tf}>{tf}</option>)}</select></div>
+                        <div className={formGroupClass}><label className={formLabelClass}>Time Frame</label><select value={localConfig.chartTimeFrame} onChange={e => setLocalConfig(p => ({...p, chartTimeFrame: e.target.value}))} className={formInputClass}>{constants.TIME_FRAMES.map(tf => <option key={tf} value={tf}>{tf}</option>)}</select></div>
                         
                         <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-1"></div>
                         
                         <div className={formGroupClass}>
                             <label className={formLabelClass}>Investment Amount (USDT)</label>
-                            <input type="number" value={localInvestmentAmount} onChange={e => setLocalInvestmentAmount(Number(e.target.value))} min="1" className={formInputClass} />
+                            <input type="number" value={localConfig.investmentAmount} onChange={e => setLocalConfig(p => ({...p, investmentAmount: Number(e.target.value)}))} min="1" className={formInputClass} />
                         </div>
                          <div className="grid grid-cols-1 gap-4">
-                            <RiskInputWithLock label="Take Profit" mode={localTakeProfitMode} value={localTakeProfitValue} isLocked={isLocalTakeProfitLocked} investmentAmount={localInvestmentAmount} onModeChange={setLocalTakeProfitMode} onValueChange={setLocalTakeProfitValue} onLockToggle={() => setIsLocalTakeProfitLocked(!isLocalTakeProfitLocked)} />
+                            <RiskInputWithLock 
+                                label="Take Profit" 
+                                mode={localConfig.takeProfitMode} 
+                                value={localConfig.takeProfitValue} 
+                                isLocked={localConfig.isTakeProfitLocked} 
+                                investmentAmount={localConfig.investmentAmount} 
+                                onModeChange={v => setLocalConfig(p => ({...p, takeProfitMode: v}))} 
+                                onValueChange={v => setLocalConfig(p => ({...p, takeProfitValue: v}))} 
+                                onLockToggle={() => setLocalConfig(p => ({...p, isTakeProfitLocked: !p.isTakeProfitLocked}))} 
+                            />
                              <p className="text-xs text-slate-500 dark:text-slate-400 -mt-2">
                                 Stop Loss is fully automated by the agent.
                             </p>
                         </div>
-                        {localTradingMode === TradingMode.USDSM_Futures && (
-                            <ParamSlider label="Leverage" value={localLeverage} min={1} max={125} step={1} onChange={setLocalLeverage} />
+                        {localConfig.tradingMode === TradingMode.USDSM_Futures && (
+                            <ParamSlider label="Leverage" value={localConfig.leverage} min={1} max={125} step={1} onChange={v => setLocalConfig(p => ({...p, leverage: v}))} />
                         )}
                         <ParamSlider label="Test Period (Days)" value={testPeriodDays} min={1} max={180} step={1} onChange={setTestPeriodDays} />
+                        
+                        <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-1"></div>
 
+                        <div className={formGroupClass}>
+                            <div className="flex items-center justify-between">
+                                <label htmlFor="htf-toggle" className={formLabelClass}>
+                                    HTF Confirmation
+                                </label>
+                                <ToggleSwitch
+                                    checked={localConfig.isHtfConfirmationEnabled}
+                                    onChange={v => setLocalConfig(p => ({...p, isHtfConfirmationEnabled: v}))}
+                                />
+                            </div>
+                             {localConfig.isHtfConfirmationEnabled && higherTimeFrames.length > 0 && (
+                                <div className="flex flex-col gap-1.5 mt-2">
+                                    <label className={formLabelClass}>Confirmation Timeframe</label>
+                                    <select value={localConfig.htfTimeFrame} onChange={e => setLocalConfig(p => ({...p, htfTimeFrame: e.target.value}))} className={formInputClass}>
+                                        <option value="auto">Auto</option>
+                                        {higherTimeFrames.map(tf => <option key={tf} value={tf}>{tf}</option>)}
+                                    </select>
+                                </div>
+                            )}
+                        </div>
                         <div className={formGroupClass}>
                             <div className="flex items-center justify-between">
                                 <label htmlFor="cooldown-toggle" className={formLabelClass}>
                                     Post-Profit Cooldown
                                 </label>
                                 <ToggleSwitch
-                                    checked={isLocalCooldownEnabled}
-                                    onChange={setIsLocalCooldownEnabled}
+                                    checked={localConfig.isCooldownEnabled}
+                                    onChange={v => setLocalConfig(p => ({...p, isCooldownEnabled: v}))}
                                 />
                             </div>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">
-                                If enabled, bot enters a persistent cautious state after a profit. It analyzes the next trade opportunity for trend exhaustion to protect gains.
-                            </p>
+                        </div>
+                        <div className={formGroupClass}>
+                            <div className="flex items-center justify-between">
+                                <label htmlFor="atr-trail-toggle" className={formLabelClass}>
+                                    Universal ATR Trailing Stop
+                                </label>
+                                <ToggleSwitch
+                                    checked={localConfig.isAtrTrailingStopEnabled}
+                                    onChange={v => setLocalConfig(p => ({...p, isAtrTrailingStopEnabled: v}))}
+                                />
+                            </div>
                         </div>
                         
                         <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-1"></div>
 
-                        <div className={formGroupClass}><label className={formLabelClass}>Trading Agent</label><select value={localSelectedAgent.id} onChange={e => setLocalSelectedAgent(constants.AGENTS.find(a => a.id === Number(e.target.value))!)} className={formInputClass}>{constants.AGENTS.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></div>
+                        <div className={formGroupClass}><label className={formLabelClass}>Trading Agent</label><select value={localConfig.selectedAgent.id} onChange={e => setLocalConfig(p => ({...p, selectedAgent: constants.AGENTS.find(a => a.id === Number(e.target.value))!}))} className={formInputClass}>{constants.AGENTS.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></div>
 
                         <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
                              <button onClick={() => setIsParamsOpen(!isParamsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
@@ -601,8 +650,13 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                             </button>
                             {isParamsOpen && (
                                 <div className="p-3 border-t border-slate-200 dark:border-slate-600 flex flex-col gap-4">
-                                    <AgentParameterEditor agent={localSelectedAgent} params={localAgentParams} onChange={handleParamChange} />
-                                    <button onClick={() => setLocalAgentParams({})} className="text-xs text-sky-600 dark:text-sky-400 hover:underline self-start">Reset Agent Logic Params</button>
+                                    <AgentParameterEditor 
+                                        agent={localConfig.selectedAgent}
+                                        params={localConfig.agentParams}
+                                        timeframe={localConfig.chartTimeFrame}
+                                        onChange={handleParamChange}
+                                    />
+                                    <button onClick={() => setLocalConfig(p => ({...p, agentParams: {}}))} className="text-xs text-sky-600 dark:text-sky-400 hover:underline self-start">Reset Agent Logic Params</button>
                                 </div>
                             )}
                         </div>

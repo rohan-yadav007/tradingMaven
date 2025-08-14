@@ -1,9 +1,4 @@
 
-
-
-
-
-
 import React, { useState, useEffect } from 'react';
 import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, TradeSignal, TradingMode, RiskMode, LogType } from '../types';
 import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, LockIcon, UnlockIcon, InfoIcon, ZapIcon } from './icons';
@@ -11,13 +6,20 @@ import { AnalysisPreview } from './AnalysisPreview';
 
 interface RunningBotsProps {
     bots: RunningBot[];
-    onClosePosition: (position: Position, exitReason?: string, exitPriceOverride?: number) => void;
+    onClosePosition: (pos: Position, reason?: string, price?: number) => void;
     onPauseBot: (botId: string) => void;
-    onResumeBot: (botId:string) => void;
+    onResumeBot: (botId: string) => void;
     onStopBot: (botId: string) => void;
     onDeleteBot: (botId: string) => void;
     onUpdateBotConfig: (botId: string, partialConfig: Partial<BotConfig>) => void;
 }
+
+const InfoItem: React.FC<{ label: string; value: React.ReactNode; valueClassName?: string, labelClassName?: string }> = ({ label, value, valueClassName, labelClassName }) => (
+    <div>
+        <div className={`text-xs text-slate-500 dark:text-slate-400 ${labelClassName}`}>{label}</div>
+        <div className={`font-medium font-mono ${valueClassName}`}>{value}</div>
+    </div>
+);
 
 const useDuration = (bot: RunningBot) => {
     const [duration, setDuration] = useState('00:00:00');
@@ -132,30 +134,6 @@ const BotHealthDisplay: React.FC<{ bot: RunningBot }> = ({ bot }) => (
     </div>
 );
 
-const PartialTpDisplay: React.FC<{ position: Position }> = ({ position }) => {
-    if (!position.partialTps) return null;
-
-    return (
-        <div>
-             <h5 className="font-semibold text-slate-600 dark:text-slate-300 text-sm mb-1">Partial Take Profits</h5>
-             <div className="space-y-1">
-                {position.partialTps.map((tp, index) => (
-                    <div key={index} className="flex items-center justify-between text-xs p-1.5 bg-slate-100 dark:bg-slate-700/50 rounded-md">
-                        <div className="flex items-center gap-2">
-                           {tp.hit ? <CheckCircleIcon className="w-4 h-4 text-emerald-500"/> : <div className="w-4 h-4 rounded-full border-2 border-slate-400 dark:border-slate-500"></div>}
-                           <span className="font-semibold text-slate-700 dark:text-slate-200">TP {index + 1} ({tp.sizeFraction * 100}%)</span>
-                        </div>
-                        <span className={`font-mono ${tp.hit ? 'text-slate-400 dark:text-slate-500 line-through' : 'text-slate-800 dark:text-slate-100'}`}>
-                            {formatPrice(tp.price, position.pricePrecision)}
-                        </span>
-                    </div>
-                ))}
-            </div>
-        </div>
-    )
-};
-
-
 const PositionPnlProgress: React.FC<{position: Position; livePrice: number}> = ({ position, livePrice }) => {
     const { entryPrice, takeProfitPrice, stopLossPrice, direction, pricePrecision } = position;
     const isLong = direction === 'LONG';
@@ -211,12 +189,9 @@ const PositionPnlProgress: React.FC<{position: Position; livePrice: number}> = (
 
 const PositionManager: React.FC<{ 
     bot: RunningBot;
-    onConfigChange: (change: Partial<BotConfig>) => void;
-}> = ({ bot, onConfigChange }) => {
-    const { config, openPosition, livePrice } = bot;
+}> = ({ bot }) => {
+    const { openPosition, livePrice } = bot;
     if (!openPosition || !livePrice) return null;
-
-    const isPartialTpAgent = openPosition.partialTps && openPosition.partialTps.length > 0;
 
     return (
         <div className="flex flex-col gap-3">
@@ -234,11 +209,7 @@ const PositionManager: React.FC<{
                 )}
             </div>
             
-            {isPartialTpAgent ? (
-                <PartialTpDisplay position={openPosition} />
-            ) : (
-                <PositionPnlProgress position={openPosition} livePrice={livePrice}/>
-            )}
+            <PositionPnlProgress position={openPosition} livePrice={livePrice}/>
         </div>
     )
 };
@@ -291,13 +262,6 @@ const CooldownDisplay: React.FC<{ endTime: number }> = ({ endTime }) => {
         </div>
     );
 };
-
-const InfoItem: React.FC<{ label: string; value: React.ReactNode; valueClassName?: string, labelClassName?: string }> = ({ label, value, valueClassName, labelClassName }) => (
-    <div>
-        <div className={`text-xs text-slate-500 dark:text-slate-400 ${labelClassName}`}>{label}</div>
-        <div className={`font-medium font-mono ${valueClassName}`}>{value}</div>
-    </div>
-);
 
 const logTypeStyles: Record<LogType, { icon: React.FC<any>; color: string; iconColor: string }> = {
     [LogType.Info]: { icon: InfoIcon, color: 'text-slate-600 dark:text-slate-300', iconColor: 'text-slate-400' },
@@ -454,7 +418,6 @@ const BotRow: React.FC<BotRowProps> = (props) => {
                         {openPosition && livePrice && (
                             <PositionManager 
                                 bot={bot}
-                                onConfigChange={(partialConfig) => onUpdateBotConfig(bot.id, partialConfig)}
                             />
                         )}
                         <BotPerformanceSummary bot={bot} />

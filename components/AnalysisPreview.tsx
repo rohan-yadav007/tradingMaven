@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { Agent, TradeSignal, AgentParams } from '../types';
-import { ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, InfoIcon } from './icons';
+import { ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, InfoIcon, ZapIcon } from './icons';
 
 interface AnalysisPreviewProps {
     analysis: TradeSignal | null;
@@ -17,15 +17,16 @@ const SignalTag: React.FC<{ signal: 'BUY' | 'SELL' | 'HOLD' }> = ({ signal }) =>
     const colorClasses = isBuy 
         ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300' 
         : isSell 
-        ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-300' 
+        ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-300'
         : 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300';
         
     const icon = isBuy ? <ChevronUp className="w-5 h-5" /> : isSell ? <ChevronDown className="w-5 h-5" /> : null;
+    const text = signal;
 
     return (
         <span className={`inline-flex items-center gap-1 px-3 py-1 text-base font-semibold rounded-full ${colorClasses}`}>
             {icon}
-            <span>{signal}</span>
+            <span>{text}</span>
         </span>
     );
 };
@@ -70,15 +71,12 @@ const ReasonItem: React.FC<{ reason: string }> = ({ reason }) => {
 export const AnalysisPreview: React.FC<AnalysisPreviewProps> = ({ analysis, isLoading, agent, agentParams }) => {
     const hasCustomParams = Object.keys(agentParams).length > 0;
 
-    return (
-        <>
-            <div className="text-xs bg-slate-100 dark:bg-slate-700/50 rounded p-2 mb-3 space-y-1">
-                <p className="mb-0 text-slate-600 dark:text-slate-400">Agent: <span className="font-semibold text-slate-900 dark:text-slate-100">{agent.name}</span></p>
-                <p className="mb-0 text-slate-600 dark:text-slate-400">
-                    Parameters: <span className={`font-semibold ${hasCustomParams ? 'text-sky-600 dark:text-sky-400' : 'text-slate-900 dark:text-slate-100'}`}>{hasCustomParams ? "Customized" : "Default Settings"}</span>
-                </p>
-            </div>
-            {analysis && !isLoading ? (
+    const renderContent = () => {
+        if (isLoading) {
+            return <div className="text-center text-sm text-slate-500 pt-4">Analyzing...</div>;
+        }
+        if (analysis) {
+            return (
                  <div className="flex items-start gap-4">
                     <SignalTag signal={analysis.signal} />
                     <div className="text-xs text-slate-600 dark:text-slate-400 flex-grow">
@@ -89,11 +87,20 @@ export const AnalysisPreview: React.FC<AnalysisPreviewProps> = ({ analysis, isLo
                         </ul>
                     </div>
                  </div>
-            ) : (
-                <div className="text-center text-sm text-slate-500 pt-4">
-                    {isLoading ? 'Analyzing...' : 'Waiting for market data...'}
-                </div>
-            )}
+            );
+        }
+        return <div className="text-center text-sm text-slate-500 pt-4">Waiting for market data...</div>;
+    };
+
+    return (
+        <>
+            <div className="text-xs bg-slate-100 dark:bg-slate-700/50 rounded p-2 mb-3 space-y-1">
+                <p className="mb-0 text-slate-600 dark:text-slate-400">Agent: <span className="font-semibold text-slate-900 dark:text-slate-100">{agent.name}</span></p>
+                <p className="mb-0 text-slate-600 dark:text-slate-400">
+                    Parameters: <span className={`font-semibold ${hasCustomParams ? 'text-sky-600 dark:text-sky-400' : 'text-slate-900 dark:text-slate-100'}`}>{hasCustomParams ? "Customized" : "Default Settings"}</span>
+                </p>
+            </div>
+            {renderContent()}
         </>
     );
 };

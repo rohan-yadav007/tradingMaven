@@ -5,8 +5,8 @@ import { Kline, SymbolInfo, SymbolFilter, WalletBalance, RawWalletBalance, Accou
 const SPOT_BASE_URL = '/proxy-spot';
 const FUTURES_BASE_URL = '/proxy-futures';
 // The execution environment provides API keys via import.meta.env
-const apiKey = (((import.meta as any).env)?.VITE_BINANCE_API_KEY || '').trim();
-const apiSecret = (((import.meta as any).env)?.VITE_BINANCE_API_SECRET || '').trim();
+const apiKey = (import.meta.env?.VITE_BINANCE_API_KEY || '').trim();
+const apiSecret = (import.meta.env?.VITE_BINANCE_API_SECRET || '').trim();
 
 let timeOffset = 0;
 let isTimeSynced = false;
@@ -328,7 +328,7 @@ const mapBalances = async (rawBalances: RawWalletBalance[]): Promise<WalletBalan
             return { ...b, asset: originalAsset, total, usdValue }; // Keep original asset name
         })
         .filter(b => b.total > 0.00001)
-        .sort((a, b) => b.usdValue - b.usdValue);
+        .sort((a, b) => b.usdValue - a.usdValue);
     return balances;
 };
 

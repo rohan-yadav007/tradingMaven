@@ -142,22 +142,26 @@ export const ChartComponent: React.FC<ChartComponentProps> = ({ data, pair, isLo
         
         prevDataLengthRef.current = data.length;
     }, [data]);
-
+    
     // Derived values for rendering
+    // Step 1: Get the visible kline data. This is memoized separately to prevent re-calculation when only livePrice changes.
+    const visibleData = useMemo(() => {
+        return data.slice(
+            Math.max(0, Math.floor(view.startIndex)),
+            Math.min(data.length, Math.floor(view.startIndex + view.visibleCandles))
+        );
+    }, [data, view.startIndex, view.visibleCandles]);
+
+    // Step 2: Calculate chart metrics based on the stable visible data and the live price.
     const {
-        visibleData, chartWidth, chartHeight,
+        chartWidth, chartHeight,
         minPrice, maxPrice, priceRange,
-        y_scale, y_invert
+        y_scale, y_invert, totalVirtualCandles
     } = useMemo(() => {
         const _chartWidth = SVG_WIDTH - PADDING.left - PADDING.right;
         const _chartHeight = SVG_HEIGHT - PADDING.top - PADDING.bottom;
 
-        const _visibleData = data.slice(
-            Math.max(0, Math.floor(view.startIndex)), 
-            Math.min(data.length, Math.floor(view.startIndex + view.visibleCandles))
-        );
-
-        const visiblePrices = _visibleData.flatMap(d => [d.low, d.high]);
+        const visiblePrices = visibleData.flatMap(d => [d.low, d.high]);
         if (livePrice > 0) visiblePrices.push(livePrice);
 
         const _minPriceRaw = visiblePrices.length > 0 ? Math.min(...visiblePrices) : 0;
@@ -172,13 +176,14 @@ export const ChartComponent: React.FC<ChartComponentProps> = ({ data, pair, isLo
 
         const _y_scale = (price: number) => PADDING.top + _chartHeight - ((price - _minPrice) / _priceRange) * _chartHeight;
         const _y_invert = (y: number) => _minPrice + ((PADDING.top + _chartHeight - y) / _chartHeight) * _priceRange;
+        const _totalVirtualCandles = view.visibleCandles + RIGHT_PADDING_CANDLES;
 
         return {
-            visibleData: _visibleData, chartWidth: _chartWidth, chartHeight: _chartHeight,
+            chartWidth: _chartWidth, chartHeight: _chartHeight,
             minPrice: _minPrice, maxPrice: _maxPrice, priceRange: _priceRange,
-            y_scale: _y_scale, y_invert: _y_invert
+            y_scale: _y_scale, y_invert: _y_invert, totalVirtualCandles: _totalVirtualCandles
         };
-    }, [data, view, livePrice, theme, PADDING.right]);
+    }, [visibleData, livePrice, theme, PADDING.right, view.visibleCandles]);
     
     // S/R Calculation
     useEffect(() => {
@@ -230,7 +235,7 @@ export const ChartComponent: React.FC<ChartComponentProps> = ({ data, pair, isLo
         const y = event.clientY - rect.top;
 
         if (isPanning) {
-            const barWidth = Math.max(1, chartWidth / (view.visibleCandles + RIGHT_PADDING_CANDLES) * 0.7);
+            const barWidth = Math.max(1, chartWidth / totalVirtualCandles * 0.7);
             const candlesPerPixel = view.visibleCandles / (chartWidth - RIGHT_PADDING_CANDLES * (barWidth / 0.7));
             
             const deltaX = event.clientX - panStart.x;
@@ -247,8 +252,10 @@ export const ChartComponent: React.FC<ChartComponentProps> = ({ data, pair, isLo
         }
 
         if (x > PADDING.left && x < SVG_WIDTH - PADDING.right && y > PADDING.top && y < PADDING.top + chartHeight) {
-            const index = Math.floor(((x - PADDING.left) / chartWidth) * view.visibleCandles);
-            if (index < visibleData.length) {
+            const candleSlotWidth = chartWidth / totalVirtualCandles;
+            const index = Math.floor((x - PADDING.left) / candleSlotWidth);
+            
+            if (index >= 0 && index < visibleData.length) {
                 const kline = visibleData[index];
                 if(kline) {
                     setCrosshair({
@@ -291,7 +298,6 @@ export const ChartComponent: React.FC<ChartComponentProps> = ({ data, pair, isLo
             return <div style={{height: '400px'}} className="flex items-center justify-center text-rose-500">Could not load chart data.</div>;
         }
 
-        const totalVirtualCandles = view.visibleCandles + RIGHT_PADDING_CANDLES;
         const barWidth = Math.max(1, chartWidth / totalVirtualCandles * 0.7);
         const priceLevels = Array.from({ length: 5 }, (_, i) => minPrice + (priceRange / 4) * i);
         const timeLabelsCount = Math.min(10, Math.floor(chartWidth / 80));

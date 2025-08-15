@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, TradeSignal, TradingMode, RiskMode, LogType } from '../types';
 import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, LockIcon, UnlockIcon, InfoIcon, ZapIcon } from './icons';
@@ -137,7 +136,7 @@ const BotHealthDisplay: React.FC<{ bot: RunningBot }> = ({ bot }) => (
 );
 
 const PositionPnlProgress: React.FC<{position: Position; livePrice: number}> = ({ position, livePrice }) => {
-    const { entryPrice, takeProfitPrice, stopLossPrice, direction, pricePrecision } = position;
+    const { entryPrice, takeProfitPrice, stopLossPrice, direction } = position;
     const isLong = direction === 'LONG';
     
     let progressPercent = 0;
@@ -155,13 +154,9 @@ const PositionPnlProgress: React.FC<{position: Position; livePrice: number}> = (
 
     const clampedProgress = Math.min(100, Math.max(0, progressPercent));
 
+    // Display GROSS PNL for clarity, as requested by the user.
     const grossPnl = (livePrice - entryPrice) * position.size * (isLong ? 1 : -1);
-    const entryValue = position.entryPrice * position.size;
-    const currentValue = livePrice * position.size;
-    const estimatedFees = (entryValue + currentValue) * TAKER_FEE_RATE;
-    const netPnl = grossPnl - estimatedFees;
-    
-    const pnlIsProfit = netPnl >= 0;
+    const pnlIsProfit = grossPnl >= 0;
 
     return (
         <div className="flex flex-col gap-1.5 pt-2">
@@ -179,13 +174,13 @@ const PositionPnlProgress: React.FC<{position: Position; livePrice: number}> = (
                     <div className={`absolute top-5 whitespace-nowrap px-1.5 py-0.5 rounded text-xs font-bold shadow-md ${pnlIsProfit ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}`}
                          style={{ transform: 'translateX(-50%)' }}
                     >
-                         {pnlIsProfit ? '+' : ''}${netPnl.toFixed(2)}
+                         <span title="Unrealized PNL (Gross)">{pnlIsProfit ? '+' : ''}${grossPnl.toFixed(2)}</span>
                     </div>
                 </div>
             </div>
             <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 font-mono">
-                <span>SL: {stopLossPrice.toFixed(pricePrecision)}</span>
-                <span>TP: {takeProfitPrice.toFixed(pricePrecision)}</span>
+                <span>SL: {formatPrice(stopLossPrice, position.pricePrecision)}</span>
+                <span>TP: {formatPrice(takeProfitPrice, position.pricePrecision)}</span>
             </div>
         </div>
     );

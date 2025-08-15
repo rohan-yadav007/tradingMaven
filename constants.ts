@@ -220,7 +220,7 @@ export const MOCK_PAPER_FUTURES_WALLET: WalletBalance[] = [
  * This is the maximum percentage of the *investment amount* that a trade is allowed to lose.
  * E.g., a value of 5 means a maximum loss of 5%, which is $5 on a $100 investment.
  */
-export const MAX_STOP_LOSS_PERCENT_OF_INVESTMENT = 2;
+export const MAX_STOP_LOSS_PERCENT_OF_INVESTMENT = 1;
 
 // New, wider ATR multipliers for initial stop loss placement to give trades more "breathing room"
 export const TIMEFRAME_ATR_CONFIG: Record<string, { atrMultiplier: number, riskRewardRatio: number }> = {

@@ -412,7 +412,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         const totalMsInPeriod = testPeriodDays * 24 * 60 * 60 * 1000;
         const candleLimit = Math.ceil(totalMsInPeriod / timeframeDurationMs);
 
-        const mainKlines = await binanceService.fetchKlines(formattedPair, localConfig.chartTimeFrame, { limit: Math.min(candleLimit, 1500) });
+        const mainKlines = await binanceService.fetchKlines(formattedPair, localConfig.chartTimeFrame, { limit: Math.min(candleLimit, 1500), mode: localConfig.tradingMode });
         if (mainKlines.length < 200) {
             throw new Error("Not enough historical data for a meaningful backtest. Need at least 200 candles.");
         }
@@ -420,7 +420,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         const startTime = mainKlines[0].time;
         const endTime = mainKlines[mainKlines.length - 1].time + getTimeframeDuration(localConfig.chartTimeFrame) - 1;
 
-        const managementKlines = await binanceService.fetchFullKlines(formattedPair, '1m', startTime, endTime);
+        const managementKlines = await binanceService.fetchFullKlines(formattedPair, '1m', startTime, endTime, localConfig.tradingMode);
         if (managementKlines.length === 0) {
             throw new Error("Could not fetch 1-minute management klines for the selected period.");
         }

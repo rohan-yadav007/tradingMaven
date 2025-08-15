@@ -3,7 +3,7 @@ import { type Kline, type LiveTicker } from '../types';
 import { ChartIcon } from './icons';
 import * as constants from '../constants';
 import { SearchableDropdown } from './SearchableDropdown';
-import { createChart, ColorType, type UTCTimestamp, type CandlestickData, type IChartApi, type ISeriesApi } from 'lightweight-charts';
+import { createChart, ColorType, type IChartApi, type ISeriesApi, type CandlestickData, type UTCTimestamp, TickMarkType } from 'lightweight-charts';
 
 interface ChartComponentProps {
     data: Kline[];
@@ -114,17 +114,32 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
         const chartContainer = chartContainerRef.current;
 
         const chart = createChart(chartContainer, {
-            autoSize: false, // Set to false to allow ResizeObserver to handle it reliably
             localization: {
-                locale: navigator.language, // Use browser locale for time/price formatting
+                locale: navigator.language,
             },
             timeScale: {
                 timeVisible: true,
                 secondsVisible: false,
+                tickMarkFormatter: (time: UTCTimestamp, tickMarkType: TickMarkType, locale: string) => {
+                    const date = new Date(time * 1000);
+                    switch (tickMarkType) {
+                        case TickMarkType.Year:
+                            return date.toLocaleDateString(locale, { year: 'numeric' });
+                        case TickMarkType.Month:
+                            return date.toLocaleDateString(locale, { month: 'short' });
+                        case TickMarkType.DayOfMonth:
+                            return date.toLocaleDateString(locale, { day: 'numeric' });
+                        case TickMarkType.Time:
+                            return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+                        case TickMarkType.TimeWithSeconds:
+                            return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    }
+                    return '';
+                },
             },
         });
         
-        const candlestickSeries = chart.addCandlestickSeries({});
+        const candlestickSeries = (chart as any).addCandlestickSeries({});
         
         chartRef.current = chart;
         candlestickSeriesRef.current = candlestickSeries;
@@ -138,7 +153,9 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
         const resizeObserver = new ResizeObserver(entries => {
             if (entries.length === 0 || entries[0].target !== chartContainer) { return; }
             const { width, height } = entries[0].contentRect;
-            chart.resize(width, height);
+            if (width > 0 && height > 0) {
+                chart.resize(width, height);
+            }
         });
 
         resizeObserver.observe(chartContainer);
@@ -172,92 +189,78 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
                 borderColor: isDark ? '#334155' : '#e5e7eb',
             },
         });
-
+        
         candlestickSeriesRef.current.applyOptions({
+            wickUpColor: isDark ? '#22c55e' : '#16a34a',
             upColor: isDark ? '#22c55e' : '#16a34a',
+            wickDownColor: isDark ? '#ef4444' : '#dc2626',
             downColor: isDark ? '#ef4444' : '#dc2626',
             borderVisible: false,
-            wickUpColor: isDark ? '#22c55e' : '#16a34a',
-            wickDownColor: isDark ? '#ef4444' : '#dc2626',
             priceFormat: {
                 type: 'price',
                 precision: pricePrecision,
                 minMove: minMove,
             },
         });
+        
     }, [theme, pricePrecision]);
-    
-    useEffect(() => {
-        if (!candlestickSeriesRef.current || data.length === 0) return;
-        
-        const formattedData: CandlestickData[] = data.map(k => ({
-            time: (k.time / 1000) as UTCTimestamp,
-            open: k.open,
-            high: k.high,
-            low: k.low,
-            close: k.close,
-        }));
-        
-        candlestickSeriesRef.current.setData(formattedData);
 
+    useEffect(() => {
+        if (candlestickSeriesRef.current) {
+            const chartData = data.map(k => ({
+                time: (k.time / 1000) as UTCTimestamp,
+                open: k.open,
+                high: k.high,
+                low: k.low,
+                close: k.close,
+            })) as CandlestickData[];
+            
+            candlestickSeriesRef.current.setData(chartData);
+        }
     }, [data]);
     
     useEffect(() => {
-        if (!candlestickSeriesRef.current || !data.length || !livePrice) return;
-        const lastKline = data[data.length - 1];
-        
-        candlestickSeriesRef.current.update({
-            time: (lastKline.time / 1000) as UTCTimestamp,
-            open: lastKline.open,
-            high: Math.max(lastKline.high, livePrice),
-            low: Math.min(lastKline.low, livePrice),
-            close: livePrice,
-        });
+        if (candlestickSeriesRef.current && livePrice > 0 && data.length > 0) {
+            const lastKline = data[data.length - 1];
+            candlestickSeriesRef.current.update({
+                time: (lastKline.time / 1000) as UTCTimestamp,
+                open: lastKline.open,
+                high: Math.max(lastKline.high, livePrice),
+                low: Math.min(lastKline.low, livePrice),
+                close: livePrice,
+            });
+        }
     }, [livePrice, data]);
 
-
-    const livePriceColor = priceChange === 'up' ? 'text-emerald-500' : priceChange === 'down' ? 'text-rose-500' : 'text-slate-800 dark:text-slate-200';
-    
-    const renderContent = () => {
-        if (isLoading) {
-            return <div style={{height: '400px'}} className="flex items-center justify-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500"></div></div>;
-        }
-         if (data.length === 0 && !isLoading) {
-            return <div style={{height: '400px'}} className="flex items-center justify-center text-rose-500">Could not load chart data for this pair.</div>;
-        }
-        return (
-             <div ref={chartContainerRef} className="w-full h-[400px] relative">
-                 {isFetchingMoreData && (
-                    <div className="absolute top-1/2 left-4 z-20 p-2 rounded-full bg-slate-100/50 dark:bg-slate-800/50">
-                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-sky-500"></div>
+    return (
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm relative h-96 md:h-[500px] flex flex-col">
+            <div className="flex flex-wrap items-center justify-between gap-2 p-3 border-b border-slate-200 dark:border-slate-700">
+                <div className="flex items-center gap-3">
+                    <div className="w-64">
+                         <SearchableDropdown
+                            options={allPairs}
+                            value={pair}
+                            onChange={onPairChange}
+                            theme={theme}
+                        />
+                    </div>
+                   <div className={`text-xl font-bold transition-colors duration-300 ${priceChange === 'up' ? 'text-emerald-500' : priceChange === 'down' ? 'text-rose-500' : 'dark:text-white'}`}>
+                        {livePrice > 0 ? livePrice.toFixed(pricePrecision) : '...'}
+                    </div>
+                </div>
+                <TimeFrameSelector selected={chartTimeFrame} onSelect={onTimeFrameChange} />
+            </div>
+            <div className="flex-grow relative">
+                {(isLoading || isFetchingMoreData) && (
+                    <div className="absolute inset-0 bg-white/70 dark:bg-slate-800/70 z-30 flex items-center justify-center">
+                        <div className="text-center">
+                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-sky-500 mx-auto"></div>
+                            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{isFetchingMoreData ? 'Loading more data...' : 'Loading chart...'}</p>
+                        </div>
                     </div>
                 )}
+                <div ref={chartContainerRef} className="w-full h-full" />
                 {data.length > 0 && <CountdownTimer lastKline={data[data.length - 1]} timeframe={chartTimeFrame} />}
-            </div>
-        )
-    };
-    
-    return (
-        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm">
-            <div className="p-4">
-                <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-                    <div className="flex items-center gap-4">
-                        <ChartIcon className="w-6 h-6 text-sky-500" />
-                        <div className="w-48 z-20">
-                             <SearchableDropdown
-                                options={allPairs}
-                                value={pair}
-                                onChange={onPairChange}
-                                theme={theme}
-                            />
-                        </div>
-                        <div className={`text-2xl font-mono font-bold transition-colors duration-200 ${livePriceColor}`}>
-                            {livePrice.toLocaleString('en-US', { minimumFractionDigits: pricePrecision, maximumFractionDigits: pricePrecision })}
-                        </div>
-                    </div>
-                    <TimeFrameSelector selected={chartTimeFrame} onSelect={onTimeFrameChange} />
-                </div>
-                {renderContent()}
             </div>
         </div>
     );

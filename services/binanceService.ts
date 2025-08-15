@@ -1,3 +1,4 @@
+
 import { Kline, SymbolInfo, SymbolFilter, WalletBalance, RawWalletBalance, AccountInfo, LeverageBracket, BinanceOrderResponse, TradingMode } from '../types';
 
 // --- Configuration ---
@@ -190,19 +191,22 @@ export const checkApiConnection = async (): Promise<boolean> => {
     }
 };
 
-export const fetchKlines = async (symbol: string, interval: string, options?: { limit?: number; startTime?: number; endTime?: number }): Promise<Kline[]> => {
+export const fetchKlines = async (symbol: string, interval: string, options: { limit?: number; startTime?: number; endTime?: number; mode: TradingMode }): Promise<Kline[]> => {
+    const { mode, ...restOptions } = options;
     const params = new URLSearchParams({ symbol, interval });
-    if(options?.limit) params.set('limit', String(options.limit));
-    if(options?.startTime) params.set('startTime', String(options.startTime));
-    if(options?.endTime) params.set('endTime', String(options.endTime));
+    if(restOptions.limit) params.set('limit', String(restOptions.limit));
+    if(restOptions.startTime) params.set('startTime', String(restOptions.startTime));
+    if(restOptions.endTime) params.set('endTime', String(restOptions.endTime));
 
-    // Determine if it's a futures or spot symbol
-    const isFutures = symbol.endsWith('USDT') && !symbol.includes('/');
+    const isFutures = mode === TradingMode.USDSM_Futures;
     const baseUrl = isFutures ? FUTURES_BASE_URL : SPOT_BASE_URL;
     const path = isFutures ? '/fapi/v1/klines' : '/api/v3/klines';
 
     const response = await fetch(`${baseUrl}${path}?${params.toString()}`);
-    if (!response.ok) throw new Error(await response.text());
+    if (!response.ok) {
+        console.error(`404 from ${baseUrl}${path}?${params.toString()}`);
+        throw new Error("404 File not found");
+    }
     const data = await response.json();
     return data.map((k: any) => ({
         time: k[0], open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]),
@@ -210,20 +214,12 @@ export const fetchKlines = async (symbol: string, interval: string, options?: { 
     }));
 };
 
-/**
- * Fetches a complete set of k-lines for a given date range, handling API pagination.
- * @param symbol The trading symbol (e.g., 'BTCUSDT').
- * @param interval The k-line interval (e.g., '1m').
- * @param startTime The start of the date range (Unix timestamp).
- * @param endTime The end of the date range (Unix timestamp).
- * @returns A promise that resolves to an array of all k-lines in the range.
- */
-export const fetchFullKlines = async (symbol: string, interval: string, startTime: number, endTime: number): Promise<Kline[]> => {
+export const fetchFullKlines = async (symbol: string, interval: string, startTime: number, endTime: number, mode: TradingMode): Promise<Kline[]> => {
     let allKlines: Kline[] = [];
     let currentStartTime = startTime;
-    const MAX_LIMIT = 1000; // Binance API kline limit
+    const MAX_LIMIT = 1000;
 
-    const isFutures = symbol.endsWith('USDT') && !symbol.includes('/');
+    const isFutures = mode === TradingMode.USDSM_Futures;
     const baseUrl = isFutures ? FUTURES_BASE_URL : SPOT_BASE_URL;
     const path = isFutures ? '/fapi/v1/klines' : '/api/v3/klines';
 
@@ -253,11 +249,9 @@ export const fetchFullKlines = async (symbol: string, interval: string, startTim
         allKlines.push(...klines);
         
         const lastKlineTime = klines[klines.length - 1].time;
-        // Move to the next potential start time. Add 1ms to avoid re-fetching the last candle.
         currentStartTime = lastKlineTime + 1;
     }
     
-    // De-duplicate and sort to ensure data integrity
     const uniqueKlinesMap = new Map<number, Kline>();
     allKlines.forEach(k => uniqueKlinesMap.set(k.time, k));
     return Array.from(uniqueKlinesMap.values()).sort((a, b) => a.time - b.time);
@@ -344,7 +338,6 @@ export const fetchFuturesWalletBalance = async (): Promise<AccountInfo> => {
     ]);
     const rawBalances = balanceResponse.map((b: any) => ({ asset: b.asset, free: parseFloat(b.availableBalance), locked: parseFloat(b.balance) - parseFloat(b.availableBalance) }));
     const balances = await mapBalances(rawBalances);
-    // Add the open positions from the account response for safety checks
     return { ...accountResponse, balances, accountType: 'USDT_FUTURES', positions: accountResponse.positions };
 };
 
@@ -359,12 +352,9 @@ export const createFuturesOrder = async (symbol: string, side: 'BUY' | 'SELL', q
     
     const rawResponse = await fetchSigned('/fapi/v1/order', params, 'POST', FUTURES_BASE_URL);
     
-    // Normalize the Futures response to match the common BinanceOrderResponse interface
     const normalized: BinanceOrderResponse = {
         ...rawResponse,
-        // Map `cumQuote` to `cummulativeQuoteQty` for consistency with Spot API
         cummulativeQuoteQty: rawResponse.cumQuote || '0', 
-        // Pass `avgPrice` through for more accurate price calculations in the app
         avgPrice: rawResponse.avgPrice,
     };
     
@@ -383,7 +373,6 @@ export const getFuturesPositionRisk = async (symbol: string): Promise<{ marginTy
     try {
         const data = await fetchSigned('/fapi/v2/positionRisk', { symbol: symbol.replace('/', '') }, 'GET', FUTURES_BASE_URL);
         if (Array.isArray(data) && data.length > 0) {
-            // The API returns an array, we need the first element for a single symbol query.
             return {
                 marginType: data[0].marginType,
                 leverage: data[0].leverage,
@@ -440,12 +429,10 @@ export const getPricePrecision = (symbolInfo?: SymbolInfo): number => {
 };
 
 export const getQuantityPrecision = (symbolInfo?: SymbolInfo): number => {
-    // For futures, the field is quantityPrecision
     if (symbolInfo && 'quantityPrecision' in symbolInfo) {
         return (symbolInfo as any).quantityPrecision;
     }
     
-    // For spot, it's from LOT_SIZE filter
     const lotSizeFilter = symbolInfo?.filters.find((f: SymbolFilter) => f.filterType === 'LOT_SIZE');
     if (lotSizeFilter?.stepSize) {
         const stepSize = parseFloat(lotSizeFilter.stepSize);
@@ -459,7 +446,7 @@ export const getStepSize = (symbolInfo?: SymbolInfo): number => {
     if (lotSizeFilter?.stepSize) {
         return parseFloat(lotSizeFilter.stepSize);
     }
-    return 0.00000001; // fallback to a very small step size
+    return 0.00000001;
 };
 
 export const getMultiAssetsMargin = async (): Promise<{ multiAssetsMargin: boolean }> => {

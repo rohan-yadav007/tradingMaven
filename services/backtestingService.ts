@@ -1,5 +1,3 @@
-
-
 import { Kline, BotConfig, BacktestResult, SimulatedTrade, AgentParams, Position, RiskMode, TradingMode } from '../types';
 import * as binanceService from './binanceService';
 import { getTradingSignal, getTradeManagementSignal, getInitialAgentTargets, analyzeTrendExhaustion } from './localAgentService';
@@ -71,7 +69,7 @@ export async function runBacktest(
         if (htf) {
             const startTime = mainKlines[0].time;
             const endTime = mainKlines[mainKlines.length - 1].time + getTimeframeDuration(config.timeFrame) - 1;
-            allHtfKlines = await binanceService.fetchFullKlines(config.pair.replace('/', ''), htf, startTime, endTime);
+            allHtfKlines = await binanceService.fetchFullKlines(config.pair.replace('/', ''), htf, startTime, endTime, config.mode);
         }
     }
 
@@ -140,7 +138,9 @@ export async function runBacktest(
                 }
 
                  if (openPosition) { 
-                    const livePriceForTrail = isLong ? managementCandle.high : managementCandle.low;
+                    // CRITICAL BUGFIX (LOOK-AHEAD): Was using high/low, giving perfect foresight.
+                    // CORRECTED: Now uses the closing price of the 1-minute candle for realistic simulation.
+                    const livePriceForTrail = managementCandle.close;
                     
                     const tempPositionForSignal: Position = { ...openPosition, id: 0, botId: 'sim', orderId: null, entryTime: new Date(openPosition.entryTime) };
 

@@ -10,6 +10,7 @@ import * as constants from './constants';
 import * as binanceService from './services/binanceService';
 import { historyService } from './services/historyService';
 import { botManagerService, BotHandlers } from './services/botManagerService';
+import { telegramBotService } from './services/telegramBotService';
 import { BacktestingPanel } from './components/BacktestingPanel';
 import { TradingConfigProvider, useTradingConfigState, useTradingConfigActions } from './contexts/TradingConfigContext';
 
@@ -62,213 +63,10 @@ const AppContent: React.FC = () => {
     const [openPositions, setOpenPositions] = useState<Position[]>([]);
     const [closingPositionIds, setClosingPositionIds] = useState<Set<number>>(new Set());
     
-    // Ref for bot handlers to prevent stale closures
-    const botHandlersRef = useRef<BotHandlers | null>(null);
-
-
-    // ---- Effects ----
-
-    // Theme effect for Tailwind CSS
-    useEffect(() => {
-        const root = window.document.documentElement;
-        root.classList.remove('light', 'dark');
-        root.classList.add(theme);
-        localStorage.setItem('theme', theme);
-    }, [theme]);
-    
-    // Initialize services and load history on mount
-    useEffect(() => {
-        binanceService.checkApiConnection()
-            .then(setIsApiConnected)
-            .catch(() => setIsApiConnected(false));
-
-        const trades = historyService.loadTrades();
-        setTradeHistory(trades);
-
-        botManagerService.init(setRunningBots);
-
-        return () => {
-            botManagerService.stopAllBots();
-        }
-    }, []);
-
-    useEffect(() => {
-        configActions.setIsApiConnected(isApiConnected);
-    }, [isApiConnected, configActions]);
-
-
-    // Fetch chart and symbol data when pair or timeframe changes
-    const fetchChartData = useCallback(async () => {
-        setIsChartLoading(true);
-        try {
-            const formattedPair = selectedPair.replace('/', '');
-
-            // Use the correct symbol info endpoint for the selected trading mode
-            const symbolInfoFetcher = tradingMode === TradingMode.USDSM_Futures
-                ? binanceService.getFuturesSymbolInfo(formattedPair)
-                : binanceService.getSymbolInfo(formattedPair);
-
-            const [klineData, info] = await Promise.all([
-                binanceService.fetchKlines(formattedPair, chartTimeFrame),
-                symbolInfoFetcher
-            ]);
-
-            if (!info) {
-                 throw new Error(`Symbol information not found for ${selectedPair} in ${tradingMode} mode. This pair may not be available for this type of trading.`);
-            }
-
-            setKlines(klineData);
-            setSymbolInfo(info as SymbolInfo); // Cast is acceptable as the used properties are common
-            botManagerService.updateKlines(formattedPair, chartTimeFrame, klineData);
-        } catch (error) {
-            console.error("Failed to fetch chart data:", error);
-            setKlines([]);
-            setSymbolInfo(undefined); // Clear symbol info on error
-        } finally {
-            setIsChartLoading(false);
-        }
-    }, [selectedPair, chartTimeFrame, tradingMode]);
-
-
-    useEffect(() => {
-        fetchChartData();
-    }, [fetchChartData]);
-
-    // Subscribe to live kline and ticker data from the centralized service
-    useEffect(() => {
-        const formattedPair = selectedPair.replace('/', '').toLowerCase();
-        
-        const tickerCallback = (ticker: LiveTicker) => {
-            if (ticker.pair.toLowerCase() === formattedPair) {
-                setLivePrice(ticker.closePrice);
-                setLiveTicker(ticker);
-            }
-        };
-
-        const klineCallback = (newKline: Kline) => {
-            // Only update the main klines state if the candle is FINAL.
-            // This prevents re-rendering the whole chart on every tick.
-            // The smooth animation is handled by the livePrice prop from the ticker stream.
-            if (newKline.isFinal) {
-                setKlines(prevKlines => {
-                    if (prevKlines.length === 0) return [newKline];
-                    const lastKline = prevKlines[prevKlines.length - 1];
-                    // If the new kline is the final version of the last one, replace it.
-                    if (lastKline && newKline.time === lastKline.time) {
-                        const updatedKlines = [...prevKlines];
-                        updatedKlines[prevKlines.length - 1] = newKline;
-                        return updatedKlines;
-                    } 
-                    // Otherwise, it's a new candle, so add it and shift the array.
-                    else if (lastKline && newKline.time > lastKline.time) {
-                        return [...prevKlines.slice(1), newKline];
-                    }
-                    // If for some reason we get an old kline, ignore it.
-                    return prevKlines;
-                });
-            }
-        };
-        
-        botManagerService.subscribeToTickerUpdates(formattedPair, tradingMode, tickerCallback);
-        botManagerService.subscribeToKlineUpdates(formattedPair, chartTimeFrame, tradingMode, klineCallback);
-        
-        return () => {
-            botManagerService.unsubscribeFromTickerUpdates(formattedPair, tradingMode, tickerCallback);
-            botManagerService.unsubscribeFromKlineUpdates(formattedPair, chartTimeFrame, tradingMode, klineCallback);
-        };
-    }, [selectedPair, chartTimeFrame, tradingMode]);
-
-    // Fetch wallet balances when mode or API connection change
-    const fetchWalletBalances = useCallback(async () => {
-        if (!isApiConnected) {
-            setAccountInfo(null);
-            setLiveBalances([]);
-            setWalletError(null);
-            return;
-        }
-        setIsWalletLoading(true);
-        setWalletError(null);
-        try {
-            let info;
-            switch (configState.walletViewMode) {
-                case TradingMode.Spot:
-                    info = await binanceService.fetchSpotWalletBalance();
-                    break;
-                case TradingMode.USDSM_Futures:
-                    info = await binanceService.fetchFuturesWalletBalance();
-                    break;
-                default:
-                    setWalletError("Invalid trading mode selected for wallet view.");
-                    return;
-            }
-            setAccountInfo(info);
-            setLiveBalances(info.balances);
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : "An unknown error occurred. Make sure your API keys are correct.";
-            setWalletError(errorMessage);
-            setAccountInfo(null);
-            setLiveBalances([]);
-        } finally {
-            setIsWalletLoading(false);
-        }
-    }, [isApiConnected, configState.walletViewMode]);
-
-    useEffect(() => {
-        fetchWalletBalances();
-    }, [fetchWalletBalances]);
-
-    // Synchronize open positions from running bots
-    useEffect(() => {
-        const positionsFromBots = runningBots
-            .filter(bot => bot.openPosition)
-            .map(bot => bot.openPosition!);
-        setOpenPositions(positionsFromBots);
-    }, [runningBots]);
-
+    // Refs for stable handlers
+    const handlersRef = useRef<BotHandlers | null>(null);
 
     // ---- Handlers ----
-    const getAvailableBalanceForInvestment = useCallback(() => {
-        if (executionMode !== 'live') return Infinity;
-        if (!isApiConnected || !accountInfo || !symbolInfo) return 0;
-        if (configState.walletViewMode !== tradingMode) return 0;
-        
-        const quoteAsset = symbolInfo.quoteAsset;
-        if (!quoteAsset) return 0;
-        
-        const balance = liveBalances.find(b => b.asset === quoteAsset);
-        return balance ? balance.free : 0;
-
-    }, [executionMode, isApiConnected, accountInfo, symbolInfo, configState.walletViewMode, tradingMode, liveBalances]);
-
-    useEffect(() => {
-        configActions.setAvailableBalance(getAvailableBalanceForInvestment());
-    }, [getAvailableBalanceForInvestment, configActions]);
-
-
-    const handleLoadMoreChartData = useCallback(async () => {
-        if (isFetchingMoreChartData || klines.length === 0) return;
-        
-        setIsFetchingMoreChartData(true);
-        try {
-            const formattedPair = selectedPair.replace('/', '');
-            const oldestKlineTime = klines[0].time;
-            
-            const newKlines = await binanceService.fetchKlines(formattedPair, chartTimeFrame, { endTime: oldestKlineTime - 1 });
-            
-            const uniqueNewKlines = newKlines.filter(nk => !klines.some(ok => ok.time === nk.time));
-            
-            if (uniqueNewKlines.length > 0) {
-                 const updatedKlines = [...uniqueNewKlines, ...klines];
-                 setKlines(updatedKlines);
-                 botManagerService.updateKlines(formattedPair, chartTimeFrame, updatedKlines);
-            }
-        } catch (error) {
-            console.error("Failed to load more chart data:", error);
-        } finally {
-            setIsFetchingMoreChartData(false);
-        }
-    }, [isFetchingMoreChartData, klines, selectedPair, chartTimeFrame]);
-
     const handleClosePosition = useCallback(async (posToClose: Position, exitReason: string = "Manual Close", exitPriceOverride?: number) => {
         if (!posToClose || closingPositionIds.has(posToClose.id)) {
             return;
@@ -286,7 +84,6 @@ const AppContent: React.FC = () => {
             const isLong = posToClose.direction === 'LONG';
             const grossPnl = (finalExitPrice - posToClose.entryPrice) * posToClose.size * (isLong ? 1 : -1);
             
-            // THE DEFINITIVE FIX: Always calculate NET PNL by subtracting fees.
             const netPnl = grossPnl - fees;
 
             const newTrade: Trade = { ...posToClose, exitPrice: finalExitPrice, exitTime: new Date(), pnl: netPnl, exitReason };
@@ -298,7 +95,6 @@ const AppContent: React.FC = () => {
             });
 
             if (posToClose.botId) {
-                // Notify the bot with the realistic NET PNL.
                 botManagerService.notifyPositionClosed(posToClose.botId, netPnl);
             }
 
@@ -339,7 +135,6 @@ const AppContent: React.FC = () => {
                  botManagerService.addBotLog(posToClose.botId!, `Live position closed successfully via API.`, LogType.Success);
                  const finalExitPrice = parseFloat(orderResponse.cummulativeQuoteQty) / parseFloat(orderResponse.executedQty);
                  
-                 // Calculate fees for live trades
                  const entryValue = posToClose.entryPrice * posToClose.size;
                  const exitValue = finalExitPrice * posToClose.size;
                  const totalFees = (entryValue + exitValue) * constants.TAKER_FEE_RATE;
@@ -360,7 +155,6 @@ const AppContent: React.FC = () => {
                 });
             }
         } else {
-            // For paper trades, SIMULATE fees to align with reality
             const entryValue = posToClose.entryPrice * posToClose.size;
             const exitValue = exitPrice * posToClose.size;
             const simulatedFees = (entryValue + exitValue) * constants.TAKER_FEE_RATE;
@@ -515,8 +309,8 @@ const AppContent: React.FC = () => {
             takeProfitPrice,
             stopLossPrice,
             initialTakeProfitPrice: takeProfitPrice,
-            initialStopLossPrice: executionDetails.agentStopLoss, // Use value from bot logic
-            activeStopLossReason: executionDetails.slReason, // Use reason from bot logic
+            initialStopLossPrice: executionDetails.agentStopLoss,
+            activeStopLossReason: executionDetails.slReason,
             pricePrecision: config.pricePrecision,
             timeFrame: config.timeFrame,
             botId,
@@ -532,10 +326,224 @@ const AppContent: React.FC = () => {
 
     }, [accountInfo]);
     
-    botHandlersRef.current = {
-        onExecuteTrade: handleExecuteTrade,
-        onClosePosition: handleClosePosition,
-    };
+    // ---- Effects ----
+
+    // Keep the refs updated with the latest versions of the handlers
+    useEffect(() => {
+        handlersRef.current = {
+            onExecuteTrade: handleExecuteTrade,
+            onClosePosition: handleClosePosition,
+        };
+    }, [handleExecuteTrade, handleClosePosition]);
+
+    // Theme effect for Tailwind CSS
+    useEffect(() => {
+        const root = window.document.documentElement;
+        root.classList.remove('light', 'dark');
+        root.classList.add(theme);
+        localStorage.setItem('theme', theme);
+    }, [theme]);
+    
+    // Initialize services and load history ONCE on mount
+    useEffect(() => {
+        binanceService.checkApiConnection()
+            .then(setIsApiConnected)
+            .catch(() => setIsApiConnected(false));
+
+        const trades = historyService.loadTrades();
+        setTradeHistory(trades);
+
+        const onBotUpdate = () => {
+            setRunningBots(botManagerService.getRunningBots());
+        };
+
+        const stableHandlers: BotHandlers = {
+            onExecuteTrade: (...args) => {
+                if (handlersRef.current) {
+                    return handlersRef.current.onExecuteTrade(...args);
+                }
+                return Promise.resolve();
+            },
+            onClosePosition: (...args) => {
+                if (handlersRef.current) {
+                    handlersRef.current.onClosePosition(...args);
+                }
+            },
+        };
+
+        botManagerService.setHandlers(stableHandlers, onBotUpdate);
+        
+        telegramBotService.start();
+
+        return () => {
+            botManagerService.stopAllBots();
+        }
+    }, []); // Empty dependency array ensures this runs only once.
+
+    useEffect(() => {
+        configActions.setIsApiConnected(isApiConnected);
+    }, [isApiConnected, configActions]);
+
+    // Fetch chart and symbol data when pair or timeframe changes
+    const fetchChartData = useCallback(async () => {
+        setIsChartLoading(true);
+        try {
+            const formattedPair = selectedPair.replace('/', '');
+
+            const symbolInfoFetcher = tradingMode === TradingMode.USDSM_Futures
+                ? binanceService.getFuturesSymbolInfo(formattedPair)
+                : binanceService.getSymbolInfo(formattedPair);
+
+            const [klineData, info] = await Promise.all([
+                binanceService.fetchKlines(formattedPair, chartTimeFrame, { mode: tradingMode }),
+                symbolInfoFetcher
+            ]);
+
+            if (!info) {
+                 throw new Error(`Symbol information not found for ${selectedPair} in ${tradingMode} mode. This pair may not be available for this type of trading.`);
+            }
+
+            setKlines(klineData);
+            setSymbolInfo(info as SymbolInfo);
+            botManagerService.updateKlines(formattedPair, chartTimeFrame, klineData);
+        } catch (error) {
+            console.error("Failed to fetch chart data:", error);
+            setKlines([]);
+            setSymbolInfo(undefined);
+        } finally {
+            setIsChartLoading(false);
+        }
+    }, [selectedPair, chartTimeFrame, tradingMode]);
+
+    useEffect(() => {
+        fetchChartData();
+    }, [fetchChartData]);
+
+    // Subscribe to live kline and ticker data
+    useEffect(() => {
+        const formattedPair = selectedPair.replace('/', '').toLowerCase();
+        
+        const tickerCallback = (ticker: LiveTicker) => {
+            if (ticker.pair.toLowerCase() === formattedPair) {
+                setLivePrice(ticker.closePrice);
+                setLiveTicker(ticker);
+            }
+        };
+
+        const klineCallback = (newKline: Kline) => {
+            if (newKline.isFinal) {
+                setKlines(prevKlines => {
+                    if (prevKlines.length === 0) return [newKline];
+                    const lastKline = prevKlines[prevKlines.length - 1];
+                    if (lastKline && newKline.time === lastKline.time) {
+                        const updatedKlines = [...prevKlines];
+                        updatedKlines[prevKlines.length - 1] = newKline;
+                        return updatedKlines;
+                    } 
+                    else if (lastKline && newKline.time > lastKline.time) {
+                        return [...prevKlines.slice(1), newKline];
+                    }
+                    return prevKlines;
+                });
+            }
+        };
+        
+        botManagerService.subscribeToTickerUpdates(formattedPair, tradingMode, tickerCallback);
+        botManagerService.subscribeToKlineUpdates(formattedPair, chartTimeFrame, tradingMode, klineCallback);
+        
+        return () => {
+            botManagerService.unsubscribeFromTickerUpdates(formattedPair, tradingMode, tickerCallback);
+            botManagerService.unsubscribeFromKlineUpdates(formattedPair, chartTimeFrame, tradingMode, klineCallback);
+        };
+    }, [selectedPair, chartTimeFrame, tradingMode]);
+
+    // Fetch wallet balances
+    const fetchWalletBalances = useCallback(async () => {
+        if (!isApiConnected) {
+            setAccountInfo(null);
+            setLiveBalances([]);
+            setWalletError(null);
+            return;
+        }
+        setIsWalletLoading(true);
+        setWalletError(null);
+        try {
+            let info;
+            switch (configState.walletViewMode) {
+                case TradingMode.Spot:
+                    info = await binanceService.fetchSpotWalletBalance();
+                    break;
+                case TradingMode.USDSM_Futures:
+                    info = await binanceService.fetchFuturesWalletBalance();
+                    break;
+                default:
+                    setWalletError("Invalid trading mode selected for wallet view.");
+                    return;
+            }
+            setAccountInfo(info);
+            setLiveBalances(info.balances);
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : "An unknown error occurred. Make sure your API keys are correct.";
+            setWalletError(errorMessage);
+            setAccountInfo(null);
+            setLiveBalances([]);
+        } finally {
+            setIsWalletLoading(false);
+        }
+    }, [isApiConnected, configState.walletViewMode]);
+
+    useEffect(() => {
+        fetchWalletBalances();
+    }, [fetchWalletBalances]);
+
+    // Synchronize open positions from running bots
+    useEffect(() => {
+        const positionsFromBots = runningBots
+            .filter(bot => bot.openPosition)
+            .map(bot => bot.openPosition!);
+        setOpenPositions(positionsFromBots);
+    }, [runningBots]);
+
+    const getAvailableBalanceForInvestment = useCallback(() => {
+        if (executionMode !== 'live') return Infinity;
+        if (!isApiConnected || !accountInfo || !symbolInfo) return 0;
+        if (configState.walletViewMode !== tradingMode) return 0;
+        
+        const quoteAsset = symbolInfo.quoteAsset;
+        if (!quoteAsset) return 0;
+        
+        const balance = liveBalances.find(b => b.asset === quoteAsset);
+        return balance ? balance.free : 0;
+
+    }, [executionMode, isApiConnected, accountInfo, symbolInfo, configState.walletViewMode, tradingMode, liveBalances]);
+
+    useEffect(() => {
+        configActions.setAvailableBalance(getAvailableBalanceForInvestment());
+    }, [getAvailableBalanceForInvestment, configActions]);
+
+    const handleLoadMoreChartData = useCallback(async () => {
+        if (isFetchingMoreChartData || klines.length === 0) return;
+        
+        setIsFetchingMoreChartData(true);
+        try {
+            const formattedPair = selectedPair.replace('/', '');
+            const oldestKlineTime = klines[0].time;
+            
+            const newKlines = await binanceService.fetchKlines(formattedPair, chartTimeFrame, { endTime: oldestKlineTime - 1, mode: tradingMode });
+            
+            const uniqueNewKlines = newKlines.filter(nk => !klines.some(ok => ok.time === nk.time));
+            
+            if (uniqueNewKlines.length > 0) {
+                 const updatedKlines = [...uniqueNewKlines, ...klines];
+                 setKlines(updatedKlines);
+                 botManagerService.updateKlines(formattedPair, chartTimeFrame, updatedKlines);
+            }
+        } catch (error) {
+            console.error("Failed to load more chart data:", error);
+        } finally {
+            setIsFetchingMoreChartData(false);
+        }
+    }, [isFetchingMoreChartData, klines, selectedPair, chartTimeFrame, tradingMode]);
     
     const isBotCombinationActive = useCallback(() => {
         if (executionMode === 'live') {
@@ -584,7 +592,7 @@ const AppContent: React.FC = () => {
             stepSize: binanceService.getStepSize(symbolInfo),
             isAtrTrailingStopEnabled,
         };
-        botManagerService.startBot(botConfig, botHandlersRef);
+        botManagerService.startBot(botConfig);
     }, [
         selectedPair, tradingMode, leverage, marginType, selectedAgent, chartTimeFrame, executionMode,
         investmentAmount, takeProfitMode, takeProfitValue,

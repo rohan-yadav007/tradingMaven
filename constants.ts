@@ -12,7 +12,7 @@ export const TIME_FRAMES: string[] = ['1m', '3m', '5m', '15m', '1h', '4h', '1d']
  * The standard taker fee rate for Binance Spot and Futures.
  * Used to calculate estimated PNL after fees.
  */
-export const TAKER_FEE_RATE = 0.001; // 0.1% fee per trade side.
+export const TAKER_FEE_RATE = 0.0004; // 0.04% fee per trade side.
 
 /**
  * A non-negotiable, system-wide minimum risk-to-reward ratio for a trade to be considered valid.

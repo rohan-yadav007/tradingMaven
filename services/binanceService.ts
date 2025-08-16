@@ -1,4 +1,3 @@
-
 import { Kline, SymbolInfo, SymbolFilter, WalletBalance, RawWalletBalance, AccountInfo, LeverageBracket, BinanceOrderResponse, TradingMode } from '../types';
 
 // --- Configuration ---
@@ -300,6 +299,28 @@ export const fetchFuturesTickerPrice = async (symbol: string): Promise<number | 
     }
     const data = await response.json();
     return parseFloat(data.price);
+};
+
+export const fetchFundingRate = async (symbol: string): Promise<{ fundingTime: number; fundingRate: string } | null> => {
+    try {
+        const response = await fetch(`${FUTURES_BASE_URL}/fapi/v1/premiumIndex?symbol=${symbol}`);
+        if (!response.ok) {
+            return null;
+        }
+        const data = await response.json();
+        const fundingData = Array.isArray(data) ? data.find(d => d.symbol === symbol) : data;
+        
+        if (fundingData && fundingData.nextFundingTime && fundingData.lastFundingRate) {
+             return {
+                fundingTime: Number(fundingData.nextFundingTime),
+                fundingRate: (parseFloat(fundingData.lastFundingRate) * 100).toFixed(4),
+             };
+        }
+        return null;
+    } catch (e) {
+        console.error(`Failed to fetch funding rate for ${symbol}:`, e);
+        return null;
+    }
 };
 
 const mapBalances = async (rawBalances: RawWalletBalance[]): Promise<WalletBalance[]> => {

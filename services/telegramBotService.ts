@@ -4,24 +4,28 @@ import { historyService } from './historyService';
 import * as constants from '../constants';
 import * as binanceService from './binanceService';
 
-const TOKEN = import.meta.env.VITE_TELEGRAM_BOT_TOKEN;
-const CHAT_ID = import.meta.env.VITE_TELEGRAM_CHAT_ID;
+const bots = [
+    { token: import.meta.env.VITE_TELEGRAM_BOT_TOKEN, chatId: import.meta.env.VITE_TELEGRAM_CHAT_ID },
+    { token: import.meta.env.VITE_TELEGRAM_BOT_TOKEN_2, chatId: import.meta.env.VITE_TELEGRAM_CHAT_ID_2 },
+    { token: import.meta.env.VITE_TELEGRAM_BOT_TOKEN_3, chatId: import.meta.env.VITE_TELEGRAM_CHAT_ID_3 },
+].filter(bot => bot.token && bot.chatId);
 
-const API_URL = `https://api.telegram.org/bot${TOKEN}`;
-
-let lastUpdateId = 0;
+const lastUpdateIds = new Map<string, number>();
 let isStarted = false; // Guard to prevent multiple initializations
 
 async function sendMessage(text: string) {
-    if (!TOKEN || !CHAT_ID) return;
-    try {
-        await fetch(`${API_URL}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: CHAT_ID, text, parse_mode: 'Markdown' }),
-        });
-    } catch (error) {
-        console.error("Telegram: Failed to send message:", error);
+    if (bots.length === 0) return;
+
+    for (const bot of bots) {
+        try {
+            await fetch(`https://api.telegram.org/bot${bot.token}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: bot.chatId, text, parse_mode: 'Markdown' }),
+            });
+        } catch (error) {
+            console.error(`Telegram: Failed to send message with bot ${bot.token.substring(0,10)}...:`, error);
+        }
     }
 }
 
@@ -33,8 +37,12 @@ async function handleCommand(command: string, args: string[]) {
 `*Gemini Trading Assistant Commands*
 
 */status* - View all running bots.
-*/create* \`agent_id pair amount leverage\`
-  _Ex: /create 9 BTC/USDT 100 20x_
+*/agents* - List available trading agents.
+*/create* \`agent_id pair amount leverage mode [platform]\`
+  • \`mode\`: paper | live
+  • \`platform\`: spot | futures (optional, defaults to futures)
+  _Ex (Futures): /create 9 SOL/USDT 50 20x live futures_
+  _Ex (Spot): /create 7 BTC/USDT 500 1x paper spot_
 */pause* \`bot_id\` - Pause a running bot.
 */resume* \`bot_id\` - Resume a paused bot.
 */stop* \`bot_id\` - Stop a bot (can't be resumed).
@@ -45,37 +53,44 @@ async function handleCommand(command: string, args: string[]) {
             break;
 
         case '/status':
-            const bots = botManagerService.getRunningBots();
-            if (bots.length === 0) {
+            const runningBots = botManagerService.getRunningBots();
+            if (runningBots.length === 0) {
                 await sendMessage("No bots are currently running.");
                 return;
             }
-            const statusText = bots.map(bot => {
-                let pnlText = `PNL: $${bot.totalPnl.toFixed(2)}`;
+            const statusText = runningBots.map(bot => {
+                const winRate = bot.closedTradesCount > 0 ? (bot.wins / bot.closedTradesCount) * 100 : 0;
+                let pnlText = `Total PNL: *$${bot.totalPnl.toFixed(2)}*`;
                 if (bot.openPosition && bot.livePrice) {
                     const isLong = bot.openPosition.direction === 'LONG';
-                    const pnl = (bot.livePrice - bot.openPosition.entryPrice) * bot.openPosition.size * (isLong ? 1 : -1);
-                    pnlText += ` (Unrealized: $${pnl.toFixed(2)})`;
+                    const unrealizedPnl = (bot.livePrice - bot.openPosition.entryPrice) * bot.openPosition.size * (isLong ? 1 : -1);
+                    pnlText += ` (Unrealized: $${unrealizedPnl.toFixed(2)})`;
                 }
-                return `*${bot.config.pair}* (${bot.config.agent.name})
-Status: ${bot.status}
+                return `*${bot.config.pair}* (${bot.config.agent.name}) - \`${bot.config.executionMode.toUpperCase()}\`
+Status: _${bot.status}_
 ${pnlText}
+Trades: ${bot.wins}W / ${bot.losses}L (${winRate.toFixed(1)}% WR)
 ID: \`${bot.id}\``;
             }).join('\n\n');
             await sendMessage(statusText);
             break;
+
+        case '/agents':
+            const agentsList = constants.AGENTS.map(agent => `*${agent.name}*\nID: \`${agent.id}\``).join('\n\n');
+            await sendMessage(`*Available Trading Agents*\n\n${agentsList}`);
+            break;
             
         case '/create':
             try {
-                if (args.length < 4) {
-                    await sendMessage("Invalid format. Use: `/create agent_id pair amount leverage`\n_Ex: /create 9 BTC/USDT 100 20x_");
+                if (args.length < 5) {
+                    await sendMessage("Invalid format. Use: `/create agent_id pair amount leverage mode [platform]`\n_Ex: /create 9 SOL/USDT 50 20x paper futures_");
                     return;
                 }
-                const [agentIdStr, pair, amountStr, leverageStr] = args;
+                const [agentIdStr, pair, amountStr, leverageStr, modeStr, platformStr] = args;
                 const agentId = parseInt(agentIdStr);
                 const agent = constants.AGENTS.find(a => a.id === agentId);
                 if (!agent) {
-                    await sendMessage(`Error: Agent with ID ${agentId} not found.`);
+                    await sendMessage(`Error: Agent with ID ${agentId} not found. Use /agents to see available agents.`);
                     return;
                 }
                 const investmentAmount = parseFloat(amountStr);
@@ -84,13 +99,33 @@ ID: \`${bot.id}\``;
                     await sendMessage("Error: Invalid investment amount or leverage.");
                     return;
                 }
+
+                const executionMode = modeStr.toLowerCase();
+                if (executionMode !== 'paper' && executionMode !== 'live') {
+                    await sendMessage("Error: Invalid mode. Use 'paper' or 'live'.");
+                    return;
+                }
+
+                const tradingMode = (platformStr || 'futures').toLowerCase();
+                let finalTradingMode: TradingMode;
+                if (tradingMode === 'futures') {
+                    finalTradingMode = TradingMode.USDSM_Futures;
+                } else if (tradingMode === 'spot') {
+                    finalTradingMode = TradingMode.Spot;
+                } else {
+                    await sendMessage("Error: Invalid platform. Use 'spot' or 'futures'.");
+                    return;
+                }
                 
-                await sendMessage(`_Creating bot for ${pair}..._`);
+                await sendMessage(`_Creating ${executionMode} ${finalTradingMode} bot for ${pair}..._`);
 
                 const formattedPair = pair.replace('/', '');
-                const symbolInfo = await binanceService.getFuturesSymbolInfo(formattedPair);
+                 const symbolInfo = finalTradingMode === TradingMode.USDSM_Futures 
+                    ? await binanceService.getFuturesSymbolInfo(formattedPair) 
+                    : await binanceService.getSymbolInfo(formattedPair);
+
                  if (!symbolInfo) {
-                    await sendMessage(`Error: Could not find symbol info for ${pair}.`);
+                    await sendMessage(`Error: Could not find symbol info for ${pair} on the ${finalTradingMode} platform.`);
                     return;
                 }
 
@@ -98,9 +133,9 @@ ID: \`${bot.id}\``;
                     pair,
                     agent,
                     investmentAmount,
-                    leverage,
-                    mode: TradingMode.USDSM_Futures,
-                    executionMode: 'paper',
+                    leverage: finalTradingMode === TradingMode.Spot ? 1 : leverage,
+                    mode: finalTradingMode,
+                    executionMode: executionMode as 'paper' | 'live',
                     timeFrame: '5m', // Default
                     takeProfitMode: RiskMode.Percent,
                     takeProfitValue: 5,
@@ -114,8 +149,8 @@ ID: \`${bot.id}\``;
                 };
                 
                 const newBot = botManagerService.startBot(config);
-                await sendMessage(`*Bot created successfully!*
-Pair: ${pair}
+                await sendMessage(`*${executionMode.toUpperCase()} bot created successfully!*
+Pair: ${pair} (${finalTradingMode})
 Agent: ${agent.name}
 ID: \`${newBot.id}\``);
 
@@ -184,41 +219,58 @@ Wins: ${wins} | Losses: ${losses}`
     }
 }
 
-async function longPoll() {
-    if (!isStarted || !TOKEN || !CHAT_ID) return;
+async function longPoll(bot: { token: string; chatId: string; }) {
+    if (!isStarted) return;
+    const currentUpdateId = lastUpdateIds.get(bot.token) || 0;
+
     try {
-        const response = await fetch(`${API_URL}/getUpdates?offset=${lastUpdateId + 1}&timeout=30`);
+        const response = await fetch(`https://api.telegram.org/bot${bot.token}/getUpdates?offset=${currentUpdateId + 1}&timeout=30`);
         const data = await response.json();
 
         if (data.ok && data.result.length > 0) {
+            let maxUpdateId = currentUpdateId;
             for (const update of data.result) {
-                lastUpdateId = update.update_id;
+                maxUpdateId = Math.max(maxUpdateId, update.update_id);
                 const message = update.message;
 
-                if (message && message.text && message.chat.id.toString() === CHAT_ID) {
-                    const [command, ...args] = message.text.split(' ');
-                    await handleCommand(command.toLowerCase(), args);
+                if (message && message.text && message.chat.id.toString() === bot.chatId) {
+                    // CRITICAL FIX: Wrap command handling in a try/catch to prevent one failed command
+                    // from halting the entire update processing loop.
+                    try {
+                        const [command, ...args] = message.text.split(' ');
+                        await handleCommand(command.toLowerCase(), args);
+                    } catch (e) {
+                        console.error(`Telegram: Error handling command "${message.text}":`, e);
+                        await sendMessage(`An internal error occurred while processing your command: \`${message.text}\`. The issue has been logged.`);
+                    }
                 }
             }
+            lastUpdateIds.set(bot.token, maxUpdateId);
         }
     } catch (error) {
-        console.error("Telegram: Long poll error:", error);
+        console.error(`Telegram: Long poll error for bot ${bot.token.substring(0,10)}...:`, error);
         await new Promise(resolve => setTimeout(resolve, 5000));
     } finally {
         if (isStarted) {
-            setTimeout(longPoll, 1000);
+            setTimeout(() => longPoll(bot), 1000);
         }
     }
 }
 
-function start() {
-    if (isStarted) return; // Prevent multiple initializations
 
-    if (TOKEN && CHAT_ID) {
+function start() {
+    if (isStarted) return; 
+
+    if (bots.length > 0) {
         isStarted = true;
-        console.log("Telegram bot service starting...");
+        console.log(`Telegram bot service starting with ${bots.length} bot(s)...`);
         sendMessage("Trading Assistant is online. Use /help for commands.");
-        longPoll();
+        
+        for (const bot of bots) {
+            lastUpdateIds.set(bot.token, 0);
+            longPoll(bot);
+            console.log(`- Listening for commands on bot with chat ID: ${bot.chatId}`);
+        }
     } else {
         console.warn("Telegram bot credentials not found in environment variables. Service will not start.");
     }
@@ -226,4 +278,5 @@ function start() {
 
 export const telegramBotService = {
     start,
+    sendMessage,
 };

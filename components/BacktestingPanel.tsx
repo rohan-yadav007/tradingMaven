@@ -89,6 +89,12 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
             </div>
             </div>);
         case 9: case 10: return (<div className="space-y-4"><ParamSlider label="Trend Score Threshold" value={allParams.qsc_trendScoreThreshold} onChange={v => updateParam('qsc_trendScoreThreshold', v)} min={1} max={4} step={1} /><ParamSlider label="Range Score Threshold" value={allParams.qsc_rangeScoreThreshold} onChange={v => updateParam('qsc_rangeScoreThreshold', v)} min={1} max={2} step={1} /><ParamSlider label="ADX Trend Threshold" value={allParams.qsc_adxThreshold} onChange={v => updateParam('qsc_adxThreshold', v)} min={15} max={35} step={1} />{agent.id === 10 && <ParamSlider label="ADX Chop Buffer" value={allParams.qsc_adxChopBuffer} onChange={v => updateParam('qsc_adxChopBuffer', v)} min={0} max={10} step={1} />}<ParamSlider label="PSAR Step" value={allParams.qsc_psarStep} onChange={v => updateParam('qsc_psarStep', v)} min={0.01} max={0.1} step={0.005} /><ParamSlider label="PSAR Max" value={allParams.qsc_psarMax} onChange={v => updateParam('qsc_psarMax', v)} min={0.1} max={0.5} step={0.01} /></div>);
+        case 11: return (<div className="space-y-4">
+            <ParamSlider label="Trend SMA Period" value={allParams.he_trendSmaPeriod} onChange={v => updateParam('he_trendSmaPeriod', v)} min={20} max={50} step={1} />
+            <ParamSlider label="Fast EMA Period" value={allParams.he_fastEmaPeriod} onChange={v => updateParam('he_fastEmaPeriod', v)} min={5} max={20} step={1} />
+            <ParamSlider label="Slow EMA Period" value={allParams.he_slowEmaPeriod} onChange={v => updateParam('he_slowEmaPeriod', v)} min={20} max={50} step={1} />
+            <ParamSlider label="RSI Midline" value={allParams.he_rsiMidline} onChange={v => updateParam('he_rsiMidline', v)} min={40} max={60} step={1} />
+            </div>);
         default: return <p className="text-sm text-slate-500">This agent does not have any customizable parameters.</p>;
     }
 };
@@ -101,7 +107,7 @@ const BacktestControlPanel: React.FC<{
 }> = ({ config, updateConfig, backtestDays, setBacktestDays, onRunBacktest, onRunOptimization, isLoading, loadingMessage, theme }) => {
     const globalConfig = useTradingConfigState();
     const [isParamsOpen, setIsParamsOpen] = useState(false);
-    const canOptimize = [7, 9, 10].includes(config.selectedAgent.id);
+    const canOptimize = [7, 9, 10, 11].includes(config.selectedAgent.id);
     return (
         <div className="flex flex-col gap-4 h-full">
             <h2 className="text-lg font-bold">Backtest Configuration</h2>

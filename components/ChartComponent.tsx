@@ -19,6 +19,7 @@ interface ChartComponentProps {
     onLoadMoreData: () => void | Promise<void>;
     isFetchingMoreData: boolean;
     theme: 'light' | 'dark';
+    fundingInfo: { rate: string; time: number } | null;
 }
 
 const getTimeframeDurationMs = (timeframe: string): number => {
@@ -67,6 +68,45 @@ const CountdownTimer: React.FC<{ lastKline: Kline; timeframe: string }> = ({ las
     );
 };
 
+const FundingRateTimer: React.FC<{ fundingInfo: { rate: string; time: number } }> = ({ fundingInfo }) => {
+    const [countdown, setCountdown] = useState('');
+
+    useEffect(() => {
+        if (!fundingInfo) return;
+
+        const interval = setInterval(() => {
+            const remaining = fundingInfo.time - Date.now();
+            if (remaining <= 0) {
+                setCountdown('00:00:00');
+            } else {
+                const hours = Math.floor((remaining / (1000 * 60 * 60)));
+                const minutes = Math.floor((remaining % (1000 * 60 * 60)) / (1000 * 60));
+                const seconds = Math.floor((remaining % (1000 * 60)) / 1000);
+                setCountdown(
+                    `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+                );
+            }
+        }, 1000);
+
+        return () => clearInterval(interval);
+    }, [fundingInfo]);
+
+    if (!fundingInfo) return null;
+
+    const rateIsPositive = parseFloat(fundingInfo.rate) > 0;
+
+    return (
+        <div className="text-xs font-mono text-slate-500 dark:text-slate-400">
+            <span>Funding: </span>
+            <span className={rateIsPositive ? 'text-emerald-500' : 'text-rose-500'}>
+                {fundingInfo.rate}%
+            </span>
+            <span className="ml-2">in {countdown}</span>
+        </div>
+    );
+};
+
+
 const TimeFrameSelector: React.FC<{selected: string, onSelect: (tf: string) => void}> = ({ selected, onSelect }) => (
     <div className="flex items-center bg-slate-100 dark:bg-slate-700/50 rounded-md p-1">
         {constants.TIME_FRAMES.map(tf => (
@@ -86,7 +126,7 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
     const { 
         data, pair, isLoading, pricePrecision, livePrice, 
         chartTimeFrame, onTimeFrameChange, allPairs, onPairChange,
-        onLoadMoreData, isFetchingMoreData, theme 
+        onLoadMoreData, isFetchingMoreData, theme, fundingInfo 
     } = props;
     
     const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -235,7 +275,7 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
     return (
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm relative h-96 md:h-[500px] flex flex-col">
             <div className="flex flex-wrap items-center justify-between gap-2 p-3 border-b border-slate-200 dark:border-slate-700">
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-4">
                     <div className="w-64">
                          <SearchableDropdown
                             options={allPairs}
@@ -244,8 +284,11 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
                             theme={theme}
                         />
                     </div>
-                   <div className={`text-xl font-bold transition-colors duration-300 ${priceChange === 'up' ? 'text-emerald-500' : priceChange === 'down' ? 'text-rose-500' : 'dark:text-white'}`}>
-                        {livePrice > 0 ? livePrice.toFixed(pricePrecision) : '...'}
+                    <div className="flex flex-col">
+                        <div className={`text-xl font-bold transition-colors duration-300 ${priceChange === 'up' ? 'text-emerald-500' : priceChange === 'down' ? 'text-rose-500' : 'dark:text-white'}`}>
+                            {livePrice > 0 ? livePrice.toFixed(pricePrecision) : '...'}
+                        </div>
+                        {fundingInfo && <FundingRateTimer fundingInfo={fundingInfo} />}
                     </div>
                 </div>
                 <TimeFrameSelector selected={chartTimeFrame} onSelect={onTimeFrameChange} />

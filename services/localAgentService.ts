@@ -119,42 +119,50 @@ export function getUniversalProfitTrailSignal(
     let newStopLoss: number | undefined;
     const isLong = position.direction === 'LONG';
     const entryPrice = position.entryPrice;
-    
+
+    // Calculate the price distance required to cover round-trip fees
     const positionValue = position.size * entryPrice;
-    // A round trip (entry + exit) has two fees.
     const roundTripFee = positionValue * TAKER_FEE_RATE * 2;
-    // Convert the fee value into a price difference.
-    const feeInPrice = roundTripFee / position.size;
+    const feeInPrice = (roundTripFee / position.size);
+    const feeAdjustedBreakeven = entryPrice + (feeInPrice * (isLong ? 1 : -1));
 
     if (feeInPrice > 0) {
         const profitInPrice = (currentPrice - entryPrice) * (isLong ? 1 : -1);
         let potentialNewStop: number | undefined;
 
-        // Condition 1: Move SL to Breakeven
-        // If profit is 2x the fee, we can safely move SL to entry without risking a loss on fees.
+        // Condition 1: Move SL to a fee-adjusted "Breakeven+" point.
+        // This ensures if the stop is hit, the trade PNL is ~0 after fees.
         const isStopInLoss = (isLong && position.stopLossPrice < entryPrice) || (!isLong && position.stopLossPrice > entryPrice);
+        // Trigger when profit gives a buffer (e.g., 2x the fee cost)
         if (profitInPrice >= (feeInPrice * 2) && isStopInLoss) {
-            potentialNewStop = entryPrice;
-            reasons.push('Breakeven Trigger');
+            potentialNewStop = feeAdjustedBreakeven;
+            reasons.push('Breakeven+ Trigger');
         }
 
-        // Condition 2: Trail the profit
-        // For every 3x fee chunks of profit, lock in 2x fee chunks. This gives the trade room to breathe.
-        if (profitInPrice > 0) {
-            const profitChunks = Math.floor(profitInPrice / (feeInPrice * 3));
-            if (profitChunks > 0) {
-                const securedProfitInPrice = profitChunks * feeInPrice * 2;
-                const stopAtProfitLevel = entryPrice + (securedProfitInPrice * (isLong ? 1 : -1));
+        // Condition 2: Trail the profit by locking in a percentage of unrealized gains.
+        const TRAIL_START_THRESHOLD_MULTIPLIER = 3; // Start trailing when profit is 3x the fee cost.
+        const PROFIT_LOCK_IN_PERCENT = 0.50; // Lock in 50% of unrealized profit.
+        
+        // This logic engages only after profit significantly clears the fee threshold.
+        if (profitInPrice > feeInPrice * TRAIL_START_THRESHOLD_MULTIPLIER) {
+            const profitToLock = profitInPrice * PROFIT_LOCK_IN_PERCENT;
+            const stopAtProfitLevel = entryPrice + (profitToLock * (isLong ? 1 : -1));
+            
+            // The current candidate for the new stop is either the one from the breakeven logic (if triggered on this tick)
+            // or the existing stop loss from the position state.
+            const currentCandidateStop = potentialNewStop ?? position.stopLossPrice;
 
-                // Only update if the new proposed stop is better than the breakeven one.
-                if (!potentialNewStop || (isLong && stopAtProfitLevel > potentialNewStop) || (!isLong && stopAtProfitLevel < potentialNewStop)) {
-                    potentialNewStop = stopAtProfitLevel;
-                    reasons.push(`Profit Lock at ${profitChunks * 2}x Fee`);
+            // Only update if the new proposed stop is an improvement over the current candidate.
+            if ((isLong && stopAtProfitLevel > currentCandidateStop) || (!isLong && stopAtProfitLevel < currentCandidateStop)) {
+                potentialNewStop = stopAtProfitLevel;
+                // If the reason array doesn't already have the breakeven trigger, add the profit trail reason.
+                if (!reasons.includes('Breakeven+ Trigger')) {
+                    reasons.push(`Profit Trail Lock`);
                 }
             }
         }
-
-        // Final check: only update if the new stop is an improvement over the old one.
+        
+        // Final check: Only propose an update if the new stop is a strict improvement over the last known stop.
         if (potentialNewStop !== undefined) {
             if ((isLong && potentialNewStop > position.stopLossPrice) || (!isLong && potentialNewStop < position.stopLossPrice)) {
                 newStopLoss = potentialNewStop;
@@ -187,7 +195,6 @@ export function getAgentExitSignal(
 
     switch (agent.id) {
         case 9: // Quantum Scalper: PSAR-based trailing stop
-        case 10: // Hybrid Quantum Scalper also uses PSAR
             const psarInput = { high: klines.map(k => k.high), low: klines.map(k => k.low), step: config.agentParams?.qsc_psarStep ?? 0.02, max: config.agentParams?.qsc_psarMax ?? 0.2 };
             if (psarInput.high.length >= 2) {
                 const psar = PSAR.calculate(psarInput);
@@ -322,7 +329,7 @@ const getMarketStructureMavenSignal = (klines: Kline[], params: Required<AgentPa
     return { signal: 'HOLD', reasons };
 };
 
-// --- Agent 9 & 10: Quantum Scalper (Core Logic with Chop Filter) ---
+// --- Agent 9: Quantum Scalper (Core Logic with Chop Filter) ---
 const getQuantumScalperSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
     const minKlines = 50;
     if (klines.length < minKlines) return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data'] };
@@ -422,12 +429,64 @@ const getQuantumScalperSignal = (klines: Kline[], params: Required<AgentParams>)
     return { signal: 'HOLD', reasons };
 };
 
+// --- Agent 11: Historic Expert ---
+const getHistoricExpertSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
+    const minKlines = Math.max(params.he_trendSmaPeriod, params.he_slowEmaPeriod, params.he_rsiPeriod);
+    if (klines.length < minKlines + 1) { // +1 for previous EMA values
+        return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data'] };
+    }
+
+    const closes = klines.map(k => k.close);
+    const currentPrice = getLast(closes)!;
+    const reasons: string[] = [];
+
+    // 1. Trend Determination (30-candle lookback)
+    const trendSma = getLast(SMA.calculate({ period: params.he_trendSmaPeriod, values: closes }))!;
+    const isBullishTrend = currentPrice > trendSma;
+    const isBearishTrend = currentPrice < trendSma;
+    reasons.push(isBullishTrend ? `✅ Trend: Bullish (Price > ${params.he_trendSmaPeriod}-SMA)` : `✅ Trend: Bearish (Price < ${params.he_trendSmaPeriod}-SMA)`);
+
+    // 2. Entry Trigger (EMA Crossover)
+    const fastEmas = EMA.calculate({ period: params.he_fastEmaPeriod, values: closes });
+    const slowEmas = EMA.calculate({ period: params.he_slowEmaPeriod, values: closes });
+    const fastEma = getLast(fastEmas)!;
+    const slowEma = getLast(slowEmas)!;
+    const prevFastEma = getPenultimate(fastEmas)!;
+    const prevSlowEma = getPenultimate(slowEmas)!;
+
+    const bullishCrossover = fastEma > slowEma && prevFastEma <= prevSlowEma;
+    const bearishCrossover = fastEma < slowEma && prevFastEma >= prevSlowEma;
+    reasons.push(bullishCrossover ? '✅ Trigger: Bullish EMA Crossover' : bearishCrossover ? '✅ Trigger: Bearish EMA Crossover' : '❌ Trigger: No EMA Crossover');
+
+    // 3. Momentum Confirmation (RSI)
+    const rsi = getLast(RSI.calculate({ period: params.he_rsiPeriod, values: closes }))!;
+    const rsiIsBullish = rsi > params.he_rsiMidline;
+    const rsiIsBearish = rsi < params.he_rsiMidline;
+    reasons.push(`ℹ️ Momentum: RSI is ${rsi.toFixed(1)}`);
+
+    // Combine Logic
+    if (isBullishTrend && bullishCrossover && rsiIsBullish) {
+        reasons.push(`✅ Momentum: RSI > ${params.he_rsiMidline}`);
+        return { signal: 'BUY', reasons };
+    }
+
+    if (isBearishTrend && bearishCrossover && rsiIsBearish) {
+        reasons.push(`✅ Momentum: RSI < ${params.he_rsiMidline}`);
+        return { signal: 'SELL', reasons };
+    }
+    
+    // Add unmet conditions for clarity if no signal
+    if(isBullishTrend && bullishCrossover && !rsiIsBullish) reasons.push(`❌ Momentum: RSI not above ${params.he_rsiMidline}`);
+    if(isBearishTrend && bearishCrossover && !rsiIsBearish) reasons.push(`❌ Momentum: RSI not below ${params.he_rsiMidline}`);
+
+    return { signal: 'HOLD', reasons };
+};
 
 // ----------------------------------------------------------------------------------
 // --- #4: MAIN ORCHESTRATOR & HELPERS ---
 // ----------------------------------------------------------------------------------
 
-function validateTradeProfitability(
+export function validateTradeProfitability(
     entryPrice: number,
     stopLossPrice: number,
     takeProfitPrice: number,
@@ -488,34 +547,10 @@ export async function getTradingSignal(
     switch (agent.id) {
         case 7: agentSignal = getMarketStructureMavenSignal(klines, finalParams); break;
         case 9: agentSignal = getQuantumScalperSignal(klines, finalParams); break;
-        case 10: agentSignal = getQuantumScalperSignal(klines, finalParams); break; // Hybrid uses same entry logic
+        case 11: agentSignal = getHistoricExpertSignal(klines, finalParams); break;
         default:
             return { signal: 'HOLD', reasons: ['Agent not found'] };
     }
-
-    // --- Profitability Filter for Hybrid Agent ---
-    if (agent.id === 10 && agentSignal.signal !== 'HOLD') {
-        const currentPrice = getLast(klines.map(k => k.close))!;
-        const direction = agentSignal.signal === 'BUY' ? 'LONG' : 'SHORT';
-
-        const initialTargets = getInitialAgentTargets(klines, currentPrice, direction, config.timeFrame, finalParams, agent.id);
-
-        const validation = validateTradeProfitability(
-            currentPrice,
-            initialTargets.stopLossPrice,
-            initialTargets.takeProfitPrice,
-            direction,
-            config
-        );
-
-        if (!validation.isValid) {
-            agentSignal.signal = 'HOLD';
-            agentSignal.reasons.unshift(validation.reason); // Prepend the reason
-        } else {
-            agentSignal.reasons.push(validation.reason);
-        }
-    }
-
 
     // --- Universal HTF Confirmation Filter ---
     if (config.isHtfConfirmationEnabled && htfKlines && htfKlines.length > 50) {

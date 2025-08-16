@@ -378,6 +378,13 @@ export interface AgentParams {
     qsc_atrMultiplier?: number;
     qsc_trendScoreThreshold?: number;
     qsc_rangeScoreThreshold?: number;
+
+    // Agent 11: Historic Expert
+    he_trendSmaPeriod?: number;
+    he_fastEmaPeriod?: number;
+    he_slowEmaPeriod?: number;
+    he_rsiPeriod?: number;
+    he_rsiMidline?: number;
 }
 
 

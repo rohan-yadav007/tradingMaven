@@ -40,10 +40,10 @@ export const AGENTS: Agent[] = [
         indicators: ['Market Regime Filter', 'Score-based Entry', 'PSAR Trailing Stop'],
     },
     {
-        id: 10,
-        name: 'Hybrid Quantum Scalper',
-        description: 'Adaptive scalper with a profitability filter. It vets trades for a minimum risk/reward ratio and ensures the profit target is outside the fee zone.',
-        indicators: ['Market Regime Filter', 'Score-based Entry', 'Profitability Filter'],
+        id: 11,
+        name: 'Historic Expert',
+        description: 'Determines the main trend using a 30-candle lookback, then enters on a fast EMA crossover with RSI confirmation.',
+        indicators: ['SMA (Trend)', 'EMA Crossover (Trigger)', 'RSI (Momentum)'],
     },
 ];
 
@@ -128,7 +128,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     msm_minPivotScore: 2,
     isCandleConfirmationEnabled: false,
 
-    // Agent 9 & 10: Quantum Scalper & Hybrid
+    // Agent 9: Quantum Scalper
     qsc_fastEmaPeriod: 9,
     qsc_slowEmaPeriod: 21,
     qsc_adxPeriod: 10,
@@ -148,6 +148,13 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     qsc_atrMultiplier: 1.5,
     qsc_trendScoreThreshold: 4,
     qsc_rangeScoreThreshold: 1,
+
+    // Agent 11: Historic Expert
+    he_trendSmaPeriod: 30,
+    he_fastEmaPeriod: 9,
+    he_slowEmaPeriod: 21,
+    he_rsiPeriod: 14,
+    he_rsiMidline: 50,
 };
 
 

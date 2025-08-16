@@ -2,7 +2,7 @@
 
 import { Kline, BotConfig, BacktestResult, SimulatedTrade, AgentParams, Position, RiskMode, TradingMode, OptimizationResultItem, TradeManagementSignal } from '../types';
 import * as binanceService from './binanceService';
-import { getTradingSignal, getUniversalProfitTrailSignal, getAgentExitSignal, getInitialAgentTargets } from './localAgentService';
+import { getTradingSignal, getUniversalProfitTrailSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability } from './localAgentService';
 import * as constants from '../constants';
 
 interface SimulatedPosition extends Omit<Position, 'id' | 'entryTime' | 'botId' | 'orderId' | 'exitReason' | 'pnl' | 'exitTime' | 'activeStopLossReason'> {
@@ -82,15 +82,19 @@ export async function runOptimization(
             };
             break;
         case 9: // Quantum Scalper
-        case 10: // Hybrid Quantum Scalper
              paramRanges = {
                 qsc_trendScoreThreshold: [3, 4],
                 qsc_adxThreshold: [22, 25, 28],
                 qsc_psarStep: [0.02, 0.025],
+                qsc_adxChopBuffer: [2, 3, 4]
             };
-            if (agent.id === 10) {
-                 paramRanges['qsc_adxChopBuffer'] = [2, 3, 4];
-            }
+            break;
+        case 11: // Historic Expert
+             paramRanges = {
+                he_fastEmaPeriod: [7, 9, 12],
+                he_slowEmaPeriod: [20, 21, 25],
+                he_rsiMidline: [48, 50, 52],
+            };
             break;
         default:
             throw new Error(`Agent "${agent.name}" does not support optimization.`);
@@ -301,6 +305,13 @@ export async function runBacktest(
                         
                         stopLossPrice = tighterSl;
                     }
+
+                    // --- UNIVERSAL PROFITABILITY GUARDRAIL (BACKTEST) ---
+                    const validation = validateTradeProfitability(entryPrice, stopLossPrice, takeProfitPrice, isLong ? 'LONG' : 'SHORT', config);
+                    if (!validation.isValid) {
+                        continue; // Veto trade and move to next candle
+                    }
+                    // --- END GUARDRAIL ---
 
                     const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
                     const tradeSize = positionValue / entryPrice;

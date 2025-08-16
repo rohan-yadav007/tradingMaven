@@ -342,6 +342,9 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
     const executionModeTag = bot.config.executionMode === 'live'
         ? { text: 'LIVE', bg: 'bg-amber-100 dark:bg-amber-900', text_color: 'text-amber-700 dark:text-amber-300' }
         : { text: 'PAPER', bg: 'bg-sky-100 dark:bg-sky-900', text_color: 'text-sky-700 dark:text-sky-300' };
+    
+    const roundTripFee = position ? position.entryPrice * position.size * TAKER_FEE_RATE * 2 : 0;
+
 
     return (
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm overflow-hidden transition-all duration-300">
@@ -404,10 +407,16 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
                                     Entry: {formatPrice(position.entryPrice, position.pricePrecision)} | Size: {position.size.toFixed(4)}
                                 </p>
                             </div>
-                            <button onClick={() => actions.onClosePosition(position)} className="px-3 py-1.5 text-sm bg-rose-600 text-white font-semibold rounded-md shadow-sm hover:bg-rose-700 flex items-center gap-1.5">
-                                <CloseIcon className="w-4 h-4" />
-                                Close
-                            </button>
+                            <div className="flex items-center gap-4">
+                                {position.mode === TradingMode.USDSM_Futures && position.liquidationPrice && (
+                                    <InfoItem label="Liq. Price" value={formatPrice(position.liquidationPrice, position.pricePrecision)} valueClassName="text-amber-500" />
+                                )}
+                                <InfoItem label="Est. Fee" value={`$${roundTripFee.toFixed(2)}`} />
+                                <button onClick={() => actions.onClosePosition(position)} className="px-3 py-1.5 text-sm bg-rose-600 text-white font-semibold rounded-md shadow-sm hover:bg-rose-700 flex items-center gap-1.5">
+                                    <CloseIcon className="w-4 h-4" />
+                                    Close
+                                </button>
+                            </div>
                         </div>
                         <PositionPnlProgress position={position} livePrice={bot.livePrice || position.entryPrice} />
                     </div>
@@ -439,16 +448,56 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
 
 
 export const RunningBots: React.FC<RunningBotsProps> = ({ bots, ...actions }) => {
+    const [activeTab, setActiveTab] = useState<'open' | 'monitoring'>('open');
+
+    const { openPositionBots, monitoringBots } = useMemo(() => {
+        const openPositionBots: RunningBot[] = [];
+        const monitoringBots: RunningBot[] = [];
+        bots.forEach(bot => {
+            if (bot.status === BotStatus.PositionOpen) {
+                openPositionBots.push(bot);
+            } else {
+                monitoringBots.push(bot);
+            }
+        });
+        return { openPositionBots, monitoringBots };
+    }, [bots]);
+
+    const botsToDisplay = activeTab === 'open' ? openPositionBots : monitoringBots;
+    const activeBotsCount = openPositionBots.length + monitoringBots.length;
+
     return (
         <div className="flex flex-col gap-4">
-            <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-                <CpuIcon className="w-6 h-6 text-sky-500" />
-                <span>Running Bots</span>
-                <span className="text-sm font-normal bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 px-2 py-1 rounded-full">{bots.length}</span>
-            </h2>
+            <div className="flex justify-between items-center flex-wrap gap-2">
+                <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                    <CpuIcon className="w-6 h-6 text-sky-500" />
+                    <span>Running Bots</span>
+                    <span className="text-sm font-normal bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 px-2 py-1 rounded-full">{activeBotsCount}</span>
+                </h2>
+                <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-lg">
+                    <button
+                        onClick={() => setActiveTab('open')}
+                        className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors flex items-center gap-2 ${activeTab === 'open' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
+                    >
+                        Position Open <span className="text-xs bg-sky-500 text-white rounded-full min-w-[20px] px-1.5 py-0.5">{openPositionBots.length}</span>
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('monitoring')}
+                        className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors flex items-center gap-2 ${activeTab === 'monitoring' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
+                    >
+                        Monitoring <span className="text-xs bg-slate-500 text-white rounded-full min-w-[20px] px-1.5 py-0.5">{monitoringBots.length}</span>
+                    </button>
+                </div>
+            </div>
+
             {bots.length > 0 ? (
                 <div className="flex flex-col gap-4">
-                    {bots.map(bot => <BotCard key={bot.id} bot={bot} actions={actions} />)}
+                    {botsToDisplay.map(bot => <BotCard key={bot.id} bot={bot} actions={actions} />)}
+                    {botsToDisplay.length === 0 && (
+                        <div className="text-center p-8 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-lg text-slate-500 dark:text-slate-400">
+                           {activeTab === 'open' ? 'No bots currently have an open position.' : 'No bots are currently monitoring for new trades.'}
+                        </div>
+                    )}
                 </div>
             ) : (
                 <div className="text-center p-8 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-lg text-slate-500 dark:text-slate-400">

@@ -1,5 +1,6 @@
 
 
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -55,6 +56,7 @@ const AppContent: React.FC = () => {
     const [livePrice, setLivePrice] = useState(0);
     const [liveTicker, setLiveTicker] = useState<LiveTicker | undefined>();
     const [symbolInfo, setSymbolInfo] = useState<SymbolInfo | undefined>();
+    const [fundingInfo, setFundingInfo] = useState<{ rate: string; time: number } | null>(null);
     const pricePrecision = binanceService.getPricePrecision(symbolInfo);
     
     // Wallet & Positions Data
@@ -67,6 +69,8 @@ const AppContent: React.FC = () => {
     
     // Refs for stable handlers
     const handlersRef = useRef<BotHandlers | null>(null);
+    const openPositionsCountRef = useRef(openPositions.length);
+    const audioContextRef = useRef<AudioContext | null>(null);
 
     // ---- Handlers ----
     const handleClosePosition = useCallback(async (posToClose: Position, exitReason: string = "Manual Close", exitPriceOverride?: number) => {
@@ -98,6 +102,21 @@ const AppContent: React.FC = () => {
 
             if (posToClose.botId) {
                 botManagerService.notifyPositionClosed(posToClose.botId, netPnl);
+            }
+            
+            if (posToClose.executionMode === 'live') {
+                const isProfit = newTrade.pnl >= 0;
+                const pnlEmoji = isProfit ? '✅' : '❌';
+                const message = `
+*🔒 LIVE TRADE CLOSED*
+${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
+*Agent:* ${newTrade.agentName}
+*Entry Price:* ${newTrade.entryPrice.toFixed(newTrade.pricePrecision)}
+*Exit Price:* ${newTrade.exitPrice.toFixed(newTrade.pricePrecision)}
+*Net PNL:* $${newTrade.pnl.toFixed(2)} (${isProfit ? 'Profit' : 'Loss'})
+*Exit Reason:* ${newTrade.exitReason}
+                `;
+                telegramBotService.sendMessage(message);
             }
 
             setClosingPositionIds(prev => { const newSet = new Set(prev); newSet.delete(posToClose.id); return newSet; });
@@ -134,8 +153,16 @@ const AppContent: React.FC = () => {
                     default:
                         throw new Error(`Unsupported trading mode for closing position: ${posToClose.mode}`);
                 }
+                
+                 // --- CRITICAL VERIFICATION STEP ---
+                 const executedQuantity = parseFloat(orderResponse.executedQty);
+                 // Use a small tolerance for floating point comparisons
+                 if (Math.abs(executedQuantity - quantity) > 1e-9) {
+                     throw new Error(`Position closure failed: Order only partially filled. Requested ${quantity}, but executed ${executedQuantity}. Please resolve manually on the exchange.`);
+                 }
+
                  botManagerService.addBotLog(posToClose.botId!, `Live position closed successfully via API.`, LogType.Success);
-                 const finalExitPrice = parseFloat(orderResponse.cummulativeQuoteQty) / parseFloat(orderResponse.executedQty);
+                 const finalExitPrice = parseFloat(orderResponse.cummulativeQuoteQty) / executedQuantity;
                  
                  const entryValue = posToClose.entryPrice * posToClose.size;
                  const exitValue = finalExitPrice * posToClose.size;
@@ -146,9 +173,22 @@ const AppContent: React.FC = () => {
             } catch(e) {
                 const errorMessage = binanceService.interpretBinanceError(e);
                 console.error("CRITICAL: Failed to close live position on Binance:", e);
-                const criticalMessage = `CRITICAL: Failed to close live position. Please close manually on Binance to prevent loss. Reason: ${errorMessage}`;
+                const criticalMessage = `CRITICAL: Failed to close live position for ${posToClose.pair}. Please close manually on Binance to prevent loss. Reason: ${errorMessage}`;
                 botManagerService.addBotLog(posToClose.botId!, criticalMessage, LogType.Error);
                 botManagerService.updateBotState(posToClose.botId!, { status: BotStatus.Error, analysis: {signal: 'HOLD', reasons: [criticalMessage]}});
+                
+                telegramBotService.sendMessage(
+`🚨 *CRITICAL ALERT: FAILED TO CLOSE LIVE POSITION* 🚨
+
+*Action Required!* Please manually close the following position on Binance immediately:
+
+*Pair:* ${posToClose.pair}
+*Direction:* ${posToClose.direction}
+*Entry Price:* ${posToClose.entryPrice.toFixed(posToClose.pricePrecision)}
+*Size:* ${posToClose.size}
+
+*Reason for Failure:* ${errorMessage}`
+                );
 
                 setClosingPositionIds(prev => {
                     const newSet = new Set(prev);
@@ -320,6 +360,21 @@ const AppContent: React.FC = () => {
             liquidationPrice: finalLiquidationPrice,
         };
 
+        if (config.executionMode === 'live') {
+            const directionEmoji = newPosition.direction === 'LONG' ? '🟢' : '🔴';
+            const message = `
+*🚀 LIVE TRADE OPENED*
+${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
+*Agent:* ${newPosition.agentName}
+*Entry Price:* ${newPosition.entryPrice.toFixed(newPosition.pricePrecision)}
+*Size:* ${newPosition.size.toFixed(4)}
+*Leverage:* ${newPosition.leverage}x
+*Stop Loss:* ${newPosition.stopLossPrice.toFixed(newPosition.pricePrecision)}
+*Take Profit:* ${newPosition.takeProfitPrice.toFixed(newPosition.pricePrecision)}
+            `;
+            telegramBotService.sendMessage(message);
+        }
+
         botManagerService.updateBotState(botId, {
             status: BotStatus.PositionOpen,
             openPositionId: newPosition.id,
@@ -459,6 +514,28 @@ const AppContent: React.FC = () => {
         };
     }, [selectedPair, chartTimeFrame, tradingMode]);
 
+    // Fetch funding rate for futures
+    useEffect(() => {
+        if (tradingMode !== TradingMode.USDSM_Futures) {
+            setFundingInfo(null);
+            return;
+        }
+        let isCancelled = false;
+        const fetchFunding = async () => {
+            const formattedPair = selectedPair.replace('/', '');
+            const info = await binanceService.fetchFundingRate(formattedPair);
+            if (!isCancelled) {
+                setFundingInfo(info ? { rate: info.fundingRate, time: info.fundingTime } : null);
+            }
+        };
+        fetchFunding();
+        const interval = setInterval(fetchFunding, 60000); // Refresh every minute
+        return () => {
+            isCancelled = true;
+            clearInterval(interval);
+        };
+    }, [selectedPair, tradingMode]);
+
     // Fetch wallet balances
     const fetchWalletBalances = useCallback(async () => {
         if (!isApiConnected) {
@@ -498,6 +575,37 @@ const AppContent: React.FC = () => {
         fetchWalletBalances();
     }, [fetchWalletBalances]);
 
+    // Initialize Audio Context and handle user interaction to enable it
+    useEffect(() => {
+        if (!audioContextRef.current) {
+            try {
+                // Create the AudioContext once and store it in the ref.
+                audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+            } catch (e) {
+                console.error("Web Audio API is not supported in this browser.", e);
+                return; // Exit if not supported
+            }
+        }
+
+        const resumeAudio = () => {
+            if (audioContextRef.current?.state === 'suspended') {
+                audioContextRef.current.resume();
+            }
+            // Listener cleans itself up after first interaction.
+            document.body.removeEventListener('click', resumeAudio);
+            document.body.removeEventListener('keydown', resumeAudio);
+        };
+
+        document.body.addEventListener('click', resumeAudio);
+        document.body.addEventListener('keydown', resumeAudio);
+
+        return () => {
+            document.body.removeEventListener('click', resumeAudio);
+            document.body.removeEventListener('keydown', resumeAudio);
+            audioContextRef.current?.close().catch(e => console.error("Error closing AudioContext", e));
+        };
+    }, []); // Empty dependency array ensures this runs only once on mount.
+
     // Synchronize open positions from running bots
     useEffect(() => {
         const positionsFromBots = runningBots
@@ -505,6 +613,32 @@ const AppContent: React.FC = () => {
             .map(bot => bot.openPosition!);
         setOpenPositions(positionsFromBots);
     }, [runningBots]);
+
+    // Audio Alert Effect for New Positions
+    useEffect(() => {
+        const playNotificationSound = () => {
+            const audioContext = audioContextRef.current;
+            if (!audioContext || audioContext.state !== 'running') {
+                console.warn('AudioContext not ready, sound blocked. Interact with the page to enable audio.');
+                return;
+            }
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(440, audioContext.currentTime); // A4 note
+            gainNode.gain.setValueAtTime(0.5, audioContext.currentTime);
+            oscillator.start();
+            gainNode.gain.exponentialRampToValueAtTime(0.00001, audioContext.currentTime + 0.5);
+            oscillator.stop(audioContext.currentTime + 0.5);
+        };
+
+        if (openPositions.length > openPositionsCountRef.current) {
+            playNotificationSound();
+        }
+        openPositionsCountRef.current = openPositions.length;
+    }, [openPositions]);
 
     const getAvailableBalanceForInvestment = useCallback(() => {
         if (executionMode !== 'live') return Infinity;
@@ -549,6 +683,7 @@ const AppContent: React.FC = () => {
     
     const isBotCombinationActive = useCallback(() => {
         if (executionMode === 'live') {
+            // For live trading, prevent running more than one bot per trading pair.
             return runningBots.some(bot => 
                 bot.config.executionMode === 'live' &&
                 bot.config.pair === selectedPair &&
@@ -557,15 +692,9 @@ const AppContent: React.FC = () => {
             );
         }
         
-        return runningBots.some(bot => 
-            bot.config.executionMode === 'paper' &&
-            bot.config.pair === selectedPair &&
-            bot.config.timeFrame === chartTimeFrame &&
-            bot.config.agent.id === selectedAgent.id &&
-            bot.status !== BotStatus.Stopped &&
-            bot.status !== BotStatus.Error
-        );
-    }, [runningBots, selectedPair, chartTimeFrame, selectedAgent, executionMode]);
+        // For paper trading, always allow creating a new bot, regardless of existing combinations.
+        return false;
+    }, [runningBots, selectedPair, executionMode]);
     
     const handleStartBot = useCallback(() => {
         if (!symbolInfo) {
@@ -656,6 +785,7 @@ const AppContent: React.FC = () => {
                             onLoadMoreData={handleLoadMoreChartData}
                             isFetchingMoreData={isFetchingMoreChartData}
                             theme={theme}
+                            fundingInfo={fundingInfo}
                         />
                         <RunningBots bots={runningBots} {...botActions} />
                         <TradingLog tradeHistory={tradeHistory} />

@@ -1,7 +1,8 @@
 import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, RiskMode, TradingMode, BinanceOrderResponse } from '../types';
 import * as binanceService from './binanceService';
-import { getTradingSignal, getUniversalProfitTrailSignal, getAgentExitSignal, getInitialAgentTargets } from './localAgentService';
+import { getTradingSignal, getUniversalProfitTrailSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability } from './localAgentService';
 import { DEFAULT_AGENT_PARAMS, MAX_STOP_LOSS_PERCENT_OF_INVESTMENT, TIME_FRAMES } from '../constants';
+import { telegramBotService } from './telegramBotService';
 
 const MAX_LOG_ENTRIES = 100;
 const RECONNECT_DELAY = 5000; // 5 seconds
@@ -271,7 +272,17 @@ class BotInstance {
             finalSl = tighterSl;
         }
 
+        // --- UNIVERSAL PROFITABILITY GUARDRAIL ---
+        const validation = validateTradeProfitability(currentPrice, finalSl, finalTp, signal.signal === 'BUY' ? 'LONG' : 'SHORT', this.bot.config);
+        if (!validation.isValid) {
+            this.notifyTradeExecutionFailed(validation.reason);
+            return;
+        }
+        // --- END GUARDRAIL ---
+
         this.addLog(`Executing ${signal.signal} at ~${currentPrice.toFixed(this.bot.config.pricePrecision)}. SL: ${finalSl.toFixed(this.bot.config.pricePrecision)} (${slReason}), TP: ${finalTp.toFixed(this.bot.config.pricePrecision)}`, LogType.Action);
+        this.addLog(validation.reason, LogType.Success);
+
 
         const execSignal: TradeSignal = {
             ...signal,
@@ -390,6 +401,17 @@ class BotInstance {
     public notifyTradeExecutionFailed(reason: string) {
         this.addLog(`Trade execution failed: ${reason}`, LogType.Error);
         this.updateState({ status: BotStatus.Monitoring });
+        if (this.bot.config.executionMode === 'live') {
+            telegramBotService.sendMessage(
+`🚨 *LIVE TRADE FAILED* 🚨
+
+Bot for *${this.bot.config.pair}* failed to execute a trade.
+
+*Reason:* ${reason}
+
+The bot is now back in monitoring mode. No action is required, but please review the bot's log.`
+            );
+        }
     }
 
     public stop() {

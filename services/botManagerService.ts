@@ -352,6 +352,8 @@ class BotInstance {
                 updatedPositionData.stopLossPrice = slSignal.newStopLoss;
                 updatedPositionData.activeStopLossReason = 'Agent Trail';
                 hasUpdate = true;
+            } else {
+                this.addLog(`Agent trail check: No improved SL found. Conditions not met for update.`, LogType.Info);
             }
         }
 

@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig } from '../types';
 import * as constants from '../constants';
@@ -138,18 +136,19 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         executionMode, availableBalance, tradingMode, allPairs, selectedPair,
         isPairsLoading, leverage, chartTimeFrame: timeFrame, selectedAgent, investmentAmount,
         takeProfitMode, takeProfitValue,
-        isTakeProfitLocked, isCooldownEnabled, agentParams,
+        isTakeProfitLocked, agentParams,
         marginType, futuresSettingsError, isMultiAssetMode, multiAssetModeError,
         maxLeverage, isLeverageLoading, isHtfConfirmationEnabled, htfTimeFrame,
-        isAtrTrailingStopEnabled
+        isUniversalProfitTrailEnabled, isTrailingTakeProfitEnabled
     } = config;
 
     const {
         setExecutionMode, setTradingMode, setSelectedPair, setLeverage, setTimeFrame,
         setSelectedAgent, setInvestmentAmount,
         setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
-        setIsCooldownEnabled, setMarginType, onSetMultiAssetMode, setAgentParams,
-        setIsHtfConfirmationEnabled, setHtfTimeFrame, setIsAtrTrailingStopEnabled
+        setMarginType, onSetMultiAssetMode, setAgentParams,
+        setIsHtfConfirmationEnabled, setHtfTimeFrame, setIsUniversalProfitTrailEnabled,
+        setIsTrailingTakeProfitEnabled
     } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -188,9 +187,9 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         takeProfitMode: config.takeProfitMode,
                         takeProfitValue: config.takeProfitValue,
                         isTakeProfitLocked: config.isTakeProfitLocked,
-                        isCooldownEnabled: config.isCooldownEnabled,
                         isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
-                        isAtrTrailingStopEnabled: config.isAtrTrailingStopEnabled,
+                        isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
+                        isTrailingTakeProfitEnabled: config.isTrailingTakeProfitEnabled,
                         htfTimeFrame: config.htfTimeFrame,
                         agentParams: agentParams,
                         // Dummy precision data for preview analysis, not used for trade execution
@@ -319,7 +318,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 />
             </div>
              <p className="text-xs text-slate-500 dark:text-slate-400 -mt-2">
-                Stop Loss is now fully automated by the agent's logic and the universal profit-locking system.
+                Stop Loss is fully automated by the agent's logic and the universal profit-locking system.
             </p>
             
             {tradingMode === TradingMode.USDSM_Futures && (
@@ -384,6 +383,17 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     {constants.AGENTS.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
                 </select>
                 <p className="text-xs text-slate-500 dark:text-slate-400">{selectedAgent.description}</p>
+                 {selectedAgent.id === 7 && (
+                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-200 dark:border-slate-700">
+                        <label htmlFor="candle-confirm-toggle" className={formLabelClass}>
+                            Candlestick Confirmation
+                        </label>
+                        <ToggleSwitch
+                            checked={agentParams.isCandleConfirmationEnabled || false}
+                            onChange={(isChecked) => setAgentParams({ ...agentParams, isCandleConfirmationEnabled: isChecked })}
+                        />
+                    </div>
+                )}
             </div>
             
             <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
@@ -436,30 +446,30 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             </div>
              <div className={formGroupClass}>
                 <div className="flex items-center justify-between">
-                    <label htmlFor="cooldown-toggle" className={formLabelClass}>
-                        Post-Profit Cooldown
+                    <label htmlFor="profit-trail-toggle" className={formLabelClass}>
+                        Universal Profit Trail
                     </label>
                     <ToggleSwitch
-                        checked={isCooldownEnabled}
-                        onChange={setIsCooldownEnabled}
+                        checked={isUniversalProfitTrailEnabled}
+                        onChange={setIsUniversalProfitTrailEnabled}
                     />
                 </div>
                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    If enabled, the bot enters a persistent cautious state after a profit. It analyzes the next trade opportunity for trend exhaustion to protect gains.
+                    A fee-based profit-locking system. Disabling allows agent-specific exit logic.
                 </p>
             </div>
              <div className={formGroupClass}>
                 <div className="flex items-center justify-between">
-                    <label htmlFor="atr-trail-toggle" className={formLabelClass}>
-                        Universal ATR Trailing Stop
+                    <label htmlFor="tp-trail-toggle" className={formLabelClass}>
+                        Trailing Take Profit
                     </label>
                     <ToggleSwitch
-                        checked={isAtrTrailingStopEnabled}
-                        onChange={setIsAtrTrailingStopEnabled}
+                        checked={isTrailingTakeProfitEnabled}
+                        onChange={setIsTrailingTakeProfitEnabled}
                     />
                 </div>
                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    A fallback ATR-based trailing stop for all agents. Can be disabled for full agent-specific exit control.
+                    Dynamically adjusts the TP target upwards on profitable trades to capture more of a trend.
                 </p>
             </div>
 

@@ -1,4 +1,3 @@
-
 import { BotConfig, TradingMode, RiskMode } from '../types';
 import { botManagerService } from './botManagerService';
 import { historyService } from './historyService';
@@ -106,9 +105,9 @@ ID: \`${bot.id}\``;
                     takeProfitMode: RiskMode.Percent,
                     takeProfitValue: 5,
                     isTakeProfitLocked: false,
-                    isCooldownEnabled: true,
                     isHtfConfirmationEnabled: false,
-                    isAtrTrailingStopEnabled: true,
+                    isUniversalProfitTrailEnabled: true,
+                    isTrailingTakeProfitEnabled: false,
                     pricePrecision: binanceService.getPricePrecision(symbolInfo),
                     quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                     stepSize: binanceService.getStepSize(symbolInfo),

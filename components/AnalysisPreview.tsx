@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect } from 'react';
 import { Agent, TradeSignal, AgentParams } from '../types';
 import { ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, InfoIcon } from './icons';
@@ -7,7 +6,7 @@ interface AnalysisPreviewProps {
     analysis: TradeSignal | null;
     isLoading: boolean;
     agent: Agent;
-    agentParams: AgentParams;
+    agentParams?: AgentParams;
 }
 
 const SignalTag: React.FC<{ signal: 'BUY' | 'SELL' | 'HOLD' }> = ({ signal }) => {
@@ -67,7 +66,7 @@ const ReasonItem: React.FC<{ reason: string }> = ({ reason }) => {
     return <li className="font-semibold text-slate-700 dark:text-slate-200">{reason}</li>;
 };
 
-export const AnalysisPreview: React.FC<AnalysisPreviewProps> = ({ analysis, isLoading, agent, agentParams }) => {
+export const AnalysisPreview: React.FC<AnalysisPreviewProps> = ({ analysis, isLoading, agent, agentParams = {} }) => {
     const hasCustomParams = Object.keys(agentParams).length > 0;
     const prevAnalysisRef = useRef(analysis);
 

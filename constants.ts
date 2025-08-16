@@ -14,48 +14,36 @@ export const TIME_FRAMES: string[] = ['1m', '3m', '5m', '15m', '1h', '4h', '1d']
  */
 export const TAKER_FEE_RATE = 0.001; // 0.1% fee per trade side.
 
+/**
+ * A non-negotiable, system-wide minimum risk-to-reward ratio for a trade to be considered valid.
+ */
+export const MIN_RISK_REWARD_RATIO = 1.2;
+
+/**
+ * A multiplier to ensure the profit target is a safe distance away from the breakeven point caused by fees.
+ * E.g., 1.5 means the profit must be at least 1.5x the cost of the fee.
+ */
+export const MIN_PROFIT_BUFFER_MULTIPLIER = 1.5;
+
+
 export const AGENTS: Agent[] = [
-    {
-        id: 1,
-        name: 'Momentum Master',
-        description: 'Waits for an established trend, then enters on a volatility-confirmed pullback to avoid chasing peaks.',
-        indicators: ['RSI', 'MACD', 'EMA (20, 50)', 'ADX', 'ATR']
-    },
-    {
-        id: 2,
-        name: 'Trend Rider',
-        description: 'A pure momentum agent. Enters on high-volume breakouts, aiming to ride explosive trends.',
-        indicators: ['EMA (20, 50)', 'ADX', 'RSI', 'Volume', 'Price Action']
-    },
-    {
-        id: 3,
-        name: 'Mean Reversionist',
-        description: 'Bets on price reverting to its average in ranging markets, with a high-timeframe trend filter to prevent catastrophic counter-trend trades.',
-        indicators: ['Bollinger Bands', 'ADX (Range Filter)', 'RSI (Confirmation)', 'EMA (HTF)']
-    },
-    {
-        id: 4,
-        name: 'Scalping Expert',
-        description: 'Uses a flexible, score-based entry (EMA, MACD, RSI, etc.) to find high-probability scalps. Exits are managed by MACD momentum fade or an ATR trail.',
-        indicators: ['Score-Based (EMA, MACD, RSI, BB)', 'ATR']
-    },
-    {
-        id: 5,
-        name: 'Market Ignition',
-        description: 'Detects a volatility squeeze, then enters on the first high-volume breakout candle that aligns with a long-term EMA directional bias.',
-        indicators: ['Bollinger Bands', 'Volume SMA', 'EMA (Bias)']
-    },
     {
         id: 7,
         name: 'Market Structure Maven',
-        description: 'Identifies the main trend with a long-term EMA, then enters on a pullback to a high-significance, volume-confirmed support/resistance level.',
+        description: 'Identifies the main trend with a medium-term EMA, then enters on a pullback to a high-significance, volume-confirmed support/resistance level.',
         indicators: ['Price Action (S/R Levels)', 'Volume', 'EMA (Bias)'],
     },
     {
         id: 9,
         name: 'Quantum Scalper',
-        description: 'An adaptive scalper that detects the market regime (trend/range). Exits are now managed by a specialized PSAR-based trailing stop for faster reaction times.',
+        description: 'An adaptive scalper that detects the market regime (trend/range). Exits are managed by a specialized PSAR-based trailing stop for faster reaction times.',
         indicators: ['Market Regime Filter', 'Score-based Entry', 'PSAR Trailing Stop'],
+    },
+    {
+        id: 10,
+        name: 'Hybrid Quantum Scalper',
+        description: 'Adaptive scalper with a profitability filter. It vets trades for a minimum risk/reward ratio and ensures the profit target is outside the fee zone.',
+        indicators: ['Market Regime Filter', 'Score-based Entry', 'Profitability Filter'],
     },
 ];
 
@@ -68,7 +56,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     macdSlowPeriod: 26,
     macdSignalPeriod: 9,
 
-    // Agent 1: Momentum Master
+    // Agent 1: Momentum Master - REMOVED
     adxTrendThreshold: 25,
     mom_emaFastPeriod: 20,
     mom_emaSlowPeriod: 50,
@@ -77,8 +65,8 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     mom_volumeSmaPeriod: 20,
     mom_volumeMultiplier: 1.5,
     mom_atrVolatilityThreshold: 0.3,
-
-    // Agent 2: Trend Rider
+    
+    // Agent 2: Trend Rider - REMOVED
     tr_emaFastPeriod: 20,
     tr_emaSlowPeriod: 50,
     tr_rsiMomentumBullish: 60,
@@ -87,7 +75,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     tr_volumeSmaPeriod: 20,
     tr_volumeMultiplier: 1.5,
 
-    // Agent 3: Mean Reversionist
+    // Agent 3: Mean Reversionist - REMOVED
     mr_adxPeriod: 14,
     mr_adxThreshold: 25,
     mr_bbPeriod: 20,
@@ -97,7 +85,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     mr_rsiOverbought: 70,
     mr_htfEmaPeriod: 200,
 
-    // Agent 4: Scalping Expert (NEW LOGIC)
+    // Agent 4: Scalping Expert (NEW LOGIC) - REMOVED
     se_emaFastPeriod: 10,
     se_emaSlowPeriod: 21,
     se_rsiPeriod: 14,
@@ -112,7 +100,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     se_macdSignalPeriod: 9,
     se_scoreThreshold: 3,
 
-    // Agent 5: Market Ignition
+    // Agent 5: Market Ignition - REMOVED
     mi_bbPeriod: 20,
     mi_bbStdDev: 2,
     mi_bbwSqueezeThreshold: 0.015, // Threshold for BBW to be considered a squeeze
@@ -120,7 +108,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     mi_volumeMultiplier: 1.75, // Breakout volume must be 1.75x the average
     mi_emaBiasPeriod: 50,
 
-    // Agent 6: Profit Locker (uses old scalping logic)
+    // Agent 6: Profit Locker (uses old scalping logic) - REMOVED
     scalp_scoreThreshold: 4,
     scalp_emaPeriod: 50,
     scalp_rsiPeriod: 14,
@@ -135,15 +123,17 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     scalp_obvScore: 2,
 
     // Agent 7: Market Structure Maven
-    msm_htfEmaPeriod: 200,
+    msm_htfEmaPeriod: 50,
     msm_swingPointLookback: 5,
     msm_minPivotScore: 2,
+    isCandleConfirmationEnabled: false,
 
-    // Agent 9: Quantum Scalper
+    // Agent 9 & 10: Quantum Scalper & Hybrid
     qsc_fastEmaPeriod: 9,
     qsc_slowEmaPeriod: 21,
     qsc_adxPeriod: 10,
     qsc_adxThreshold: 25,
+    qsc_adxChopBuffer: 3,
     qsc_bbPeriod: 20,
     qsc_bbStdDev: 2,
     qsc_bbwSqueezeThreshold: 0.01,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, TradeSignal, TradingMode, RiskMode, LogType } from '../types';
 import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, LockIcon, UnlockIcon, InfoIcon, ZapIcon } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
@@ -68,8 +68,6 @@ const getStatusInfo = (status: BotStatus): { text: string; bg: string; text_colo
         case BotStatus.Monitoring: return { text: status, bg: 'bg-sky-100 dark:bg-sky-900/50', text_color: 'text-sky-700 dark:text-sky-300', icon: <ActivityIcon className="w-3 h-3"/>, pulse: true };
         case BotStatus.PositionOpen: return { text: 'Position Open', bg: 'bg-emerald-100 dark:bg-emerald-900/50', text_color: 'text-emerald-700 dark:text-emerald-300', icon: <CheckCircleIcon className="w-3 h-3"/>, pulse: false };
         case BotStatus.ExecutingTrade: return { text: 'Executing...', bg: 'bg-amber-100 dark:bg-amber-900/50', text_color: 'text-amber-700 dark:text-amber-300', icon: <CpuIcon className="w-3 h-3"/>, pulse: true };
-        case BotStatus.Cooldown: return { text: 'Cooldown', bg: 'bg-amber-100 dark:bg-amber-900/50', text_color: 'text-amber-700 dark:text-amber-300', icon: <PauseIcon className="w-3 h-3"/>, pulse: false };
-        case BotStatus.PostProfitAnalysis: return { text: 'Post-Profit Analysis', bg: 'bg-indigo-100 dark:bg-indigo-900/50', text_color: 'text-indigo-700 dark:text-indigo-300', icon: <CpuIcon className="w-3 h-3"/>, pulse: true };
         case BotStatus.Error: return { text: status, bg: 'bg-rose-100 dark:bg-rose-900/50', text_color: 'text-rose-700 dark:text-rose-300', icon: <XCircleIcon className="w-3 h-3"/>, pulse: false };
         case BotStatus.Paused: return { text: status, bg: 'bg-slate-200 dark:bg-slate-700', text_color: 'text-slate-600 dark:text-slate-300', icon: <PauseIcon className="w-3 h-3"/>, pulse: false };
         case BotStatus.Stopped: return { text: status, bg: 'bg-slate-200 dark:bg-slate-700', text_color: 'text-slate-600 dark:text-slate-300', icon: <StopIcon className="w-3 h-3"/>, pulse: false };
@@ -113,12 +111,23 @@ const BotConfigDetails: React.FC<{ config: BotConfig; onUpdate: (change: Partial
             </div>
              <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
                  <div className="flex flex-col">
-                    <span className="font-medium text-slate-700 dark:text-slate-300">Cooldown</span>
-                    <span className="text-xs text-slate-500 dark:text-slate-400">Pause after trades</span>
+                    <span className="font-medium text-slate-700 dark:text-slate-300">Universal Profit Trail</span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">Fee-based profit locking</span>
                 </div>
                 <ToggleSwitch
-                    checked={config.isCooldownEnabled}
-                    onChange={(checked) => onUpdate({ isCooldownEnabled: checked })}
+                    checked={config.isUniversalProfitTrailEnabled}
+                    onChange={(checked) => onUpdate({ isUniversalProfitTrailEnabled: checked })}
+                    size="sm"
+                />
+            </div>
+             <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                 <div className="flex flex-col">
+                    <span className="font-medium text-slate-700 dark:text-slate-300">Trailing Take Profit</span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">Dynamically raises TP</span>
+                </div>
+                <ToggleSwitch
+                    checked={config.isTrailingTakeProfitEnabled}
+                    onChange={(checked) => onUpdate({ isTrailingTakeProfitEnabled: checked })}
                     size="sm"
                 />
             </div>
@@ -126,14 +135,6 @@ const BotConfigDetails: React.FC<{ config: BotConfig; onUpdate: (change: Partial
     </div>
 );
 
-const BotHealthDisplay: React.FC<{ bot: RunningBot }> = ({ bot }) => (
-    <div>
-        <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Data & Health</h4>
-        <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-            <InfoItem label="Candles Loaded" value={bot.klinesLoaded ?? 'N/A'} />
-        </div>
-    </div>
-);
 
 const PositionPnlProgress: React.FC<{position: Position; livePrice: number}> = ({ position, livePrice }) => {
     const { entryPrice, takeProfitPrice, stopLossPrice, direction } = position;
@@ -154,7 +155,6 @@ const PositionPnlProgress: React.FC<{position: Position; livePrice: number}> = (
 
     const clampedProgress = Math.min(100, Math.max(0, progressPercent));
 
-    // Display GROSS PNL for clarity, as requested by the user.
     const grossPnl = (livePrice - entryPrice) * position.size * (isLong ? 1 : -1);
     const pnlIsProfit = grossPnl >= 0;
 
@@ -199,7 +199,7 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
     const activeIsUniversalTrail = activeStopLossReason === 'Universal Trail';
     const activeIsAgentTrail = activeStopLossReason === 'Agent Trail';
     
-    const isUniversalTrailEnabled = config.isAtrTrailingStopEnabled;
+    const isUniversalTrailEnabled = config.isUniversalProfitTrailEnabled;
 
     const getUniversalTrailStatus = () => {
         if (!isUniversalTrailEnabled) return { text: 'Disabled', className: 'bg-slate-200 dark:bg-slate-600' };
@@ -309,6 +309,25 @@ const BotLog: React.FC<{ log: BotLogEntry[] }> = ({ log }) => {
 
 const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots'> }> = ({ bot, actions }) => {
     const [isExpanded, setIsExpanded] = useState(false);
+    
+    const [priceChange, setPriceChange] = useState<'up' | 'down' | 'none'>('none');
+    const prevPriceRef = useRef(bot.livePrice);
+
+    useEffect(() => {
+        const currentPrice = bot.livePrice || 0;
+        const prevPrice = prevPriceRef.current || 0;
+        
+        if (currentPrice > prevPrice) {
+            setPriceChange('up');
+        } else if (currentPrice < prevPrice) {
+            setPriceChange('down');
+        }
+        
+        prevPriceRef.current = currentPrice;
+        
+        const timeout = setTimeout(() => setPriceChange('none'), 500);
+        return () => clearTimeout(timeout);
+    }, [bot.livePrice]);
 
     const duration = useDuration(bot);
     const statusInfo = getStatusInfo(bot.status);
@@ -361,6 +380,11 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
                         <span>{statusInfo.text}</span>
                     </div>
                      <div className="flex items-center gap-4 text-sm">
+                        <InfoItem 
+                            label="Live Price" 
+                            value={formatPrice(bot.livePrice, bot.config.pricePrecision)} 
+                            valueClassName={`transition-colors duration-300 ${priceChange === 'up' ? 'text-emerald-500' : priceChange === 'down' ? 'text-rose-500' : 'dark:text-slate-100'}`} 
+                        />
                         <InfoItem label="Net PNL" value={`$${bot.totalPnl.toFixed(2)}`} valueClassName={pnlIsProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'} />
                         <InfoItem label="Win Rate" value={`${winRate.toFixed(1)}%`} valueClassName={winRateIsGood ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'} />
                         <InfoItem label="Trades" value={`${bot.wins}/${bot.losses}`} />
@@ -397,7 +421,7 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
                         {position && <StopLossDetails position={position} config={bot.config} />}
                         <div className={position ? '' : 'lg:col-span-1'}>
                              <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">AI Analysis</h4>
-                             <AnalysisPreview agent={bot.config.agent} agentParams={bot.config.agentParams ?? {}} analysis={bot.analysis} isLoading={false} />
+                             <AnalysisPreview agent={bot.config.agent} agentParams={bot.config.agentParams} analysis={bot.analysis} isLoading={false} />
                         </div>
                          <div className={position ? '' : 'lg:col-span-1'}>
                            <BotConfigDetails config={bot.config} onUpdate={(partial) => actions.onUpdateBotConfig(bot.id, partial)} />

@@ -1,4 +1,3 @@
-
 import React, { createContext, useState, useContext, useMemo, useEffect, useCallback } from 'react';
 import { TradingMode, Agent, AgentParams, RiskMode } from '../types';
 import * as constants from '../constants';
@@ -20,9 +19,9 @@ interface TradingConfigState {
     takeProfitMode: RiskMode;
     takeProfitValue: number;
     isTakeProfitLocked: boolean;
-    isCooldownEnabled: boolean;
     isHtfConfirmationEnabled: boolean;
-    isAtrTrailingStopEnabled: boolean;
+    isUniversalProfitTrailEnabled: boolean;
+    isTrailingTakeProfitEnabled: boolean;
     htfTimeFrame: 'auto' | string;
     agentParams: AgentParams;
     isApiConnected: boolean; // Managed from App.tsx but needed here
@@ -50,9 +49,9 @@ interface TradingConfigActions {
     setTakeProfitMode: (mode: RiskMode) => void;
     setTakeProfitValue: (value: number) => void;
     setIsTakeProfitLocked: (isLocked: boolean) => void;
-    setIsCooldownEnabled: (isEnabled: boolean) => void;
     setIsHtfConfirmationEnabled: (isEnabled: boolean) => void;
-    setIsAtrTrailingStopEnabled: (isEnabled: boolean) => void;
+    setIsUniversalProfitTrailEnabled: (isEnabled: boolean) => void;
+    setIsTrailingTakeProfitEnabled: (isEnabled: boolean) => void;
     setHtfTimeFrame: (tf: 'auto' | string) => void;
     setAgentParams: (params: AgentParams) => void;
     setIsApiConnected: (isConnected: boolean) => void;
@@ -78,15 +77,15 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [marginType, setMarginType] = useState<'ISOLATED' | 'CROSSED'>('ISOLATED');
     const [chartTimeFrame, setTimeFrame] = useState<string>('5m');
     const [selectedAgent, setSelectedAgent] = useState<Agent>(constants.AGENTS[0]);
-    const [agentParams, setAgentParams] = useState<AgentParams>({});
+    const [agentParams, setAgentParams] = useState<AgentParams>({ isCandleConfirmationEnabled: constants.DEFAULT_AGENT_PARAMS.isCandleConfirmationEnabled });
     const [investmentAmount, setInvestmentAmount] = useState<number>(100);
     const [availableBalance, setAvailableBalance] = useState<number>(Infinity);
     const [takeProfitMode, setTakeProfitMode] = useState<RiskMode>(RiskMode.Percent);
     const [takeProfitValue, setTakeProfitValue] = useState<number>(4);
     const [isTakeProfitLocked, setIsTakeProfitLocked] = useState<boolean>(false);
-    const [isCooldownEnabled, setIsCooldownEnabled] = useState<boolean>(false);
     const [isHtfConfirmationEnabled, setIsHtfConfirmationEnabled] = useState<boolean>(false);
-    const [isAtrTrailingStopEnabled, setIsAtrTrailingStopEnabled] = useState<boolean>(false);
+    const [isUniversalProfitTrailEnabled, setIsUniversalProfitTrailEnabled] = useState<boolean>(true);
+    const [isTrailingTakeProfitEnabled, setIsTrailingTakeProfitEnabled] = useState<boolean>(false);
     const [htfTimeFrame, setHtfTimeFrame] = useState<'auto' | string>('auto');
     const [isApiConnected, setIsApiConnected] = useState(false);
     const [walletViewMode, setWalletViewMode] = useState<TradingMode>(TradingMode.Spot);
@@ -237,15 +236,17 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         setLeverage, setMarginType, setTimeFrame, setSelectedAgent,
         setInvestmentAmount, setAvailableBalance,
         setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
-        setIsCooldownEnabled, setIsHtfConfirmationEnabled, setHtfTimeFrame, setAgentParams, setIsApiConnected, setWalletViewMode,
-        setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError, setIsAtrTrailingStopEnabled,
+        setIsHtfConfirmationEnabled, setHtfTimeFrame, setAgentParams, setIsApiConnected, setWalletViewMode,
+        setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError, setIsUniversalProfitTrailEnabled,
+        setIsTrailingTakeProfitEnabled,
     }), [onSetMultiAssetMode]);
     
     const state = {
         executionMode, tradingMode, selectedPair, allPairs, isPairsLoading, leverage, marginType, chartTimeFrame,
         selectedAgent, agentParams, investmentAmount, availableBalance,
-        takeProfitMode, takeProfitValue, isTakeProfitLocked, isCooldownEnabled,
-        isHtfConfirmationEnabled, isAtrTrailingStopEnabled, htfTimeFrame,
+        takeProfitMode, takeProfitValue, isTakeProfitLocked,
+        isHtfConfirmationEnabled, isUniversalProfitTrailEnabled: isUniversalProfitTrailEnabled, 
+        isTrailingTakeProfitEnabled: isTrailingTakeProfitEnabled, htfTimeFrame,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
         futuresSettingsError, multiAssetModeError
     };

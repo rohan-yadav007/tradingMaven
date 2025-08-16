@@ -1,4 +1,3 @@
-
 export enum TradingMode {
     Spot = 'Spot',
     USDSM_Futures = 'USDS-M Futures',
@@ -202,9 +201,9 @@ export interface BotConfig {
     takeProfitValue: number;
     // Proactive Management Toggles
     isTakeProfitLocked: boolean;
-    isCooldownEnabled: boolean;
     isHtfConfirmationEnabled: boolean;
-    isAtrTrailingStopEnabled: boolean;
+    isUniversalProfitTrailEnabled: boolean;
+    isTrailingTakeProfitEnabled: boolean;
     htfTimeFrame?: 'auto' | string;
     agentParams?: AgentParams;
     // Precision data for self-contained bot logic
@@ -216,10 +215,8 @@ export interface BotConfig {
 export enum BotStatus {
     Starting = 'Starting',
     Monitoring = 'Monitoring',
-    PostProfitAnalysis = 'Post-Profit Analysis',
     ExecutingTrade = 'Executing Trade',
     PositionOpen = 'Position Open',
-    Cooldown = 'Cooldown',
     Paused = 'Paused',
     Stopping = 'Stopping',
     Stopped = 'Stopped',
@@ -261,7 +258,6 @@ export interface RunningBot {
     totalGrossProfit: number;
     totalGrossLoss: number; // Stored as a positive number
     // State & Monitoring
-    cooldownUntil: number | null; // Timestamp for error cooldown
     lastProfitableTradeDirection: 'LONG' | 'SHORT' | null;
     accumulatedActiveMs: number;
     lastResumeTimestamp: number | null;
@@ -360,12 +356,14 @@ export interface AgentParams {
     msm_htfEmaPeriod?: number;
     msm_swingPointLookback?: number;
     msm_minPivotScore?: number;
+    isCandleConfirmationEnabled?: boolean; // New feature
 
     // Agent 9: Quantum Scalper
     qsc_fastEmaPeriod?: number;
     qsc_slowEmaPeriod?: number;
     qsc_adxPeriod?: number;
     qsc_adxThreshold?: number;
+    qsc_adxChopBuffer?: number;
     qsc_bbPeriod?: number;
     qsc_bbStdDev?: number;
     qsc_bbwSqueezeThreshold?: number;

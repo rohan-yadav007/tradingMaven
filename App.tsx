@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -29,8 +30,9 @@ const AppContent: React.FC = () => {
     const { 
         executionMode, tradingMode, selectedPair, chartTimeFrame, 
         selectedAgent, investmentAmount, takeProfitMode, 
-        takeProfitValue, isTakeProfitLocked, isCooldownEnabled, agentParams,
-        leverage, marginType, isHtfConfirmationEnabled, htfTimeFrame, isAtrTrailingStopEnabled
+        takeProfitValue, isTakeProfitLocked, agentParams,
+        leverage, marginType, isHtfConfirmationEnabled, htfTimeFrame, isUniversalProfitTrailEnabled,
+        isTrailingTakeProfitEnabled
     } = configState;
 
     const {
@@ -583,20 +585,21 @@ const AppContent: React.FC = () => {
             takeProfitMode,
             takeProfitValue,
             isTakeProfitLocked,
-            isCooldownEnabled,
             isHtfConfirmationEnabled,
             htfTimeFrame,
             agentParams,
             pricePrecision: binanceService.getPricePrecision(symbolInfo),
             quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
             stepSize: binanceService.getStepSize(symbolInfo),
-            isAtrTrailingStopEnabled,
+            isUniversalProfitTrailEnabled,
+            isTrailingTakeProfitEnabled,
         };
         botManagerService.startBot(botConfig);
     }, [
         selectedPair, tradingMode, leverage, marginType, selectedAgent, chartTimeFrame, executionMode,
         investmentAmount, takeProfitMode, takeProfitValue,
-        isTakeProfitLocked, isCooldownEnabled, isHtfConfirmationEnabled, htfTimeFrame, agentParams, symbolInfo, isAtrTrailingStopEnabled
+        isTakeProfitLocked, isHtfConfirmationEnabled, htfTimeFrame, agentParams, symbolInfo, isUniversalProfitTrailEnabled,
+        isTrailingTakeProfitEnabled
     ]);
 
     const handleUpdateBotConfig = useCallback((botId: string, partialConfig: Partial<BotConfig>) => {

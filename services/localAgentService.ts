@@ -2,7 +2,6 @@ import { TradingMode, type Agent, type TradeSignal, type Kline, type AgentParams
 import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV } from 'technicalindicators';
 import * as constants from '../constants';
 import { calculateSupportResistance } from './chartAnalysisService';
-import * as binanceService from './binanceService';
 
 // --- HELPERS ---
 const getLast = <T>(arr: T[] | undefined): T | undefined => arr && arr.length > 0 ? arr[arr.length - 1] : undefined;
@@ -482,6 +481,7 @@ const getHistoricExpertSignal = (klines: Kline[], params: Required<AgentParams>)
     return { signal: 'HOLD', reasons };
 };
 
+
 // ----------------------------------------------------------------------------------
 // --- #4: MAIN ORCHESTRATOR & HELPERS ---
 // ----------------------------------------------------------------------------------
@@ -494,21 +494,24 @@ export function validateTradeProfitability(
     config: BotConfig
 ): { isValid: boolean, reason: string } {
 
-    // 1. Risk-to-Reward Check
     const riskDistance = Math.abs(entryPrice - stopLossPrice);
     const rewardDistance = Math.abs(takeProfitPrice - entryPrice);
 
-    if (riskDistance <= 0) {
-        return { isValid: false, reason: '❌ VETO: Risk distance is zero.' };
+    // 1. Risk-to-Reward Check
+    if (config.isMinRrEnabled) {
+        if (riskDistance <= 0) {
+            return { isValid: false, reason: '❌ VETO: Risk distance is zero.' };
+        }
+
+        const rrRatio = rewardDistance / riskDistance;
+        if (rrRatio < constants.MIN_RISK_REWARD_RATIO) {
+            return {
+                isValid: false,
+                reason: `❌ VETO: R:R Ratio of ${rrRatio.toFixed(2)}:1 is below the minimum of ${constants.MIN_RISK_REWARD_RATIO}:1.`
+            };
+        }
     }
 
-    const rrRatio = rewardDistance / riskDistance;
-    if (rrRatio < constants.MIN_RISK_REWARD_RATIO) {
-        return {
-            isValid: false,
-            reason: `❌ VETO: R:R Ratio of ${rrRatio.toFixed(2)}:1 is below the minimum of ${constants.MIN_RISK_REWARD_RATIO}:1.`
-        };
-    }
 
     // 2. Fee-Awareness Check
     const positionValue = config.mode === TradingMode.USDSM_Futures 

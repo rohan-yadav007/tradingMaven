@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Kline, AccountInfo } from '../types';
 import { SettingsIcon, WalletIcon } from './icons';

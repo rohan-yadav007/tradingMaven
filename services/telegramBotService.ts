@@ -13,10 +13,22 @@ const bots = [
 const lastUpdateIds = new Map<string, number>();
 let isStarted = false; // Guard to prevent multiple initializations
 
-async function sendMessage(text: string) {
-    if (bots.length === 0) return;
+/**
+ * Sends a message via Telegram. Can broadcast to all bots or send to a specific one.
+ * @param text The message content (Markdown formatted).
+ * @param specificChatId If provided, sends the message only to this chat ID. Otherwise, broadcasts to all.
+ */
+async function sendMessage(text: string, specificChatId?: string) {
+    const targets = specificChatId 
+        ? bots.filter(b => b.chatId === specificChatId)
+        : bots;
 
-    for (const bot of bots) {
+    if (targets.length === 0) {
+        if(specificChatId) console.error(`Telegram: No bot configured for chat ID ${specificChatId}`);
+        return;
+    }
+
+    for (const bot of targets) {
         try {
             await fetch(`https://api.telegram.org/bot${bot.token}/sendMessage`, {
                 method: 'POST',
@@ -29,7 +41,8 @@ async function sendMessage(text: string) {
     }
 }
 
-async function handleCommand(command: string, args: string[]) {
+
+async function handleCommand(command: string, args: string[], chatId: string) {
     switch (command) {
         case '/help':
         case '/start':
@@ -48,14 +61,15 @@ async function handleCommand(command: string, args: string[]) {
 */stop* \`bot_id\` - Stop a bot (can't be resumed).
 */delete* \`bot_id\` - Delete a stopped bot.
 */pnl_today* - See today's net PNL.
-*/pnl_week* - See last 7 days' net PNL.`
+*/pnl_week* - See last 7 days' net PNL.`,
+                chatId
             );
             break;
 
         case '/status':
             const runningBots = botManagerService.getRunningBots();
             if (runningBots.length === 0) {
-                await sendMessage("No bots are currently running.");
+                await sendMessage("No bots are currently running.", chatId);
                 return;
             }
             const statusText = runningBots.map(bot => {
@@ -72,37 +86,37 @@ ${pnlText}
 Trades: ${bot.wins}W / ${bot.losses}L (${winRate.toFixed(1)}% WR)
 ID: \`${bot.id}\``;
             }).join('\n\n');
-            await sendMessage(statusText);
+            await sendMessage(statusText, chatId);
             break;
 
         case '/agents':
             const agentsList = constants.AGENTS.map(agent => `*${agent.name}*\nID: \`${agent.id}\``).join('\n\n');
-            await sendMessage(`*Available Trading Agents*\n\n${agentsList}`);
+            await sendMessage(`*Available Trading Agents*\n\n${agentsList}`, chatId);
             break;
             
         case '/create':
             try {
                 if (args.length < 5) {
-                    await sendMessage("Invalid format. Use: `/create agent_id pair amount leverage mode [platform]`\n_Ex: /create 9 SOL/USDT 50 20x paper futures_");
+                    await sendMessage("Invalid format. Use: `/create agent_id pair amount leverage mode [platform]`\n_Ex: /create 9 SOL/USDT 50 20x paper futures_", chatId);
                     return;
                 }
                 const [agentIdStr, pair, amountStr, leverageStr, modeStr, platformStr] = args;
                 const agentId = parseInt(agentIdStr);
                 const agent = constants.AGENTS.find(a => a.id === agentId);
                 if (!agent) {
-                    await sendMessage(`Error: Agent with ID ${agentId} not found. Use /agents to see available agents.`);
+                    await sendMessage(`Error: Agent with ID ${agentId} not found. Use /agents to see available agents.`, chatId);
                     return;
                 }
                 const investmentAmount = parseFloat(amountStr);
                 const leverage = parseInt(leverageStr.replace('x', ''));
                 if (isNaN(investmentAmount) || isNaN(leverage) || investmentAmount <= 0 || leverage <= 0) {
-                    await sendMessage("Error: Invalid investment amount or leverage.");
+                    await sendMessage("Error: Invalid investment amount or leverage.", chatId);
                     return;
                 }
 
                 const executionMode = modeStr.toLowerCase();
                 if (executionMode !== 'paper' && executionMode !== 'live') {
-                    await sendMessage("Error: Invalid mode. Use 'paper' or 'live'.");
+                    await sendMessage("Error: Invalid mode. Use 'paper' or 'live'.", chatId);
                     return;
                 }
 
@@ -113,11 +127,11 @@ ID: \`${bot.id}\``;
                 } else if (tradingMode === 'spot') {
                     finalTradingMode = TradingMode.Spot;
                 } else {
-                    await sendMessage("Error: Invalid platform. Use 'spot' or 'futures'.");
+                    await sendMessage("Error: Invalid platform. Use 'spot' or 'futures'.", chatId);
                     return;
                 }
                 
-                await sendMessage(`_Creating ${executionMode} ${finalTradingMode} bot for ${pair}..._`);
+                await sendMessage(`_Creating ${executionMode} ${finalTradingMode} bot for ${pair}..._`, chatId);
 
                 const formattedPair = pair.replace('/', '');
                  const symbolInfo = finalTradingMode === TradingMode.USDSM_Futures 
@@ -125,7 +139,7 @@ ID: \`${bot.id}\``;
                     : await binanceService.getSymbolInfo(formattedPair);
 
                  if (!symbolInfo) {
-                    await sendMessage(`Error: Could not find symbol info for ${pair} on the ${finalTradingMode} platform.`);
+                    await sendMessage(`Error: Could not find symbol info for ${pair} on the ${finalTradingMode} platform.`, chatId);
                     return;
                 }
 
@@ -143,6 +157,7 @@ ID: \`${bot.id}\``;
                     isHtfConfirmationEnabled: false,
                     isUniversalProfitTrailEnabled: true,
                     isTrailingTakeProfitEnabled: false,
+                    isMinRrEnabled: true,
                     pricePrecision: binanceService.getPricePrecision(symbolInfo),
                     quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                     stepSize: binanceService.getStepSize(symbolInfo),
@@ -152,10 +167,10 @@ ID: \`${bot.id}\``;
                 await sendMessage(`*${executionMode.toUpperCase()} bot created successfully!*
 Pair: ${pair} (${finalTradingMode})
 Agent: ${agent.name}
-ID: \`${newBot.id}\``);
+ID: \`${newBot.id}\``, chatId);
 
             } catch (error) {
-                await sendMessage(`Failed to create bot: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                await sendMessage(`Failed to create bot: ${error instanceof Error ? error.message : 'Unknown error'}`, chatId);
             }
             break;
 
@@ -164,13 +179,13 @@ ID: \`${newBot.id}\``);
         case '/stop':
         case '/delete':
              if (args.length === 0) {
-                await sendMessage(`Please provide a bot ID. Use /status to see IDs.`);
+                await sendMessage(`Please provide a bot ID. Use /status to see IDs.`, chatId);
                 return;
             }
             const botId = args[0];
             const botInstance = botManagerService.getBot(botId);
             if (!botInstance) {
-                await sendMessage(`Error: Bot with ID \`${botId}\` not found.`);
+                await sendMessage(`Error: Bot with ID \`${botId}\` not found.`, chatId);
                 return;
             }
             
@@ -181,7 +196,7 @@ ID: \`${newBot.id}\``);
                 case '/stop': botManagerService.stopBot(botId); actionText = 'stopped'; break;
                 case '/delete': botManagerService.deleteBot(botId); actionText = 'deleted'; break;
             }
-            await sendMessage(`Bot \`${botId}\` has been ${actionText}.`);
+            await sendMessage(`Bot \`${botId}\` has been ${actionText}.`, chatId);
             break;
 
         case '/pnl_today':
@@ -197,7 +212,7 @@ ID: \`${newBot.id}\``);
             });
 
             if (relevantTrades.length === 0) {
-                await sendMessage(`No trades closed in the period.`);
+                await sendMessage(`No trades closed in the period.`, chatId);
                 return;
             }
 
@@ -209,12 +224,13 @@ ID: \`${newBot.id}\``);
 `*PNL Report (${command === '/pnl_today' ? 'Today' : 'Last 7 Days'})*
 Net PNL: *$${totalPnl.toFixed(2)}*
 Total Trades: ${relevantTrades.length}
-Wins: ${wins} | Losses: ${losses}`
+Wins: ${wins} | Losses: ${losses}`,
+                chatId
             );
             break;
 
         default:
-            await sendMessage("Unknown command. Use /help to see available commands.");
+            await sendMessage("Unknown command. Use /help to see available commands.", chatId);
             break;
     }
 }
@@ -234,14 +250,12 @@ async function longPoll(bot: { token: string; chatId: string; }) {
                 const message = update.message;
 
                 if (message && message.text && message.chat.id.toString() === bot.chatId) {
-                    // CRITICAL FIX: Wrap command handling in a try/catch to prevent one failed command
-                    // from halting the entire update processing loop.
                     try {
                         const [command, ...args] = message.text.split(' ');
-                        await handleCommand(command.toLowerCase(), args);
+                        await handleCommand(command.toLowerCase(), args, message.chat.id.toString());
                     } catch (e) {
                         console.error(`Telegram: Error handling command "${message.text}":`, e);
-                        await sendMessage(`An internal error occurred while processing your command: \`${message.text}\`. The issue has been logged.`);
+                        await sendMessage(`An internal error occurred while processing your command: \`${message.text}\`. The issue has been logged.`, message.chat.id.toString());
                     }
                 }
             }

@@ -1,6 +1,3 @@
-
-
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -20,6 +17,7 @@ const AppContent: React.FC = () => {
     // ---- State Management ----
     // UI State
     const [isApiConnected, setIsApiConnected] = useState(false);
+    const [isInitialized, setIsInitialized] = useState(false);
     const [theme, setTheme] = useState<'light' | 'dark'>(() => {
         return (localStorage.getItem('theme') as 'light' | 'dark') || 'dark';
     });
@@ -33,7 +31,7 @@ const AppContent: React.FC = () => {
         selectedAgent, investmentAmount, takeProfitMode, 
         takeProfitValue, isTakeProfitLocked, agentParams,
         leverage, marginType, isHtfConfirmationEnabled, htfTimeFrame, isUniversalProfitTrailEnabled,
-        isTrailingTakeProfitEnabled
+        isTrailingTakeProfitEnabled, isMinRrEnabled
     } = configState;
 
     const {
@@ -403,13 +401,6 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
     
     // Initialize services and load history ONCE on mount
     useEffect(() => {
-        binanceService.checkApiConnection()
-            .then(setIsApiConnected)
-            .catch(() => setIsApiConnected(false));
-
-        const trades = historyService.loadTrades();
-        setTradeHistory(trades);
-
         const onBotUpdate = () => {
             setRunningBots(botManagerService.getRunningBots());
         };
@@ -430,7 +421,16 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
 
         botManagerService.setHandlers(stableHandlers, onBotUpdate);
         
+        binanceService.checkApiConnection()
+            .then(setIsApiConnected)
+            .catch(() => setIsApiConnected(false));
+
+        const trades = historyService.loadTrades();
+        setTradeHistory(trades);
+        
         telegramBotService.start();
+
+        setIsInitialized(true); // Signal that initialization is complete
 
         return () => {
             botManagerService.stopAllBots();
@@ -480,14 +480,32 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
     useEffect(() => {
         const formattedPair = selectedPair.replace('/', '').toLowerCase();
         
-        const tickerCallback = (ticker: LiveTicker) => {
-            if (ticker.pair.toLowerCase() === formattedPair) {
+        const tickerCallback = (data: any) => {
+            const ticker: LiveTicker = {
+                pair: data.s,
+                closePrice: parseFloat(data.c),
+                highPrice: parseFloat(data.h),
+                lowPrice: parseFloat(data.l),
+                volume: parseFloat(data.v),
+                quoteVolume: parseFloat(data.q)
+            };
+            if (ticker.pair && ticker.pair.toLowerCase() === formattedPair) {
                 setLivePrice(ticker.closePrice);
                 setLiveTicker(ticker);
             }
         };
 
-        const klineCallback = (newKline: Kline) => {
+        const klineCallback = (data: any) => {
+            const newKline: Kline = {
+                time: data.k.t,
+                open: parseFloat(data.k.o),
+                high: parseFloat(data.k.h),
+                low: parseFloat(data.k.l),
+                close: parseFloat(data.k.c),
+                volume: parseFloat(data.k.v),
+                isFinal: data.k.x
+            };
+
             if (newKline.isFinal) {
                 setKlines(prevKlines => {
                     if (prevKlines.length === 0) return [newKline];
@@ -697,6 +715,10 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
     }, [runningBots, selectedPair, executionMode]);
     
     const handleStartBot = useCallback(() => {
+        if (!isInitialized) {
+            console.warn("Cannot start bot: App is not yet initialized.");
+            return;
+        }
         if (!symbolInfo) {
             console.error("Cannot start bot: symbol information is not yet loaded.");
             return;
@@ -722,13 +744,15 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
             stepSize: binanceService.getStepSize(symbolInfo),
             isUniversalProfitTrailEnabled,
             isTrailingTakeProfitEnabled,
+            isMinRrEnabled,
         };
         botManagerService.startBot(botConfig);
     }, [
+        isInitialized,
         selectedPair, tradingMode, leverage, marginType, selectedAgent, chartTimeFrame, executionMode,
         investmentAmount, takeProfitMode, takeProfitValue,
         isTakeProfitLocked, isHtfConfirmationEnabled, htfTimeFrame, agentParams, symbolInfo, isUniversalProfitTrailEnabled,
-        isTrailingTakeProfitEnabled
+        isTrailingTakeProfitEnabled, isMinRrEnabled
     ]);
 
     const handleUpdateBotConfig = useCallback((botId: string, partialConfig: Partial<BotConfig>) => {

@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig } from '../types';
 import * as constants from '../constants';
-import { PlayIcon, LockIcon, UnlockIcon, CpuIcon, ChevronDown, ChevronUp, ZapIcon } from './icons';
+import { PlayIcon, LockIcon, UnlockIcon, CpuIcon, ChevronDown, ChevronUp } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
-import * as binanceService from './../services/binanceService';
 import { getTradingSignal, getInitialAgentTargets } from '../services/localAgentService';
 import { SearchableDropdown } from './SearchableDropdown';
 import { useTradingConfigState, useTradingConfigActions } from '../contexts/TradingConfigContext';
@@ -139,7 +138,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         isTakeProfitLocked, agentParams,
         marginType, futuresSettingsError, isMultiAssetMode, multiAssetModeError,
         maxLeverage, isLeverageLoading, isHtfConfirmationEnabled, htfTimeFrame,
-        isUniversalProfitTrailEnabled, isTrailingTakeProfitEnabled
+        isUniversalProfitTrailEnabled, isTrailingTakeProfitEnabled, isMinRrEnabled
     } = config;
 
     const {
@@ -148,7 +147,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
         setMarginType, onSetMultiAssetMode, setAgentParams,
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setIsUniversalProfitTrailEnabled,
-        setIsTrailingTakeProfitEnabled
+        setIsTrailingTakeProfitEnabled, setIsMinRrEnabled
     } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -190,6 +189,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
                         isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
                         isTrailingTakeProfitEnabled: config.isTrailingTakeProfitEnabled,
+                        isMinRrEnabled: config.isMinRrEnabled,
                         htfTimeFrame: config.htfTimeFrame,
                         agentParams: agentParams,
                         // Dummy precision data for preview analysis, not used for trade execution
@@ -197,6 +197,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         quantityPrecision: 8,
                         stepSize: 0.00000001
                     };
+
                     const signal = await getTradingSignal(selectedAgent, klines, previewConfig);
                     setAnalysisSignal(signal);
                 } catch (e) {
@@ -470,6 +471,20 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 </div>
                  <p className="text-xs text-slate-500 dark:text-slate-400">
                     Dynamically adjusts the TP target upwards on profitable trades to capture more of a trend.
+                </p>
+            </div>
+             <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="rr-veto-toggle" className={formLabelClass}>
+                        Minimum R:R Veto
+                    </label>
+                    <ToggleSwitch
+                        checked={isMinRrEnabled}
+                        onChange={setIsMinRrEnabled}
+                    />
+                </div>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Enforces a minimum risk-to-reward ratio of {constants.MIN_RISK_REWARD_RATIO}:1 on all new trades.
                 </p>
             </div>
 

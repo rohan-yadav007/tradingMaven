@@ -1,5 +1,4 @@
 
-
 import { Kline, BotConfig, BacktestResult, SimulatedTrade, AgentParams, Position, RiskMode, TradingMode, OptimizationResultItem, TradeManagementSignal } from '../types';
 import * as binanceService from './binanceService';
 import { getTradingSignal, getUniversalProfitTrailSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability } from './localAgentService';
@@ -74,25 +73,28 @@ export async function runOptimization(
     const { agent } = baseConfig;
     let paramRanges: Record<string, number[]> = {};
 
+    // --- Reworked Optimization Parameter Ranges ---
+    // These are wider and more strategic to find better results efficiently.
     switch (agent.id) {
         case 7: // Market Structure Maven
             paramRanges = {
-                msm_htfEmaPeriod: [50, 75, 100],
-                msm_swingPointLookback: [5, 10, 15],
+                msm_htfEmaPeriod: [50, 75, 100, 125],
+                msm_swingPointLookback: [5, 8, 12, 15],
             };
             break;
         case 9: // Quantum Scalper
              paramRanges = {
                 qsc_trendScoreThreshold: [3, 4],
                 qsc_adxThreshold: [22, 25, 28],
-                qsc_psarStep: [0.02, 0.025],
-                qsc_adxChopBuffer: [2, 3, 4]
+                qsc_adxChopBuffer: [2, 4],
+                qsc_psarStep: [0.02, 0.03],
             };
             break;
         case 11: // Historic Expert
              paramRanges = {
+                he_trendSmaPeriod: [20, 30],
                 he_fastEmaPeriod: [7, 9, 12],
-                he_slowEmaPeriod: [20, 21, 25],
+                he_slowEmaPeriod: [20, 25],
                 he_rsiMidline: [48, 50, 52],
             };
             break;
@@ -101,7 +103,7 @@ export async function runOptimization(
     }
 
     const paramCombinations = generateParamCombinations(paramRanges);
-    if (paramCombinations.length > 50) {
+    if (paramCombinations.length > 200) { // Safety cap
         throw new Error(`Too many combinations to test (${paramCombinations.length}). Please narrow the parameter ranges.`);
     }
 
@@ -115,11 +117,9 @@ export async function runOptimization(
             agentParams: params,
         };
         
-        // The backtest itself is the heavy part.
         const result = await runBacktest(klines, testConfig);
         results.push({ params, result });
 
-        // Update progress and yield to the main thread AFTER the heavy work.
         onProgress({
             percent: ((i + 1) / totalCombinations) * 100,
             combinations: totalCombinations
@@ -127,8 +127,6 @@ export async function runOptimization(
         await new Promise(resolve => setTimeout(resolve, 0)); // Yield to allow UI updates
     }
 
-
-    // Filter out failed/no-trade results and sort by best performance (Profit Factor > PNL)
     return results
         .filter(item => item.result.totalTrades > 0)
         .sort((a, b) => {

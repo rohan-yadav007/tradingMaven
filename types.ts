@@ -113,6 +113,19 @@ export interface Kline {
     isFinal?: boolean; // From websocket stream
 }
 
+export interface OrderBookEntry {
+    price: number;
+    amount: number;
+    total: number;
+}
+
+export interface OrderBook {
+    bids: OrderBookEntry[];
+    asks: OrderBookEntry[];
+    spread: number;
+    spreadPercentage: number;
+}
+
 export enum LogType {
     Info = 'Info',
     Status = 'Status',
@@ -135,19 +148,6 @@ export interface LiveTicker {
     lowPrice: number;
     volume: number;
     quoteVolume: number;
-}
-
-export interface OrderBookEntry {
-    price: number;
-    amount: number;
-    total: number;
-}
-
-export interface OrderBook {
-    bids: OrderBookEntry[];
-    asks: OrderBookEntry[];
-    spread: number;
-    spreadPercentage: number;
 }
 
 export interface SymbolFilter {
@@ -204,6 +204,7 @@ export interface BotConfig {
     isHtfConfirmationEnabled: boolean;
     isUniversalProfitTrailEnabled: boolean;
     isTrailingTakeProfitEnabled: boolean;
+    isMinRrEnabled: boolean;
     htfTimeFrame?: 'auto' | string;
     agentParams?: AgentParams;
     // Precision data for self-contained bot logic

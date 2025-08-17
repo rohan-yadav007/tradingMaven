@@ -1,4 +1,3 @@
-
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -26,7 +25,6 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/proxy-spot-ws/, ''),
       },
-      // CORRECTED: The target for futures does not use port 9443.
       '/proxy-futures-ws': {
         target: 'wss://fstream.binance.com',
         ws: true,

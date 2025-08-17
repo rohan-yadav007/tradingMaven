@@ -22,6 +22,7 @@ interface TradingConfigState {
     isHtfConfirmationEnabled: boolean;
     isUniversalProfitTrailEnabled: boolean;
     isTrailingTakeProfitEnabled: boolean;
+    isMinRrEnabled: boolean;
     htfTimeFrame: 'auto' | string;
     agentParams: AgentParams;
     isApiConnected: boolean; // Managed from App.tsx but needed here
@@ -52,6 +53,7 @@ interface TradingConfigActions {
     setIsHtfConfirmationEnabled: (isEnabled: boolean) => void;
     setIsUniversalProfitTrailEnabled: (isEnabled: boolean) => void;
     setIsTrailingTakeProfitEnabled: (isEnabled: boolean) => void;
+    setIsMinRrEnabled: (isEnabled: boolean) => void;
     setHtfTimeFrame: (tf: 'auto' | string) => void;
     setAgentParams: (params: AgentParams) => void;
     setIsApiConnected: (isConnected: boolean) => void;
@@ -86,6 +88,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [isHtfConfirmationEnabled, setIsHtfConfirmationEnabled] = useState<boolean>(false);
     const [isUniversalProfitTrailEnabled, setIsUniversalProfitTrailEnabled] = useState<boolean>(true);
     const [isTrailingTakeProfitEnabled, setIsTrailingTakeProfitEnabled] = useState<boolean>(false);
+    const [isMinRrEnabled, setIsMinRrEnabled] = useState<boolean>(true);
     const [htfTimeFrame, setHtfTimeFrame] = useState<'auto' | string>('auto');
     const [isApiConnected, setIsApiConnected] = useState(false);
     const [walletViewMode, setWalletViewMode] = useState<TradingMode>(TradingMode.Spot);
@@ -238,7 +241,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setAgentParams, setIsApiConnected, setWalletViewMode,
         setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError, setIsUniversalProfitTrailEnabled,
-        setIsTrailingTakeProfitEnabled,
+        setIsTrailingTakeProfitEnabled, setIsMinRrEnabled,
     }), [onSetMultiAssetMode]);
     
     const state = {
@@ -246,7 +249,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         selectedAgent, agentParams, investmentAmount, availableBalance,
         takeProfitMode, takeProfitValue, isTakeProfitLocked,
         isHtfConfirmationEnabled, isUniversalProfitTrailEnabled: isUniversalProfitTrailEnabled, 
-        isTrailingTakeProfitEnabled: isTrailingTakeProfitEnabled, htfTimeFrame,
+        isTrailingTakeProfitEnabled: isTrailingTakeProfitEnabled, isMinRrEnabled, htfTimeFrame,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
         futuresSettingsError, multiAssetModeError
     };

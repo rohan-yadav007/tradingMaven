@@ -6,6 +6,135 @@ import { telegramBotService } from './telegramBotService';
 
 const MAX_LOG_ENTRIES = 100;
 const RECONNECT_DELAY = 5000; // 5 seconds
+let nextRequestId = 1;
+
+// --- New WebSocket Manager for Combined Streams ---
+class WebSocketManager {
+    private ws: WebSocket | null = null;
+    private subscriptions = new Map<string, Function[]>();
+    private getUrl: () => string;
+    private reconnectTimeout: number | null = null;
+    private isConnected = false;
+    private isConnecting = false;
+    private pendingSubscriptions: string[] = [];
+
+    constructor(getUrl: () => string) {
+        this.getUrl = getUrl;
+    }
+
+    private connect() {
+        if (this.isConnecting || this.isConnected) return;
+        this.isConnecting = true;
+
+        const url = `${this.getUrl()}/stream`;
+        this.ws = new WebSocket(url);
+
+        this.ws.onopen = () => {
+            console.log(`[WS Manager] Connected to ${url}`);
+            this.isConnected = true;
+            this.isConnecting = false;
+            const streamsToSubscribe = Array.from(this.subscriptions.keys());
+            if (streamsToSubscribe.length > 0) {
+                this.sendSubscriptionMessage('SUBSCRIBE', streamsToSubscribe);
+            }
+        };
+
+        this.ws.onmessage = (event) => {
+            let message;
+            try {
+                message = JSON.parse(event.data);
+            } catch (error) {
+                console.error('[WS Manager] Error parsing JSON message:', error, event.data);
+                return;
+            }
+
+            if (message.stream && message.data) {
+                const callbacks = this.subscriptions.get(message.stream);
+                if (callbacks) {
+                    callbacks.forEach(cb => {
+                        try {
+                            cb(message.data);
+                        } catch (error) {
+                            console.error(`[WS Manager] Error in callback for stream ${message.stream}:`, error);
+                        }
+                    });
+                }
+            }
+        };
+
+        this.ws.onerror = (error) => {
+            console.error(`[WS Manager] WebSocket error on connection to ${url}:`, error);
+        };
+
+        this.ws.onclose = () => {
+            console.log(`[WS Manager] Disconnected from ${url}`);
+            this.isConnected = false;
+            this.isConnecting = false;
+            if (this.subscriptions.size > 0) { // Only reconnect if there are active subscriptions
+                this.reconnectTimeout = window.setTimeout(() => this.connect(), RECONNECT_DELAY);
+            }
+        };
+    }
+
+    private sendSubscriptionMessage(method: 'SUBSCRIBE' | 'UNSUBSCRIBE', params: string[]) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            console.warn(`[WS Manager] WS not open, cannot send ${method} message.`);
+            return;
+        }
+        this.ws.send(JSON.stringify({
+            method,
+            params,
+            id: nextRequestId++,
+        }));
+    }
+
+    public subscribe(streamName: string, callback: Function) {
+        let callbacks = this.subscriptions.get(streamName);
+        if (!callbacks) {
+            callbacks = [];
+            this.subscriptions.set(streamName, callbacks);
+            if (this.isConnected) {
+                this.sendSubscriptionMessage('SUBSCRIBE', [streamName]);
+            }
+        }
+        if (!callbacks.includes(callback)) {
+            callbacks.push(callback);
+        }
+
+        if (!this.isConnected && !this.isConnecting) {
+            this.connect();
+        }
+    }
+
+    public unsubscribe(streamName: string, callback: Function) {
+        const callbacks = this.subscriptions.get(streamName);
+        if (callbacks) {
+            const index = callbacks.indexOf(callback);
+            if (index > -1) {
+                callbacks.splice(index, 1);
+            }
+
+            if (callbacks.length === 0) {
+                this.subscriptions.delete(streamName);
+                if (this.isConnected) {
+                    this.sendSubscriptionMessage('UNSUBSCRIBE', [streamName]);
+                }
+            }
+        }
+    }
+
+    public disconnect() {
+        if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+        if (this.ws) {
+            this.ws.onclose = null;
+            this.ws.close();
+        }
+        this.subscriptions.clear();
+        this.isConnected = false;
+        this.isConnecting = false;
+    }
+}
+
 
 export interface BotHandlers {
     onExecuteTrade: (
@@ -106,6 +235,7 @@ class BotInstance {
                         this.addLog(`Warning: Could not fetch HTF klines: ${e}`, LogType.Error);
                     }
                 }
+
                 const signal = await getTradingSignal(this.bot.config.agent, this.klines, this.bot.config, htfKlines);
                 this.bot.analysis = signal;
 
@@ -134,10 +264,9 @@ class BotInstance {
         this.bot.liveTicker = tickerData;
         this.bot.lastPriceUpdateTimestamp = Date.now();
         
-        // CORE FIX: Perform immediate, tick-by-tick management for open positions in ALL modes.
         if (this.bot.openPosition) {
-            this.checkPriceBoundaries(price); // Checks for SL/TP hit
-            this.proactiveTradeManagement(price); // Checks for profit trailing
+            this.checkPriceBoundaries(price);
+            this.proactiveTradeManagement(price);
         }
 
         const isEligibleForPreview = [BotStatus.Monitoring].includes(this.bot.status);
@@ -191,7 +320,6 @@ class BotInstance {
     }
 
     public updateState(partialState: Partial<RunningBot>) {
-        // IMMUTABLE UPDATE: Create new bot object to ensure state propagation.
         this.bot = { ...this.bot, ...partialState };
         this.onUpdate();
     }
@@ -261,10 +389,9 @@ class BotInstance {
                 : currentPrice + (maxLossAmount / tradeSizeForCap);
 
             const isLong = signal.signal === 'BUY';
-            // CRITICAL FIX: Always choose the SL that MINIMIZES loss (closer to entry).
             const tighterSl = isLong
-                ? Math.max(finalSl, hardCapStopLossPrice) // For a long, the higher SL is tighter/less risky.
-                : Math.min(finalSl, hardCapStopLossPrice); // For a short, the lower SL is tighter/less risky.
+                ? Math.max(finalSl, hardCapStopLossPrice)
+                : Math.min(finalSl, hardCapStopLossPrice);
 
             if (tighterSl !== finalSl) {
                 slReason = 'Hard Cap';
@@ -272,17 +399,14 @@ class BotInstance {
             finalSl = tighterSl;
         }
 
-        // --- UNIVERSAL PROFITABILITY GUARDRAIL ---
         const validation = validateTradeProfitability(currentPrice, finalSl, finalTp, signal.signal === 'BUY' ? 'LONG' : 'SHORT', this.bot.config);
         if (!validation.isValid) {
             this.notifyTradeExecutionFailed(validation.reason);
             return;
         }
-        // --- END GUARDRAIL ---
 
         this.addLog(`Executing ${signal.signal} at ~${currentPrice.toFixed(this.bot.config.pricePrecision)}. SL: ${finalSl.toFixed(this.bot.config.pricePrecision)} (${slReason}), TP: ${finalTp.toFixed(this.bot.config.pricePrecision)}`, LogType.Action);
         this.addLog(validation.reason, LogType.Success);
-
 
         const execSignal: TradeSignal = {
             ...signal,
@@ -324,7 +448,6 @@ class BotInstance {
         const mgmtSignal = getUniversalProfitTrailSignal(openPosition, currentPrice, config);
     
         if (mgmtSignal.newStopLoss && mgmtSignal.newStopLoss !== openPosition.stopLossPrice) {
-            // Additional check to ensure we're not moving the stop the wrong way
             const isLong = openPosition.direction === 'LONG';
             if ((isLong && mgmtSignal.newStopLoss > openPosition.stopLossPrice) || (!isLong && mgmtSignal.newStopLoss < openPosition.stopLossPrice)) {
                 this.addLog(`Proactive trail updated SL to ${mgmtSignal.newStopLoss.toFixed(config.pricePrecision)}. Reason: ${mgmtSignal.reasons.join(' ')}`, LogType.Info);
@@ -348,14 +471,13 @@ class BotInstance {
         let updatedPositionData: Partial<Position> = {};
         let hasUpdate = false;
 
-        // Step 1: Handle Agent-Specific Stop Loss Trailing
         if (!config.isUniversalProfitTrailEnabled && this.klines.length > 5) {
             const slSignal = getAgentExitSignal(openPosition, this.klines, currentPriceForManagement, config);
 
             if (slSignal.closePosition) {
                 this.addLog(`Agent exit triggered: ${slSignal.reasons.join(' ')}`, LogType.Action);
                 this.handlers.onClosePosition(openPosition, `Agent Exit: ${slSignal.reasons.join(' ')}`, currentPriceForManagement);
-                return; // Exit early if position is closed
+                return;
             }
             
             if (slSignal.newStopLoss && slSignal.newStopLoss !== openPosition.stopLossPrice) {
@@ -368,17 +490,14 @@ class BotInstance {
             }
         }
 
-        // Step 2: Handle Trailing Take Profit
         if (config.isTrailingTakeProfitEnabled) {
             const isLong = openPosition.direction === 'LONG';
             const isInProfit = isLong ? currentPriceForManagement > openPosition.entryPrice : currentPriceForManagement < openPosition.entryPrice;
 
             if (isInProfit) {
-                // Re-calculate targets based on the current market state
                 const agentTargets = getInitialAgentTargets(this.klines, currentPriceForManagement, isLong ? 'LONG' : 'SHORT', config.timeFrame, { ...DEFAULT_AGENT_PARAMS, ...config.agentParams }, config.agent.id);
                 const newTp = agentTargets.takeProfitPrice;
                 
-                // Only update if the new target is an improvement
                 const currentTp = updatedPositionData.takeProfitPrice || openPosition.takeProfitPrice;
                 const isTpImprovement = isLong ? newTp > currentTp : newTp < currentTp;
 
@@ -390,7 +509,6 @@ class BotInstance {
             }
         }
 
-        // Step 3: Apply any collected updates to the position state
         if (hasUpdate) {
             const newPositionState: Position = { ...this.bot.openPosition!, ...updatedPositionData };
             this.updateState({ openPosition: newPositionState });
@@ -445,8 +563,15 @@ class BotManagerService {
     private bots: Map<string, BotInstance> = new Map();
     private handlers: BotHandlers | null = null;
     private onUpdateCallback: (() => void) | null = null;
-    private tickerSubscriptions: Map<string, { ws: WebSocket | null, callbacks: Function[], mode: TradingMode }> = new Map();
-    private klineSubscriptions: Map<string, { ws: WebSocket | null, callbacks: Function[], mode: TradingMode }> = new Map();
+
+    // Combined stream managers
+    private spotStreamManager: WebSocketManager;
+    private futuresStreamManager: WebSocketManager;
+
+    constructor() {
+        this.spotStreamManager = new WebSocketManager(() => this.getWebSocketUrl(TradingMode.Spot));
+        this.futuresStreamManager = new WebSocketManager(() => this.getWebSocketUrl(TradingMode.USDSM_Futures));
+    }
 
     public setHandlers(handlers: BotHandlers, onUpdateCallback: () => void) {
         this.handlers = handlers;
@@ -490,7 +615,14 @@ class BotManagerService {
             .then(mainKlines => {
                 instance.initialize(mainKlines);
                 
-                const mainKlineCallback = (kline: Kline) => instance.onMainKlineUpdate(kline);
+                const mainKlineCallback = (data: any) => {
+                    const kline: Kline = {
+                        time: data.k.t, open: parseFloat(data.k.o), high: parseFloat(data.k.h),
+                        low: parseFloat(data.k.l), close: parseFloat(data.k.c),
+                        volume: parseFloat(data.k.v), isFinal: data.k.x
+                    };
+                    instance.onMainKlineUpdate(kline)
+                };
                 instance.subscriptions.push({ type: 'kline', pair: formattedPair.toLowerCase(), timeFrame: config.timeFrame, mode: config.mode, callback: mainKlineCallback });
                 this.subscribeToKlineUpdates(formattedPair.toLowerCase(), config.timeFrame, config.mode, mainKlineCallback);
             })
@@ -499,10 +631,16 @@ class BotManagerService {
                 instance.updateState({ status: BotStatus.Error });
             });
 
-        const tickerCallback = (ticker: LiveTicker) => instance.updateLivePrice(ticker.closePrice, ticker);
+        const tickerCallback = (data: any) => {
+            const ticker: LiveTicker = {
+                pair: data.s, closePrice: parseFloat(data.c), highPrice: parseFloat(data.h),
+                lowPrice: parseFloat(data.l), volume: parseFloat(data.v), quoteVolume: parseFloat(data.q)
+            };
+            instance.updateLivePrice(ticker.closePrice, ticker);
+        };
         instance.subscriptions.push({ type: 'ticker', pair: formattedPair.toLowerCase(), mode: config.mode, callback: tickerCallback });
         this.subscribeToTickerUpdates(formattedPair.toLowerCase(), config.mode, tickerCallback);
-
+        
         this.updateState();
         return instance.bot;
     }
@@ -518,7 +656,6 @@ class BotManagerService {
     public deleteBot(botId: string) {
         const instance = this.bots.get(botId);
         if (instance) {
-            // Unsubscribe from all its streams first
             instance.subscriptions.forEach(sub => {
                 if (sub.type === 'ticker') {
                     this.unsubscribeFromTickerUpdates(sub.pair, sub.mode, sub.callback);
@@ -545,10 +682,7 @@ class BotManagerService {
     }
 
     public addBotLog(botId: string, message: string, type: LogType) {
-        const bot = this.getBot(botId);
-        if (bot) {
-            bot.addLog(message, type);
-        }
+        this.getBot(botId)?.addLog(message, type);
     }
 
     public updateBotState(botId: string, partialState: Partial<RunningBot>) {
@@ -573,6 +707,8 @@ class BotManagerService {
 
     public stopAllBots() {
         this.bots.forEach(bot => bot.stop());
+        this.spotStreamManager.disconnect();
+        this.futuresStreamManager.disconnect();
         this.updateState();
     }
 
@@ -610,124 +746,30 @@ class BotManagerService {
         this.getBot(botId)?.notifyTradeExecutionFailed(reason);
     }
 
-    public subscribeToTickerUpdates(pair: string, mode: TradingMode, callback: (ticker: LiveTicker) => void) {
-        const streamName = `${pair.toLowerCase()}@ticker`;
-        const subscriptionKey = `${mode}:${streamName}`;
-        let sub = this.tickerSubscriptions.get(subscriptionKey);
+    // --- Public Subscription Methods (using WebSocketManager) ---
 
-        if (!sub) {
-            sub = { ws: null, callbacks: [], mode };
-            this.tickerSubscriptions.set(subscriptionKey, sub);
-            this.connectTickerWebSocket(streamName, subscriptionKey, sub);
-        }
-        if (!sub.callbacks.includes(callback)) {
-            sub.callbacks.push(callback);
-        }
+    public subscribeToTickerUpdates(pair: string, mode: TradingMode, callback: (data: any) => void) {
+        const streamName = `${pair.toLowerCase()}@ticker`;
+        const manager = mode === TradingMode.USDSM_Futures ? this.futuresStreamManager : this.spotStreamManager;
+        manager.subscribe(streamName, callback);
     }
 
     public unsubscribeFromTickerUpdates(pair: string, mode: TradingMode, callback: Function) {
         const streamName = `${pair.toLowerCase()}@ticker`;
-        const subscriptionKey = `${mode}:${streamName}`;
-        const sub = this.tickerSubscriptions.get(subscriptionKey);
-        if (sub) {
-            sub.callbacks = sub.callbacks.filter(cb => cb !== callback);
-            if (sub.callbacks.length === 0) {
-                sub.ws?.close();
-                this.tickerSubscriptions.delete(subscriptionKey);
-            }
-        }
+        const manager = mode === TradingMode.USDSM_Futures ? this.futuresStreamManager : this.spotStreamManager;
+        manager.unsubscribe(streamName, callback);
     }
 
-    private connectTickerWebSocket(streamName: string, subscriptionKey: string, sub: { ws: WebSocket | null, callbacks: Function[], mode: TradingMode }) {
-        const url = `${this.getWebSocketUrl(sub.mode)}/ws/${streamName}`;
-        sub.ws = new WebSocket(url);
-
-        sub.ws.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                const ticker: LiveTicker = {
-                    pair: data.s,
-                    closePrice: parseFloat(data.c),
-                    highPrice: parseFloat(data.h),
-                    lowPrice: parseFloat(data.l),
-                    volume: parseFloat(data.v),
-                    quoteVolume: parseFloat(data.q)
-                };
-                sub.callbacks.forEach(cb => {
-                    try {
-                        cb(ticker);
-                    } catch (e) {
-                        console.error(`Error in ticker callback for ${streamName}:`, e);
-                    }
-                });
-            } catch (e) {
-                console.error(`Error parsing ticker data for ${streamName}:`, e);
-            }
-        };
-        sub.ws.onerror = (err) => console.error(`Ticker WS Error for ${streamName}:`, err);
-        sub.ws.onclose = () => {
-            if (this.tickerSubscriptions.has(subscriptionKey)) {
-                setTimeout(() => this.connectTickerWebSocket(streamName, subscriptionKey, sub!), RECONNECT_DELAY);
-            }
-        };
-    }
-
-    public subscribeToKlineUpdates(pair: string, timeFrame: string, mode: TradingMode, callback: (kline: Kline) => void) {
+    public subscribeToKlineUpdates(pair: string, timeFrame: string, mode: TradingMode, callback: (data: any) => void) {
         const streamName = `${pair.toLowerCase()}@kline_${timeFrame}`;
-        const subscriptionKey = `${mode}:${streamName}`;
-        let sub = this.klineSubscriptions.get(subscriptionKey);
-        if (!sub) {
-            sub = { ws: null, callbacks: [], mode };
-            this.klineSubscriptions.set(subscriptionKey, sub);
-            this.connectKlineWebSocket(streamName, subscriptionKey, sub);
-        }
-        if (!sub.callbacks.includes(callback)) {
-            sub.callbacks.push(callback);
-        }
+        const manager = mode === TradingMode.USDSM_Futures ? this.futuresStreamManager : this.spotStreamManager;
+        manager.subscribe(streamName, callback);
     }
 
     public unsubscribeFromKlineUpdates(pair: string, timeFrame: string, mode: TradingMode, callback: Function) {
         const streamName = `${pair.toLowerCase()}@kline_${timeFrame}`;
-        const subscriptionKey = `${mode}:${streamName}`;
-        const sub = this.klineSubscriptions.get(subscriptionKey);
-        if (sub) {
-            sub.callbacks = sub.callbacks.filter(cb => cb !== callback);
-            if (sub.callbacks.length === 0) {
-                sub.ws?.close();
-                this.klineSubscriptions.delete(subscriptionKey);
-            }
-        }
-    }
-
-    private connectKlineWebSocket(streamName: string, subscriptionKey: string, sub: { ws: WebSocket | null, callbacks: Function[], mode: TradingMode }) {
-        const url = `${this.getWebSocketUrl(sub.mode)}/ws/${streamName}`;
-        sub.ws = new WebSocket(url);
-
-        sub.ws.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data).k;
-                const kline: Kline = {
-                    time: data.t, open: parseFloat(data.o), high: parseFloat(data.h),
-                    low: parseFloat(data.l), close: parseFloat(data.c),
-                    volume: parseFloat(data.v), isFinal: data.x
-                };
-                sub.callbacks.forEach(cb => {
-                     try {
-                        cb(kline);
-                    } catch (e) {
-                        console.error(`Error in kline callback for ${streamName}:`, e);
-                    }
-                });
-            } catch (e) {
-                console.error(`Error parsing kline data for ${streamName}:`, e);
-            }
-        };
-        sub.ws.onerror = (err) => console.error(`Kline WS Error for ${streamName}:`, err);
-        sub.ws.onclose = () => {
-             if (this.klineSubscriptions.has(subscriptionKey)) {
-                setTimeout(() => this.connectKlineWebSocket(streamName, subscriptionKey, sub!), RECONNECT_DELAY);
-             }
-        };
+        const manager = mode === TradingMode.USDSM_Futures ? this.futuresStreamManager : this.spotStreamManager;
+        manager.unsubscribe(streamName, callback);
     }
 }
 

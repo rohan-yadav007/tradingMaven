@@ -105,11 +105,6 @@ export const AnalysisPreview: React.FC<AnalysisPreviewProps> = ({ analysis, isLo
                     </div>
                 )}
             </div>
-             {isLoading && (
-                 <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="text-sm font-semibold text-slate-600 dark:text-slate-300 animate-pulse">Analyzing...</div>
-                 </div>
-             )}
         </div>
     );
 };

@@ -266,6 +266,17 @@ export const getFuturesSymbolInfo = async (symbol: string): Promise<any | undefi
     return info?.find(s => s.symbol === symbol);
 };
 
+export const fetchDepthSnapshot = async (symbol: string, mode: TradingMode, limit: number = 1000): Promise<any> => {
+    const params = new URLSearchParams({ symbol, limit: String(limit) });
+    const isFutures = mode === TradingMode.USDSM_Futures;
+    const baseUrl = isFutures ? FUTURES_BASE_URL : SPOT_BASE_URL;
+    const path = isFutures ? '/fapi/v1/depth' : '/api/v3/depth';
+
+    const response = await fetch(`${baseUrl}${path}?${params.toString()}`);
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+};
+
 const fetchAllTickerPrices = async (): Promise<Map<string, number>> => {
     const now = Date.now();
     if (now - tickerPriceCacheTimestamp < CACHE_DURATION_SHORT) {

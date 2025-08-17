@@ -165,8 +165,8 @@ export const TIMEFRAME_ADAPTIVE_SETTINGS: Record<string, AgentParams> = {
     '1m': {
         mom_rsiThresholdBullish: 60,
         mom_rsiThresholdBearish: 40,
-        scalp_stochRsiOversold: 15,
-        scalp_stochRsiOverbought: 85,
+        scalp_stochRsiOversold: 25,
+        scalp_stochRsiOverbought: 80,
     },
     '3m': {
         mom_rsiThresholdBullish: 58,

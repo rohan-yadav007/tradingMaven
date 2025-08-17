@@ -1,5 +1,4 @@
 
-
 import React from 'react';
 import { useState, useEffect } from 'react';
 import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, Kline, RiskMode, OptimizationResultItem } from '../types';
@@ -88,11 +87,31 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                 <ToggleSwitch checked={allParams.isCandleConfirmationEnabled} onChange={v => updateParam('isCandleConfirmationEnabled', v)} />
             </div>
             </div>);
-        case 9: case 10: return (<div className="space-y-4"><ParamSlider label="Trend Score Threshold" value={allParams.qsc_trendScoreThreshold} onChange={v => updateParam('qsc_trendScoreThreshold', v)} min={1} max={4} step={1} /><ParamSlider label="Range Score Threshold" value={allParams.qsc_rangeScoreThreshold} onChange={v => updateParam('qsc_rangeScoreThreshold', v)} min={1} max={2} step={1} /><ParamSlider label="ADX Trend Threshold" value={allParams.qsc_adxThreshold} onChange={v => updateParam('qsc_adxThreshold', v)} min={15} max={35} step={1} />{agent.id === 10 && <ParamSlider label="ADX Chop Buffer" value={allParams.qsc_adxChopBuffer} onChange={v => updateParam('qsc_adxChopBuffer', v)} min={0} max={10} step={1} />}<ParamSlider label="PSAR Step" value={allParams.qsc_psarStep} onChange={v => updateParam('qsc_psarStep', v)} min={0.01} max={0.1} step={0.005} /><ParamSlider label="PSAR Max" value={allParams.qsc_psarMax} onChange={v => updateParam('qsc_psarMax', v)} min={0.1} max={0.5} step={0.01} /></div>);
+        case 9: return (<div className="space-y-4">
+            <h5 className="font-semibold text-xs uppercase text-slate-400">Regime Filter</h5>
+            <ParamSlider label="ADX Period" value={allParams.qsc_adxPeriod} onChange={v => updateParam('qsc_adxPeriod', v)} min={5} max={20} step={1} />
+            <ParamSlider label="ADX Trend Threshold" value={allParams.qsc_adxThreshold} onChange={v => updateParam('qsc_adxThreshold', v)} min={15} max={35} step={1} />
+            <ParamSlider label="ADX Chop Buffer" value={allParams.qsc_adxChopBuffer} onChange={v => updateParam('qsc_adxChopBuffer', v)} min={0} max={10} step={1} />
+            <h5 className="font-semibold text-xs uppercase text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">Trend Logic</h5>
+            <ParamSlider label="Fast EMA Period" value={allParams.qsc_fastEmaPeriod} onChange={v => updateParam('qsc_fastEmaPeriod', v)} min={5} max={20} step={1} />
+            <ParamSlider label="Slow EMA Period" value={allParams.qsc_slowEmaPeriod} onChange={v => updateParam('qsc_slowEmaPeriod', v)} min={15} max={50} step={1} />
+            <ParamSlider label="Trend Score Threshold" value={allParams.qsc_trendScoreThreshold} onChange={v => updateParam('qsc_trendScoreThreshold', v)} min={1} max={4} step={1} />
+            <h5 className="font-semibold text-xs uppercase text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">Range Logic</h5>
+            <ParamSlider label="BB Period" value={allParams.qsc_bbPeriod} onChange={v => updateParam('qsc_bbPeriod', v)} min={10} max={30} step={1} />
+            <ParamSlider label="BB StdDev" value={allParams.qsc_bbStdDev} onChange={v => updateParam('qsc_bbStdDev', v)} min={1.5} max={3} step={0.1} />
+            <ParamSlider label="StochRSI Period" value={allParams.qsc_stochRsiPeriod} onChange={v => updateParam('qsc_stochRsiPeriod', v)} min={7} max={28} step={1} />
+            <ParamSlider label="StochRSI Oversold" value={allParams.qsc_stochRsiOversold} onChange={v => updateParam('qsc_stochRsiOversold', v)} min={10} max={40} step={1} />
+            <ParamSlider label="StochRSI Overbought" value={allParams.qsc_stochRsiOverbought} onChange={v => updateParam('qsc_stochRsiOverbought', v)} min={60} max={90} step={1} />
+            <ParamSlider label="Range Score Threshold" value={allParams.qsc_rangeScoreThreshold} onChange={v => updateParam('qsc_rangeScoreThreshold', v)} min={1} max={2} step={1} />
+            <h5 className="font-semibold text-xs uppercase text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">Exit Logic</h5>
+            <ParamSlider label="PSAR Step" value={allParams.qsc_psarStep} onChange={v => updateParam('qsc_psarStep', v)} min={0.01} max={0.1} step={0.005} />
+            <ParamSlider label="PSAR Max" value={allParams.qsc_psarMax} onChange={v => updateParam('qsc_psarMax', v)} min={0.1} max={0.5} step={0.01} />
+            </div>);
         case 11: return (<div className="space-y-4">
             <ParamSlider label="Trend SMA Period" value={allParams.he_trendSmaPeriod} onChange={v => updateParam('he_trendSmaPeriod', v)} min={20} max={50} step={1} />
             <ParamSlider label="Fast EMA Period" value={allParams.he_fastEmaPeriod} onChange={v => updateParam('he_fastEmaPeriod', v)} min={5} max={20} step={1} />
             <ParamSlider label="Slow EMA Period" value={allParams.he_slowEmaPeriod} onChange={v => updateParam('he_slowEmaPeriod', v)} min={20} max={50} step={1} />
+            <ParamSlider label="RSI Period" value={allParams.he_rsiPeriod} onChange={v => updateParam('he_rsiPeriod', v)} min={7} max={28} step={1} />
             <ParamSlider label="RSI Midline" value={allParams.he_rsiMidline} onChange={v => updateParam('he_rsiMidline', v)} min={40} max={60} step={1} />
             </div>);
         default: return <p className="text-sm text-slate-500">This agent does not have any customizable parameters.</p>;
@@ -107,7 +126,7 @@ const BacktestControlPanel: React.FC<{
 }> = ({ config, updateConfig, backtestDays, setBacktestDays, onRunBacktest, onRunOptimization, isLoading, loadingMessage, theme }) => {
     const globalConfig = useTradingConfigState();
     const [isParamsOpen, setIsParamsOpen] = useState(false);
-    const canOptimize = [7, 9, 10, 11].includes(config.selectedAgent.id);
+    const canOptimize = [7, 9, 11].includes(config.selectedAgent.id);
     return (
         <div className="flex flex-col gap-4 h-full">
             <h2 className="text-lg font-bold">Backtest Configuration</h2>
@@ -121,7 +140,9 @@ const BacktestControlPanel: React.FC<{
             {config.tradingMode === TradingMode.USDSM_Futures && (<div className={formGroupClass}><label className="flex justify-between items-baseline"><span className={formLabelClass}>Leverage</span><span className="font-bold text-sky-500">{config.leverage}x</span></label><input type="range" min="1" max={globalConfig.maxLeverage} value={config.leverage} onChange={e => updateConfig('leverage', Number(e.target.value))} className="w-full h-2 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer" /></div>)}
             <RiskInputWithLock label="Take Profit" mode={config.takeProfitMode} value={config.takeProfitValue} isLocked={config.isTakeProfitLocked} investmentAmount={config.investmentAmount} onModeChange={v => updateConfig('takeProfitMode', v)} onValueChange={v => updateConfig('takeProfitValue', v)} onLockToggle={() => updateConfig('isTakeProfitLocked', !config.isTakeProfitLocked)} />
             <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
-            <div className="space-y-3 pt-2"><div className="flex items-center justify-between"><label className={formLabelClass}>Higher Timeframe Confirmation</label><ToggleSwitch checked={config.isHtfConfirmationEnabled} onChange={v => updateConfig('isHtfConfirmationEnabled', v)} /></div><div className="flex items-center justify-between"><label className={formLabelClass}>Universal Profit Trail</label><ToggleSwitch checked={config.isUniversalProfitTrailEnabled} onChange={v => updateConfig('isUniversalProfitTrailEnabled', v)} /></div><div className="flex items-center justify-between"><label className={formLabelClass}>Trailing Take Profit</label><ToggleSwitch checked={config.isTrailingTakeProfitEnabled} onChange={v => updateConfig('isTrailingTakeProfitEnabled', v)} /></div></div>
+            <div className="space-y-3 pt-2"><div className="flex items-center justify-between"><label className={formLabelClass}>Higher Timeframe Confirmation</label><ToggleSwitch checked={config.isHtfConfirmationEnabled} onChange={v => updateConfig('isHtfConfirmationEnabled', v)} /></div><div className="flex items-center justify-between"><label className={formLabelClass}>Universal Profit Trail</label><ToggleSwitch checked={config.isUniversalProfitTrailEnabled} onChange={v => updateConfig('isUniversalProfitTrailEnabled', v)} /></div><div className="flex items-center justify-between"><label className={formLabelClass}>Trailing Take Profit</label><ToggleSwitch checked={config.isTrailingTakeProfitEnabled} onChange={v => updateConfig('isTrailingTakeProfitEnabled', v)} /></div>
+                <div className="flex items-center justify-between"><label className={formLabelClass}>Minimum R:R Veto</label><ToggleSwitch checked={config.isMinRrEnabled} onChange={v => updateConfig('isMinRrEnabled', v)} /></div>
+            </div>
             <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700"><button onClick={() => setIsParamsOpen(!isParamsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold">Agent Logic Parameters{isParamsOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}</button>{isParamsOpen && (<div className="p-3 border-t border-slate-200 dark:border-slate-600"><AgentParameterEditor agent={config.selectedAgent} params={config.agentParams} onParamsChange={p => updateConfig('agentParams', p)} /></div>)}</div>
             <div className="mt-auto pt-4 border-t border-slate-200 dark:border-slate-700 flex flex-col gap-3">
                 <button onClick={onRunBacktest} disabled={isLoading} className={`${buttonClass} bg-slate-600 hover:bg-slate-700 disabled:bg-slate-400 dark:disabled:bg-slate-600`}>{isLoading ? loadingMessage : 'Run Single Backtest'}</button>
@@ -190,8 +211,9 @@ interface BacktestingPanelProps {
 export type BacktestConfig = {
     tradingMode: TradingMode; selectedPair: string; chartTimeFrame: string; selectedAgent: Agent;
     investmentAmount: number; takeProfitMode: RiskMode; takeProfitValue: number; isTakeProfitLocked: boolean;
-    isHtfConfirmationEnabled: boolean; isUniversalProfitTrailEnabled: boolean; htfTimeFrame: 'auto' | string;
-    agentParams: AgentParams; leverage: number; isTrailingTakeProfitEnabled: boolean;
+    isHtfConfirmationEnabled: boolean; isUniversalProfitTrailEnabled: boolean; isTrailingTakeProfitEnabled: boolean;
+    isMinRrEnabled: boolean; htfTimeFrame: 'auto' | string;
+    agentParams: AgentParams; leverage: number;
 };
 
 export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
@@ -206,7 +228,8 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         takeProfitMode: globalConfig.takeProfitMode, takeProfitValue: globalConfig.takeProfitValue,
         isTakeProfitLocked: globalConfig.isTakeProfitLocked, isHtfConfirmationEnabled: globalConfig.isHtfConfirmationEnabled,
         isUniversalProfitTrailEnabled: globalConfig.isUniversalProfitTrailEnabled, htfTimeFrame: globalConfig.htfTimeFrame,
-        agentParams: globalConfig.agentParams, leverage: globalConfig.leverage, isTrailingTakeProfitEnabled: globalConfig.isTrailingTakeProfitEnabled
+        agentParams: globalConfig.agentParams, leverage: globalConfig.leverage, isTrailingTakeProfitEnabled: globalConfig.isTrailingTakeProfitEnabled,
+        isMinRrEnabled: globalConfig.isMinRrEnabled,
     });
 
     const [backtestDays, setBacktestDays] = useState(7);
@@ -241,7 +264,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 timeFrame: config.chartTimeFrame, investmentAmount: config.investmentAmount, takeProfitMode: config.takeProfitMode,
                 takeProfitValue: config.takeProfitValue, isTakeProfitLocked: config.isTakeProfitLocked,
                 isHtfConfirmationEnabled: config.isHtfConfirmationEnabled, isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
-                isTrailingTakeProfitEnabled: config.isTrailingTakeProfitEnabled,
+                isTrailingTakeProfitEnabled: config.isTrailingTakeProfitEnabled, isMinRrEnabled: config.isMinRrEnabled,
                 htfTimeFrame: config.htfTimeFrame, agentParams: config.agentParams,
                 pricePrecision: binanceService.getPricePrecision(symbolInfo), quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
@@ -276,7 +299,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 timeFrame: config.chartTimeFrame, investmentAmount: config.investmentAmount, takeProfitMode: config.takeProfitMode,
                 takeProfitValue: config.takeProfitValue, isTakeProfitLocked: config.isTakeProfitLocked,
                 isHtfConfirmationEnabled: config.isHtfConfirmationEnabled, isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
-                isTrailingTakeProfitEnabled: config.isTrailingTakeProfitEnabled,
+                isTrailingTakeProfitEnabled: config.isTrailingTakeProfitEnabled, isMinRrEnabled: config.isMinRrEnabled,
                 htfTimeFrame: config.htfTimeFrame, agentParams: config.agentParams,
                 pricePrecision: binanceService.getPricePrecision(symbolInfo), quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
@@ -299,6 +322,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         globalActions.setIsHtfConfirmationEnabled(config.isHtfConfirmationEnabled);
         globalActions.setIsUniversalProfitTrailEnabled(config.isUniversalProfitTrailEnabled);
         globalActions.setIsTrailingTakeProfitEnabled(config.isTrailingTakeProfitEnabled);
+        globalActions.setIsMinRrEnabled(config.isMinRrEnabled);
         setActiveView('trading');
     };
 

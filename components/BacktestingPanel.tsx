@@ -143,7 +143,31 @@ const BacktestControlPanel: React.FC<{
             <div className="space-y-3 pt-2"><div className="flex items-center justify-between"><label className={formLabelClass}>Higher Timeframe Confirmation</label><ToggleSwitch checked={config.isHtfConfirmationEnabled} onChange={v => updateConfig('isHtfConfirmationEnabled', v)} /></div><div className="flex items-center justify-between"><label className={formLabelClass}>Universal Profit Trail</label><ToggleSwitch checked={config.isUniversalProfitTrailEnabled} onChange={v => updateConfig('isUniversalProfitTrailEnabled', v)} /></div><div className="flex items-center justify-between"><label className={formLabelClass}>Trailing Take Profit</label><ToggleSwitch checked={config.isTrailingTakeProfitEnabled} onChange={v => updateConfig('isTrailingTakeProfitEnabled', v)} /></div>
                 <div className="flex items-center justify-between"><label className={formLabelClass}>Minimum R:R Veto</label><ToggleSwitch checked={config.isMinRrEnabled} onChange={v => updateConfig('isMinRrEnabled', v)} /></div>
             </div>
-            <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700"><button onClick={() => setIsParamsOpen(!isParamsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold">Agent Logic Parameters{isParamsOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}</button>{isParamsOpen && (<div className="p-3 border-t border-slate-200 dark:border-slate-600"><AgentParameterEditor agent={config.selectedAgent} params={config.agentParams} onParamsChange={p => updateConfig('agentParams', p)} /></div>)}</div>
+            <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
+                <button onClick={() => setIsParamsOpen(!isParamsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold">
+                    Agent Logic Parameters
+                    {isParamsOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                </button>
+                {isParamsOpen && (
+                    <div className="p-3 border-t border-slate-200 dark:border-slate-600">
+                        <div className="flex justify-between items-center mb-4">
+                            <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300">Customize Parameters</h4>
+                            <button 
+                                onClick={() => updateConfig('agentParams', {})}
+                                className="text-xs font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-500 transition-colors"
+                                title="Reset parameters to their default values"
+                            >
+                                Reset to Default
+                            </button>
+                        </div>
+                        <AgentParameterEditor 
+                            agent={config.selectedAgent} 
+                            params={config.agentParams} 
+                            onParamsChange={p => updateConfig('agentParams', p)} 
+                        />
+                    </div>
+                )}
+            </div>
             <div className="mt-auto pt-4 border-t border-slate-200 dark:border-slate-700 flex flex-col gap-3">
                 <button onClick={onRunBacktest} disabled={isLoading} className={`${buttonClass} bg-slate-600 hover:bg-slate-700 disabled:bg-slate-400 dark:disabled:bg-slate-600`}>{isLoading ? loadingMessage : 'Run Single Backtest'}</button>
                 <button onClick={onRunOptimization} disabled={isLoading || !canOptimize} className={`${buttonClass} bg-sky-600 hover:bg-sky-700 disabled:bg-slate-400 dark:disabled:bg-slate-600`} title={canOptimize ? "Optimize agent parameters" : "This agent does not support optimization"}><SparklesIcon className="w-5 h-5"/>{isLoading ? loadingMessage : 'Optimize Agent'}</button>
@@ -216,6 +240,18 @@ export type BacktestConfig = {
     agentParams: AgentParams; leverage: number;
 };
 
+const getTimeframeDuration = (timeframe: string): number => {
+    const unit = timeframe.slice(-1);
+    const value = parseInt(timeframe.slice(0, -1), 10);
+    if (isNaN(value)) return 0;
+    switch (unit) {
+        case 'm': return value * 60 * 1000;
+        case 'h': return value * 60 * 60 * 1000;
+        case 'd': return value * 24 * 60 * 60 * 1000;
+        default: return 0;
+    }
+};
+
 export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     const { backtestResult, setBacktestResult, setActiveView, theme } = props;
     
@@ -232,7 +268,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         isMinRrEnabled: globalConfig.isMinRrEnabled,
     });
 
-    const [backtestDays, setBacktestDays] = useState(7);
+    const [backtestDays, setBacktestDays] = useState(1);
     const [optimizationResults, setOptimizationResults] = useState<OptimizationResultItem[] | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -249,16 +285,28 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     }, [config.selectedAgent]);
 
     const handleRunBacktest = async () => {
-        setIsLoading(true); setLoadingMessage('Fetching data & running simulation...'); setError(null);
+        setIsLoading(true); setLoadingMessage('Fetching data...'); setError(null);
         setBacktestResult(null); setOptimizationResults(null);
         try {
             const formattedPair = config.selectedPair.replace('/', '');
             const startTime = Date.now() - backtestDays * 24 * 60 * 60 * 1000;
             const backtestKlines = await binanceService.fetchFullKlines(formattedPair, '1m', startTime, Date.now(), config.tradingMode);
             if (backtestKlines.length < 200) { throw new Error("Not enough historical data available for a reliable backtest (min 200 candles)."); }
+            
+            let htfKlines: Kline[] | undefined = undefined;
+            if (config.isHtfConfirmationEnabled) {
+                const htf = config.htfTimeFrame === 'auto' ? constants.TIME_FRAMES[constants.TIME_FRAMES.indexOf(config.chartTimeFrame) + 1] : config.htfTimeFrame;
+                if (htf) {
+                    const htfStartTime = backtestKlines[0].time;
+                    const htfEndTime = backtestKlines[backtestKlines.length - 1].time + getTimeframeDuration(config.chartTimeFrame) - 1;
+                    htfKlines = await binanceService.fetchFullKlines(formattedPair, htf, htfStartTime, htfEndTime, config.tradingMode);
+                }
+            }
+
             setLoadingMessage('Running backtest...');
             const symbolInfo = config.tradingMode === TradingMode.USDSM_Futures ? await binanceService.getFuturesSymbolInfo(formattedPair) : await binanceService.getSymbolInfo(formattedPair);
             if (!symbolInfo) throw new Error("Could not fetch symbol info.");
+            
             const fullBotConfig: BotConfig = {
                 pair: config.selectedPair, mode: config.tradingMode, executionMode: 'paper', leverage: config.leverage, agent: config.selectedAgent,
                 timeFrame: config.chartTimeFrame, investmentAmount: config.investmentAmount, takeProfitMode: config.takeProfitMode,
@@ -269,7 +317,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 pricePrecision: binanceService.getPricePrecision(symbolInfo), quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
             };
-            const result = await runBacktest(backtestKlines, fullBotConfig);
+            const result = await runBacktest(backtestKlines, fullBotConfig, htfKlines);
             setBacktestResult(result);
         } catch (e) {
             console.error("Backtest failed:", e); setError(e instanceof Error ? e.message : "An unknown error occurred during backtesting.");
@@ -279,19 +327,26 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     const handleRunOptimization = async () => {
         setIsLoading(true); setLoadingMessage('Fetching historical data...'); setError(null);
         setBacktestResult(null); setOptimizationResults(null);
-
         const onProgress = (progress: { percent: number, combinations: number }) => {
-            setLoadingMessage(`Optimizing... ${progress.percent.toFixed(0)}% of ${progress.combinations} combinations`);
+            setLoadingMessage(`Optimizing... ${progress.percent.toFixed(0)}% of ${progress.combinations}`);
         };
-
         try {
             const formattedPair = config.selectedPair.replace('/', '');
             const startTime = Date.now() - backtestDays * 24 * 60 * 60 * 1000;
             const backtestKlines = await binanceService.fetchFullKlines(formattedPair, '1m', startTime, Date.now(), config.tradingMode);
             if (backtestKlines.length < 200) { throw new Error("Not enough historical data for optimization."); }
             
-            setLoadingMessage(`Preparing optimization...`);
+            let htfKlines: Kline[] | undefined = undefined;
+            if (config.isHtfConfirmationEnabled) {
+                 const htf = config.htfTimeFrame === 'auto' ? constants.TIME_FRAMES[constants.TIME_FRAMES.indexOf(config.chartTimeFrame) + 1] : config.htfTimeFrame;
+                if (htf) {
+                    const htfStartTime = backtestKlines[0].time;
+                    const htfEndTime = backtestKlines[backtestKlines.length - 1].time + getTimeframeDuration(config.chartTimeFrame) - 1;
+                    htfKlines = await binanceService.fetchFullKlines(formattedPair, htf, htfStartTime, htfEndTime, config.tradingMode);
+                }
+            }
             
+            setLoadingMessage(`Preparing optimization...`);
             const symbolInfo = config.tradingMode === TradingMode.USDSM_Futures ? await binanceService.getFuturesSymbolInfo(formattedPair) : await binanceService.getSymbolInfo(formattedPair);
             if (!symbolInfo) throw new Error("Could not fetch symbol info.");
             const baseBotConfig: BotConfig = {
@@ -304,9 +359,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 pricePrecision: binanceService.getPricePrecision(symbolInfo), quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
             };
-            
-            const results = await runOptimization(backtestKlines, baseBotConfig, onProgress);
-            
+            const results = await runOptimization(backtestKlines, baseBotConfig, onProgress, htfKlines);
             if (results.length === 0) { setError("Optimization complete, but no profitable parameter combinations were found."); } else { setOptimizationResults(results); }
         } catch (e) {
             console.error("Optimization failed:", e); setError(e instanceof Error ? e.message : "An unknown error occurred during optimization.");

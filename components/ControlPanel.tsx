@@ -379,7 +379,16 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
 
             <div className={formGroupClass}>
-                <label htmlFor="agent-select" className={formLabelClass}>Trading Agent</label>
+                <div className="flex justify-between items-center">
+                    <label htmlFor="agent-select" className={formLabelClass}>Trading Agent</label>
+                    <button 
+                        onClick={() => setAgentParams({})}
+                        className="text-xs font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-500 transition-colors"
+                        title="Reset agent-specific parameters to their default values"
+                    >
+                        Reset to Default
+                    </button>
+                </div>
                 <select id="agent-select" value={selectedAgent.id} onChange={e => setSelectedAgent(constants.AGENTS.find(a => a.id === Number(e.target.value))!)} className={formInputClass}>
                     {constants.AGENTS.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
                 </select>

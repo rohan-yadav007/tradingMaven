@@ -150,11 +150,11 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     qsc_rangeScoreThreshold: 1,
 
     // Agent 11: Historic Expert
-    he_trendSmaPeriod: 30,
-    he_fastEmaPeriod: 9,
-    he_slowEmaPeriod: 21,
-    he_rsiPeriod: 14,
-    he_rsiMidline: 50,
+    he_trendSmaPeriod: 22,
+    he_fastEmaPeriod: 12,
+    he_slowEmaPeriod: 25,
+    he_rsiPeriod: 10,
+    he_rsiMidline: 48,
 };
 
 

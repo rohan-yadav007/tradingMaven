@@ -192,22 +192,40 @@ interface StopLossDetailsProps {
 }
 
 const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) => {
-    const { stopLossPrice, initialStopLossPrice, activeStopLossReason, pricePrecision } = position;
+    const { stopLossPrice, initialStopLossPrice, activeStopLossReason, pricePrecision, profitLockTier } = position;
 
     const activeIsAgentInitial = activeStopLossReason === 'Agent Logic';
     const activeIsHardCap = activeStopLossReason === 'Hard Cap';
-    const activeIsUniversalTrail = activeStopLossReason === 'Universal Trail';
+    const activeIsProfitSecure = activeStopLossReason === 'Profit Secure' || activeStopLossReason === 'Breakeven';
     const activeIsAgentTrail = activeStopLossReason === 'Agent Trail';
     
-    const isUniversalTrailEnabled = config.isUniversalProfitTrailEnabled;
+    const isProfitSecureEnabled = config.isUniversalProfitTrailEnabled;
 
-    const getUniversalTrailStatus = () => {
-        if (!isUniversalTrailEnabled) return { text: 'Disabled', className: 'bg-slate-200 dark:bg-slate-600' };
-        if (activeIsUniversalTrail) return { text: 'ACTIVE', className: 'bg-sky-500 text-white' };
+    const getProfitSecureStatus = () => {
+        if (!isProfitSecureEnabled) return { text: 'Disabled', className: 'bg-slate-200 dark:bg-slate-600' };
+        
+        if (activeIsProfitSecure) {
+             if(position.activeStopLossReason === 'Breakeven') {
+                 return { text: 'ACTIVE: Risk-Free', className: 'bg-teal-500 text-white' };
+             }
+
+            let lockFeeMultiple = 0;
+            // New logic: N -> N-1
+            if (profitLockTier >= 2) {
+                lockFeeMultiple = profitLockTier - 1;
+            }
+
+            const statusText = lockFeeMultiple > 0 
+                ? `Tier ${lockFeeMultiple}: ${lockFeeMultiple}x Fee Locked` 
+                : 'ACTIVE';
+
+            return { text: statusText, className: 'bg-teal-500 text-white' };
+        }
+        
         return { text: 'Enabled', className: 'bg-slate-500 dark:bg-slate-400 text-white dark:text-slate-900' };
     };
-
-    const universalTrailStatus = getUniversalTrailStatus();
+    
+    const profitSecureStatus = getProfitSecureStatus();
 
     const isFutures = config.mode === TradingMode.USDSM_Futures;
     let hardCapLabel = `Hard Cap (${MAX_STOP_LOSS_PERCENT_OF_INVESTMENT}%)`;
@@ -230,24 +248,29 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
                     <span className="font-bold font-mono bg-slate-200 dark:bg-slate-700 px-2 py-1 rounded-md">{formatPrice(stopLossPrice, pricePrecision)}</span>
                 </div>
                 
-                <div className={`p-2 rounded-md ${activeIsUniversalTrail ? 'bg-sky-100 dark:bg-sky-900 border border-sky-300 dark:border-sky-700' : ''}`}>
+                <div className={`p-2 rounded-md ${activeIsProfitSecure ? 'bg-teal-100 dark:bg-teal-900 border border-teal-300 dark:border-teal-700' : ''}`}>
                     <div className="flex justify-between items-center">
-                         <span className={activeIsUniversalTrail ? 'font-semibold text-sky-700 dark:text-sky-300' : 'font-medium'}>Universal Trail</span>
-                         <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${universalTrailStatus.className}`}>
-                            {universalTrailStatus.text}
+                         <span className={activeIsProfitSecure ? 'font-semibold text-teal-700 dark:text-teal-300' : 'font-medium'}>Multi-Stage Profit Secure</span>
+                         <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${profitSecureStatus.className}`}>
+                            {profitSecureStatus.text}
                          </span>
                     </div>
-                    {isUniversalTrailEnabled && !activeIsUniversalTrail &&
+                    {isProfitSecureEnabled && !activeIsProfitSecure &&
                         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                           Will become active once the trade is in sufficient profit.
+                           Will activate once profit covers the trade fee.
+                        </p>
+                    }
+                     {activeIsProfitSecure &&
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                           { position.activeStopLossReason === 'Breakeven' ? 'Stop is at fee-adjusted breakeven.' : 'Trailing profit based on fee multiples.' }
                         </p>
                     }
                 </div>
 
-                <div className={`p-2 rounded-md ${activeIsAgentTrail ? 'bg-teal-100 dark:bg-teal-900 border border-teal-300 dark:border-teal-700' : ''}`}>
+                <div className={`p-2 rounded-md ${activeIsAgentTrail ? 'bg-sky-100 dark:bg-sky-900 border border-sky-300 dark:border-sky-700' : ''}`}>
                     <div className="flex justify-between items-center">
-                         <span className={activeIsAgentTrail ? 'font-semibold text-teal-700 dark:text-teal-300' : ''}>Agent Trail</span>
-                         <span className={`text-xs px-1.5 py-0.5 rounded-full ${activeIsAgentTrail ? 'bg-teal-500 text-white' : 'bg-slate-200 dark:bg-slate-600'}`}>
+                         <span className={activeIsAgentTrail ? 'font-semibold text-sky-700 dark:text-sky-300' : ''}>Agent Trail</span>
+                         <span className={`text-xs px-1.5 py-0.5 rounded-full ${activeIsAgentTrail ? 'bg-sky-500 text-white' : 'bg-slate-200 dark:bg-slate-600'}`}>
                             {activeIsAgentTrail ? 'ACTIVE' : 'Inactive'}
                          </span>
                     </div>

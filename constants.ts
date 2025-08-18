@@ -25,6 +25,13 @@ export const MIN_RISK_REWARD_RATIO = 1.2;
  */
 export const MIN_PROFIT_BUFFER_MULTIPLIER = 1.5;
 
+/**
+ * A multiplier to prevent entries where the stop loss would be too close to the entry price
+ * relative to the current market volatility (ATR).
+ * E.g., a value of 0.75 means the SL must be at least 75% of one ATR period away from the entry price.
+ */
+export const MIN_ATR_SL_BUFFER_MULTIPLIER = 0.75;
+
 
 export const AGENTS: Agent[] = [
     {
@@ -44,6 +51,12 @@ export const AGENTS: Agent[] = [
         name: 'Historic Expert',
         description: 'Determines the main trend using a 30-candle lookback, then enters on a fast EMA crossover with RSI confirmation.',
         indicators: ['SMA (Trend)', 'EMA Crossover (Trigger)', 'RSI (Momentum)'],
+    },
+    {
+        id: 13,
+        name: 'The Chameleon',
+        description: 'A fully adaptive agent that dynamically manages trades on every tick. It uses a multi-factor model to trail stops and proactively exit on signs of reversal.',
+        indicators: ['Adaptive Momentum', 'Volatility Trailing Stop', 'Reversal Detection'],
     },
 ];
 
@@ -150,11 +163,24 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     qsc_rangeScoreThreshold: 1,
 
     // Agent 11: Historic Expert
-    he_trendSmaPeriod: 22,
-    he_fastEmaPeriod: 12,
-    he_slowEmaPeriod: 25,
-    he_rsiPeriod: 10,
-    he_rsiMidline: 48,
+    he_trendSmaPeriod: 30,
+    he_fastEmaPeriod: 9,
+    he_slowEmaPeriod: 21,
+    he_rsiPeriod: 14,
+    he_rsiMidline: 50,
+    
+    // Agent 13: The Chameleon
+    ch_rsiPeriod: 14,
+    ch_atrPeriod: 14,
+    ch_momentumThreshold: 65,
+    ch_volatilityMultiplier: 1.8,
+    ch_lookbackPeriod: 10,
+    ch_bbPeriod: 20,
+    ch_bbStdDev: 2,
+    ch_profitLockMultiplier: 1.2, // Hyper-aggressive profit locking
+    ch_volatilitySpikeMultiplier: 2.5, // Veto entries on candles > 2.5x ATR
+    ch_psarStep: 0.02,
+    ch_psarMax: 0.2,
 };
 
 
@@ -165,8 +191,8 @@ export const TIMEFRAME_ADAPTIVE_SETTINGS: Record<string, AgentParams> = {
     '1m': {
         mom_rsiThresholdBullish: 60,
         mom_rsiThresholdBearish: 40,
-        scalp_stochRsiOversold: 25,
-        scalp_stochRsiOverbought: 80,
+        scalp_stochRsiOversold: 15,
+        scalp_stochRsiOverbought: 85,
     },
     '3m': {
         mom_rsiThresholdBullish: 58,

@@ -1,4 +1,4 @@
-import { TradingMode, type Agent, type TradeSignal, type Kline, type AgentParams, type Position, type ADXOutput, type MACDOutput, type BollingerBandsOutput, type StochasticRSIOutput, type TradeManagementSignal, type BotConfig } from '../types';
+import { TradingMode, type Agent, type TradeSignal, type Kline, type AgentParams, type Position, type ADXOutput, type MACDOutput, type BollingerBandsOutput, type StochasticRSIOutput, type TradeManagementSignal, type BotConfig, ChameleonAgentState } from '../types';
 import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV } from 'technicalindicators';
 import * as constants from '../constants';
 import { calculateSupportResistance } from './chartAnalysisService';
@@ -44,7 +44,12 @@ export const getInitialAgentTargets = (
     const currentAtr = (getLast(atrValues) as number) || (entryPrice * 0.01);
     const timeframeConfig = TIMEFRAME_ATR_CONFIG[timeFrame] || TIMEFRAME_ATR_CONFIG['5m'];
     const atrMultiplier = timeframeConfig.atrMultiplier;
-    const riskRewardRatio = timeframeConfig.riskRewardRatio;
+    let riskRewardRatio = timeframeConfig.riskRewardRatio;
+
+    if (agentId === 13) {
+        riskRewardRatio = 10; // Use a very high R:R to set a distant, failsafe TP for the Chameleon agent
+    }
+
     const atrStopOffset = currentAtr * atrMultiplier;
 
     let suggestedStopLoss = isLong ? entryPrice - atrStopOffset : entryPrice + atrStopOffset;
@@ -98,78 +103,75 @@ export const getInitialAgentTargets = (
 
 // ----------------------------------------------------------------------------------
 // --- #2: TRADE MANAGEMENT (Trailing Stops, etc.) ---
-// This is now split into two specialized functions for performance and clarity.
 // ----------------------------------------------------------------------------------
 
 /**
- * Calculates a potential new Stop Loss based on the Universal Profit Trail logic.
- * This is a lightweight function designed to be called on every price tick.
+ * A multi-stage, fee-multiple-based profit-locking mechanism.
+ * 1. Moves SL to fee-adjusted breakeven once fees are covered.
+ * 2. Moves SL to lock in profits at pre-defined fee-multiple milestones.
+ * Called on every price tick.
  * @param position - The current open position.
  * @param currentPrice - The live price tick.
- * @param config - The bot's configuration.
  * @returns A TradeManagementSignal with a potential new stop loss.
  */
-export function getUniversalProfitTrailSignal(
+export function getMultiStageProfitSecureSignal(
     position: Position,
-    currentPrice: number,
-    config: BotConfig
+    currentPrice: number
 ): TradeManagementSignal {
+    const { entryPrice, stopLossPrice, direction, isBreakevenSet, profitLockTier, size } = position;
+    const isLong = direction === 'LONG';
     const reasons: string[] = [];
-    let newStopLoss: number | undefined;
-    const isLong = position.direction === 'LONG';
-    const entryPrice = position.entryPrice;
 
-    // Calculate the price distance required to cover round-trip fees
-    const positionValue = position.size * entryPrice;
+    // Step 1: Calculate the fee in price terms ('x')
+    const positionValue = entryPrice * size;
     const roundTripFee = positionValue * TAKER_FEE_RATE * 2;
-    const feeInPrice = (roundTripFee / position.size);
-    const feeAdjustedBreakeven = entryPrice + (feeInPrice * (isLong ? 1 : -1));
+    const feeInPrice = roundTripFee > 0 ? (roundTripFee / size) : 0;
+    if (feeInPrice <= 0) return { reasons };
 
-    if (feeInPrice > 0) {
-        const profitInPrice = (currentPrice - entryPrice) * (isLong ? 1 : -1);
-        let potentialNewStop: number | undefined;
-
-        // Condition 1: Move SL to a fee-adjusted "Breakeven+" point.
-        // This ensures if the stop is hit, the trade PNL is ~0 after fees.
-        const isStopInLoss = (isLong && position.stopLossPrice < entryPrice) || (!isLong && position.stopLossPrice > entryPrice);
-        // Trigger when profit gives a buffer (e.g., 2x the fee cost)
-        if (profitInPrice >= (feeInPrice * 2) && isStopInLoss) {
-            potentialNewStop = feeAdjustedBreakeven;
-            reasons.push('Breakeven+ Trigger');
-        }
-
-        // Condition 2: Trail the profit by locking in a percentage of unrealized gains.
-        const TRAIL_START_THRESHOLD_MULTIPLIER = 3; // Start trailing when profit is 3x the fee cost.
-        const PROFIT_LOCK_IN_PERCENT = 0.50; // Lock in 50% of unrealized profit.
-        
-        // This logic engages only after profit significantly clears the fee threshold.
-        if (profitInPrice > feeInPrice * TRAIL_START_THRESHOLD_MULTIPLIER) {
-            const profitToLock = profitInPrice * PROFIT_LOCK_IN_PERCENT;
-            const stopAtProfitLevel = entryPrice + (profitToLock * (isLong ? 1 : -1));
-            
-            // The current candidate for the new stop is either the one from the breakeven logic (if triggered on this tick)
-            // or the existing stop loss from the position state.
-            const currentCandidateStop = potentialNewStop ?? position.stopLossPrice;
-
-            // Only update if the new proposed stop is an improvement over the current candidate.
-            if ((isLong && stopAtProfitLevel > currentCandidateStop) || (!isLong && stopAtProfitLevel < currentCandidateStop)) {
-                potentialNewStop = stopAtProfitLevel;
-                // If the reason array doesn't already have the breakeven trigger, add the profit trail reason.
-                if (!reasons.includes('Breakeven+ Trigger')) {
-                    reasons.push(`Profit Trail Lock`);
-                }
-            }
-        }
-        
-        // Final check: Only propose an update if the new stop is a strict improvement over the last known stop.
-        if (potentialNewStop !== undefined) {
-            if ((isLong && potentialNewStop > position.stopLossPrice) || (!isLong && potentialNewStop < position.stopLossPrice)) {
-                newStopLoss = potentialNewStop;
+    const currentGrossProfitInPrice = (currentPrice - entryPrice) * (isLong ? 1 : -1);
+    if (currentGrossProfitInPrice <= 0) return { reasons }; // Not in profit, no action.
+    
+    // Step 2: Handle one-time move to Breakeven (Risk-Free)
+    if (!isBreakevenSet) {
+        if (currentGrossProfitInPrice > feeInPrice) {
+            const breakevenStop = entryPrice + (feeInPrice * (isLong ? 1 : -1));
+            // Ratchet check: Only move SL if it's an improvement
+            if ((isLong && breakevenStop > stopLossPrice) || (!isLong && breakevenStop < stopLossPrice)) {
+                return {
+                    newStopLoss: breakevenStop,
+                    reasons: [`Profit Secure: Trade is now risk-free (covering fees).`],
+                    newState: { isBreakevenSet: true, profitLockTier: 1 } // Mark BE as tier 1
+                };
             }
         }
     }
-    return { newStopLoss, reasons };
+    
+    // Step 3: Handle the new dynamic (N)x -> (N-1)x profit lock
+    const currentFeeMultiple = currentGrossProfitInPrice / feeInPrice;
+
+    if (currentFeeMultiple >= 2) {
+        const triggerFeeMultiple = Math.floor(currentFeeMultiple); // This is our 'N'
+        const lockFeeMultiple = triggerFeeMultiple - 1; // This is 'N-1'
+
+        // Only trigger if we've reached a new integer multiple, and it's higher than the current tier
+        if (triggerFeeMultiple > profitLockTier) {
+            const newStopLoss = entryPrice + (feeInPrice * lockFeeMultiple * (isLong ? 1 : -1));
+            
+            // Ratchet Check
+            if ((isLong && newStopLoss > stopLossPrice) || (!isLong && newStopLoss < stopLossPrice)) {
+                const reason = `Profit Secure: Tier ${lockFeeMultiple} activated at ${triggerFeeMultiple}x fee gain.`;
+                return {
+                    newStopLoss,
+                    reasons: [reason],
+                    newState: { profitLockTier: triggerFeeMultiple, isBreakevenSet: true }
+                };
+            }
+        }
+    }
+
+    return { reasons };
 }
+
 
 
 /**
@@ -481,6 +483,65 @@ const getHistoricExpertSignal = (klines: Kline[], params: Required<AgentParams>)
     return { signal: 'HOLD', reasons };
 };
 
+// --- Agent 13: The Chameleon ---
+const getChameleonSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
+    const minKlines = Math.max(30, params.ch_bbPeriod!, params.ch_atrPeriod!);
+    if (klines.length < minKlines) return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data'] };
+    
+    const closes = klines.map(k => k.close);
+    const highs = klines.map(k => k.high);
+    const lows = klines.map(k => k.low);
+    const currentPrice = getLast(closes)!;
+    const lastKline = klines[klines.length - 1];
+    const reasons: string[] = [];
+
+    // --- Pre-Trade Volatility Veto ---
+    const lastAtr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: params.ch_atrPeriod! }))!;
+    const candleRange = lastKline.high - lastKline.low;
+    const maxAllowedRange = lastAtr * params.ch_volatilitySpikeMultiplier!;
+    if (candleRange > maxAllowedRange) {
+        reasons.push(`❌ VETO: Entry candle volatility is too high (Range: ${candleRange.toFixed(4)} > Max Allowed: ${maxAllowedRange.toFixed(4)}).`);
+        return { signal: 'HOLD', reasons };
+    }
+
+    const fastEma = getLast(EMA.calculate({ period: 9, values: closes }))!;
+    const slowEma = getLast(EMA.calculate({ period: 21, values: closes }))!;
+    const rsi = getLast(RSI.calculate({ period: params.ch_rsiPeriod!, values: closes }))!;
+    const bb = getLast(BollingerBands.calculate({ period: params.ch_bbPeriod!, stdDev: params.ch_bbStdDev!, values: closes }))! as BollingerBandsOutput;
+
+    const isBullish = fastEma > slowEma && rsi > 55;
+    const isBearish = fastEma < slowEma && rsi < 45;
+
+    reasons.push(fastEma > slowEma ? '✅ Trend: Bullish EMA' : '✅ Trend: Bearish EMA');
+    reasons.push(`ℹ️ Momentum: RSI is ${rsi.toFixed(1)}`);
+
+    if (isBullish) {
+        if (currentPrice > bb.upper) {
+            reasons.push(`❌ VETO: Price is overextended (above Upper Bollinger Band).`);
+            return { signal: 'HOLD', reasons };
+        }
+        if (rsi > 75) {
+            reasons.push(`❌ VETO: RSI is overbought (${rsi.toFixed(1)} > 75), avoiding peak entry.`);
+            return { signal: 'HOLD', reasons };
+        }
+        reasons.push('✅ Confirmation: RSI > 55');
+        return { signal: 'BUY', reasons };
+    }
+    if (isBearish) {
+        if (currentPrice < bb.lower) {
+            reasons.push(`❌ VETO: Price is overextended (below Lower Bollinger Band).`);
+            return { signal: 'HOLD', reasons };
+        }
+        if (rsi < 25) {
+            reasons.push(`❌ VETO: RSI is oversold (${rsi.toFixed(1)} < 25), avoiding peak entry.`);
+            return { signal: 'HOLD', reasons };
+        }
+        reasons.push('✅ Confirmation: RSI < 45');
+        return { signal: 'SELL', reasons };
+    }
+
+    return { signal: 'HOLD', reasons };
+};
 
 // ----------------------------------------------------------------------------------
 // --- #4: MAIN ORCHESTRATOR & HELPERS ---
@@ -491,13 +552,33 @@ export function validateTradeProfitability(
     stopLossPrice: number,
     takeProfitPrice: number,
     direction: 'LONG' | 'SHORT',
-    config: BotConfig
+    config: BotConfig,
+    klines: Kline[]
 ): { isValid: boolean, reason: string } {
 
     const riskDistance = Math.abs(entryPrice - stopLossPrice);
     const rewardDistance = Math.abs(takeProfitPrice - entryPrice);
 
-    // 1. Risk-to-Reward Check
+    // 1. Minimum Volatility-Adjusted Risk Distance (NEW CHECK)
+    const atrPeriod = constants.DEFAULT_AGENT_PARAMS.atrPeriod;
+    if (klines.length > atrPeriod) {
+        const highs = klines.map(k => k.high);
+        const lows = klines.map(k => k.low);
+        const closes = klines.map(k => k.close);
+        const currentAtr = (ATR.calculate({ high: highs, low: lows, close: closes, period: atrPeriod }).pop()) || 0;
+
+        if (currentAtr > 0) {
+            const minRiskDistance = currentAtr * constants.MIN_ATR_SL_BUFFER_MULTIPLIER;
+            if (riskDistance < minRiskDistance) {
+                return {
+                    isValid: false,
+                    reason: `❌ VETO: Stop loss is too tight for current volatility (Risk: ${riskDistance.toFixed(config.pricePrecision)} < Min Required: ${minRiskDistance.toFixed(config.pricePrecision)}).`
+                };
+            }
+        }
+    }
+
+    // 2. Risk-to-Reward Check
     if (config.isMinRrEnabled) {
         if (riskDistance <= 0) {
             return { isValid: false, reason: '❌ VETO: Risk distance is zero.' };
@@ -513,7 +594,7 @@ export function validateTradeProfitability(
     }
 
 
-    // 2. Fee-Awareness Check
+    // 3. Fee-Awareness Check
     const positionValue = config.mode === TradingMode.USDSM_Futures 
         ? config.investmentAmount * config.leverage 
         : config.investmentAmount;
@@ -551,6 +632,7 @@ export async function getTradingSignal(
         case 7: agentSignal = getMarketStructureMavenSignal(klines, finalParams); break;
         case 9: agentSignal = getQuantumScalperSignal(klines, finalParams); break;
         case 11: agentSignal = getHistoricExpertSignal(klines, finalParams); break;
+        case 13: agentSignal = getChameleonSignal(klines, finalParams); break;
         default:
             return { signal: 'HOLD', reasons: ['Agent not found'] };
     }
@@ -583,4 +665,139 @@ export async function getTradingSignal(
     }
 
     return agentSignal;
+}
+
+export function getChameleonStrategicUpdate(
+    klines: Kline[],
+    config: BotConfig,
+    position: Position
+): ChameleonAgentState {
+    const params = { ...constants.DEFAULT_AGENT_PARAMS, ...config.agentParams };
+    
+    const closes = klines.map(k => k.close);
+    const highs = klines.map(k => k.high);
+    const lows = klines.map(k => k.low);
+
+    const lastAtr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: params.ch_atrPeriod! })) || 0;
+    const lastRsi = getLast(RSI.calculate({ values: closes, period: params.ch_rsiPeriod! })) || 50;
+    
+    const lookback = params.ch_lookbackPeriod!;
+    const recentKlines = klines.slice(-lookback);
+    const swingPoint = position.direction === 'LONG' 
+        ? Math.min(...recentKlines.map(k => k.low)) 
+        : Math.max(...recentKlines.map(k => k.high));
+
+    const fastEma = getLast(EMA.calculate({ period: 9, values: closes }))!;
+    const slowEma = getLast(EMA.calculate({ period: 21, values: closes }))!;
+    
+    const psarInput = { high: highs, low: lows, step: params.ch_psarStep!, max: params.ch_psarMax! };
+    const lastPsar = psarInput.high.length >= 2 ? getLast(PSAR.calculate(psarInput)) as number | undefined : undefined;
+
+
+    return {
+        lastAtr,
+        lastRsi,
+        swingPoint,
+        fastEma,
+        slowEma,
+        lastPsar,
+    };
+}
+
+
+export function getChameleonManagementSignal(
+    position: Position,
+    currentPrice: number,
+    agentState: ChameleonAgentState | undefined,
+    config: BotConfig,
+): TradeManagementSignal {
+    const reasons: string[] = [];
+
+    if (!agentState || !position.peakPrice) {
+        return { reasons: ['State not initialized or peak price missing'] };
+    }
+
+    const { lastAtr, fastEma, slowEma, lastRsi, swingPoint, lastPsar } = agentState;
+    const finalParams = { ...constants.DEFAULT_AGENT_PARAMS, ...config.agentParams };
+    const { ch_volatilityMultiplier } = finalParams;
+    const isLong = position.direction === 'LONG';
+    
+    // --- 1. Reversal Detection (Immediate Exit) ---
+    // Only exit proactively if trade is already in profit to avoid exiting on small pullbacks at a loss.
+    const isInProfit = isLong ? currentPrice > position.entryPrice : currentPrice < position.entryPrice;
+    if (isInProfit) {
+        const isReversal = isLong 
+            ? (fastEma < slowEma && lastRsi < 48) // EMA cross down + RSI momentum loss
+            : (fastEma > slowEma && lastRsi > 52); // EMA cross up + RSI momentum loss
+        if (isReversal) {
+            reasons.push('Proactive Exit: Trend reversal detected.');
+            return { closePosition: true, reasons };
+        }
+    }
+
+    // --- NEW: Prioritize Universal Profit Trail ---
+    // If the universal system is enabled, the agent's specific trailing logic is bypassed.
+    if (config.isUniversalProfitTrailEnabled) {
+        return { reasons: ['Universal Profit Trail is active; skipping agent-specific trail.'] };
+    }
+
+    // --- 2. Gather Stop-Loss Candidates ---
+    const stopCandidates: number[] = [];
+
+    // a) ATR Volatility Stop
+    if (lastAtr > 0 && ch_volatilityMultiplier) {
+        const atrStopOffset = lastAtr * ch_volatilityMultiplier;
+        const atrStop = isLong 
+            ? position.peakPrice - atrStopOffset
+            : position.peakPrice + atrStopOffset;
+        stopCandidates.push(atrStop);
+    }
+
+    // b) Structure-based Stop (Swing Point)
+    if (swingPoint) {
+        // Add a small buffer to avoid being stopped out exactly on the swing point
+        const buffer = (lastAtr || 0) * 0.1;
+        const structureStop = isLong ? swingPoint - buffer : swingPoint + buffer;
+        stopCandidates.push(structureStop);
+    }
+
+    // c) Momentum-based Stop (PSAR)
+    if (lastPsar) {
+        stopCandidates.push(lastPsar);
+    }
+    
+    if (stopCandidates.length === 0) {
+        return { reasons: ['No valid stop candidates found.'] };
+    }
+
+    // --- 3. Select the "Smartest" Stop ---
+    let bestNewStop: number | undefined;
+
+    for (const price of stopCandidates) {
+        if (isNaN(price)) continue;
+
+        // Common validity checks:
+        // - Must be an improvement over the current stop loss (ratchet effect).
+        // - Must not be on the wrong side of the current price (would cause immediate stop out).
+        const isTighter = isLong ? price > position.stopLossPrice : price < position.stopLossPrice;
+        const isSafe = isLong ? price < currentPrice : price > currentPrice;
+
+        if (isTighter && isSafe) {
+            if (bestNewStop === undefined) {
+                bestNewStop = price;
+            } else {
+                // For long, we want the highest (tightest) stop. For short, the lowest.
+                bestNewStop = isLong ? Math.max(bestNewStop, price) : Math.min(bestNewStop, price);
+            }
+        }
+    }
+
+    if (bestNewStop) {
+        return {
+            newStopLoss: bestNewStop,
+            reasons: ['Adaptive Trail Updated'],
+        };
+    }
+
+    return { reasons: ['No adaptive stop update needed.'] };
 }

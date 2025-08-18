@@ -1,14 +1,20 @@
-
 import { Kline, BotConfig, BacktestResult, SimulatedTrade, AgentParams, Position, RiskMode, TradingMode, OptimizationResultItem } from '../types';
-import { getTradingSignal, getInitialAgentTargets, validateTradeProfitability, getAgentExitSignal } from './localAgentService';
+import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal } from './localAgentService';
 import * as constants from '../constants';
+import { ATR } from 'technicalindicators';
 
 // --- Worker-local Helper Functions ---
 
-interface SimulatedPosition extends Omit<Position, 'id' | 'entryTime' | 'botId' | 'orderId' | 'exitReason' | 'pnl' | 'exitTime' | 'activeStopLossReason'> {
+const getLast = <T>(arr: T[] | undefined): T | undefined => arr && arr.length > 0 ? arr[arr.length - 1] : undefined;
+
+interface SimulatedPosition extends Omit<Position, 'id' | 'entryTime' | 'botId' | 'orderId' | 'exitReason' | 'pnl' | 'exitTime' | 'activeStopLossReason' | 'isBreakevenSet' | 'proactiveLossCheckTriggered' | 'profitLockTier' | 'peakPrice'> {
     entryTime: number; 
-    activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Universal Trail' | 'Agent Trail';
+    activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Profit Secure' | 'Agent Trail' | 'Breakeven';
+    isBreakevenSet: boolean;
+    profitLockTier: number;
+    peakPrice: number;
 }
+
 
 function formatDuration(ms: number): string {
     if (ms < 0) return '0s';
@@ -72,6 +78,66 @@ function calculateResults(trades: SimulatedTrade[], equityCurve: number[], start
     return { trades, totalPnl, winRate, totalTrades, wins, losses, breakEvens, maxDrawdown, profitFactor, sharpeRatio, averageTradeDuration };
 }
 
+function validateTradeProfitability(
+    entryPrice: number,
+    stopLossPrice: number,
+    takeProfitPrice: number,
+    direction: 'LONG' | 'SHORT',
+    config: BotConfig,
+    klines: Kline[]
+): { isValid: boolean, reason: string } {
+    const riskDistance = Math.abs(entryPrice - stopLossPrice);
+    const rewardDistance = Math.abs(takeProfitPrice - entryPrice);
+
+    // 1. Minimum Volatility-Adjusted Risk Distance (NEW CHECK)
+    const atrPeriod = constants.DEFAULT_AGENT_PARAMS.atrPeriod;
+    if (klines.length > atrPeriod) {
+        const highs = klines.map(k => k.high);
+        const lows = klines.map(k => k.low);
+        const closes = klines.map(k => k.close);
+        const currentAtr = (ATR.calculate({ high: highs, low: lows, close: closes, period: atrPeriod }).pop()) || 0;
+
+        if (currentAtr > 0) {
+            const minRiskDistance = currentAtr * constants.MIN_ATR_SL_BUFFER_MULTIPLIER;
+            if (riskDistance < minRiskDistance) {
+                return {
+                    isValid: false,
+                    reason: `❌ VETO: Stop loss is too tight for current volatility (Risk: ${riskDistance.toFixed(config.pricePrecision)} < Min Required: ${minRiskDistance.toFixed(config.pricePrecision)}).`
+                };
+            }
+        }
+    }
+
+    // 2. Risk-to-Reward Check
+    if (config.isMinRrEnabled) {
+        if (riskDistance <= 0) {
+            return { isValid: false, reason: '❌ VETO: Risk distance is zero.' };
+        }
+        const rrRatio = rewardDistance / riskDistance;
+        if (rrRatio < constants.MIN_RISK_REWARD_RATIO) {
+            return {
+                isValid: false,
+                reason: `❌ VETO: R:R Ratio of ${rrRatio.toFixed(2)}:1 is below the minimum of ${constants.MIN_RISK_REWARD_RATIO}:1.`
+            };
+        }
+    }
+
+    // 3. Fee-Awareness Check
+    const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
+    const tradeSize = positionValue / entryPrice;
+    if (tradeSize <= 0) return { isValid: true, reason: '' };
+    const roundTripFee = positionValue * constants.TAKER_FEE_RATE * 2;
+    const feeInPrice = roundTripFee / tradeSize;
+    const minProfitDistance = feeInPrice * constants.MIN_PROFIT_BUFFER_MULTIPLIER;
+    if (rewardDistance < minProfitDistance) {
+        return {
+            isValid: false,
+            reason: `❌ VETO: Profit target is within the fee zone (Target: ${rewardDistance.toFixed(config.pricePrecision)}, Min Required: ${minProfitDistance.toFixed(config.pricePrecision)}).`
+        };
+    }
+    return { isValid: true, reason: `✅ Profitability checks passed.` };
+}
+
 // --- Core Logic (Now accepts pre-fetched HTF klines) ---
 
 async function runBacktest(
@@ -116,7 +182,62 @@ async function runBacktest(
 
         if (openPosition) {
             const isLong = openPosition.direction === 'LONG';
-            const stopReason = openPosition.activeStopLossReason.includes('Trail') ? 'Trailing Stop Hit' : 'Stop Loss Hit';
+            
+            // Update peak price
+            if (isLong) {
+                openPosition.peakPrice = Math.max(openPosition.peakPrice, currentCandle.high);
+            } else {
+                openPosition.peakPrice = Math.min(openPosition.peakPrice, currentCandle.low);
+            }
+
+            // Universal Profit Trail Logic
+            if (config.isUniversalProfitTrailEnabled) {
+                const positionValue = openPosition.entryPrice * openPosition.size;
+                const roundTripFee = positionValue * constants.TAKER_FEE_RATE * 2;
+                const feeInPrice = roundTripFee > 0 ? (roundTripFee / openPosition.size) : 0;
+                
+                if (feeInPrice > 0) {
+                     const highProfitInPrice = (currentCandle.high - openPosition.entryPrice) * (isLong ? 1 : -1);
+                     const lowProfitInPrice = (currentCandle.low - openPosition.entryPrice) * (isLong ? 1 : -1);
+                     const peakProfitInCandle = Math.max(highProfitInPrice, lowProfitInPrice);
+
+                    if (peakProfitInCandle > 0) {
+                        // 1. Breakeven check
+                        if (!openPosition.isBreakevenSet && peakProfitInCandle > feeInPrice) {
+                             const breakevenStop = openPosition.entryPrice + (feeInPrice * (isLong ? 1 : -1));
+                             if ((isLong && breakevenStop > openPosition.stopLossPrice) || (!isLong && breakevenStop < openPosition.stopLossPrice)) {
+                                 openPosition.stopLossPrice = breakevenStop;
+                                 openPosition.activeStopLossReason = 'Breakeven';
+                                 openPosition.isBreakevenSet = true;
+                                 openPosition.profitLockTier = 1;
+                             }
+                        }
+
+                        // --- NEW DYNAMIC (N)x -> (N-1)x LOGIC ---
+                        const peakFeeMultiple = peakProfitInCandle / feeInPrice;
+
+                        if (peakFeeMultiple >= 2) {
+                            const triggerFeeMultiple = Math.floor(peakFeeMultiple); // This is our 'N'
+                            const lockFeeMultiple = triggerFeeMultiple - 1; // This is 'N-1'
+    
+                            // Only trigger if we've reached a new integer multiple, and it's higher than the current tier
+                            if (triggerFeeMultiple > openPosition.profitLockTier) {
+                                const newStop = openPosition.entryPrice + (feeInPrice * lockFeeMultiple * (isLong ? 1 : -1));
+                                
+                                // Ratchet Check
+                                if ((isLong && newStop > openPosition.stopLossPrice) || (!isLong && newStop < openPosition.stopLossPrice)) {
+                                    openPosition.stopLossPrice = newStop;
+                                    openPosition.activeStopLossReason = 'Profit Secure';
+                                    openPosition.profitLockTier = triggerFeeMultiple;
+                                    openPosition.isBreakevenSet = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            const stopReason = openPosition.activeStopLossReason.includes('Trail') || openPosition.activeStopLossReason.includes('Secure') || openPosition.activeStopLossReason === 'Breakeven' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
             if (isLong) {
                 if (currentCandle.low <= openPosition.stopLossPrice) hasTradedInThisCandle = closePosition(openPosition.stopLossPrice, stopReason, currentCandle.time);
                 else if (currentCandle.high >= openPosition.takeProfitPrice) hasTradedInThisCandle = closePosition(openPosition.takeProfitPrice, 'Take Profit Hit', currentCandle.time);
@@ -124,17 +245,31 @@ async function runBacktest(
                 if (currentCandle.high >= openPosition.stopLossPrice) hasTradedInThisCandle = closePosition(openPosition.stopLossPrice, stopReason, currentCandle.time);
                 else if (currentCandle.low <= openPosition.takeProfitPrice) hasTradedInThisCandle = closePosition(openPosition.takeProfitPrice, 'Take Profit Hit', currentCandle.time);
             }
+
             if (openPosition) {
-                const tempPos = { ...openPosition, id: 0, botId: 'sim', orderId: null, entryTime: new Date(openPosition.entryTime) };
-                if (!config.isUniversalProfitTrailEnabled) {
-                    const slSignal = getAgentExitSignal(tempPos, historySlice, currentCandle.close, config);
-                    if (slSignal.closePosition) {
-                        hasTradedInThisCandle = closePosition(currentCandle.close, `Agent Exit: ${slSignal.reasons.join(' ')}`, currentCandle.time);
-                    } else if (slSignal.newStopLoss) {
-                        if ((isLong && slSignal.newStopLoss > openPosition.stopLossPrice) || (!isLong && slSignal.newStopLoss < openPosition.stopLossPrice)) {
-                            openPosition.stopLossPrice = slSignal.newStopLoss; openPosition.activeStopLossReason = 'Agent Trail';
-                        }
-                    }
+                const tempPos: Position = { ...openPosition, id: 0, botId: 'sim', orderId: null, entryTime: new Date(openPosition.entryTime), proactiveLossCheckTriggered: false };
+                 if (config.agent.id === 13) {
+                     // Simplified Chameleon logic for backtesting (candle-based ATR trail)
+                     const finalParams = { ...constants.DEFAULT_AGENT_PARAMS, ...config.agentParams };
+                     const { ch_atrPeriod, ch_volatilityMultiplier } = finalParams;
+                     if (historySlice.length > ch_atrPeriod && ch_volatilityMultiplier) {
+                         const atr = getLast(ATR.calculate({ high: historySlice.map(k => k.high), low: historySlice.map(k => k.low), close: historySlice.map(k => k.close), period: ch_atrPeriod }))!;
+                         const atrStopOffset = atr * ch_volatilityMultiplier;
+                         const newStop = isLong ? openPosition.peakPrice - atrStopOffset : openPosition.peakPrice + atrStopOffset;
+                         if ((isLong && newStop > openPosition.stopLossPrice) || (!isLong && newStop < openPosition.stopLossPrice)) {
+                             openPosition.stopLossPrice = newStop;
+                             openPosition.activeStopLossReason = 'Agent Trail';
+                         }
+                     }
+                } else if (!config.isUniversalProfitTrailEnabled) {
+                     const slSignal = getAgentExitSignal(tempPos, historySlice, currentCandle.close, config);
+                     if (slSignal.closePosition) {
+                         hasTradedInThisCandle = closePosition(currentCandle.close, `Agent Exit: ${slSignal.reasons.join(' ')}`, currentCandle.time);
+                     } else if (slSignal.newStopLoss) {
+                         if ((isLong && slSignal.newStopLoss > openPosition.stopLossPrice) || (!isLong && slSignal.newStopLoss < openPosition.stopLossPrice)) {
+                             openPosition.stopLossPrice = slSignal.newStopLoss; openPosition.activeStopLossReason = 'Agent Trail';
+                         }
+                     }
                 }
                 if (openPosition && config.isTrailingTakeProfitEnabled) {
                     const isInProfit = isLong ? currentCandle.close > openPosition.entryPrice : currentCandle.close < openPosition.entryPrice;
@@ -171,14 +306,14 @@ async function runBacktest(
                     const posValForCap = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
                     const sizeForCap = posValForCap / entryPrice;
                     if (sizeForCap > 0) {
-                        let maxLoss = config.investmentAmount * (constants.MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
-                        if (config.mode === TradingMode.USDSM_Futures) maxLoss *= config.leverage;
-                        const hardCapSl = isLong ? entryPrice - (maxLoss / sizeForCap) : entryPrice + (maxLoss / sizeForCap);
+                        // Corrected Logic: Max loss is based on investment (margin), not notional.
+                        const maxLossOnMargin = config.investmentAmount * (constants.MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
+                        const hardCapSl = isLong ? entryPrice - (maxLossOnMargin / sizeForCap) : entryPrice + (maxLossOnMargin / sizeForCap);
                         const tighterSl = isLong ? Math.max(stopLossPrice, hardCapSl) : Math.min(stopLossPrice, hardCapSl);
                         if (tighterSl !== stopLossPrice) slReason = 'Hard Cap';
                         stopLossPrice = tighterSl;
                     }
-                    if (!validateTradeProfitability(entryPrice, stopLossPrice, takeProfitPrice, isLong ? 'LONG' : 'SHORT', config).isValid) continue;
+                    if (!validateTradeProfitability(entryPrice, stopLossPrice, takeProfitPrice, isLong ? 'LONG' : 'SHORT', config, historySlice).isValid) continue;
                     const posVal = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
                     const size = posVal / entryPrice;
                     if (size > 0) {
@@ -189,6 +324,9 @@ async function runBacktest(
                             stopLossPrice, initialStopLossPrice: agentTargets.stopLossPrice, initialTakeProfitPrice: takeProfitPrice,
                             pricePrecision: config.pricePrecision, timeFrame: config.timeFrame, marginType: config.marginType,
                             activeStopLossReason: slReason,
+                            isBreakevenSet: false,
+                            profitLockTier: 0,
+                            peakPrice: entryPrice,
                         };
                     }
                 }

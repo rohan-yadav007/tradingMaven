@@ -356,6 +356,10 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             botId,
             orderId: orderResponse?.orderId ?? null,
             liquidationPrice: finalLiquidationPrice,
+            isBreakevenSet: false,
+            proactiveLossCheckTriggered: false,
+            profitLockTier: 0,
+            peakPrice: finalEntryPrice,
         };
 
         if (config.executionMode === 'live') {

@@ -306,18 +306,26 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 )}
             </div>
 
-            <div className="grid grid-cols-1 gap-4">
-                <RiskInputWithLock
-                    label="Take Profit"
-                    mode={takeProfitMode}
-                    value={takeProfitValue}
-                    isLocked={isTakeProfitLocked}
-                    investmentAmount={investmentAmount}
-                    onModeChange={setTakeProfitMode}
-                    onValueChange={setTakeProfitValue}
-                    onLockToggle={() => setIsTakeProfitLocked(!isTakeProfitLocked)}
-                />
-            </div>
+            {selectedAgent.id === 13 ? (
+                <div className="text-xs text-slate-500 dark:text-slate-400 p-2 bg-slate-100 dark:bg-slate-900/50 rounded-md">
+                    <p className="font-semibold text-sky-600 dark:text-sky-400">Dynamic Profit Management</p>
+                    The Chameleon agent actively manages trades without a fixed take profit target. It uses a multi-factor model to trail stops and secure profits based on live market conditions.
+                </div>
+            ) : (
+                <div className="grid grid-cols-1 gap-4">
+                    <RiskInputWithLock
+                        label="Take Profit"
+                        mode={takeProfitMode}
+                        value={takeProfitValue}
+                        isLocked={isTakeProfitLocked}
+                        investmentAmount={investmentAmount}
+                        onModeChange={setTakeProfitMode}
+                        onValueChange={setTakeProfitValue}
+                        onLockToggle={() => setIsTakeProfitLocked(!isTakeProfitLocked)}
+                    />
+                </div>
+            )}
+            
              <p className="text-xs text-slate-500 dark:text-slate-400 -mt-2">
                 Stop Loss is fully automated by the agent's logic and the universal profit-locking system.
             </p>

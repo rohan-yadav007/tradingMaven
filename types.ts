@@ -25,7 +25,9 @@ export interface TradeManagementSignal {
     newStopLoss?: number;
     newTakeProfit?: number;
     closePosition?: boolean;
+    flipPosition?: boolean; // For Agent 13
     reasons: string[];
+    newState?: any; // Generic state update object
 }
 
 
@@ -53,7 +55,11 @@ export interface Position {
     initialStopLossPrice: number;
     initialTakeProfitPrice: number;
     // For SL transparency
-    activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Universal Trail' | 'Agent Trail';
+    activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Profit Secure' | 'Agent Trail' | 'Breakeven';
+    isBreakevenSet?: boolean;
+    proactiveLossCheckTriggered: boolean;
+    profitLockTier: number; // 0 for none, or the fee-multiple trigger (e.g., 3, 4, 5)
+    peakPrice?: number; // Highest price for LONG, lowest for SHORT since entry
 }
 
 export interface Trade extends Position {
@@ -240,6 +246,16 @@ export interface BinanceOrderResponse {
     avgPrice?: string; // For futures
 }
 
+export interface ChameleonAgentState {
+    // Strategic context (updated on candle close)
+    lastAtr: number;
+    lastRsi: number;
+    swingPoint: number; // The most recent valid swing low/high
+    fastEma: number;
+    slowEma: number;
+    lastPsar?: number;
+}
+
 
 export interface RunningBot {
     id: string;
@@ -265,6 +281,7 @@ export interface RunningBot {
     klinesLoaded?: number;
     lastAnalysisTimestamp: number | null;
     lastPriceUpdateTimestamp: number | null;
+    agentState?: ChameleonAgentState;
 }
 
 export interface LeverageBracket {
@@ -386,6 +403,19 @@ export interface AgentParams {
     he_slowEmaPeriod?: number;
     he_rsiPeriod?: number;
     he_rsiMidline?: number;
+
+    // Agent 13: The Chameleon
+    ch_rsiPeriod?: number;
+    ch_atrPeriod?: number;
+    ch_momentumThreshold?: number; // e.g., 65 for bullish, 35 for bearish
+    ch_volatilityMultiplier?: number; // Base ATR multiplier for SL
+    ch_lookbackPeriod?: number; // For swing points and divergence
+    ch_bbPeriod?: number;
+    ch_bbStdDev?: number;
+    ch_profitLockMultiplier?: number; // For aggressive trailing
+    ch_volatilitySpikeMultiplier?: number; // For entry veto
+    ch_psarStep?: number;
+    ch_psarMax?: number;
 }
 
 

@@ -156,23 +156,43 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
         const chart = createChart(chartContainer, {
             localization: {
                 locale: navigator.language,
+                // Formatter for the crosshair label to ensure it's in local time
+                timeFormatter: (timestamp: UTCTimestamp) => {
+                    return new Date(timestamp * 1000).toLocaleString(navigator.language, {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false,
+                    });
+                },
             },
             timeScale: {
                 timeVisible: true,
                 secondsVisible: false,
-                tickMarkFormatter: (time: UTCTimestamp, tickMarkType: TickMarkType, locale: string) => {
+                // Formatter for the time axis labels, explicitly using the browser's locale
+                tickMarkFormatter: (time: UTCTimestamp, tickMarkType: TickMarkType) => {
                     const date = new Date(time * 1000);
+                    const language = navigator.language;
+
+                    const timeOptions: Intl.DateTimeFormatOptions = {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false,
+                    };
+
                     switch (tickMarkType) {
                         case TickMarkType.Year:
-                            return date.toLocaleDateString(locale, { year: 'numeric' });
+                            return new Intl.DateTimeFormat(language, { year: 'numeric' }).format(date);
                         case TickMarkType.Month:
-                            return date.toLocaleDateString(locale, { month: 'short' });
+                            return new Intl.DateTimeFormat(language, { month: 'short' }).format(date);
                         case TickMarkType.DayOfMonth:
-                            return date.toLocaleDateString(locale, { day: 'numeric' });
+                            return new Intl.DateTimeFormat(language, { day: 'numeric' }).format(date);
                         case TickMarkType.Time:
-                            return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+                            return new Intl.DateTimeFormat(language, timeOptions).format(date);
                         case TickMarkType.TimeWithSeconds:
-                            return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                             return new Intl.DateTimeFormat(language, { ...timeOptions, second: '2-digit' }).format(date);
                     }
                     return '';
                 },

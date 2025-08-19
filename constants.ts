@@ -58,6 +58,12 @@ export const AGENTS: Agent[] = [
         description: 'A fully adaptive agent that dynamically manages trades on every tick. It uses a multi-factor model to trail stops and proactively exit on signs of reversal.',
         indicators: ['Adaptive Momentum', 'Volatility Trailing Stop', 'Reversal Detection'],
     },
+    {
+        id: 14,
+        name: 'The Sentinel',
+        description: 'A MACD-RSI momentum scalping agent for short-term trades in trending markets, using RSI for filtering and MACD crossovers for entry triggers.',
+        indicators: ['MACD', 'RSI', 'Volume'],
+    },
 ];
 
 export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
@@ -181,6 +187,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     ch_volatilitySpikeMultiplier: 2.5, // Veto entries on candles > 2.5x ATR
     ch_psarStep: 0.02,
     ch_psarMax: 0.2,
+    ch_scoreThreshold: 3, // New score threshold for entries
 };
 
 

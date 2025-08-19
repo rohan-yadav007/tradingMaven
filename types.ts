@@ -416,6 +416,8 @@ export interface AgentParams {
     ch_volatilitySpikeMultiplier?: number; // For entry veto
     ch_psarStep?: number;
     ch_psarMax?: number;
+    ch_scoreThreshold?: number; // New multi-factor score threshold
+
 }
 
 

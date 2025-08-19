@@ -217,6 +217,42 @@ export function getAgentExitSignal(
             }
             break;
         
+        case 14: // The Sentinel: MACD reverse cross or RSI overbought/oversold
+            const closes = klines.map(k => k.close);
+            const rsi = getLast(RSI.calculate({ values: closes, period: config.agentParams?.rsiPeriod || 14 }))!;
+            const macdInput = { values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false };
+            const macd = MACD.calculate(macdInput);
+            const lastMacd = getLast(macd) as MACDOutput | undefined;
+            const prevMacd = getPenultimate(macd) as MACDOutput | undefined;
+
+            if (lastMacd && prevMacd && lastMacd.MACD && lastMacd.signal && prevMacd.MACD && prevMacd.signal) {
+                const isLong = position.direction === 'LONG';
+                if (isLong) {
+                    const bearishCross = lastMacd.MACD < lastMacd.signal && prevMacd.MACD >= prevMacd.signal;
+                    const rsiOverbought = rsi > 70;
+                    if (bearishCross) {
+                        reasons.push('Momentum fading: MACD bearish crossover.');
+                        closePosition = true;
+                    }
+                    if (rsiOverbought) {
+                        reasons.push('Market overbought: RSI > 70.');
+                        closePosition = true;
+                    }
+                } else { // Short position
+                    const bullishCross = lastMacd.MACD > lastMacd.signal && prevMacd.MACD <= prevMacd.signal;
+                    const rsiOversold = rsi < 30;
+                    if (bullishCross) {
+                        reasons.push('Momentum fading: MACD bullish crossover.');
+                        closePosition = true;
+                    }
+                    if (rsiOversold) {
+                        reasons.push('Market oversold: RSI < 30.');
+                        closePosition = true;
+                    }
+                }
+            }
+            break;
+            
         default:
             break;
     }
@@ -483,15 +519,14 @@ const getHistoricExpertSignal = (klines: Kline[], params: Required<AgentParams>)
     return { signal: 'HOLD', reasons };
 };
 
-// --- Agent 13: The Chameleon ---
+// --- Agent 13: The Chameleon (Re-engineered with Multi-Factor Scoring) ---
 const getChameleonSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
-    const minKlines = Math.max(30, params.ch_bbPeriod!, params.ch_atrPeriod!);
+    const minKlines = Math.max(30, params.ch_atrPeriod!, params.ch_bbPeriod!);
     if (klines.length < minKlines) return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data'] };
     
     const closes = klines.map(k => k.close);
     const highs = klines.map(k => k.high);
     const lows = klines.map(k => k.low);
-    const currentPrice = getLast(closes)!;
     const lastKline = klines[klines.length - 1];
     const reasons: string[] = [];
 
@@ -500,7 +535,7 @@ const getChameleonSignal = (klines: Kline[], params: Required<AgentParams>): Tra
     const candleRange = lastKline.high - lastKline.low;
     const maxAllowedRange = lastAtr * params.ch_volatilitySpikeMultiplier!;
     if (candleRange > maxAllowedRange) {
-        reasons.push(`❌ VETO: Entry candle volatility is too high (Range: ${candleRange.toFixed(4)} > Max Allowed: ${maxAllowedRange.toFixed(4)}).`);
+        reasons.push(`❌ VETO: High volatility candle (Range: ${candleRange.toFixed(4)} > Max: ${maxAllowedRange.toFixed(4)})`);
         return { signal: 'HOLD', reasons };
     }
 
@@ -508,40 +543,122 @@ const getChameleonSignal = (klines: Kline[], params: Required<AgentParams>): Tra
     const slowEma = getLast(EMA.calculate({ period: 21, values: closes }))!;
     const rsi = getLast(RSI.calculate({ period: params.ch_rsiPeriod!, values: closes }))!;
     const bb = getLast(BollingerBands.calculate({ period: params.ch_bbPeriod!, stdDev: params.ch_bbStdDev!, values: closes }))! as BollingerBandsOutput;
+    const candlePattern = recognizeCandlestickPattern(lastKline, klines[klines.length - 2]);
 
-    const isBullish = fastEma > slowEma && rsi > 55;
-    const isBearish = fastEma < slowEma && rsi < 45;
+    // 1. Establish Trend Context
+    const isBullishContext = fastEma > slowEma;
+    const isBearishContext = fastEma < slowEma;
+    reasons.push(isBullishContext ? `✅ Trend: Bullish Context (EMA 9 > 21)` : isBearishContext ? `✅ Trend: Bearish Context (EMA 9 < 21)` : '❌ Trend: Indecisive');
 
-    reasons.push(fastEma > slowEma ? '✅ Trend: Bullish EMA' : '✅ Trend: Bearish EMA');
-    reasons.push(`ℹ️ Momentum: RSI is ${rsi.toFixed(1)}`);
+    if (isBullishContext) {
+        reasons.push(`ℹ️ Seeking Long Entry...`);
+        let bullishScore = 0;
+        
+        // Factor 1: Momentum
+        if (rsi > 55) bullishScore++;
+        reasons.push(rsi > 55 ? `✅ Momentum: RSI > 55 (${rsi.toFixed(1)})` : `❌ Momentum: RSI not > 55 (${rsi.toFixed(1)})`);
 
-    if (isBullish) {
-        if (currentPrice > bb.upper) {
-            reasons.push(`❌ VETO: Price is overextended (above Upper Bollinger Band).`);
-            return { signal: 'HOLD', reasons };
+        // Factor 2: Volatility (Bounce from lower BB)
+        if (lastKline.low <= bb.lower) bullishScore++;
+        reasons.push(lastKline.low <= bb.lower ? `✅ Volatility: Price at lower BB support` : `❌ Volatility: Price not at lower BB`);
+        
+        // Factor 3: Price Action (Pullback Confirmation)
+        if (lastKline.low < fastEma && lastKline.close > fastEma) bullishScore++;
+        reasons.push(lastKline.low < fastEma && lastKline.close > fastEma ? `✅ Price Action: Reclaimed EMA 9` : `❌ Price Action: Did not reclaim EMA 9`);
+
+        // Factor 4: Candlestick Confirmation
+        if (candlePattern?.type === 'bullish') bullishScore++;
+        reasons.push(candlePattern?.type === 'bullish' ? `✅ Candlestick: ${candlePattern.name} detected` : `❌ Candlestick: No bullish pattern`);
+
+        reasons.push(`ℹ️ Final Score: ${bullishScore}/${params.ch_scoreThreshold!}`);
+        if (bullishScore >= params.ch_scoreThreshold!) {
+            return { signal: 'BUY', reasons };
         }
-        if (rsi > 75) {
-            reasons.push(`❌ VETO: RSI is overbought (${rsi.toFixed(1)} > 75), avoiding peak entry.`);
-            return { signal: 'HOLD', reasons };
-        }
-        reasons.push('✅ Confirmation: RSI > 55');
-        return { signal: 'BUY', reasons };
     }
-    if (isBearish) {
-        if (currentPrice < bb.lower) {
-            reasons.push(`❌ VETO: Price is overextended (below Lower Bollinger Band).`);
-            return { signal: 'HOLD', reasons };
+
+    if (isBearishContext) {
+        reasons.push(`ℹ️ Seeking Short Entry...`);
+        let bearishScore = 0;
+
+        // Factor 1: Momentum
+        if (rsi < 45) bearishScore++;
+        reasons.push(rsi < 45 ? `✅ Momentum: RSI < 45 (${rsi.toFixed(1)})` : `❌ Momentum: RSI not < 45 (${rsi.toFixed(1)})`);
+
+        // Factor 2: Volatility (Rejection from upper BB)
+        if (lastKline.high >= bb.upper) bearishScore++;
+        reasons.push(lastKline.high >= bb.upper ? `✅ Volatility: Price at upper BB resistance` : `❌ Volatility: Price not at upper BB`);
+
+        // Factor 3: Price Action (Pullback Confirmation)
+        if (lastKline.high > fastEma && lastKline.close < fastEma) bearishScore++;
+        reasons.push(lastKline.high > fastEma && lastKline.close < fastEma ? `✅ Price Action: Rejected from EMA 9` : `❌ Price Action: Did not get rejected from EMA 9`);
+
+        // Factor 4: Candlestick Confirmation
+        if (candlePattern?.type === 'bearish') bearishScore++;
+        reasons.push(candlePattern?.type === 'bearish' ? `✅ Candlestick: ${candlePattern.name} detected` : `❌ Candlestick: No bearish pattern`);
+
+        reasons.push(`ℹ️ Final Score: ${bearishScore}/${params.ch_scoreThreshold!}`);
+        if (bearishScore >= params.ch_scoreThreshold!) {
+            return { signal: 'SELL', reasons };
         }
-        if (rsi < 25) {
-            reasons.push(`❌ VETO: RSI is oversold (${rsi.toFixed(1)} < 25), avoiding peak entry.`);
-            return { signal: 'HOLD', reasons };
-        }
-        reasons.push('✅ Confirmation: RSI < 45');
-        return { signal: 'SELL', reasons };
     }
 
     return { signal: 'HOLD', reasons };
 };
+
+
+// --- Agent 14: The Sentinel (MACD-RSI Momentum Scalper) ---
+const getTheSentinelSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
+    const minKlines = Math.max(params.macdSlowPeriod, params.rsiPeriod, 20) + 1; // +1 for prevMacd
+    if (klines.length < minKlines) {
+        return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data for The Sentinel.'] };
+    }
+
+    const closes = klines.map(k => k.close);
+    const volumes = klines.map(k => k.volume || 0);
+    const reasons: string[] = [];
+
+    // Indicators
+    const macdInput = { values: closes, fastPeriod: params.macdFastPeriod, slowPeriod: params.macdSlowPeriod, signalPeriod: params.macdSignalPeriod, SimpleMAOscillator: false, SimpleMASignal: false };
+    const macd = MACD.calculate(macdInput);
+    const lastMacd = getLast(macd) as MACDOutput | undefined;
+    const prevMacd = getPenultimate(macd) as MACDOutput | undefined;
+
+    const rsi = getLast(RSI.calculate({ values: closes, period: params.rsiPeriod }))!;
+    
+    const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes }))!;
+    const lastVolume = getLast(volumes)!;
+
+    if (!lastMacd || !prevMacd || !lastMacd.MACD || !lastMacd.signal || !prevMacd.MACD || !prevMacd.signal) {
+        return { signal: 'HOLD', reasons: ['ℹ️ Awaiting MACD calculation.'] };
+    }
+    
+    // Long Entry Conditions
+    const bullishCrossover = lastMacd.MACD > lastMacd.signal && prevMacd.MACD <= prevMacd.signal;
+    const rsiBullish = rsi > 50;
+    const volumeSpike = lastVolume > (volumeSma * 1.5);
+    
+    reasons.push(bullishCrossover ? '✅ MACD Bullish Crossover' : '❌ No Bullish Crossover');
+    reasons.push(rsiBullish ? `✅ RSI > 50 (${rsi.toFixed(1)})` : `❌ RSI not > 50 (${rsi.toFixed(1)})`);
+    reasons.push(volumeSpike ? `✅ Volume Spike Confirmed` : `❌ No Volume Spike`);
+
+    if (bullishCrossover && rsiBullish && volumeSpike) {
+        return { signal: 'BUY', reasons };
+    }
+
+    // Short Entry Conditions
+    const bearishCrossover = lastMacd.MACD < lastMacd.signal && prevMacd.MACD >= prevMacd.signal;
+    const rsiBearish = rsi < 50;
+    
+    reasons.push(bearishCrossover ? '✅ MACD Bearish Crossover' : '❌ No Bearish Crossover');
+    reasons.push(rsiBearish ? `✅ RSI < 50 (${rsi.toFixed(1)})` : `❌ RSI not < 50 (${rsi.toFixed(1)})`);
+    
+    if (bearishCrossover && rsiBearish && volumeSpike) {
+        return { signal: 'SELL', reasons };
+    }
+
+    return { signal: 'HOLD', reasons: reasons.filter(r => r.startsWith('❌')) };
+};
+
 
 // ----------------------------------------------------------------------------------
 // --- #4: MAIN ORCHESTRATOR & HELPERS ---
@@ -633,6 +750,7 @@ export async function getTradingSignal(
         case 9: agentSignal = getQuantumScalperSignal(klines, finalParams); break;
         case 11: agentSignal = getHistoricExpertSignal(klines, finalParams); break;
         case 13: agentSignal = getChameleonSignal(klines, finalParams); break;
+        case 14: agentSignal = getTheSentinelSignal(klines, finalParams); break;
         default:
             return { signal: 'HOLD', reasons: ['Agent not found'] };
     }

@@ -36,7 +36,7 @@ export const AGENTS: Agent[] = [
     {
         id: 9,
         name: 'Quantum Scalper',
-        description: 'An adaptive scalper that detects the market regime (trend/range). Exits are managed by a specialized PSAR-based trailing stop for faster reaction times.',
+        description: 'An adaptive scalper that detects the market regime (trend/range). Uses a multi-factor score for entries and a specialized PSAR-based trailing stop.',
         indicators: ['Market Regime Filter', 'Score-based Entry', 'PSAR Trailing Stop'],
     },
     {
@@ -48,7 +48,7 @@ export const AGENTS: Agent[] = [
     {
         id: 13,
         name: 'The Chameleon',
-        description: 'A fully adaptive agent that dynamically manages trades on every tick. It uses a multi-factor model to trail stops and proactively exit on signs of reversal.',
+        description: 'A high-momentum agent that enters on pullbacks in a confirmed trend. It uses a confluence of EMA, RSI, and Volume to find high-probability continuation entries.',
         indicators: ['Adaptive Momentum', 'Volatility Trailing Stop', 'Reversal Detection'],
     },
     {
@@ -159,8 +159,8 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     qsc_psarMax: 0.2,
     qsc_atrPeriod: 14,
     qsc_atrMultiplier: 1.5,
-    qsc_trendScoreThreshold: 4,
-    qsc_rangeScoreThreshold: 1,
+    qsc_trendScoreThreshold: 3,
+    qsc_rangeScoreThreshold: 2,
 
     // Agent 11: Historic Expert
     he_trendSmaPeriod: 30,
@@ -269,7 +269,7 @@ export const MAX_STOP_LOSS_PERCENT_OF_INVESTMENT = 5;
 // New, wider ATR multipliers for initial stop loss placement to give trades more "breathing room"
 export const TIMEFRAME_ATR_CONFIG: Record<string, { atrMultiplier: number, riskRewardRatio: number }> = {
     '1m':  { atrMultiplier: 2.0, riskRewardRatio: 1.5 },
-    '3m':  { atrMultiplier: 2.2, riskRewardRatio: 1.7 },
+    '3m':  { atrMultiplier: 2.2, riskRewardRatio: 1.5 },
     '5m':  { atrMultiplier: 2.5, riskRewardRatio: 1.8 },
     '15m': { atrMultiplier: 2.5, riskRewardRatio: 2.0 },
     '1h':  { atrMultiplier: 2.8, riskRewardRatio: 2.2 },

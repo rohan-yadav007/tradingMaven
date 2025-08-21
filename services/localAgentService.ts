@@ -524,7 +524,7 @@ const getHistoricExpertSignal = (klines: Kline[], params: Required<AgentParams>)
     return { signal: 'HOLD', reasons };
 };
 
-// --- Agent 13: The Chameleon V4 (Momentum Acceleration & Profit Potential) ---
+// --- Agent 13: The Chameleon (Rebuilt for Trend Pullbacks) ---
 const getChameleonSignal = (klines: Kline[], params: Required<AgentParams>, config: BotConfig): TradeSignal => {
     const minKlines = Math.max(50, params.ch_atrPeriod!, params.ch_bbPeriod!, params.adxPeriod!);
     if (klines.length < minKlines) return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data for Chameleon analysis.'] };
@@ -536,7 +536,7 @@ const getChameleonSignal = (klines: Kline[], params: Required<AgentParams>, conf
     const lastKline = klines[klines.length - 1];
     const reasons: string[] = [];
 
-    // --- V2: ADX Trend Strength Filter ---
+    // --- 1. Primary Filter: Market must be trending ---
     const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.adxPeriod! }))!;
     if (adx.adx < params.ch_adxThreshold!) {
         reasons.push(`❌ VETO: Market is not trending (ADX ${adx.adx.toFixed(1)} < ${params.ch_adxThreshold!})`);
@@ -544,7 +544,7 @@ const getChameleonSignal = (klines: Kline[], params: Required<AgentParams>, conf
     }
     reasons.push(`✅ Trend Strength: ADX is ${adx.adx.toFixed(1)}`);
 
-    // --- Pre-Trade Volatility Veto ---
+    // --- 2. VETO: Pre-Trade Volatility Spike ---
     const lastAtr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: params.ch_atrPeriod! }))!;
     const candleRange = lastKline.high - lastKline.low;
     const maxAllowedRange = lastAtr * params.ch_volatilitySpikeMultiplier!;
@@ -553,73 +553,58 @@ const getChameleonSignal = (klines: Kline[], params: Required<AgentParams>, conf
         return { signal: 'HOLD', reasons };
     }
 
-    // --- V4: Profit Potential Veto ---
-    if (config.isMinRrEnabled) {
-        const timeframeConfig = constants.TIMEFRAME_ATR_CONFIG[config.timeFrame] || constants.TIMEFRAME_ATR_CONFIG['5m'];
-        const stopLossDistance = lastAtr * timeframeConfig.atrMultiplier;
-        const { supports, resistances } = calculateSupportResistance(klines, 10);
-        const currentPrice = lastKline.close;
-        
-        // Bullish potential
-        const nextResistance = resistances.filter(r => r > currentPrice).sort((a,b) => a - b)[0];
-        if (nextResistance) {
-            const profitDistance = nextResistance - currentPrice;
-            if (profitDistance < stopLossDistance * constants.MIN_RISK_REWARD_RATIO) {
-                reasons.push(`❌ VETO: Insufficient R:R to next resistance (< ${constants.MIN_RISK_REWARD_RATIO}:1)`);
-                return { signal: 'HOLD', reasons };
-            }
-        }
-        // Bearish potential
-        const nextSupport = supports.filter(s => s < currentPrice).sort((a,b) => b-a)[0];
-         if (nextSupport) {
-            const profitDistance = currentPrice - nextSupport;
-            if (profitDistance < stopLossDistance * constants.MIN_RISK_REWARD_RATIO) {
-                reasons.push(`❌ VETO: Insufficient R:R to next support (< ${constants.MIN_RISK_REWARD_RATIO}:1)`);
-                return { signal: 'HOLD', reasons };
-            }
-        }
-        reasons.push(`✅ Profit Potential: Clear path to next S/R level.`);
-    }
-
-    // --- V2 & V4: Weighted Confluence Scoring ---
+    // --- 3. Confluence Scoring for Trend Pullback Entries ---
     const fastEma = getLast(EMA.calculate({ period: 9, values: closes }))!;
     const slowEma = getLast(EMA.calculate({ period: 21, values: closes }))!;
     const rsiValues = RSI.calculate({ period: params.ch_rsiPeriod!, values: closes });
     const rsi = getLast(rsiValues)!;
     const prevRsi = getPenultimate(rsiValues)!;
     const bb = getLast(BollingerBands.calculate({ period: params.ch_bbPeriod!, stdDev: params.ch_bbStdDev!, values: closes }))! as BollingerBandsOutput;
-    const candlePattern = recognizeCandlestickPattern(lastKline, klines[klines.length - 2]);
     const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes }))!;
+    const lastVolume = getLast(volumes)!;
 
-    const isBullishContext = fastEma > slowEma && adx.pdi > adx.mdi;
-    const isBearishContext = fastEma < slowEma && adx.mdi > adx.pdi;
-
-    if (isBullishContext) {
+    // --- Bullish Entry Logic (Uptrend Pullback) ---
+    const isUptrend = fastEma > slowEma && adx.pdi > adx.mdi;
+    if (isUptrend) {
         let score = 0;
         let scoreReasons: string[] = [];
-
-        score += 2; scoreReasons.push(`Trend Alignment (+2)`);
-        if (rsi > 55) { score += 1; scoreReasons.push(`RSI Momentum (+1)`); }
-        if (rsi > prevRsi) { score += 1.5; scoreReasons.push(`Momentum Accelerating (+1.5)`); } // V4
-        if (lastKline.low <= bb.lower) { score += 1.5; scoreReasons.push(`BB Support Bounce (+1.5)`); }
-        if (candlePattern?.type === 'bullish') { score += 2; scoreReasons.push(`Bullish Candlestick (+2)`); }
-        if (getLast(volumes)! > volumeSma * params.ch_volumeMultiplier!) { score += 1; scoreReasons.push(`Volume Spike (+1)`); }
-
+        
+        score += 1.5; scoreReasons.push(`Uptrend Confirmed (+1.5)`);
+        
+        // Pullback Confirmation: Price touched or is near the dynamic support of the fast EMA or middle BB line
+        const pullbackZoneUpper = Math.max(fastEma, bb.middle);
+        const pullbackZoneLower = Math.min(fastEma, bb.middle);
+        if (lastKline.low <= pullbackZoneUpper && lastKline.close >= pullbackZoneLower) {
+            score += 2.5; scoreReasons.push(`Pullback to EMA/BB-mid Support (+2.5)`);
+        }
+        
+        if (rsi > 50 && rsi < 75) { score += 1; scoreReasons.push(`RSI in bullish zone (+1)`); }
+        if (rsi > prevRsi) { score += 1.5; scoreReasons.push(`RSI momentum accelerating (+1.5)`); }
+        if (lastVolume > volumeSma * params.ch_volumeMultiplier!) { score += 1; scoreReasons.push(`Volume confirmation (+1)`); }
+        
         reasons.push(`ℹ️ Bullish Score: ${score.toFixed(1)} / ${params.ch_scoreThreshold!}. Factors: ${scoreReasons.join(', ')}`);
         if (score >= params.ch_scoreThreshold!) return { signal: 'BUY', reasons };
     }
 
-    if (isBearishContext) {
+    // --- Bearish Entry Logic (Downtrend Pullback) ---
+    const isDowntrend = fastEma < slowEma && adx.mdi > adx.pdi;
+    if (isDowntrend) {
         let score = 0;
         let scoreReasons: string[] = [];
-
-        score += 2; scoreReasons.push(`Trend Alignment (+2)`);
-        if (rsi < 45) { score += 1; scoreReasons.push(`RSI Momentum (+1)`); }
-        if (rsi < prevRsi) { score += 1.5; scoreReasons.push(`Momentum Accelerating (+1.5)`); } // V4
-        if (lastKline.high >= bb.upper) { score += 1.5; scoreReasons.push(`BB Resistance Rejection (+1.5)`); }
-        if (candlePattern?.type === 'bearish') { score += 2; scoreReasons.push(`Bearish Candlestick (+2)`); }
-        if (getLast(volumes)! > volumeSma * params.ch_volumeMultiplier!) { score += 1; scoreReasons.push(`Volume Spike (+1)`); }
         
+        score += 1.5; scoreReasons.push(`Downtrend Confirmed (+1.5)`);
+        
+        // Pullback Confirmation: Price touched or is near the dynamic resistance of the fast EMA or middle BB line
+        const pullbackZoneUpper = Math.max(fastEma, bb.middle);
+        const pullbackZoneLower = Math.min(fastEma, bb.middle);
+        if (lastKline.high >= pullbackZoneLower && lastKline.close <= pullbackZoneUpper) {
+            score += 2.5; scoreReasons.push(`Pullback to EMA/BB-mid Resistance (+2.5)`);
+        }
+        
+        if (rsi < 50 && rsi > 25) { score += 1; scoreReasons.push(`RSI in bearish zone (+1)`); }
+        if (rsi < prevRsi) { score += 1.5; scoreReasons.push(`RSI momentum accelerating (+1.5)`); }
+        if (lastVolume > volumeSma * params.ch_volumeMultiplier!) { score += 1; scoreReasons.push(`Volume confirmation (+1)`); }
+
         reasons.push(`ℹ️ Bearish Score: ${score.toFixed(1)} / ${params.ch_scoreThreshold!}. Factors: ${scoreReasons.join(', ')}`);
         if (score >= params.ch_scoreThreshold!) return { signal: 'SELL', reasons };
     }

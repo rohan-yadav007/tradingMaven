@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { useState, useEffect } from 'react';
 import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, Kline, RiskMode, OptimizationResultItem } from '../types';
@@ -8,6 +7,8 @@ import { runBacktest, runOptimization } from '../services/backtestingService';
 import { FlaskIcon, ChevronUp, ChevronDown, LockIcon, UnlockIcon, SparklesIcon } from './icons';
 import { useTradingConfigState, useTradingConfigActions } from '../contexts/TradingConfigContext';
 import { SearchableDropdown } from './SearchableDropdown';
+import { BacktestResultDisplay } from './BacktestResultDisplay';
+import { OptimizationResults } from './OptimizationResults';
 
 
 // --- Internal Components (Consolidated) ---
@@ -134,7 +135,10 @@ const BacktestControlPanel: React.FC<{
             <div className={formGroupClass}><label className={formLabelClass}>Trading Platform</label><select value={config.tradingMode} onChange={e => updateConfig('tradingMode', e.target.value as TradingMode)} className={formInputClass}>{Object.values(TradingMode).map(mode => <option key={mode} value={mode}>{mode}</option>)}</select></div>
             <div className={formGroupClass}><label className={formLabelClass}>Market</label><SearchableDropdown options={globalConfig.allPairs} value={config.selectedPair} onChange={(v) => updateConfig('selectedPair', v)} theme={theme} disabled={globalConfig.isPairsLoading} /></div>
             <div className={formGroupClass}><label className={formLabelClass}>Entry Timeframe</label><select value={config.chartTimeFrame} onChange={e => updateConfig('chartTimeFrame', e.target.value)} className={formInputClass}>{constants.TIME_FRAMES.map(tf => <option key={tf} value={tf}>{tf}</option>)}</select></div>
-            <div className={formGroupClass}><label className={formLabelClass}>Trading Agent</label><select value={config.selectedAgent.id} onChange={e => updateConfig('selectedAgent', constants.AGENTS.find(a => a.id === Number(e.target.value))!)} className={formInputClass}>{constants.AGENTS.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></div>
+            <div className={formGroupClass}><label className={formLabelClass}>Trading Agent</label><select value={config.selectedAgent.id} onChange={e => {
+                const agent = constants.AGENTS.find(a => a.id === Number(e.target.value));
+                if (agent) updateConfig('selectedAgent', agent);
+            }} className={formInputClass}>{constants.AGENTS.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></div>
             <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
             <div className={formGroupClass}><label className={formLabelClass}>Investment Amount</label><div className="relative"><span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500">$</span><input type="number" value={config.investmentAmount} onChange={e => updateConfig('investmentAmount', Number(e.target.value))} className={`${formInputClass} pl-7`} min="1"/></div></div>
             {config.tradingMode === TradingMode.USDSM_Futures && (<div className={formGroupClass}><label className="flex justify-between items-baseline"><span className={formLabelClass}>Leverage</span><span className="font-bold text-sky-500">{config.leverage}x</span></label><input type="range" min="1" max={globalConfig.maxLeverage} value={config.leverage} onChange={e => updateConfig('leverage', Number(e.target.value))} className="w-full h-2 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer" /></div>)}
@@ -175,52 +179,6 @@ const BacktestControlPanel: React.FC<{
         </div>
     );
 };
-
-const ResultMetric: React.FC<{label: string, value: string | number, className?: string}> = ({label, value, className}) => (
-    <div className="text-center bg-slate-100 dark:bg-slate-800/50 p-2 rounded-lg">
-        <p className="text-xs text-slate-500 dark:text-slate-400 mb-0">{label}</p>
-        <p className={`text-lg font-bold mb-0 ${className}`}>{value}</p>
-    </div>
-);
-
-const BacktestResultDisplay: React.FC<{ result: BacktestResult, onReset: () => void, onApplyAndSwitchView: () => void }> = ({ result, onReset, onApplyAndSwitchView }) => {
-    const pnlIsProfit = result.totalPnl >= 0;
-    const winRateIsGood = result.winRate >= 50;
-    const sideClass = (dir: 'LONG' | 'SHORT') => dir === 'LONG' ? 'bg-emerald-100 dark:bg-emerald-900/50 text-emerald-800 dark:text-emerald-300' : 'bg-rose-100 dark:bg-rose-900/50 text-rose-800 dark:text-rose-300';
-    return (
-        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 animate-fade-in h-full flex flex-col">
-            <div className="flex justify-between items-start flex-shrink-0"><h2 className="text-xl font-bold mb-4">Backtest Results</h2><div className="flex gap-2"><button onClick={onReset} className="text-sm font-semibold text-slate-600 dark:text-slate-300 hover:text-sky-500">Run New Test</button><button onClick={onApplyAndSwitchView} className="px-4 py-2 bg-sky-600 text-white font-semibold rounded-md shadow-sm hover:bg-sky-700 text-sm">Apply to Trading</button></div></div>
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-6 flex-shrink-0"><ResultMetric label="Total Net PNL" value={`$${result.totalPnl.toFixed(2)}`} className={pnlIsProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}/><ResultMetric label="Win Rate" value={`${result.winRate.toFixed(1)}%`} className={winRateIsGood ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}/><ResultMetric label="Total Trades" value={result.totalTrades} /><ResultMetric label="Wins / Losses" value={`${result.wins} / ${result.losses}`} /><ResultMetric label="Profit Factor" value={result.profitFactor.toFixed(2)} /><ResultMetric label="Max Drawdown" value={`$${result.maxDrawdown.toFixed(2)}`} /><ResultMetric label="Sharpe Ratio" value={result.sharpeRatio.toFixed(2)} /><ResultMetric label="Avg. Duration" value={result.averageTradeDuration} /></div>
-            <div className="overflow-auto border dark:border-slate-700 rounded-md flex-grow"><table className="w-full text-sm text-left"><thead className="bg-slate-50 dark:bg-slate-700/50 sticky top-0"><tr><th className="px-4 py-2">Pair</th><th className="px-4 py-2">Side</th><th className="px-4 py-2">Entry Time</th><th className="px-4 py-2">Exit Time</th><th className="px-4 py-2">Entry Price</th><th className="px-4 py-2">Exit Price</th><th className="px-4 py-2">Net PNL</th><th className="px-4 py-2">Exit Reason</th></tr></thead><tbody className="divide-y divide-slate-200 dark:divide-slate-700">{result.trades.map(trade => (<tr key={trade.id}><td className="px-4 py-2 font-semibold">{trade.pair}</td><td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-full font-medium ${sideClass(trade.direction)}`}>{trade.direction}</span></td><td className="px-4 py-2 whitespace-nowrap">{new Date(trade.entryTime).toLocaleString()}</td><td className="px-4 py-2 whitespace-nowrap">{new Date(trade.exitTime).toLocaleString()}</td><td className="px-4 py-2 font-mono">{trade.entryPrice.toFixed(4)}</td><td className="px-4 py-2 font-mono">{trade.exitPrice.toFixed(4)}</td><td className={`px-4 py-2 font-mono ${trade.pnl >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{trade.pnl.toFixed(2)}</td><td className="px-4 py-2 text-slate-500 dark:text-slate-400">{trade.exitReason}</td></tr>))}</tbody></table></div>
-        </div>
-    );
-};
-
-const OptimizationResultRow: React.FC<{ item: OptimizationResultItem; onApply: () => void; isOpen: boolean; onToggle: () => void; }> = ({ item, onApply, isOpen, onToggle }) => {
-    const { result, params } = item;
-    const pnlIsProfit = result.totalPnl >= 0;
-    const winRateIsGood = result.winRate >= 50;
-    const sideClass = (dir: 'LONG' | 'SHORT') => dir === 'LONG' ? 'bg-emerald-100 dark:bg-emerald-900/50 text-emerald-800 dark:text-emerald-300' : 'bg-rose-100 dark:bg-rose-900/50 text-rose-800 dark:text-rose-300';
-    const Metric: React.FC<{label: string, value: string | number, className?: string}> = ({label, value, className}) => (<div className="text-center"><p className="text-xs text-slate-500 dark:text-slate-400 mb-0">{label}</p><p className={`text-base font-bold mb-0 ${className}`}>{value}</p></div>);
-    return (
-        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm">
-            <button onClick={onToggle} className="w-full text-left p-3 focus:outline-none"><div className="grid grid-cols-3 md:grid-cols-4 gap-3 w-full items-center"><Metric label="Total PNL" value={`$${result.totalPnl.toFixed(2)}`} className={pnlIsProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}/><Metric label="Win Rate" value={`${result.winRate.toFixed(1)}%`} className={winRateIsGood ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'} /><Metric label="Trades" value={result.totalTrades} /><div className="hidden md:flex justify-end pr-2">{isOpen ? <ChevronUp className="w-5 h-5 text-slate-400"/> : <ChevronDown className="w-5 h-5 text-slate-400"/>}</div></div></button>
-            {isOpen && (<div className="p-4 border-t border-slate-200 dark:border-slate-700"><div className="flex flex-col md:flex-row gap-4"><div className="flex-grow"><h4 className="font-semibold text-sm mb-2">Trade Log</h4><div className="overflow-auto border dark:border-slate-700 rounded-md" style={{maxHeight: '240px'}}><table className="w-full text-xs text-left"><thead className="bg-slate-50 dark:bg-slate-700/50 sticky top-0"><tr><th className="px-2 py-1.5">Exit Time</th><th className="px-2 py-1.5">Side</th><th className="px-2 py-1.5">PNL</th><th className="px-2 py-1.5">Reason</th></tr></thead><tbody className="divide-y divide-slate-200 dark:divide-slate-700">{result.trades.map(trade => (<tr key={trade.id}><td className="px-2 py-1.5 whitespace-nowrap">{new Date(trade.exitTime).toLocaleDateString()}</td><td className="px-2 py-1.5"><span className={`px-2 py-0.5 rounded-full font-medium ${sideClass(trade.direction)}`}>{trade.direction}</span></td><td className={`px-2 py-1.5 font-mono ${trade.pnl >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{trade.pnl.toFixed(2)}</td><td className="px-2 py-1.5 text-slate-500 dark:text-slate-400 truncate">{trade.exitReason}</td></tr>))}</tbody></table></div></div><div className="w-full md:max-w-xs"><h4 className="font-semibold text-sm mb-2">Parameters Used</h4><div className="text-xs p-3 bg-slate-100 dark:bg-slate-900/50 rounded-lg border dark:border-slate-700 mb-3 space-y-1">{Object.entries(params).map(([key, value]) => (<div key={key} className="flex justify-between"><span className="text-slate-500 dark:text-slate-400">{key}:</span><span className="font-mono font-semibold">{String(value)}</span></div>))}</div><button onClick={onApply} className="w-full px-4 py-2 bg-sky-600 text-white font-semibold rounded-md shadow-sm hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500">Apply to Trading</button></div></div></div>)}
-        </div>
-    );
-};
-
-const OptimizationResults: React.FC<{ results: OptimizationResultItem[]; onApplyAndSwitchView: (params: AgentParams) => void; onReset: () => void; }> = ({ results, onApplyAndSwitchView, onReset }) => {
-    const [openId, setOpenId] = useState<number | null>(0);
-    const handleToggle = (id: number) => { setOpenId(prevId => prevId === id ? null : id); };
-    return (
-        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 animate-fade-in h-full flex flex-col">
-            <div className="flex justify-between items-center mb-4 flex-shrink-0"><h3 className="font-bold text-lg">Optimization Results ({results.length} combinations)</h3><button onClick={onReset} className="text-sm font-semibold text-slate-600 dark:text-slate-300 hover:text-sky-500">Run New Test</button></div>
-            <div className="space-y-2 flex-grow overflow-y-auto pr-2 -mr-2">{results.map((item, index) => (<OptimizationResultRow key={index} item={item} onApply={() => onApplyAndSwitchView(item.params)} isOpen={openId === index} onToggle={() => handleToggle(index)} />))}</div>
-        </div>
-    )
-};
-
 
 // --- Main Panel Component ---
 
@@ -367,39 +325,71 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     };
     
     const handleApplyAndSwitchView = (paramsToApply: AgentParams) => {
-        globalActions.setAgentParams(paramsToApply); globalActions.setSelectedAgent(config.selectedAgent);
-        globalActions.setTradingMode(config.tradingMode); globalActions.setSelectedPair(config.selectedPair);
-        globalActions.setTimeFrame(config.chartTimeFrame); globalActions.setInvestmentAmount(config.investmentAmount);
-        globalActions.setLeverage(config.leverage); globalActions.setTakeProfitMode(config.takeProfitMode);
-        globalActions.setTakeProfitValue(config.takeProfitValue); globalActions.setIsTakeProfitLocked(config.isTakeProfitLocked);
+        globalActions.setTradingMode(config.tradingMode);
+        globalActions.setSelectedPair(config.selectedPair);
+        globalActions.setTimeFrame(config.chartTimeFrame);
+        globalActions.setSelectedAgent(config.selectedAgent);
+        globalActions.setInvestmentAmount(config.investmentAmount);
+        globalActions.setLeverage(config.leverage);
+        globalActions.setTakeProfitMode(config.takeProfitMode);
+        globalActions.setTakeProfitValue(config.takeProfitValue);
+        globalActions.setIsTakeProfitLocked(config.isTakeProfitLocked);
         globalActions.setIsHtfConfirmationEnabled(config.isHtfConfirmationEnabled);
         globalActions.setIsUniversalProfitTrailEnabled(config.isUniversalProfitTrailEnabled);
         globalActions.setIsTrailingTakeProfitEnabled(config.isTrailingTakeProfitEnabled);
         globalActions.setIsMinRrEnabled(config.isMinRrEnabled);
+        globalActions.setAgentParams(paramsToApply);
         setActiveView('trading');
     };
 
-    const handleReset = () => {
-        setBacktestResult(null); setOptimizationResults(null); setError(null);
-    };
-    
-    const renderContent = () => {
-        if (isLoading) { return (<div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm h-full flex flex-col justify-center items-center text-center p-6"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500"></div><p className="mt-4 text-lg font-semibold text-slate-700 dark:text-slate-200">{loadingMessage}</p></div>); }
-        if (error) { return (<div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm h-full flex flex-col justify-center items-center text-center p-6"><h3 className="text-lg font-bold text-rose-600 dark:text-rose-400">An Error Occurred</h3><p className="text-slate-600 dark:text-slate-300 my-2">{error}</p><button onClick={handleReset} className="mt-2 px-4 py-2 bg-sky-600 text-white font-semibold rounded-md shadow-sm hover:bg-sky-700">Try Again</button></div>) }
-        if (optimizationResults) { return <OptimizationResults results={optimizationResults} onReset={handleReset} onApplyAndSwitchView={handleApplyAndSwitchView} />; }
-        if (backtestResult) { return <BacktestResultDisplay result={backtestResult} onReset={handleReset} onApplyAndSwitchView={() => handleApplyAndSwitchView(config.agentParams)} />; }
-        return (<div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm text-center h-full flex flex-col justify-center items-center p-6"><FlaskIcon className="w-16 h-16 mx-auto text-slate-300 dark:text-slate-600" /><h2 className="text-xl font-bold mt-4 text-slate-800 dark:text-slate-100">Backtesting Laboratory</h2><p className="text-slate-500 dark:text-slate-400 max-w-md mx-auto">Configure your parameters in the sidebar, then run a simulation or optimize an agent to see the results here.</p></div>);
-    };
-
     return (
-        <div className="grid grid-cols-12 gap-4">
-            <div className="col-span-12 lg:col-span-4 xl:col-span-3">
-                 <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-4 h-full">
-                    <BacktestControlPanel config={config} updateConfig={updateConfig} backtestDays={backtestDays} setBacktestDays={setBacktestDays} onRunBacktest={handleRunBacktest} onRunOptimization={handleRunOptimization} isLoading={isLoading} loadingMessage={loadingMessage} theme={theme} />
-                 </div>
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-start" style={{ minHeight: 'calc(100vh - 100px)' }}>
+            <div className="lg:col-span-1 bg-white dark:bg-slate-800 rounded-lg shadow-sm p-4 sticky top-20 h-full">
+                <BacktestControlPanel
+                    config={config}
+                    updateConfig={updateConfig}
+                    backtestDays={backtestDays}
+                    setBacktestDays={setBacktestDays}
+                    onRunBacktest={handleRunBacktest}
+                    onRunOptimization={handleRunOptimization}
+                    isLoading={isLoading}
+                    loadingMessage={loadingMessage}
+                    theme={theme}
+                />
             </div>
-            <div className="col-span-12 lg:col-span-8 xl:col-span-9">
-                {renderContent()}
+            <div className="lg:col-span-3">
+                {isLoading ? (
+                    <div className="flex items-center justify-center h-96">
+                        <div className="text-center">
+                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500 mx-auto"></div>
+                            <p className="mt-4 text-slate-500 dark:text-slate-400">{loadingMessage}</p>
+                        </div>
+                    </div>
+                ) : error ? (
+                    <div className="bg-rose-100 dark:bg-rose-900/50 p-4 rounded-lg text-rose-700 dark:text-rose-300">
+                        <h3 className="font-bold">Backtest Failed</h3>
+                        <p>{error}</p>
+                    </div>
+                ) : optimizationResults ? (
+                    <OptimizationResults 
+                        results={optimizationResults} 
+                        onApplyAndSwitchView={handleApplyAndSwitchView}
+                        onReset={() => { setOptimizationResults(null); setBacktestResult(null); }}
+                        pricePrecision={globalConfig.selectedPair.includes('USDT') ? 4 : 8}
+                    />
+                ) : backtestResult ? (
+                    <BacktestResultDisplay 
+                        result={backtestResult}
+                        onReset={() => setBacktestResult(null)} 
+                        onApplyAndSwitchView={() => handleApplyAndSwitchView(config.agentParams)}
+                    />
+                ) : (
+                    <div className="text-center p-16 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-lg">
+                        <FlaskIcon className="w-12 h-12 mx-auto text-slate-400 dark:text-slate-500 mb-4"/>
+                        <h3 className="text-xl font-semibold text-slate-800 dark:text-slate-200">Ready to Test</h3>
+                        <p className="text-slate-500 dark:text-slate-400">Configure your backtest on the left and click "Run" to see the results.</p>
+                    </div>
+                )}
             </div>
         </div>
     );

@@ -25,13 +25,6 @@ export const MIN_RISK_REWARD_RATIO = 1.2;
  */
 export const MIN_PROFIT_BUFFER_MULTIPLIER = 1.5;
 
-/**
- * A multiplier to prevent entries where the stop loss would be too close to the entry price
- * relative to the current market volatility (ATR).
- * E.g., a value of 0.75 means the SL must be at least 75% of one ATR period away from the entry price.
- */
-export const MIN_ATR_SL_BUFFER_MULTIPLIER = 0.75;
-
 
 export const AGENTS: Agent[] = [
     {
@@ -74,6 +67,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     macdFastPeriod: 12,
     macdSlowPeriod: 26,
     macdSignalPeriod: 9,
+    invalidationCandleLimit: 10,
 
     // Agent 1: Momentum Master - REMOVED
     adxTrendThreshold: 25,
@@ -183,50 +177,70 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     ch_lookbackPeriod: 10,
     ch_bbPeriod: 20,
     ch_bbStdDev: 2,
-    ch_profitLockMultiplier: 1.2, // Hyper-aggressive profit locking
-    ch_volatilitySpikeMultiplier: 2.5, // Veto entries on candles > 2.5x ATR
+    ch_profitLockMultiplier: 1.2,
+    ch_volatilitySpikeMultiplier: 2.5,
     ch_psarStep: 0.02,
     ch_psarMax: 0.2,
-    ch_scoreThreshold: 3, // New score threshold for entries
+    ch_scoreThreshold: 5, // V4: Increased from 4 to 5 for higher selectivity
+    ch_adxThreshold: 22, // V2: ADX trend filter
+    ch_volumeMultiplier: 1.5, // V2: Volume confirmation
+    ch_breathingRoomCandles: 2, // V2: "Stalk Mode" duration
+    ch_useHybridTrail: true, // V3: Hybrid trailing stop
 };
 
 
-// This configuration provides optimized parameters for different timeframes.
-// These settings are merged on top of the defaults, and below user customizations.
-export const TIMEFRAME_ADAPTIVE_SETTINGS: Record<string, AgentParams> = {
-    // Shorter timeframes: more sensitive, quicker reactions
+// Fine-tuned, timeframe-specific parameters for the Chameleon Agent (ID 13)
+export const CHAMELEON_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
+    // Shorter timeframes: require stronger confirmation to filter out noise
     '1m': {
-        mom_rsiThresholdBullish: 60,
-        mom_rsiThresholdBearish: 40,
-        scalp_stochRsiOversold: 15,
-        scalp_stochRsiOverbought: 85,
+        ch_adxThreshold: 28,
+        ch_scoreThreshold: 6.0,
+        ch_volatilityMultiplier: 1.5,
+        ch_volatilitySpikeMultiplier: 3.0,
+        invalidationCandleLimit: 15, // 15 minutes
     },
     '3m': {
-        mom_rsiThresholdBullish: 58,
-        mom_rsiThresholdBearish: 42,
+        ch_adxThreshold: 26,
+        ch_scoreThreshold: 5.5,
+        ch_volatilityMultiplier: 1.6,
+        ch_volatilitySpikeMultiplier: 2.8,
+        invalidationCandleLimit: 12, // 36 minutes
     },
-    '5m': {
-        mom_rsiThresholdBullish: 58,
-        mom_rsiThresholdBearish: 42,
+    '5m': { // Baseline for mid-range scalping
+        ch_adxThreshold: 25,
+        ch_scoreThreshold: 5.0,
+        ch_volatilityMultiplier: 1.8,
+        ch_volatilitySpikeMultiplier: 2.5,
+        invalidationCandleLimit: 10, // 50 minutes
     },
     '15m': {
-        // Uses default momentum/reversion thresholds
+        ch_adxThreshold: 22,
+        ch_scoreThreshold: 5.0,
+        ch_volatilityMultiplier: 2.0,
+        ch_volatilitySpikeMultiplier: 2.5,
+        invalidationCandleLimit: 8, // 2 hours
     },
-    // Longer timeframes: more patient, looking for bigger moves
+    // Longer timeframes: more patient, allow for wider volatility
     '1h': {
-        adxTrendThreshold: 22,
-        mom_rsiThresholdBullish: 60,
-        mom_rsiThresholdBearish: 40,
+        ch_adxThreshold: 20,
+        ch_scoreThreshold: 4.5,
+        ch_volatilityMultiplier: 2.2,
+        ch_volatilitySpikeMultiplier: 2.2,
+        invalidationCandleLimit: 6, // 6 hours
     },
     '4h': {
-        adxTrendThreshold: 20,
-        mom_rsiThresholdBullish: 65,
-        mom_rsiThresholdBearish: 35,
+        ch_adxThreshold: 20,
+        ch_scoreThreshold: 4.5,
+        ch_volatilityMultiplier: 2.5,
+        ch_volatilitySpikeMultiplier: 2.0,
+        invalidationCandleLimit: 5, // 20 hours
     },
     '1d': {
-        adxTrendThreshold: 18,
-        mom_rsiThresholdBullish: 70,
-        mom_rsiThresholdBearish: 30,
+        ch_adxThreshold: 18,
+        ch_scoreThreshold: 4.5,
+        ch_volatilityMultiplier: 2.8,
+        ch_volatilitySpikeMultiplier: 2.0,
+        invalidationCandleLimit: 4, // 4 days
     }
 };
 
@@ -248,14 +262,14 @@ export const MOCK_PAPER_FUTURES_WALLET: WalletBalance[] = [
 /**
  * A non-configurable hard cap on risk to prevent catastrophic single-trade losses.
  * This is the maximum percentage of the *investment amount* that a trade is allowed to lose.
- * E.g., a value of 5 means a maximum loss of 5%, which is $5 on a $100 investment.
+ * E.g., a value of 40 means a maximum loss of 40%, which is $40 on a $100 investment.
  */
-export const MAX_STOP_LOSS_PERCENT_OF_INVESTMENT = 1;
+export const MAX_STOP_LOSS_PERCENT_OF_INVESTMENT = 5;
 
 // New, wider ATR multipliers for initial stop loss placement to give trades more "breathing room"
 export const TIMEFRAME_ATR_CONFIG: Record<string, { atrMultiplier: number, riskRewardRatio: number }> = {
     '1m':  { atrMultiplier: 2.0, riskRewardRatio: 1.5 },
-    '3m':  { atrMultiplier: 2.2, riskRewardRatio: 1.5 },
+    '3m':  { atrMultiplier: 2.2, riskRewardRatio: 1.7 },
     '5m':  { atrMultiplier: 2.5, riskRewardRatio: 1.8 },
     '15m': { atrMultiplier: 2.5, riskRewardRatio: 2.0 },
     '1h':  { atrMultiplier: 2.8, riskRewardRatio: 2.2 },

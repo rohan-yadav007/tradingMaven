@@ -25,7 +25,7 @@ export interface TradeManagementSignal {
     newStopLoss?: number;
     newTakeProfit?: number;
     closePosition?: boolean;
-    flipPosition?: boolean; // For Agent 13
+    closeAndFlipPosition?: boolean; // For Agent 13 V2
     reasons: string[];
     newState?: any; // Generic state update object
 }
@@ -60,6 +60,8 @@ export interface Position {
     proactiveLossCheckTriggered: boolean;
     profitLockTier: number; // 0 for none, or the fee-multiple trigger (e.g., 3, 4, 5)
     peakPrice?: number; // Highest price for LONG, lowest for SHORT since entry
+    candlesSinceEntry?: number; // For state-based management (Chameleon V2)
+    hasBeenProfitable?: boolean; // For trade invalidation check
 }
 
 export interface Trade extends Position {
@@ -211,6 +213,7 @@ export interface BotConfig {
     isUniversalProfitTrailEnabled: boolean;
     isTrailingTakeProfitEnabled: boolean;
     isMinRrEnabled: boolean;
+    isInvalidationCheckEnabled?: boolean;
     htfTimeFrame?: 'auto' | string;
     agentParams?: AgentParams;
     // Precision data for self-contained bot logic
@@ -254,6 +257,7 @@ export interface ChameleonAgentState {
     fastEma: number;
     slowEma: number;
     lastPsar?: number;
+    lastAdx?: ADXOutput;
 }
 
 
@@ -303,6 +307,7 @@ export interface AgentParams {
     macdFastPeriod?: number;
     macdSlowPeriod?: number;
     macdSignalPeriod?: number;
+    invalidationCandleLimit?: number; // Universal invalidation check
 
     // Agent 1: Momentum Master
     adxTrendThreshold?: number;
@@ -416,7 +421,13 @@ export interface AgentParams {
     ch_volatilitySpikeMultiplier?: number; // For entry veto
     ch_psarStep?: number;
     ch_psarMax?: number;
-    ch_scoreThreshold?: number; // New multi-factor score threshold
+    ch_scoreThreshold?: number;
+    // V2 Params
+    ch_adxThreshold?: number;
+    ch_volumeMultiplier?: number;
+    ch_breathingRoomCandles?: number;
+    // V3 Params
+    ch_useHybridTrail?: boolean;
 
 }
 

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, TradeSignal, TradingMode, RiskMode, LogType } from '../types';
 import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, LockIcon, UnlockIcon, InfoIcon, ZapIcon } from './icons';
@@ -196,7 +197,8 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
 
     const activeIsAgentInitial = activeStopLossReason === 'Agent Logic';
     const activeIsHardCap = activeStopLossReason === 'Hard Cap';
-    const activeIsProfitSecure = activeStopLossReason === 'Profit Secure' || activeStopLossReason === 'Breakeven';
+    const activeIsBreakeven = activeStopLossReason === 'Breakeven';
+    const activeIsProfitSecure = activeStopLossReason === 'Profit Secure';
     const activeIsAgentTrail = activeStopLossReason === 'Agent Trail';
     
     const isProfitSecureEnabled = config.isUniversalProfitTrailEnabled;
@@ -204,17 +206,14 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
     const getProfitSecureStatus = () => {
         if (!isProfitSecureEnabled) return { text: 'Disabled', className: 'bg-slate-200 dark:bg-slate-600' };
         
+        if (activeIsBreakeven) {
+            return { text: 'ACTIVE: Risk-Free', className: 'bg-teal-500 text-white' };
+        }
         if (activeIsProfitSecure) {
-             if(position.activeStopLossReason === 'Breakeven') {
-                 return { text: 'ACTIVE: Risk-Free', className: 'bg-teal-500 text-white' };
-             }
-
-            let lockFeeMultiple = 0;
-            // New logic: N -> N-1
-            if (profitLockTier >= 2) {
-                lockFeeMultiple = profitLockTier - 1;
-            }
-
+            // profitLockTier is N (e.g. 4, 5...)
+            // lockFeeMultiple is N-2, which corresponds to the tier number.
+            const lockFeeMultiple = profitLockTier >= 4 ? profitLockTier - 2 : 0;
+            
             const statusText = lockFeeMultiple > 0 
                 ? `Tier ${lockFeeMultiple}: ${lockFeeMultiple}x Fee Locked` 
                 : 'ACTIVE';
@@ -232,9 +231,9 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
     let hardCapDescription: string;
 
     if (isFutures && config.leverage > 1) {
-        const marginLossPercent = (MAX_STOP_LOSS_PERCENT_OF_INVESTMENT * config.leverage);
-        hardCapLabel = `Hard Cap (${MAX_STOP_LOSS_PERCENT_OF_INVESTMENT}% of Position)`;
-        hardCapDescription = `Caps price move at ${MAX_STOP_LOSS_PERCENT_OF_INVESTMENT}%. With ${config.leverage}x leverage, this is a max loss of ≈${marginLossPercent.toFixed(0)}% of your margin.`;
+        const maxLossInDollars = (config.investmentAmount * MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100).toFixed(2);
+        hardCapLabel = `Hard Cap (${MAX_STOP_LOSS_PERCENT_OF_INVESTMENT}% of Investment)`;
+        hardCapDescription = `Caps max loss to ${MAX_STOP_LOSS_PERCENT_OF_INVESTMENT}% of your invested margin ($${maxLossInDollars}).`;
     } else {
         hardCapDescription = `Caps max loss to ${MAX_STOP_LOSS_PERCENT_OF_INVESTMENT}% of your investment if the agent's logic is riskier.`;
     }
@@ -248,21 +247,26 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
                     <span className="font-bold font-mono bg-slate-200 dark:bg-slate-700 px-2 py-1 rounded-md">{formatPrice(stopLossPrice, pricePrecision)}</span>
                 </div>
                 
-                <div className={`p-2 rounded-md ${activeIsProfitSecure ? 'bg-teal-100 dark:bg-teal-900 border border-teal-300 dark:border-teal-700' : ''}`}>
+                <div className={`p-2 rounded-md ${activeIsProfitSecure || activeIsBreakeven ? 'bg-teal-100 dark:bg-teal-900 border border-teal-300 dark:border-teal-700' : ''}`}>
                     <div className="flex justify-between items-center">
-                         <span className={activeIsProfitSecure ? 'font-semibold text-teal-700 dark:text-teal-300' : 'font-medium'}>Multi-Stage Profit Secure</span>
+                         <span className={activeIsProfitSecure || activeIsBreakeven ? 'font-semibold text-teal-700 dark:text-teal-300' : 'font-medium'}>Multi-Stage Profit Secure</span>
                          <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${profitSecureStatus.className}`}>
                             {profitSecureStatus.text}
                          </span>
                     </div>
-                    {isProfitSecureEnabled && !activeIsProfitSecure &&
+                    {isProfitSecureEnabled && !activeIsProfitSecure && !activeIsBreakeven &&
                         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                           Will activate once profit covers the trade fee.
+                           Will activate once profit reaches 3x the trade fee.
                         </p>
                     }
-                     {activeIsProfitSecure &&
+                     {activeIsBreakeven &&
                         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                           { position.activeStopLossReason === 'Breakeven' ? 'Stop is at fee-adjusted breakeven.' : 'Trailing profit based on fee multiples.' }
+                           Stop is at fee-adjusted breakeven.
+                        </p>
+                    }
+                    {activeIsProfitSecure &&
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                           Trailing profit based on fee multiples.
                         </p>
                     }
                 </div>

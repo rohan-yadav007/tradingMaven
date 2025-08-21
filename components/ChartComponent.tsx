@@ -199,7 +199,7 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
             },
         });
         
-        const candlestickSeries = (chart as any).addCandlestickSeries({});
+        const candlestickSeries = chart.addCandlestickSeries({});
         
         chartRef.current = chart;
         candlestickSeriesRef.current = candlestickSeries;

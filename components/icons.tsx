@@ -1,4 +1,3 @@
-
 import React from 'react';
 
 // Define a shared props type for all icons to accept a title for tooltips
@@ -180,6 +179,18 @@ export const FlaskIcon: React.FC<IconProps> = ({ title, ...props }) => (
         <path d="M10 20h4" />
         <path d="M6 16H5a2 2 0 0 0-2 2v2" />
         <path d="M18 16h1a2 2 0 0 1 2 2v2" />
+    </svg>
+);
+
+export const FlaskConical: React.FC<IconProps> = ({ title, ...props }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+        <IconTitle title={title} />
+        <path d="M10 2v7.31" />
+        <path d="M14 9.31V2" />
+        <path d="M12 12.31A3 3 0 0 0 9.69 9.5a2.5 2.5 0 0 1-1.42-3.21L6 2" />
+        <path d="M14.31 9.5a3 3 0 0 0 2.38-2.81 2.5 2.5 0 0 0-1.42-3.21L18 2" />
+        <path d="M8.69 16.5A6.5 6.5 0 0 0 15.3 16.5" />
+        <path d="M7 22h10" />
     </svg>
 );
 

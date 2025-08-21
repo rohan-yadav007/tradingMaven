@@ -1,3 +1,5 @@
+
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig } from '../types';
 import * as constants from '../constants';
@@ -138,7 +140,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         isTakeProfitLocked, agentParams,
         marginType, futuresSettingsError, isMultiAssetMode, multiAssetModeError,
         maxLeverage, isLeverageLoading, isHtfConfirmationEnabled, htfTimeFrame,
-        isUniversalProfitTrailEnabled, isTrailingTakeProfitEnabled, isMinRrEnabled
+        isUniversalProfitTrailEnabled, isTrailingTakeProfitEnabled, isMinRrEnabled, isInvalidationCheckEnabled
     } = config;
 
     const {
@@ -147,7 +149,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
         setMarginType, onSetMultiAssetMode, setAgentParams,
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setIsUniversalProfitTrailEnabled,
-        setIsTrailingTakeProfitEnabled, setIsMinRrEnabled
+        setIsTrailingTakeProfitEnabled, setIsMinRrEnabled, setIsInvalidationCheckEnabled
     } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -190,6 +192,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
                         isTrailingTakeProfitEnabled: config.isTrailingTakeProfitEnabled,
                         isMinRrEnabled: config.isMinRrEnabled,
+                        isInvalidationCheckEnabled: config.isInvalidationCheckEnabled,
                         htfTimeFrame: config.htfTimeFrame,
                         agentParams: agentParams,
                         // Dummy precision data for preview analysis, not used for trade execution
@@ -213,27 +216,29 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
 
     useEffect(() => {
         const updateSmartTargets = () => {
-            if (klines.length < 50 || !isTakeProfitLocked) return;
+            if (klines.length < 50 || isTakeProfitLocked) return;
 
             const currentPrice = klines[klines.length - 1].close;
             if (currentPrice <= 0) return;
             
-            const timeframeAdaptiveParams = constants.TIMEFRAME_ADAPTIVE_SETTINGS[timeFrame] || {};
-            const finalParams: Required<AgentParams> = { ...constants.DEFAULT_AGENT_PARAMS, ...timeframeAdaptiveParams, ...agentParams };
+            let finalParams: Required<AgentParams> = { ...constants.DEFAULT_AGENT_PARAMS };
+            if (selectedAgent.id === 13) {
+                const chameleonTimeframeSettings = constants.CHAMELEON_TIMEFRAME_SETTINGS[timeFrame] || {};
+                finalParams = { ...finalParams, ...chameleonTimeframeSettings };
+            }
+            finalParams = { ...finalParams, ...agentParams };
 
             const longTargets = getInitialAgentTargets(klines, currentPrice, 'LONG', timeFrame, finalParams, selectedAgent.id);
             
             const profitDistance = longTargets.takeProfitPrice - currentPrice;
             
-            if (!isTakeProfitLocked) {
-                let newTpValue: number;
-                if (takeProfitMode === RiskMode.Percent) {
-                    newTpValue = (profitDistance / currentPrice) * 100;
-                } else { // Amount
-                    newTpValue = investmentAmount * (profitDistance / currentPrice);
-                }
-                setTakeProfitValue(parseFloat(newTpValue.toFixed(2)));
+            let newTpValue: number;
+            if (takeProfitMode === RiskMode.Percent) {
+                newTpValue = (profitDistance / currentPrice) * 100;
+            } else { // Amount
+                newTpValue = investmentAmount * (profitDistance / currentPrice);
             }
+            setTakeProfitValue(parseFloat(newTpValue.toFixed(2)));
         };
 
         updateSmartTargets();
@@ -307,9 +312,20 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             </div>
 
             {selectedAgent.id === 13 ? (
-                <div className="text-xs text-slate-500 dark:text-slate-400 p-2 bg-slate-100 dark:bg-slate-900/50 rounded-md">
-                    <p className="font-semibold text-sky-600 dark:text-sky-400">Dynamic Profit Management</p>
-                    The Chameleon agent actively manages trades without a fixed take profit target. It uses a multi-factor model to trail stops and secure profits based on live market conditions.
+                 <div className="flex flex-col gap-3">
+                    <div className="text-xs text-slate-500 dark:text-slate-400 p-2 bg-slate-100 dark:bg-slate-900/50 rounded-md">
+                        <p className="font-semibold text-sky-600 dark:text-sky-400">Dynamic Profit Management</p>
+                        The Chameleon agent uses a dynamic model to trail stops instead of a fixed take profit target.
+                    </div>
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-700">
+                        <label htmlFor="hybrid-trail-toggle" className={formLabelClass}>
+                            Hybrid Trail (V3)
+                        </label>
+                        <ToggleSwitch
+                            checked={agentParams.ch_useHybridTrail === undefined ? true : agentParams.ch_useHybridTrail}
+                            onChange={(isChecked) => setAgentParams({ ...agentParams, ch_useHybridTrail: isChecked })}
+                        />
+                    </div>
                 </div>
             ) : (
                 <div className="grid grid-cols-1 gap-4">
@@ -397,7 +413,15 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         Reset to Default
                     </button>
                 </div>
-                <select id="agent-select" value={selectedAgent.id} onChange={e => setSelectedAgent(constants.AGENTS.find(a => a.id === Number(e.target.value))!)} className={formInputClass}>
+                <select 
+                    id="agent-select" 
+                    value={selectedAgent.id} 
+                    onChange={e => {
+                        const agent = constants.AGENTS.find(a => a.id === Number(e.target.value));
+                        if (agent) setSelectedAgent(agent);
+                    }} 
+                    className={formInputClass}
+                >
                     {constants.AGENTS.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
                 </select>
                 <p className="text-xs text-slate-500 dark:text-slate-400">{selectedAgent.description}</p>
@@ -502,6 +526,20 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 </div>
                  <p className="text-xs text-slate-500 dark:text-slate-400">
                     Enforces a minimum risk-to-reward ratio of {constants.MIN_RISK_REWARD_RATIO}:1 on all new trades.
+                </p>
+            </div>
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="invalidation-toggle" className={formLabelClass}>
+                        Trade Invalidation Check
+                    </label>
+                    <ToggleSwitch
+                        checked={isInvalidationCheckEnabled}
+                        onChange={setIsInvalidationCheckEnabled}
+                    />
+                </div>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Proactively closes losing trades if the entry thesis is no longer valid after a set time.
                 </p>
             </div>
 

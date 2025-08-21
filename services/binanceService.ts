@@ -460,7 +460,7 @@ export const getPricePrecision = (symbolInfo?: SymbolInfo): number => {
     return 4; // Use a more sensible default for crypto
 };
 
-export const getQuantityPrecision = (symbolInfo?: SymbolInfo): number => {
+export const getQuantityPrecision = (symbolInfo?: any): number => {
     if (symbolInfo && 'quantityPrecision' in symbolInfo) {
         return (symbolInfo as any).quantityPrecision;
     }

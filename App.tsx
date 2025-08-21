@@ -31,7 +31,7 @@ const AppContent: React.FC = () => {
         selectedAgent, investmentAmount, takeProfitMode, 
         takeProfitValue, isTakeProfitLocked, agentParams,
         leverage, marginType, isHtfConfirmationEnabled, htfTimeFrame, isUniversalProfitTrailEnabled,
-        isTrailingTakeProfitEnabled, isMinRrEnabled
+        isTrailingTakeProfitEnabled, isMinRrEnabled, isInvalidationCheckEnabled
     } = configState;
 
     const {
@@ -360,6 +360,8 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             proactiveLossCheckTriggered: false,
             profitLockTier: 0,
             peakPrice: finalEntryPrice,
+            candlesSinceEntry: 0,
+            hasBeenProfitable: false,
         };
 
         if (config.executionMode === 'live') {
@@ -749,6 +751,7 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
             isUniversalProfitTrailEnabled,
             isTrailingTakeProfitEnabled,
             isMinRrEnabled,
+            isInvalidationCheckEnabled,
         };
         botManagerService.startBot(botConfig);
     }, [
@@ -756,7 +759,7 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
         selectedPair, tradingMode, leverage, marginType, selectedAgent, chartTimeFrame, executionMode,
         investmentAmount, takeProfitMode, takeProfitValue,
         isTakeProfitLocked, isHtfConfirmationEnabled, htfTimeFrame, agentParams, symbolInfo, isUniversalProfitTrailEnabled,
-        isTrailingTakeProfitEnabled, isMinRrEnabled
+        isTrailingTakeProfitEnabled, isMinRrEnabled, isInvalidationCheckEnabled
     ]);
 
     const handleUpdateBotConfig = useCallback((botId: string, partialConfig: Partial<BotConfig>) => {

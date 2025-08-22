@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, TradeSignal, TradingMode, RiskMode, LogType } from '../types';
 import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, LockIcon, UnlockIcon, InfoIcon, ZapIcon } from './icons';
@@ -99,7 +100,32 @@ const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) =>
     );
 };
 
-const BotConfigDetails: React.FC<{ config: BotConfig; onUpdate: (change: Partial<BotConfig>) => void }> = ({ config, onUpdate }) => (
+const ConfigToggle: React.FC<{label: string; description: string; tooltip: string; checked: boolean; onChange: (checked: boolean) => void}> = ({label, description, tooltip, checked, onChange}) => (
+    <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
+        <div className="flex flex-col">
+            <div className="flex items-center gap-1.5">
+                <span className="font-medium text-slate-700 dark:text-slate-300">{label}</span>
+                 <div className="relative group">
+                    <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                    <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                        {tooltip}
+                    </div>
+                </div>
+            </div>
+            <span className="text-xs text-slate-500 dark:text-slate-400">{description}</span>
+        </div>
+        <ToggleSwitch
+            checked={checked}
+            onChange={onChange}
+            size="sm"
+        />
+    </div>
+);
+
+
+const BotConfigDetails: React.FC<{ bot: RunningBot; onUpdate: (change: Partial<BotConfig>) => void }> = ({ bot, onUpdate }) => {
+    const { config } = bot;
+    return (
     <div>
         <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Configuration</h4>
         <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg space-y-2 text-sm">
@@ -110,31 +136,46 @@ const BotConfigDetails: React.FC<{ config: BotConfig; onUpdate: (change: Partial
                 {config.mode === TradingMode.USDSM_Futures && <InfoItem label="Margin" value={config.marginType || 'N/A'} />}
                 <InfoItem label="Investment" value={`$${config.investmentAmount}`} />
             </div>
-             <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
-                 <div className="flex flex-col">
-                    <span className="font-medium text-slate-700 dark:text-slate-300">Universal Profit Trail</span>
-                    <span className="text-xs text-slate-500 dark:text-slate-400">Fee-based profit locking</span>
-                </div>
-                <ToggleSwitch
-                    checked={config.isUniversalProfitTrailEnabled}
-                    onChange={(checked) => onUpdate({ isUniversalProfitTrailEnabled: checked })}
-                    size="sm"
+            <ConfigToggle
+                label="Universal Profit Trail"
+                description="Fee-based profit locking"
+                tooltip="Affects the current open trade."
+                checked={config.isUniversalProfitTrailEnabled}
+                onChange={(checked) => onUpdate({ isUniversalProfitTrailEnabled: checked })}
+            />
+            <ConfigToggle
+                label="Trailing Take Profit"
+                description="Dynamically raises TP target"
+                tooltip="Affects the current open trade."
+                checked={config.isTrailingTakeProfitEnabled}
+                onChange={(checked) => onUpdate({ isTrailingTakeProfitEnabled: checked })}
+            />
+             <ConfigToggle
+                label="Minimum R:R Veto"
+                description="Enforces minimum risk-reward"
+                tooltip="Affects the NEXT trade only."
+                checked={config.isMinRrEnabled}
+                onChange={(checked) => onUpdate({ isMinRrEnabled: checked })}
+            />
+             <ConfigToggle
+                label="Trade Invalidation Check"
+                description="Closes stale losing trades"
+                tooltip="Affects the current open trade."
+                checked={config.isInvalidationCheckEnabled ?? false}
+                onChange={(checked) => onUpdate({ isInvalidationCheckEnabled: checked })}
+            />
+            {config.agent.id === 7 && (
+                 <ConfigToggle
+                    label="Candlestick Confirmation"
+                    description="Requires candle pattern for entry"
+                    tooltip="Affects the NEXT trade only."
+                    checked={config.agentParams?.isCandleConfirmationEnabled ?? false}
+                    onChange={(checked) => onUpdate({ agentParams: { ...config.agentParams, isCandleConfirmationEnabled: checked } })}
                 />
-            </div>
-             <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
-                 <div className="flex flex-col">
-                    <span className="font-medium text-slate-700 dark:text-slate-300">Trailing Take Profit</span>
-                    <span className="text-xs text-slate-500 dark:text-slate-400">Dynamically raises TP</span>
-                </div>
-                <ToggleSwitch
-                    checked={config.isTrailingTakeProfitEnabled}
-                    onChange={(checked) => onUpdate({ isTrailingTakeProfitEnabled: checked })}
-                    size="sm"
-                />
-            </div>
+            )}
         </div>
     </div>
-);
+)};
 
 
 const PositionPnlProgress: React.FC<{position: Position; livePrice: number}> = ({ position, livePrice }) => {
@@ -460,7 +501,7 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
                              <AnalysisPreview agent={bot.config.agent} agentParams={bot.config.agentParams} analysis={bot.analysis} isLoading={false} />
                         </div>
                          <div className={position ? '' : 'lg:col-span-1'}>
-                           <BotConfigDetails config={bot.config} onUpdate={(partial) => actions.onUpdateBotConfig(bot.id, partial)} />
+                           <BotConfigDetails bot={bot} onUpdate={(partial) => actions.onUpdateBotConfig(bot.id, partial)} />
                         </div>
                          <div className={position ? 'md:col-span-2 lg:col-span-1' : 'lg:col-span-1'}>
                             <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Activity Log</h4>

@@ -304,6 +304,7 @@ export interface AgentParams {
     rsiPeriod?: number;
     atrPeriod?: number;
     adxPeriod?: number;
+    viPeriod?: number; // Vortex Indicator
     macdFastPeriod?: number;
     macdSlowPeriod?: number;
     macdSignalPeriod?: number;
@@ -401,6 +402,7 @@ export interface AgentParams {
     qsc_atrMultiplier?: number;
     qsc_trendScoreThreshold?: number;
     qsc_rangeScoreThreshold?: number;
+    qsc_vwapDeviationPercent?: number;
 
     // Agent 11: Historic Expert
     he_trendSmaPeriod?: number;
@@ -426,9 +428,40 @@ export interface AgentParams {
     ch_adxThreshold?: number;
     ch_volumeMultiplier?: number;
     ch_breathingRoomCandles?: number;
-    // V3 Params
-    ch_useHybridTrail?: boolean;
 
+    // Agent 14: The Sentinel
+    sentinel_scoreThreshold?: number;
+
+    // Agent 15: Institutional Flow Tracer
+    vwap_emaTrendPeriod?: number;
+    vwap_proximityPercent?: number;
+
+    // Agent 16: Ichimoku Trend Rider
+    ichi_conversionPeriod?: number;
+    ichi_basePeriod?: number;
+    ichi_laggingSpanPeriod?: number;
+    ichi_displacement?: number;
+
+    // Agent 17: The Detonator
+    det_bb1_len?: number;
+    det_bb1_dev?: number;
+    det_bb2_len?: number;
+    det_bb2_dev?: number;
+    det_bb3_len?: number;
+    det_bb3_dev?: number;
+    det_bb4_len?: number;
+    det_bb4_dev?: number;
+    det_ema_fast_len?: number;
+    det_ema_slow_len?: number;
+    det_rsi_len?: number;
+    det_rsi_thresh?: number;
+    det_vol_len?: number;
+    det_vol_mult?: number;
+    det_atr_len?: number;
+    det_sl_atr_mult?: number;
+    det_rr_mult?: number;
+    det_max_bar_move_pct?: number;
+    det_bb_margin_pct?: number;
 }
 
 
@@ -514,6 +547,12 @@ export interface ADXOutput {
     pdi: number;
     mdi: number;
 }
+
+export interface VortexIndicatorOutput {
+  pdi: number[];
+  ndi: number[];
+}
+
 
 export interface BollingerBandsOutput {
     middle: number;

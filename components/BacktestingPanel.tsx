@@ -11,7 +11,7 @@ import { BacktestResultDisplay } from './BacktestResultDisplay';
 import { OptimizationResults } from './OptimizationResults';
 
 
-// --- Internal Components (Consolidated) ---
+// --- Internal Components (Moved from BacktestControlPanel) ---
 
 const formGroupClass = "flex flex-col gap-1.5";
 const formLabelClass = "text-sm font-medium text-slate-700 dark:text-slate-300";
@@ -69,9 +69,13 @@ const RiskInputWithLock: React.FC<{
     );
 };
 
-const ParamSlider: React.FC<{label: string, value: number, onChange: (val: number) => void, min: number, max: number, step: number}> = ({ label, value, onChange, min, max, step }) => (
+const ParamSlider: React.FC<{label: string, value: number, onChange: (val: number) => void, min: number, max: number, step: number, valueDisplay?: (v: number) => string}> = 
+({ label, value, onChange, min, max, step, valueDisplay }) => (
     <div className="flex flex-col gap-1.5">
-        <div className="flex justify-between items-baseline"><label className={formLabelClass}>{label}</label><span className="text-sm font-semibold text-sky-500">{value}</span></div>
+        <div className="flex justify-between items-baseline">
+            <label className={formLabelClass}>{label}</label>
+            <span className="text-sm font-semibold text-sky-500">{valueDisplay ? valueDisplay(value) : value}</span>
+        </div>
         <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(Number(e.target.value))} className="w-full h-2 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer" />
     </div>
 );
@@ -89,96 +93,120 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
             </div>
             </div>);
         case 9: return (<div className="space-y-4">
-            <h5 className="font-semibold text-xs uppercase text-slate-400">Regime Filter</h5>
-            <ParamSlider label="ADX Period" value={allParams.qsc_adxPeriod} onChange={v => updateParam('qsc_adxPeriod', v)} min={5} max={20} step={1} />
+            <ParamSlider label="VWAP Deviation" value={allParams.qsc_vwapDeviationPercent} onChange={v => updateParam('qsc_vwapDeviationPercent', v)} min={0.1} max={1.0} step={0.05} valueDisplay={(v) => `${v.toFixed(2)}%`} />
             <ParamSlider label="ADX Trend Threshold" value={allParams.qsc_adxThreshold} onChange={v => updateParam('qsc_adxThreshold', v)} min={15} max={35} step={1} />
-            <ParamSlider label="ADX Chop Buffer" value={allParams.qsc_adxChopBuffer} onChange={v => updateParam('qsc_adxChopBuffer', v)} min={0} max={10} step={1} />
-            <h5 className="font-semibold text-xs uppercase text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">Trend Logic</h5>
-            <ParamSlider label="Fast EMA Period" value={allParams.qsc_fastEmaPeriod} onChange={v => updateParam('qsc_fastEmaPeriod', v)} min={5} max={20} step={1} />
-            <ParamSlider label="Slow EMA Period" value={allParams.qsc_slowEmaPeriod} onChange={v => updateParam('qsc_slowEmaPeriod', v)} min={15} max={50} step={1} />
-            <ParamSlider label="Trend Score Threshold" value={allParams.qsc_trendScoreThreshold} onChange={v => updateParam('qsc_trendScoreThreshold', v)} min={1} max={4} step={1} />
-            <h5 className="font-semibold text-xs uppercase text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">Range Logic</h5>
-            <ParamSlider label="BB Period" value={allParams.qsc_bbPeriod} onChange={v => updateParam('qsc_bbPeriod', v)} min={10} max={30} step={1} />
-            <ParamSlider label="BB StdDev" value={allParams.qsc_bbStdDev} onChange={v => updateParam('qsc_bbStdDev', v)} min={1.5} max={3} step={0.1} />
-            <ParamSlider label="StochRSI Period" value={allParams.qsc_stochRsiPeriod} onChange={v => updateParam('qsc_stochRsiPeriod', v)} min={7} max={28} step={1} />
+            <ParamSlider label="Vortex Indicator Period" value={allParams.viPeriod} onChange={v => updateParam('viPeriod', v)} min={7} max={25} step={1} />
             <ParamSlider label="StochRSI Oversold" value={allParams.qsc_stochRsiOversold} onChange={v => updateParam('qsc_stochRsiOversold', v)} min={10} max={40} step={1} />
             <ParamSlider label="StochRSI Overbought" value={allParams.qsc_stochRsiOverbought} onChange={v => updateParam('qsc_stochRsiOverbought', v)} min={60} max={90} step={1} />
-            <ParamSlider label="Range Score Threshold" value={allParams.qsc_rangeScoreThreshold} onChange={v => updateParam('qsc_rangeScoreThreshold', v)} min={1} max={2} step={1} />
-            <h5 className="font-semibold text-xs uppercase text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">Exit Logic</h5>
-            <ParamSlider label="PSAR Step" value={allParams.qsc_psarStep} onChange={v => updateParam('qsc_psarStep', v)} min={0.01} max={0.1} step={0.005} />
-            <ParamSlider label="PSAR Max" value={allParams.qsc_psarMax} onChange={v => updateParam('qsc_psarMax', v)} min={0.1} max={0.5} step={0.01} />
             </div>);
         case 11: return (<div className="space-y-4">
             <ParamSlider label="Trend SMA Period" value={allParams.he_trendSmaPeriod} onChange={v => updateParam('he_trendSmaPeriod', v)} min={20} max={50} step={1} />
             <ParamSlider label="Fast EMA Period" value={allParams.he_fastEmaPeriod} onChange={v => updateParam('he_fastEmaPeriod', v)} min={5} max={20} step={1} />
             <ParamSlider label="Slow EMA Period" value={allParams.he_slowEmaPeriod} onChange={v => updateParam('he_slowEmaPeriod', v)} min={20} max={50} step={1} />
-            <ParamSlider label="RSI Period" value={allParams.he_rsiPeriod} onChange={v => updateParam('he_rsiPeriod', v)} min={7} max={28} step={1} />
             <ParamSlider label="RSI Midline" value={allParams.he_rsiMidline} onChange={v => updateParam('he_rsiMidline', v)} min={40} max={60} step={1} />
+            </div>);
+        case 13: // The Chameleon
+             return (<div className="space-y-4">
+                <ParamSlider label="Vortex Indicator Period" value={allParams.viPeriod} onChange={v => updateParam('viPeriod', v)} min={7} max={25} step={1} />
+                <p className="text-xs text-slate-500 dark:text-slate-400">Standard Ichimoku parameters (9, 26, 52, 26) are recommended. Adjust with caution.</p>
+                <ParamSlider 
+                    label="Conversion Line Period"
+                    value={allParams.ichi_conversionPeriod}
+                    onChange={(v) => updateParam('ichi_conversionPeriod', v)}
+                    min={5} max={20} step={1}
+                />
+                <ParamSlider 
+                    label="Base Line Period"
+                    value={allParams.ichi_basePeriod}
+                    onChange={(v) => updateParam('ichi_basePeriod', v)}
+                    min={20} max={60} step={1}
+                />
+            </div>);
+        case 16: // Ichimoku Trend Rider
+            return (<div className="space-y-4">
+                <p className="text-xs text-slate-500 dark:text-slate-400">Standard Ichimoku parameters (9, 26, 52, 26) are recommended. Adjust with caution.</p>
+                <ParamSlider 
+                    label="Conversion Line Period"
+                    value={allParams.ichi_conversionPeriod}
+                    onChange={(v) => updateParam('ichi_conversionPeriod', v)}
+                    min={5} max={20} step={1}
+                />
+                <ParamSlider 
+                    label="Base Line Period"
+                    value={allParams.ichi_basePeriod}
+                    onChange={(v) => updateParam('ichi_basePeriod', v)}
+                    min={20} max={60} step={1}
+                />
+            </div>);
+        case 14: // The Sentinel
+            return (<div className="space-y-4">
+                 <ParamSlider 
+                    label="Entry Score Threshold" 
+                    value={allParams.sentinel_scoreThreshold}
+                    onChange={(v) => updateParam('sentinel_scoreThreshold', v)}
+                    min={50} max={95} step={1}
+                    valueDisplay={(v) => `${v}%`}
+                />
+                <ParamSlider label="Vortex Indicator Period" value={allParams.viPeriod} onChange={v => updateParam('viPeriod', v)} min={7} max={25} step={1} />
+            </div>);
+        case 15: // Institutional Flow Tracer
+            return (<div className="space-y-4">
+                <ParamSlider 
+                    label="Trend EMA Period"
+                    value={allParams.vwap_emaTrendPeriod}
+                    onChange={(v) => updateParam('vwap_emaTrendPeriod', v)}
+                    min={50} max={200} step={10}
+                />
+                <ParamSlider 
+                    label="VWAP Proximity"
+                    value={allParams.vwap_proximityPercent}
+                    onChange={(v) => updateParam('vwap_proximityPercent', v)}
+                    min={0.1} max={1} step={0.05}
+                    valueDisplay={(v) => `${v.toFixed(2)}%`}
+                />
+            </div>);
+        case 17: // The Detonator
+            return (<div className="space-y-4">
+                <p className="text-xs text-slate-500 dark:text-slate-400">Key parameters for the multi-layer breakout strategy.</p>
+                <ParamSlider 
+                    label="RSI Threshold"
+                    value={allParams.det_rsi_thresh}
+                    onChange={(v) => updateParam('det_rsi_thresh', v)}
+                    min={51} max={70} step={1}
+                />
+                <ParamSlider 
+                    label="Volume Multiplier"
+                    value={allParams.det_vol_mult}
+                    onChange={(v) => updateParam('det_vol_mult', v)}
+                    min={1.2} max={3.0} step={0.1}
+                    valueDisplay={(v) => `${v.toFixed(1)}x`}
+                />
+                <ParamSlider 
+                    label="SL ATR Multiplier"
+                    value={allParams.det_sl_atr_mult}
+                    onChange={(v) => updateParam('det_sl_atr_mult', v)}
+                    min={0.5} max={3.0} step={0.1}
+                    valueDisplay={(v) => `${v.toFixed(1)}x`}
+                />
+                <ParamSlider 
+                    label="Risk/Reward Ratio"
+                    value={allParams.det_rr_mult}
+                    onChange={(v) => updateParam('det_rr_mult', v)}
+                    min={1.2} max={5.0} step={0.1}
+                    valueDisplay={(v) => `1:${v.toFixed(1)}`}
+                />
+                 <ParamSlider 
+                    label="BB Breakout Margin"
+                    value={allParams.det_bb_margin_pct}
+                    onChange={(v) => updateParam('det_bb_margin_pct', v)}
+                    min={0} max={0.2} step={0.01}
+                    valueDisplay={(v) => `${(v * 100).toFixed(0)}%`}
+                />
             </div>);
         default: return <p className="text-sm text-slate-500">This agent does not have any customizable parameters.</p>;
     }
 };
 
-const BacktestControlPanel: React.FC<{
-    config: BacktestConfig; updateConfig: <K extends keyof BacktestConfig>(key: K, value: BacktestConfig[K]) => void;
-    backtestDays: number; setBacktestDays: (days: number) => void;
-    onRunBacktest: () => void; onRunOptimization: () => void;
-    isLoading: boolean; loadingMessage: string; theme: 'light' | 'dark';
-}> = ({ config, updateConfig, backtestDays, setBacktestDays, onRunBacktest, onRunOptimization, isLoading, loadingMessage, theme }) => {
-    const globalConfig = useTradingConfigState();
-    const [isParamsOpen, setIsParamsOpen] = useState(false);
-    const canOptimize = [7, 9, 11].includes(config.selectedAgent.id);
-    return (
-        <div className="flex flex-col gap-4 h-full">
-            <h2 className="text-lg font-bold">Backtest Configuration</h2>
-            <div className={formGroupClass}><label className={formLabelClass}>Backtest Period (Days)</label><input type="number" value={backtestDays} onChange={e => setBacktestDays(Number(e.target.value))} className={formInputClass} min="1" max="90" /></div>
-            <div className={formGroupClass}><label className={formLabelClass}>Trading Platform</label><select value={config.tradingMode} onChange={e => updateConfig('tradingMode', e.target.value as TradingMode)} className={formInputClass}>{Object.values(TradingMode).map(mode => <option key={mode} value={mode}>{mode}</option>)}</select></div>
-            <div className={formGroupClass}><label className={formLabelClass}>Market</label><SearchableDropdown options={globalConfig.allPairs} value={config.selectedPair} onChange={(v) => updateConfig('selectedPair', v)} theme={theme} disabled={globalConfig.isPairsLoading} /></div>
-            <div className={formGroupClass}><label className={formLabelClass}>Entry Timeframe</label><select value={config.chartTimeFrame} onChange={e => updateConfig('chartTimeFrame', e.target.value)} className={formInputClass}>{constants.TIME_FRAMES.map(tf => <option key={tf} value={tf}>{tf}</option>)}</select></div>
-            <div className={formGroupClass}><label className={formLabelClass}>Trading Agent</label><select value={config.selectedAgent.id} onChange={e => {
-                const agent = constants.AGENTS.find(a => a.id === Number(e.target.value));
-                if (agent) updateConfig('selectedAgent', agent);
-            }} className={formInputClass}>{constants.AGENTS.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></div>
-            <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
-            <div className={formGroupClass}><label className={formLabelClass}>Investment Amount</label><div className="relative"><span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500">$</span><input type="number" value={config.investmentAmount} onChange={e => updateConfig('investmentAmount', Number(e.target.value))} className={`${formInputClass} pl-7`} min="1"/></div></div>
-            {config.tradingMode === TradingMode.USDSM_Futures && (<div className={formGroupClass}><label className="flex justify-between items-baseline"><span className={formLabelClass}>Leverage</span><span className="font-bold text-sky-500">{config.leverage}x</span></label><input type="range" min="1" max={globalConfig.maxLeverage} value={config.leverage} onChange={e => updateConfig('leverage', Number(e.target.value))} className="w-full h-2 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer" /></div>)}
-            <RiskInputWithLock label="Take Profit" mode={config.takeProfitMode} value={config.takeProfitValue} isLocked={config.isTakeProfitLocked} investmentAmount={config.investmentAmount} onModeChange={v => updateConfig('takeProfitMode', v)} onValueChange={v => updateConfig('takeProfitValue', v)} onLockToggle={() => updateConfig('isTakeProfitLocked', !config.isTakeProfitLocked)} />
-            <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
-            <div className="space-y-3 pt-2"><div className="flex items-center justify-between"><label className={formLabelClass}>Higher Timeframe Confirmation</label><ToggleSwitch checked={config.isHtfConfirmationEnabled} onChange={v => updateConfig('isHtfConfirmationEnabled', v)} /></div><div className="flex items-center justify-between"><label className={formLabelClass}>Universal Profit Trail</label><ToggleSwitch checked={config.isUniversalProfitTrailEnabled} onChange={v => updateConfig('isUniversalProfitTrailEnabled', v)} /></div><div className="flex items-center justify-between"><label className={formLabelClass}>Trailing Take Profit</label><ToggleSwitch checked={config.isTrailingTakeProfitEnabled} onChange={v => updateConfig('isTrailingTakeProfitEnabled', v)} /></div>
-                <div className="flex items-center justify-between"><label className={formLabelClass}>Minimum R:R Veto</label><ToggleSwitch checked={config.isMinRrEnabled} onChange={v => updateConfig('isMinRrEnabled', v)} /></div>
-            </div>
-            <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
-                <button onClick={() => setIsParamsOpen(!isParamsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold">
-                    Agent Logic Parameters
-                    {isParamsOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-                </button>
-                {isParamsOpen && (
-                    <div className="p-3 border-t border-slate-200 dark:border-slate-600">
-                        <div className="flex justify-between items-center mb-4">
-                            <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300">Customize Parameters</h4>
-                            <button 
-                                onClick={() => updateConfig('agentParams', {})}
-                                className="text-xs font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-500 transition-colors"
-                                title="Reset parameters to their default values"
-                            >
-                                Reset to Default
-                            </button>
-                        </div>
-                        <AgentParameterEditor 
-                            agent={config.selectedAgent} 
-                            params={config.agentParams} 
-                            onParamsChange={p => updateConfig('agentParams', p)} 
-                        />
-                    </div>
-                )}
-            </div>
-            <div className="mt-auto pt-4 border-t border-slate-200 dark:border-slate-700 flex flex-col gap-3">
-                <button onClick={onRunBacktest} disabled={isLoading} className={`${buttonClass} bg-slate-600 hover:bg-slate-700 disabled:bg-slate-400 dark:disabled:bg-slate-600`}>{isLoading ? loadingMessage : 'Run Single Backtest'}</button>
-                <button onClick={onRunOptimization} disabled={isLoading || !canOptimize} className={`${buttonClass} bg-sky-600 hover:bg-sky-700 disabled:bg-slate-400 dark:disabled:bg-slate-600`} title={canOptimize ? "Optimize agent parameters" : "This agent does not support optimization"}><SparklesIcon className="w-5 h-5"/>{isLoading ? loadingMessage : 'Optimize Agent'}</button>
-            </div>
-        </div>
-    );
-};
 
 // --- Main Panel Component ---
 
@@ -231,6 +259,9 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [loadingMessage, setLoadingMessage] = useState('Running Simulation...');
+    const [isParamsOpen, setIsParamsOpen] = useState(false);
+
+    const canOptimize = [7, 9, 11, 13, 14, 15, 16, 17].includes(config.selectedAgent.id);
     
     const updateConfig = <K extends keyof BacktestConfig>(key: K, value: BacktestConfig[K]) => {
         setConfig(prev => ({...prev, [key]: value}));
@@ -345,17 +376,56 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     return (
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-start" style={{ minHeight: 'calc(100vh - 100px)' }}>
             <div className="lg:col-span-1 bg-white dark:bg-slate-800 rounded-lg shadow-sm p-4 sticky top-20 h-full">
-                <BacktestControlPanel
-                    config={config}
-                    updateConfig={updateConfig}
-                    backtestDays={backtestDays}
-                    setBacktestDays={setBacktestDays}
-                    onRunBacktest={handleRunBacktest}
-                    onRunOptimization={handleRunOptimization}
-                    isLoading={isLoading}
-                    loadingMessage={loadingMessage}
-                    theme={theme}
-                />
+                {/* START: Merged BacktestControlPanel Content */}
+                 <div className="flex flex-col gap-4 h-full">
+                    <h2 className="text-lg font-bold">Backtest Configuration</h2>
+                    <div className={formGroupClass}><label className={formLabelClass}>Backtest Period (Days)</label><input type="number" value={backtestDays} onChange={e => setBacktestDays(Number(e.target.value))} className={formInputClass} min="1" max="90" /></div>
+                    <div className={formGroupClass}><label className={formLabelClass}>Trading Platform</label><select value={config.tradingMode} onChange={e => updateConfig('tradingMode', e.target.value as TradingMode)} className={formInputClass}>{Object.values(TradingMode).map(mode => <option key={mode} value={mode}>{mode}</option>)}</select></div>
+                    <div className={formGroupClass}><label className={formLabelClass}>Market</label><SearchableDropdown options={globalConfig.allPairs} value={config.selectedPair} onChange={(v) => updateConfig('selectedPair', v)} theme={theme} disabled={globalConfig.isPairsLoading} /></div>
+                    <div className={formGroupClass}><label className={formLabelClass}>Entry Timeframe</label><select value={config.chartTimeFrame} onChange={e => updateConfig('chartTimeFrame', e.target.value)} className={formInputClass}>{constants.TIME_FRAMES.map(tf => <option key={tf} value={tf}>{tf}</option>)}</select></div>
+                    <div className={formGroupClass}><label className={formLabelClass}>Trading Agent</label><select value={config.selectedAgent.id} onChange={e => {
+                        const agent = constants.AGENTS.find(a => a.id === Number(e.target.value));
+                        if (agent) updateConfig('selectedAgent', agent);
+                    }} className={formInputClass}>{constants.AGENTS.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></div>
+                    <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
+                    <div className={formGroupClass}><label className={formLabelClass}>Investment Amount</label><div className="relative"><span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500">$</span><input type="number" value={config.investmentAmount} onChange={e => updateConfig('investmentAmount', Number(e.target.value))} className={`${formInputClass} pl-7`} min="1"/></div></div>
+                    {config.tradingMode === TradingMode.USDSM_Futures && (<div className={formGroupClass}><label className="flex justify-between items-baseline"><span className={formLabelClass}>Leverage</span><span className="font-bold text-sky-500">{config.leverage}x</span></label><input type="range" min="1" max={globalConfig.maxLeverage} value={config.leverage} onChange={e => updateConfig('leverage', Number(e.target.value))} className="w-full h-2 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer" /></div>)}
+                    <RiskInputWithLock label="Take Profit" mode={config.takeProfitMode} value={config.takeProfitValue} isLocked={config.isTakeProfitLocked} investmentAmount={config.investmentAmount} onModeChange={v => updateConfig('takeProfitMode', v)} onValueChange={v => updateConfig('takeProfitValue', v)} onLockToggle={() => updateConfig('isTakeProfitLocked', !config.isTakeProfitLocked)} />
+                    <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
+                    <div className="space-y-3 pt-2"><div className="flex items-center justify-between"><label className={formLabelClass}>Higher Timeframe Confirmation</label><ToggleSwitch checked={config.isHtfConfirmationEnabled} onChange={v => updateConfig('isHtfConfirmationEnabled', v)} /></div><div className="flex items-center justify-between"><label className={formLabelClass}>Universal Profit Trail</label><ToggleSwitch checked={config.isUniversalProfitTrailEnabled} onChange={v => updateConfig('isUniversalProfitTrailEnabled', v)} /></div><div className="flex items-center justify-between"><label className={formLabelClass}>Trailing Take Profit</label><ToggleSwitch checked={config.isTrailingTakeProfitEnabled} onChange={v => updateConfig('isTrailingTakeProfitEnabled', v)} /></div>
+                        <div className="flex items-center justify-between"><label className={formLabelClass}>Minimum R:R Veto</label><ToggleSwitch checked={config.isMinRrEnabled} onChange={v => updateConfig('isMinRrEnabled', v)} /></div>
+                    </div>
+                    <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
+                        <button onClick={() => setIsParamsOpen(!isParamsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold">
+                            Agent Logic Parameters
+                            {isParamsOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                        </button>
+                        {isParamsOpen && (
+                            <div className="p-3 border-t border-slate-200 dark:border-slate-600">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300">Customize Parameters</h4>
+                                    <button 
+                                        onClick={() => updateConfig('agentParams', {})}
+                                        className="text-xs font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-500 transition-colors"
+                                        title="Reset parameters to their default values"
+                                    >
+                                        Reset to Default
+                                    </button>
+                                </div>
+                                <AgentParameterEditor 
+                                    agent={config.selectedAgent} 
+                                    params={config.agentParams} 
+                                    onParamsChange={p => updateConfig('agentParams', p)} 
+                                />
+                            </div>
+                        )}
+                    </div>
+                    <div className="mt-auto pt-4 border-t border-slate-200 dark:border-slate-700 flex flex-col gap-3">
+                        <button onClick={handleRunBacktest} disabled={isLoading} className={`${buttonClass} bg-slate-600 hover:bg-slate-700 disabled:bg-slate-400 dark:disabled:bg-slate-600`}>{isLoading ? loadingMessage : 'Run Single Backtest'}</button>
+                        <button onClick={handleRunOptimization} disabled={isLoading || !canOptimize} className={`${buttonClass} bg-sky-600 hover:bg-sky-700 disabled:bg-slate-400 dark:disabled:bg-slate-600`} title={canOptimize ? "Optimize agent parameters" : "This agent does not support optimization"}><SparklesIcon className="w-5 h-5"/>{isLoading ? loadingMessage : 'Optimize Agent'}</button>
+                    </div>
+                </div>
+                {/* END: Merged BacktestControlPanel Content */}
             </div>
             <div className="lg:col-span-3">
                 {isLoading ? (

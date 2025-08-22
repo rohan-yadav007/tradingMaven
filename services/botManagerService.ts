@@ -1,9 +1,11 @@
 
 
+
+
 import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, RiskMode, TradingMode, BinanceOrderResponse, ChameleonAgentState, TradeManagementSignal, AgentParams } from '../types';
 import * as binanceService from './binanceService';
 import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getChameleonManagementSignal, getChameleonStrategicUpdate } from './localAgentService';
-import { DEFAULT_AGENT_PARAMS, MAX_STOP_LOSS_PERCENT_OF_INVESTMENT, TIME_FRAMES, TAKER_FEE_RATE, CHAMELEON_TIMEFRAME_SETTINGS } from '../constants';
+import { DEFAULT_AGENT_PARAMS, MAX_STOP_LOSS_PERCENT_OF_INVESTMENT, TIME_FRAMES, TAKER_FEE_RATE, CHAMELEON_TIMEFRAME_SETTINGS, MIN_PROFIT_BUFFER_MULTIPLIER } from '../constants';
 import { telegramBotService } from './telegramBotService';
 
 const MAX_LOG_ENTRIES = 100;
@@ -471,8 +473,11 @@ class BotInstance {
             this.notifyTradeExecutionFailed("Could not determine a valid entry price.");
             return;
         }
+        
+        const isLong = signal.signal === 'BUY';
+        const { config } = this.bot;
 
-        const agentTargets = getInitialAgentTargets(klinesForAnalysis, currentPrice, signal.signal === 'BUY' ? 'LONG' : 'SHORT', this.bot.config.timeFrame, { ...DEFAULT_AGENT_PARAMS, ...this.bot.config.agentParams }, this.bot.config.agent.id);
+        const agentTargets = getInitialAgentTargets(klinesForAnalysis, currentPrice, isLong ? 'LONG' : 'SHORT', config);
 
         let finalTp = agentTargets.takeProfitPrice;
         if (this.bot.config.isTakeProfitLocked && this.bot.config.agent.id !== 13) {
@@ -480,23 +485,37 @@ class BotInstance {
             const tradeSize = positionValue / currentPrice;
             if (this.bot.config.takeProfitMode === RiskMode.Percent) {
                 const profitAmount = this.bot.config.investmentAmount * (this.bot.config.takeProfitValue / 100);
-                finalTp = signal.signal === 'BUY' ? currentPrice + (profitAmount / tradeSize) : currentPrice - (profitAmount / tradeSize);
+                finalTp = isLong ? currentPrice + (profitAmount / tradeSize) : currentPrice - (profitAmount / tradeSize);
             } else {
-                finalTp = signal.signal === 'BUY' ? currentPrice + (this.bot.config.takeProfitValue / tradeSize) : currentPrice - (this.bot.config.takeProfitValue / tradeSize);
+                finalTp = isLong ? currentPrice + (this.bot.config.takeProfitValue / tradeSize) : currentPrice - (this.bot.config.takeProfitValue / tradeSize);
+            }
+        }
+        
+        // --- Intelligent TP Adjustment (Fee Veto Fix) ---
+        const positionValue = config.investmentAmount * (config.mode === TradingMode.USDSM_Futures ? config.leverage : 1);
+        const tradeSize = positionValue / currentPrice;
+        if (tradeSize > 0) {
+            const roundTripFee = positionValue * TAKER_FEE_RATE * 2;
+            const feeInPrice = roundTripFee / tradeSize;
+            const minProfitDistance = feeInPrice * MIN_PROFIT_BUFFER_MULTIPLIER;
+            const rewardDistance = Math.abs(finalTp - currentPrice);
+
+            if (rewardDistance < minProfitDistance) {
+                const originalTp = finalTp;
+                finalTp = isLong ? currentPrice + minProfitDistance : currentPrice - minProfitDistance;
+                this.addLog(`TP target of ${originalTp.toFixed(config.pricePrecision)} was within fee zone. Adjusted to ${finalTp.toFixed(config.pricePrecision)}.`, LogType.Info);
             }
         }
         
         const agentStopLoss = agentTargets.stopLossPrice;
         let finalSl = agentStopLoss;
         let slReason: 'Agent Logic' | 'Hard Cap' = 'Agent Logic';
-        const isLong = signal.signal === 'BUY';
-        const { config } = this.bot;
 
         // Corrected Hard Cap Logic
         const investment = config.investmentAmount;
         const leverage = config.mode === TradingMode.USDSM_Futures ? config.leverage : 1;
-        const positionValue = investment * leverage;
-        const tradeSizeForCap = positionValue / currentPrice;
+        const positionValueForCap = investment * leverage;
+        const tradeSizeForCap = positionValueForCap / currentPrice;
 
         if (tradeSizeForCap > 0) {
             const maxLossOnInvestment = investment * (MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
@@ -604,22 +623,18 @@ class BotInstance {
         let bestMgmtReason: string[] = [];
         let newState: any = null;
         
-        const useHybridTrail = config.agent.id === 13 && config.agentParams?.ch_useHybridTrail;
-
         // Source 1: Universal Profit Trail
-        if (config.isUniversalProfitTrailEnabled || useHybridTrail) {
+        if (config.isUniversalProfitTrailEnabled) {
             const signal = getMultiStageProfitSecureSignal(openPosition, currentPrice);
             if (signal.newStopLoss && ((isLong && signal.newStopLoss > bestNewStop) || (!isLong && signal.newStopLoss < bestNewStop))) {
                 bestNewStop = signal.newStopLoss;
-                // Correctly determine reason based on the new tier. Tier 3 is breakeven.
                 bestReason = (signal.newState?.profitLockTier && signal.newState.profitLockTier > 3) ? 'Profit Secure' : 'Breakeven';
                 bestMgmtReason = signal.reasons;
                 newState = { ...newState, ...signal.newState };
             }
         }
-
-        // Source 2: Chameleon Agent Trail
-        if (config.agent.id === 13 && (!config.isUniversalProfitTrailEnabled || useHybridTrail)) {
+        // Source 2: Chameleon Agent Trail (only if Universal is OFF)
+        else if (config.agent.id === 13) {
              const signal = getChameleonManagementSignal(openPosition, currentPrice, agentState, config);
              if (signal.newStopLoss && ((isLong && signal.newStopLoss > bestNewStop) || (!isLong && signal.newStopLoss < bestNewStop))) {
                 bestNewStop = signal.newStopLoss;
@@ -696,7 +711,7 @@ class BotInstance {
             const isInProfit = isLong ? currentPriceForManagement > openPosition.entryPrice : currentPriceForManagement < openPosition.entryPrice;
 
             if (isInProfit) {
-                const agentTargets = getInitialAgentTargets(this.klines, currentPriceForManagement, isLong ? 'LONG' : 'SHORT', config.timeFrame, { ...DEFAULT_AGENT_PARAMS, ...config.agentParams }, config.agent.id);
+                const agentTargets = getInitialAgentTargets(this.klines, currentPriceForManagement, isLong ? 'LONG' : 'SHORT', config);
                 const newTp = agentTargets.takeProfitPrice;
                 
                 const currentTp = updatedPositionData.takeProfitPrice || openPosition.takeProfitPrice;

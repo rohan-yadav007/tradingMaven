@@ -1,5 +1,9 @@
 
 
+
+
+
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig } from '../types';
 import * as constants from '../constants';
@@ -21,6 +25,26 @@ const formLabelClass = "text-sm font-medium text-slate-700 dark:text-slate-300";
 const formInputClass = "w-full px-3 py-2 bg-white dark:bg-slate-700/50 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors";
 const buttonClass = "w-full flex items-center justify-center gap-2 px-4 py-2.5 text-white font-semibold rounded-md shadow-sm transition-colors duration-200";
 const primaryButtonClass = `${buttonClass} bg-sky-600 hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 focus:ring-offset-slate-50 dark:dark:focus:ring-offset-slate-800 disabled:bg-slate-400 dark:disabled:bg-slate-600 disabled:cursor-not-allowed`;
+
+const ParamSlider: React.FC<{label: string, value: number, onChange: (val: number) => void, min: number, max: number, step: number, valueDisplay?: (v: number) => string}> = 
+({ label, value, onChange, min, max, step, valueDisplay }) => (
+    <div className="flex flex-col gap-1.5">
+        <div className="flex justify-between items-baseline">
+            <label className={formLabelClass}>{label}</label>
+            <span className="text-sm font-semibold text-sky-500">{valueDisplay ? valueDisplay(value) : value}</span>
+        </div>
+        <input
+            type="range"
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            onChange={e => onChange(Number(e.target.value))}
+            className="w-full h-2 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer"
+        />
+    </div>
+);
+
 
 const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) => void }> = ({ checked, onChange }) => (
     <button
@@ -227,8 +251,30 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 finalParams = { ...finalParams, ...chameleonTimeframeSettings };
             }
             finalParams = { ...finalParams, ...agentParams };
+            
+             const fullConfig: BotConfig = {
+                pair: selectedPair,
+                mode: tradingMode,
+                executionMode: executionMode,
+                leverage: leverage,
+                agent: selectedAgent,
+                timeFrame: timeFrame,
+                investmentAmount: investmentAmount,
+                // These don't affect initial target generation
+                takeProfitMode: takeProfitMode,
+                takeProfitValue: takeProfitValue,
+                isTakeProfitLocked: isTakeProfitLocked,
+                isHtfConfirmationEnabled: false,
+                isUniversalProfitTrailEnabled: false,
+                isTrailingTakeProfitEnabled: false,
+                isMinRrEnabled: false,
+                agentParams: finalParams,
+                pricePrecision: 8,
+                quantityPrecision: 8,
+                stepSize: 0.00000001
+            };
 
-            const longTargets = getInitialAgentTargets(klines, currentPrice, 'LONG', timeFrame, finalParams, selectedAgent.id);
+            const longTargets = getInitialAgentTargets(klines, currentPrice, 'LONG', fullConfig);
             
             const profitDistance = longTargets.takeProfitPrice - currentPrice;
             
@@ -236,7 +282,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             if (takeProfitMode === RiskMode.Percent) {
                 newTpValue = (profitDistance / currentPrice) * 100;
             } else { // Amount
-                newTpValue = investmentAmount * (profitDistance / currentPrice);
+                const positionValue = tradingMode === TradingMode.USDSM_Futures ? investmentAmount * leverage : investmentAmount;
+                newTpValue = positionValue * (profitDistance / currentPrice);
             }
             setTakeProfitValue(parseFloat(newTpValue.toFixed(2)));
         };
@@ -244,7 +291,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         updateSmartTargets();
     }, [
         klines, isTakeProfitLocked, selectedAgent, timeFrame, agentParams, 
-        investmentAmount, takeProfitMode, setTakeProfitValue
+        investmentAmount, takeProfitMode, setTakeProfitValue, tradingMode, leverage, selectedPair, executionMode
     ]);
     
     return (
@@ -316,15 +363,6 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     <div className="text-xs text-slate-500 dark:text-slate-400 p-2 bg-slate-100 dark:bg-slate-900/50 rounded-md">
                         <p className="font-semibold text-sky-600 dark:text-sky-400">Dynamic Profit Management</p>
                         The Chameleon agent uses a dynamic model to trail stops instead of a fixed take profit target.
-                    </div>
-                    <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-700">
-                        <label htmlFor="hybrid-trail-toggle" className={formLabelClass}>
-                            Hybrid Trail (V3)
-                        </label>
-                        <ToggleSwitch
-                            checked={agentParams.ch_useHybridTrail === undefined ? true : agentParams.ch_useHybridTrail}
-                            onChange={(isChecked) => setAgentParams({ ...agentParams, ch_useHybridTrail: isChecked })}
-                        />
                     </div>
                 </div>
             ) : (
@@ -433,6 +471,83 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         <ToggleSwitch
                             checked={agentParams.isCandleConfirmationEnabled || false}
                             onChange={(isChecked) => setAgentParams({ ...agentParams, isCandleConfirmationEnabled: isChecked })}
+                        />
+                    </div>
+                )}
+                 {selectedAgent.id === 9 && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700">
+                         <ParamSlider 
+                            label="VWAP Deviation" 
+                            value={agentParams.qsc_vwapDeviationPercent ?? constants.DEFAULT_AGENT_PARAMS.qsc_vwapDeviationPercent}
+                            onChange={(v) => setAgentParams({ ...agentParams, qsc_vwapDeviationPercent: v })}
+                            min={0.1}
+                            max={1.0}
+                            step={0.05}
+                            valueDisplay={(v) => `${v.toFixed(2)}%`}
+                         />
+                    </div>
+                )}
+                 {selectedAgent.id === 13 && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
+                         <p className="text-xs text-slate-500 dark:text-slate-400">Standard Ichimoku parameters (9, 26, 52, 26) are recommended. Adjust with caution.</p>
+                         <ParamSlider 
+                            label="Conversion Line Period"
+                            value={agentParams.ichi_conversionPeriod ?? constants.DEFAULT_AGENT_PARAMS.ichi_conversionPeriod}
+                            onChange={(v) => setAgentParams({ ...agentParams, ichi_conversionPeriod: v })}
+                            min={5} max={20} step={1}
+                        />
+                        <ParamSlider 
+                            label="Base Line Period"
+                            value={agentParams.ichi_basePeriod ?? constants.DEFAULT_AGENT_PARAMS.ichi_basePeriod}
+                            onChange={(v) => setAgentParams({ ...agentParams, ichi_basePeriod: v })}
+                            min={20} max={60} step={1}
+                        />
+                    </div>
+                )}
+                 {selectedAgent.id === 14 && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700">
+                         <ParamSlider 
+                            label="Entry Score Threshold" 
+                            value={agentParams.sentinel_scoreThreshold ?? constants.DEFAULT_AGENT_PARAMS.sentinel_scoreThreshold}
+                            onChange={(v) => setAgentParams({ ...agentParams, sentinel_scoreThreshold: v })}
+                            min={50}
+                            max={95}
+                            step={1}
+                            valueDisplay={(v) => `${v}%`}
+                         />
+                    </div>
+                )}
+                {selectedAgent.id === 15 && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
+                        <ParamSlider 
+                            label="Trend EMA Period"
+                            value={agentParams.vwap_emaTrendPeriod ?? constants.DEFAULT_AGENT_PARAMS.vwap_emaTrendPeriod}
+                            onChange={(v) => setAgentParams({ ...agentParams, vwap_emaTrendPeriod: v })}
+                            min={50} max={200} step={10}
+                        />
+                        <ParamSlider 
+                            label="VWAP Proximity"
+                            value={agentParams.vwap_proximityPercent ?? constants.DEFAULT_AGENT_PARAMS.vwap_proximityPercent}
+                            onChange={(v) => setAgentParams({ ...agentParams, vwap_proximityPercent: v })}
+                            min={0.1} max={1} step={0.05}
+                            valueDisplay={(v) => `${v.toFixed(2)}%`}
+                        />
+                    </div>
+                )}
+                 {selectedAgent.id === 16 && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
+                         <p className="text-xs text-slate-500 dark:text-slate-400">Standard Ichimoku parameters (9, 26, 52, 26) are recommended. Adjust with caution.</p>
+                         <ParamSlider 
+                            label="Conversion Line Period"
+                            value={agentParams.ichi_conversionPeriod ?? constants.DEFAULT_AGENT_PARAMS.ichi_conversionPeriod}
+                            onChange={(v) => setAgentParams({ ...agentParams, ichi_conversionPeriod: v })}
+                            min={5} max={20} step={1}
+                        />
+                        <ParamSlider 
+                            label="Base Line Period"
+                            value={agentParams.ichi_basePeriod ?? constants.DEFAULT_AGENT_PARAMS.ichi_basePeriod}
+                            onChange={(v) => setAgentParams({ ...agentParams, ichi_basePeriod: v })}
+                            min={20} max={60} step={1}
                         />
                     </div>
                 )}

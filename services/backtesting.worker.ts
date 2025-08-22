@@ -1,7 +1,7 @@
 
 
 import { Kline, BotConfig, BacktestResult, SimulatedTrade, AgentParams, Position, RiskMode, TradingMode, OptimizationResultItem } from '../types';
-import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal } from './localAgentService';
+import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability } from './localAgentService';
 import * as constants from '../constants';
 import { ATR } from 'technicalindicators';
 
@@ -129,45 +129,6 @@ function calculateResults(trades: SimulatedTrade[], equityCurve: number[], start
     return { trades, totalPnl, winRate, totalTrades, wins, losses, breakEvens, maxDrawdown, profitFactor, sharpeRatio, averageTradeDuration };
 }
 
-function validateTradeProfitability(
-    entryPrice: number,
-    stopLossPrice: number,
-    takeProfitPrice: number,
-    direction: 'LONG' | 'SHORT',
-    config: BotConfig
-): { isValid: boolean, reason: string } {
-    const riskDistance = Math.abs(entryPrice - stopLossPrice);
-    const rewardDistance = Math.abs(takeProfitPrice - entryPrice);
-
-    // 1. Risk-to-Reward Check
-    if (config.isMinRrEnabled) {
-        if (riskDistance <= 0) {
-            return { isValid: false, reason: '❌ VETO: Risk distance is zero.' };
-        }
-        const rrRatio = rewardDistance / riskDistance;
-        if (rrRatio < constants.MIN_RISK_REWARD_RATIO) {
-            return {
-                isValid: false,
-                reason: `❌ VETO: R:R Ratio of ${rrRatio.toFixed(2)}:1 is below the minimum of ${constants.MIN_RISK_REWARD_RATIO}:1.`
-            };
-        }
-    }
-
-    // 2. Fee-Awareness Check
-    const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
-    const tradeSize = positionValue / entryPrice;
-    if (tradeSize <= 0) return { isValid: true, reason: '' };
-    const roundTripFee = positionValue * constants.TAKER_FEE_RATE * 2;
-    const feeInPrice = roundTripFee / tradeSize;
-    const minProfitDistance = feeInPrice * constants.MIN_PROFIT_BUFFER_MULTIPLIER;
-    if (rewardDistance < minProfitDistance) {
-        return {
-            isValid: false,
-            reason: `❌ VETO: Profit target is within the fee zone (Target: ${rewardDistance.toFixed(config.pricePrecision)}, Min Required: ${minProfitDistance.toFixed(config.pricePrecision)}).`
-        };
-    }
-    return { isValid: true, reason: `✅ Profitability checks passed.` };
-}
 
 // --- Core Logic (Now accepts pre-fetched HTF klines) ---
 
@@ -257,10 +218,11 @@ async function runBacktest(
             let bestNewStop = openPosition.stopLossPrice;
             let bestReason = openPosition.activeStopLossReason;
             
-            const useHybridTrail = config.agent.id === 13 && config.agentParams?.ch_useHybridTrail;
+            // For backtesting, Chameleon's hybrid trail isn't a user toggle, but a conceptual split.
+            const isChameleonAgent = config.agent.id === 13;
 
-            // 1. Universal Profit Trail (always runs if enabled, or if in hybrid mode)
-            if (config.isUniversalProfitTrailEnabled || useHybridTrail) {
+            // 1. Universal Profit Trail (always runs if enabled)
+            if (config.isUniversalProfitTrailEnabled) {
                 const tempPos: Position = { ...openPosition, id: 0, botId: 'sim', orderId: null, entryTime: new Date(openPosition.entryTime) };
                 const up_signal = getMultiStageProfitSecureSignal(tempPos, isLong ? currentCandle.high : currentCandle.low);
                 if(up_signal.newStopLoss && ((isLong && up_signal.newStopLoss > bestNewStop) || (!isLong && up_signal.newStopLoss < bestNewStop))) {
@@ -269,28 +231,31 @@ async function runBacktest(
                 }
             }
             
-            // 2. Agent-specific trail
-            const tempPos: Position = { ...openPosition, id: 0, botId: 'sim', orderId: null, entryTime: new Date(openPosition.entryTime) };
-            if (config.agent.id === 13 && (!config.isUniversalProfitTrailEnabled || useHybridTrail)) {
-                // Simplified Chameleon logic for backtesting (candle-based ATR trail)
-                const { ch_atrPeriod, ch_volatilityMultiplier } = params;
-                if (historySlice.length > ch_atrPeriod && ch_volatilityMultiplier) {
-                    const atr = getLast(ATR.calculate({ high: historySlice.map(k => k.high), low: historySlice.map(k => k.low), close: historySlice.map(k => k.close), period: ch_atrPeriod }))!;
-                    const atrStop = isLong ? openPosition.peakPrice! - (atr * ch_volatilityMultiplier) : openPosition.peakPrice! + (atr * ch_volatilityMultiplier);
-                    if ((isLong && atrStop > bestNewStop) || (!isLong && atrStop < bestNewStop)) {
-                         bestNewStop = atrStop;
-                         bestReason = 'Agent Trail';
+            // 2. Agent-specific trail (runs if universal is off)
+            if (!config.isUniversalProfitTrailEnabled) {
+                const tempPos: Position = { ...openPosition, id: 0, botId: 'sim', orderId: null, entryTime: new Date(openPosition.entryTime) };
+                if (isChameleonAgent) {
+                     // Simplified Chameleon logic for backtesting (candle-based ATR trail)
+                    const { ch_atrPeriod, ch_volatilityMultiplier } = params;
+                    if (historySlice.length > ch_atrPeriod && ch_volatilityMultiplier) {
+                        const atr = getLast(ATR.calculate({ high: historySlice.map(k => k.high), low: historySlice.map(k => k.low), close: historySlice.map(k => k.close), period: ch_atrPeriod }))!;
+                        const atrStop = isLong ? openPosition.peakPrice! - (atr * ch_volatilityMultiplier) : openPosition.peakPrice! + (atr * ch_volatilityMultiplier);
+                        if ((isLong && atrStop > bestNewStop) || (!isLong && atrStop < bestNewStop)) {
+                             bestNewStop = atrStop;
+                             bestReason = 'Agent Trail';
+                        }
                     }
+                } else { // For other agents
+                     const agent_signal = getAgentExitSignal(tempPos, historySlice, currentCandle.close, config);
+                     if (agent_signal.closePosition) {
+                         hasTradedInThisCandle = closePosition(currentCandle.close, `Agent Exit: ${agent_signal.reasons.join(' ')}`, currentCandle.time);
+                     } else if (agent_signal.newStopLoss && ((isLong && agent_signal.newStopLoss > bestNewStop) || (!isLong && agent_signal.newStopLoss < bestNewStop))) {
+                         bestNewStop = agent_signal.newStopLoss;
+                         bestReason = 'Agent Trail';
+                     }
                 }
-            } else if (!config.isUniversalProfitTrailEnabled) { // For other agents
-                 const agent_signal = getAgentExitSignal(tempPos, historySlice, currentCandle.close, config);
-                 if (agent_signal.closePosition) {
-                     hasTradedInThisCandle = closePosition(currentCandle.close, `Agent Exit: ${agent_signal.reasons.join(' ')}`, currentCandle.time);
-                 } else if (agent_signal.newStopLoss && ((isLong && agent_signal.newStopLoss > bestNewStop) || (!isLong && agent_signal.newStopLoss < bestNewStop))) {
-                     bestNewStop = agent_signal.newStopLoss;
-                     bestReason = 'Agent Trail';
-                 }
             }
+
 
             openPosition.stopLossPrice = bestNewStop;
             openPosition.activeStopLossReason = bestReason;
@@ -309,7 +274,7 @@ async function runBacktest(
              if (openPosition && config.isTrailingTakeProfitEnabled) {
                 const isInProfit = isLong ? currentCandle.close > openPosition.entryPrice : currentCandle.close < openPosition.entryPrice;
                 if (isInProfit) {
-                    const targets = getInitialAgentTargets(historySlice, currentCandle.close, isLong ? 'LONG' : 'SHORT', config.timeFrame, params, config.agent.id);
+                    const targets = getInitialAgentTargets(historySlice, currentCandle.close, isLong ? 'LONG' : 'SHORT', config);
                     if ((isLong && targets.takeProfitPrice > openPosition.takeProfitPrice) || (!isLong && targets.takeProfitPrice < openPosition.takeProfitPrice)) {
                         openPosition.takeProfitPrice = targets.takeProfitPrice;
                     }
@@ -324,7 +289,7 @@ async function runBacktest(
                 const entryPrice = targetTimeframeKlines[i].open;
                 const isLong = signal.signal === 'BUY';
                 if (config.investmentAmount > 0 && entryPrice > 0) {
-                    const agentTargets = getInitialAgentTargets(historySlice, entryPrice, isLong ? 'LONG' : 'SHORT', config.timeFrame, { ...constants.DEFAULT_AGENT_PARAMS, ...config.agentParams }, config.agent.id);
+                    const agentTargets = getInitialAgentTargets(historySlice, entryPrice, isLong ? 'LONG' : 'SHORT', config);
                     let { stopLossPrice, takeProfitPrice } = agentTargets;
                     let slReason: 'Agent Logic' | 'Hard Cap' = 'Agent Logic';
                     if (config.isTakeProfitLocked && config.agent.id !== 13) {
@@ -388,8 +353,21 @@ async function runOptimization(
     let paramRanges: Record<string, (number | boolean)[]> = {};
     switch (agent.id) {
         case 7: paramRanges = { msm_htfEmaPeriod: [50, 80, 120], msm_swingPointLookback: [5, 10, 15], isCandleConfirmationEnabled: [false, true] }; break;
-        case 9: paramRanges = { qsc_adxThreshold: [22, 25, 28], qsc_fastEmaPeriod: [9, 12], qsc_slowEmaPeriod: [21, 25], qsc_stochRsiOversold: [20, 30], qsc_psarStep: [0.02, 0.03] }; break;
+        case 9: paramRanges = { qsc_adxThreshold: [22, 25, 28], viPeriod: [10, 14, 20], qsc_vwapDeviationPercent: [0.1, 0.2, 0.35] }; break;
         case 11: paramRanges = { he_trendSmaPeriod: [20, 30, 40], he_fastEmaPeriod: [7, 9, 12], he_slowEmaPeriod: [20, 25], he_rsiPeriod: [10, 14], he_rsiMidline: [48, 50, 52] }; break;
+        case 13: paramRanges = { ichi_conversionPeriod: [7, 9, 12], ichi_basePeriod: [22, 26, 30], viPeriod: [10, 14, 20] }; break;
+        case 16: paramRanges = { ichi_conversionPeriod: [7, 9, 12], ichi_basePeriod: [22, 26, 30] }; break;
+        case 14: paramRanges = { sentinel_scoreThreshold: [65, 70, 75], viPeriod: [10, 14, 20] }; break;
+        case 15: paramRanges = { vwap_emaTrendPeriod: [100, 150, 200], vwap_proximityPercent: [0.1, 0.2, 0.3] }; break;
+        case 17: // The Detonator
+            paramRanges = {
+                det_rsi_thresh: [52, 55, 60],
+                det_vol_mult: [1.5, 2.0, 2.5],
+                det_sl_atr_mult: [0.9, 1.2, 1.5],
+                det_rr_mult: [1.6, 2.0, 2.5],
+                det_bb_margin_pct: [0.05, 0.08, 0.12],
+            };
+            break;
         default: throw new Error(`Agent "${agent.name}" does not support optimization.`);
     }
     const paramCombinations = generateParamCombinations(paramRanges);

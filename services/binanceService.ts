@@ -488,3 +488,18 @@ export const getMultiAssetsMargin = async (): Promise<{ multiAssetsMargin: boole
 export const setMultiAssetsMargin = async (isEnabled: boolean): Promise<any> => {
     return fetchSigned('/fapi/v1/multiAssetsMargin', { multiAssetsMargin: String(isEnabled) }, 'POST', FUTURES_BASE_URL);
 };
+
+export const fetchFuturesCommissionRate = async (symbol: string): Promise<{ takerCommissionRate: number } | null> => {
+    try {
+        const data = await fetchSigned('/fapi/v1/commissionRate', { symbol: symbol.replace('/', '') }, 'GET', FUTURES_BASE_URL);
+        if (data && data.takerCommissionRate) {
+            return {
+                takerCommissionRate: parseFloat(data.takerCommissionRate)
+            };
+        }
+        return null;
+    } catch (e) {
+        console.error(`Failed to fetch commission rate for ${symbol}:`, e);
+        return null;
+    }
+};

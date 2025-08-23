@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { Kline, AccountInfo } from '../types';
 import { SettingsIcon, WalletIcon } from './icons';
@@ -8,6 +9,7 @@ import { useTradingConfigState, useTradingConfigActions } from '../contexts/Trad
 interface SidebarProps {
     onStartBot: () => void;
     klines: Kline[];
+    livePrice: number;
     isBotCombinationActive: boolean;
     theme: 'light' | 'dark';
 
@@ -51,6 +53,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                 {activeTab === 'trade' && (
                     <ControlPanel
                         klines={props.klines}
+                        livePrice={props.livePrice}
                         isBotCombinationActive={props.isBotCombinationActive}
                         onStartBot={props.onStartBot}
                         theme={props.theme}

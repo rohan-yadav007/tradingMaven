@@ -1,3 +1,35 @@
+// Manually define indicator output types as they are not exported by 'technicalindicators'
+export interface ADXOutput {
+  adx: number;
+  pdi: number;
+  mdi: number;
+}
+
+export interface MACDOutput {
+  MACD?: number;
+  signal?: number;
+  histogram?: number;
+}
+
+export interface BollingerBandsOutput {
+  upper: number;
+  middle: number;
+  lower: number;
+  pb: number;
+}
+
+export interface StochasticRSIOutput {
+  stochRSI: number;
+  k: number;
+  d: number;
+}
+
+export interface KSTOutput {
+  kst: number;
+  signal: number;
+}
+
+
 export enum TradingMode {
     Spot = 'Spot',
     USDSM_Futures = 'USDS-M Futures',
@@ -10,6 +42,22 @@ export interface Agent {
     indicators: string[];
 }
 
+export interface SentinelAnalysis {
+    bullish: {
+        total: number;
+        trend: number;
+        momentum: number;
+        confirmation: number;
+    };
+    bearish: {
+        total: number;
+        trend: number;
+        momentum: number;
+        confirmation: number;
+    };
+}
+
+
 export interface TradeSignal {
     signal: 'BUY' | 'SELL' | 'HOLD';
     reasons: string[];
@@ -18,14 +66,14 @@ export interface TradeSignal {
     stopLossPrice?: number;
     takeProfitPrice?: number;
     entryPrice?: number;
+    sentinelAnalysis?: SentinelAnalysis;
 }
 
 // For proactive trade management
 export interface TradeManagementSignal {
     newStopLoss?: number;
     newTakeProfit?: number;
-    closePosition?: boolean;
-    closeAndFlipPosition?: boolean; // For Agent 13 V2
+    action?: 'hold' | 'close' | 'flip';
     reasons: string[];
     newState?: any; // Generic state update object
 }
@@ -62,6 +110,7 @@ export interface Position {
     peakPrice?: number; // Highest price for LONG, lowest for SHORT since entry
     candlesSinceEntry?: number; // For state-based management (Chameleon V2)
     hasBeenProfitable?: boolean; // For trade invalidation check
+    takerFeeRate: number;
 }
 
 export interface Trade extends Position {
@@ -214,18 +263,21 @@ export interface BotConfig {
     isTrailingTakeProfitEnabled: boolean;
     isMinRrEnabled: boolean;
     isInvalidationCheckEnabled?: boolean;
+    isCooldownEnabled?: boolean;
     htfTimeFrame?: 'auto' | string;
     agentParams?: AgentParams;
     // Precision data for self-contained bot logic
     pricePrecision: number;
     quantityPrecision: number;
     stepSize: number;
+    takerFeeRate: number;
 }
 
 export enum BotStatus {
     Starting = 'Starting',
     Monitoring = 'Monitoring',
     ExecutingTrade = 'Executing Trade',
+    FlipPending = 'Flip Pending',
     PositionOpen = 'Position Open',
     Paused = 'Paused',
     Stopping = 'Stopping',
@@ -286,6 +338,7 @@ export interface RunningBot {
     lastAnalysisTimestamp: number | null;
     lastPriceUpdateTimestamp: number | null;
     agentState?: ChameleonAgentState;
+    cooldownUntil?: { time: number; direction: 'LONG' | 'SHORT' };
 }
 
 export interface LeverageBracket {
@@ -305,10 +358,12 @@ export interface AgentParams {
     atrPeriod?: number;
     adxPeriod?: number;
     viPeriod?: number; // Vortex Indicator
+    obvPeriod?: number; // On-Balance Volume
     macdFastPeriod?: number;
     macdSlowPeriod?: number;
     macdSignalPeriod?: number;
     invalidationCandleLimit?: number; // Universal invalidation check
+    cooldownCandles?: number;
 
     // Agent 1: Momentum Master
     adxTrendThreshold?: number;
@@ -373,8 +428,6 @@ export interface AgentParams {
     scalp_superTrendMultiplier?: number;
     scalp_psarStep?: number;
     scalp_psarMax?: number;
-    scalp_obvLookback?: number;
-    scalp_obvScore?: number;
 
     // Agent 7: Market Structure Maven
     msm_htfEmaPeriod?: number;
@@ -383,8 +436,6 @@ export interface AgentParams {
     isCandleConfirmationEnabled?: boolean; // New feature
 
     // Agent 9: Quantum Scalper
-    qsc_fastEmaPeriod?: number;
-    qsc_slowEmaPeriod?: number;
     qsc_adxPeriod?: number;
     qsc_adxThreshold?: number;
     qsc_adxChopBuffer?: number;
@@ -402,7 +453,11 @@ export interface AgentParams {
     qsc_atrMultiplier?: number;
     qsc_trendScoreThreshold?: number;
     qsc_rangeScoreThreshold?: number;
-    qsc_vwapDeviationPercent?: number;
+    qsc_ichi_conversionPeriod?: number;
+    qsc_ichi_basePeriod?: number;
+    qsc_ichi_laggingSpanPeriod?: number;
+    qsc_ichi_displacement?: number;
+    qsc_vwapDeviationPercent?: number; // VWAP proximity check for entry filtering
 
     // Agent 11: Historic Expert
     he_trendSmaPeriod?: number;
@@ -410,6 +465,7 @@ export interface AgentParams {
     he_slowEmaPeriod?: number;
     he_rsiPeriod?: number;
     he_rsiMidline?: number;
+    he_adxTrendThreshold?: number;
 
     // Agent 13: The Chameleon
     ch_rsiPeriod?: number;
@@ -428,6 +484,16 @@ export interface AgentParams {
     ch_adxThreshold?: number;
     ch_volumeMultiplier?: number;
     ch_breathingRoomCandles?: number;
+    // KST parameters
+    ch_kst_rocPer1?: number;
+    ch_kst_rocPer2?: number;
+    ch_kst_rocPer3?: number;
+    ch_kst_rocPer4?: number;
+    ch_kst_smaRocPer1?: number;
+    ch_kst_smaRocPer2?: number;
+    ch_kst_smaRocPer3?: number;
+    ch_kst_smaRocPer4?: number;
+    ch_kst_signalPeriod?: number;
 
     // Agent 14: The Sentinel
     sentinel_scoreThreshold?: number;
@@ -462,6 +528,7 @@ export interface AgentParams {
     det_rr_mult?: number;
     det_max_bar_move_pct?: number;
     det_bb_margin_pct?: number;
+    det_maxSlAtrMult?: number;
 }
 
 
@@ -536,32 +603,7 @@ export interface ComputedIndicators {
     candlestick?: { bullish: boolean; bearish: boolean; pattern: string | null };
 }
 
-export interface MACDOutput {
-  MACD?: number;
-  signal?: number;
-  histogram?: number;
-}
-
-export interface ADXOutput {
-    adx: number;
-    pdi: number;
-    mdi: number;
-}
-
 export interface VortexIndicatorOutput {
   pdi: number[];
   ndi: number[];
-}
-
-
-export interface BollingerBandsOutput {
-    middle: number;
-    upper: number;
-    lower: number;
-}
-
-export interface StochasticRSIOutput {
-    stochRSI: number;
-    k: number;
-    d: number;
 }

@@ -1,3 +1,5 @@
+
+
 import React from 'react';
 import { useState, useEffect } from 'react';
 import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, Kline, RiskMode, OptimizationResultItem } from '../types';
@@ -93,11 +95,23 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
             </div>
             </div>);
         case 9: return (<div className="space-y-4">
-            <ParamSlider label="VWAP Deviation" value={allParams.qsc_vwapDeviationPercent} onChange={v => updateParam('qsc_vwapDeviationPercent', v)} min={0.1} max={1.0} step={0.05} valueDisplay={(v) => `${v.toFixed(2)}%`} />
             <ParamSlider label="ADX Trend Threshold" value={allParams.qsc_adxThreshold} onChange={v => updateParam('qsc_adxThreshold', v)} min={15} max={35} step={1} />
-            <ParamSlider label="Vortex Indicator Period" value={allParams.viPeriod} onChange={v => updateParam('viPeriod', v)} min={7} max={25} step={1} />
+            <ParamSlider 
+                label="BBW Squeeze Threshold" 
+                value={allParams.qsc_bbwSqueezeThreshold}
+                onChange={(v) => updateParam('qsc_bbwSqueezeThreshold', v)}
+                min={0.005} max={0.05} step={0.001}
+                valueDisplay={(v) => v.toFixed(3)}
+            />
             <ParamSlider label="StochRSI Oversold" value={allParams.qsc_stochRsiOversold} onChange={v => updateParam('qsc_stochRsiOversold', v)} min={10} max={40} step={1} />
             <ParamSlider label="StochRSI Overbought" value={allParams.qsc_stochRsiOverbought} onChange={v => updateParam('qsc_stochRsiOverbought', v)} min={60} max={90} step={1} />
+            <ParamSlider 
+                label="VWAP Deviation" 
+                value={allParams.qsc_vwapDeviationPercent}
+                onChange={(v) => updateParam('qsc_vwapDeviationPercent', v)}
+                min={0.1} max={1.0} step={0.05}
+                valueDisplay={(v) => `${v.toFixed(2)}%`}
+            />
             </div>);
         case 11: return (<div className="space-y-4">
             <ParamSlider label="Trend SMA Period" value={allParams.he_trendSmaPeriod} onChange={v => updateParam('he_trendSmaPeriod', v)} min={20} max={50} step={1} />
@@ -107,7 +121,6 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
             </div>);
         case 13: // The Chameleon
              return (<div className="space-y-4">
-                <ParamSlider label="Vortex Indicator Period" value={allParams.viPeriod} onChange={v => updateParam('viPeriod', v)} min={7} max={25} step={1} />
                 <p className="text-xs text-slate-500 dark:text-slate-400">Standard Ichimoku parameters (9, 26, 52, 26) are recommended. Adjust with caution.</p>
                 <ParamSlider 
                     label="Conversion Line Period"
@@ -120,6 +133,12 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                     value={allParams.ichi_basePeriod}
                     onChange={(v) => updateParam('ichi_basePeriod', v)}
                     min={20} max={60} step={1}
+                />
+                 <ParamSlider 
+                    label="KST Signal Period"
+                    value={allParams.ch_kst_signalPeriod}
+                    onChange={(v) => updateParam('ch_kst_signalPeriod', v)}
+                    min={3} max={20} step={1}
                 />
             </div>);
         case 16: // Ichimoku Trend Rider
@@ -222,7 +241,8 @@ export type BacktestConfig = {
     tradingMode: TradingMode; selectedPair: string; chartTimeFrame: string; selectedAgent: Agent;
     investmentAmount: number; takeProfitMode: RiskMode; takeProfitValue: number; isTakeProfitLocked: boolean;
     isHtfConfirmationEnabled: boolean; isUniversalProfitTrailEnabled: boolean; isTrailingTakeProfitEnabled: boolean;
-    isMinRrEnabled: boolean; htfTimeFrame: 'auto' | string;
+    isMinRrEnabled: boolean; htfTimeFrame: 'auto' | string; isInvalidationCheckEnabled?: boolean;
+    isCooldownEnabled?: boolean;
     agentParams: AgentParams; leverage: number;
 };
 
@@ -251,7 +271,8 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         isTakeProfitLocked: globalConfig.isTakeProfitLocked, isHtfConfirmationEnabled: globalConfig.isHtfConfirmationEnabled,
         isUniversalProfitTrailEnabled: globalConfig.isUniversalProfitTrailEnabled, htfTimeFrame: globalConfig.htfTimeFrame,
         agentParams: globalConfig.agentParams, leverage: globalConfig.leverage, isTrailingTakeProfitEnabled: globalConfig.isTrailingTakeProfitEnabled,
-        isMinRrEnabled: globalConfig.isMinRrEnabled,
+        isMinRrEnabled: globalConfig.isMinRrEnabled, isInvalidationCheckEnabled: globalConfig.isInvalidationCheckEnabled,
+        isCooldownEnabled: globalConfig.isCooldownEnabled,
     });
 
     const [backtestDays, setBacktestDays] = useState(1);
@@ -297,14 +318,17 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
             if (!symbolInfo) throw new Error("Could not fetch symbol info.");
             
             const fullBotConfig: BotConfig = {
+                ...config,
                 pair: config.selectedPair, mode: config.tradingMode, executionMode: 'paper', leverage: config.leverage, agent: config.selectedAgent,
                 timeFrame: config.chartTimeFrame, investmentAmount: config.investmentAmount, takeProfitMode: config.takeProfitMode,
                 takeProfitValue: config.takeProfitValue, isTakeProfitLocked: config.isTakeProfitLocked,
                 isHtfConfirmationEnabled: config.isHtfConfirmationEnabled, isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
                 isTrailingTakeProfitEnabled: config.isTrailingTakeProfitEnabled, isMinRrEnabled: config.isMinRrEnabled,
+                isCooldownEnabled: config.isCooldownEnabled,
                 htfTimeFrame: config.htfTimeFrame, agentParams: config.agentParams,
                 pricePrecision: binanceService.getPricePrecision(symbolInfo), quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
+                takerFeeRate: constants.TAKER_FEE_RATE
             };
             const result = await runBacktest(backtestKlines, fullBotConfig, htfKlines);
             setBacktestResult(result);
@@ -339,14 +363,17 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
             const symbolInfo = config.tradingMode === TradingMode.USDSM_Futures ? await binanceService.getFuturesSymbolInfo(formattedPair) : await binanceService.getSymbolInfo(formattedPair);
             if (!symbolInfo) throw new Error("Could not fetch symbol info.");
             const baseBotConfig: BotConfig = {
+                ...config,
                 pair: config.selectedPair, mode: config.tradingMode, executionMode: 'paper', leverage: config.leverage, agent: config.selectedAgent,
                 timeFrame: config.chartTimeFrame, investmentAmount: config.investmentAmount, takeProfitMode: config.takeProfitMode,
                 takeProfitValue: config.takeProfitValue, isTakeProfitLocked: config.isTakeProfitLocked,
                 isHtfConfirmationEnabled: config.isHtfConfirmationEnabled, isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
                 isTrailingTakeProfitEnabled: config.isTrailingTakeProfitEnabled, isMinRrEnabled: config.isMinRrEnabled,
+                isCooldownEnabled: config.isCooldownEnabled,
                 htfTimeFrame: config.htfTimeFrame, agentParams: config.agentParams,
                 pricePrecision: binanceService.getPricePrecision(symbolInfo), quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
+                takerFeeRate: constants.TAKER_FEE_RATE
             };
             const results = await runOptimization(backtestKlines, baseBotConfig, onProgress, htfKlines);
             if (results.length === 0) { setError("Optimization complete, but no profitable parameter combinations were found."); } else { setOptimizationResults(results); }
@@ -369,6 +396,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         globalActions.setIsUniversalProfitTrailEnabled(config.isUniversalProfitTrailEnabled);
         globalActions.setIsTrailingTakeProfitEnabled(config.isTrailingTakeProfitEnabled);
         globalActions.setIsMinRrEnabled(config.isMinRrEnabled);
+        globalActions.setIsCooldownEnabled(config.isCooldownEnabled ?? true);
         globalActions.setAgentParams(paramsToApply);
         setActiveView('trading');
     };
@@ -392,8 +420,12 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                     {config.tradingMode === TradingMode.USDSM_Futures && (<div className={formGroupClass}><label className="flex justify-between items-baseline"><span className={formLabelClass}>Leverage</span><span className="font-bold text-sky-500">{config.leverage}x</span></label><input type="range" min="1" max={globalConfig.maxLeverage} value={config.leverage} onChange={e => updateConfig('leverage', Number(e.target.value))} className="w-full h-2 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer" /></div>)}
                     <RiskInputWithLock label="Take Profit" mode={config.takeProfitMode} value={config.takeProfitValue} isLocked={config.isTakeProfitLocked} investmentAmount={config.investmentAmount} onModeChange={v => updateConfig('takeProfitMode', v)} onValueChange={v => updateConfig('takeProfitValue', v)} onLockToggle={() => updateConfig('isTakeProfitLocked', !config.isTakeProfitLocked)} />
                     <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
-                    <div className="space-y-3 pt-2"><div className="flex items-center justify-between"><label className={formLabelClass}>Higher Timeframe Confirmation</label><ToggleSwitch checked={config.isHtfConfirmationEnabled} onChange={v => updateConfig('isHtfConfirmationEnabled', v)} /></div><div className="flex items-center justify-between"><label className={formLabelClass}>Universal Profit Trail</label><ToggleSwitch checked={config.isUniversalProfitTrailEnabled} onChange={v => updateConfig('isUniversalProfitTrailEnabled', v)} /></div><div className="flex items-center justify-between"><label className={formLabelClass}>Trailing Take Profit</label><ToggleSwitch checked={config.isTrailingTakeProfitEnabled} onChange={v => updateConfig('isTrailingTakeProfitEnabled', v)} /></div>
+                    <div className="space-y-3 pt-2">
+                        <div className="flex items-center justify-between"><label className={formLabelClass}>Higher Timeframe Confirmation</label><ToggleSwitch checked={config.isHtfConfirmationEnabled} onChange={v => updateConfig('isHtfConfirmationEnabled', v)} /></div>
+                        <div className="flex items-center justify-between"><label className={formLabelClass}>Universal Profit Trail</label><ToggleSwitch checked={config.isUniversalProfitTrailEnabled} onChange={v => updateConfig('isUniversalProfitTrailEnabled', v)} /></div>
+                        <div className="flex items-center justify-between"><label className={formLabelClass}>Trailing Take Profit</label><ToggleSwitch checked={config.isTrailingTakeProfitEnabled} onChange={v => updateConfig('isTrailingTakeProfitEnabled', v)} /></div>
                         <div className="flex items-center justify-between"><label className={formLabelClass}>Minimum R:R Veto</label><ToggleSwitch checked={config.isMinRrEnabled} onChange={v => updateConfig('isMinRrEnabled', v)} /></div>
+                        <div className="flex items-center justify-between"><label className={formLabelClass}>Post-Trade Cooldown</label><ToggleSwitch checked={config.isCooldownEnabled ?? true} onChange={v => updateConfig('isCooldownEnabled', v)} /></div>
                     </div>
                     <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
                         <button onClick={() => setIsParamsOpen(!isParamsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold">

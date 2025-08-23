@@ -30,50 +30,50 @@ export const AGENTS: Agent[] = [
     {
         id: 7,
         name: 'Market Structure Maven',
-        description: 'Identifies primary trend with a 50-EMA. Enters on pullbacks to high-volume support/resistance zones, often requiring a confirmation candle. Ideal for clear, trending markets. Optimal Timeframes: 15m, 1h, 4h. Leverage: Low to Medium (3-10x).',
-        indicators: ['Price Action (S/R Levels)', 'Volume', 'EMA (Bias)'],
+        description: 'Identifies trend with a dynamic EMA. Enters on pullbacks to S/R zones, confirmed by Vortex and OBV momentum. All signals are filtered to avoid entries on climactic, high-volume candles.',
+        indicators: ['Price Action (S/R Levels)', 'Volume', 'EMA (Bias)', 'Vortex Indicator', 'OBV'],
     },
     {
         id: 9,
         name: 'Quantum Scalper',
-        description: 'A hyper-adaptive scalper. In trending markets, it uses EMA/momentum scores. In ranging markets, it seeks high-probability mean reversions using a confluence of Bollinger Bands, StochRSI, and significant deviation from VWAP. Optimal Timeframes: 1m, 3m, 5m. Leverage: High (20-50x).',
-        indicators: ['Market Regime Filter', 'Score-based Entry', 'Vortex Indicator', 'PSAR Trailing Stop'],
+        description: 'A disciplined, aggressive agent. A volatility filter avoids chop. In trends, Ichimoku Cloud acts as a gatekeeper, with entries confirmed by a Supertrend/Vortex/OBV score. All signals are filtered to avoid entries on climactic, high-volume candles.',
+        indicators: ['Market Regime Filter (ADX)', 'Volatility Filter (BBW)', 'Ichimoku Cloud', 'OBV'],
     },
     {
         id: 11,
         name: 'Historic Expert',
-        description: 'A classic trend-following agent using a 30-SMA for trend direction, an EMA crossover for entry triggers, and RSI for momentum confirmation. Best suited for markets with sustained, long-term trends. Optimal Timeframes: 1h, 4h, 1d. Leverage: Low (2-5x).',
-        indicators: ['SMA (Trend)', 'EMA Crossover (Trigger)', 'RSI (Momentum)'],
+        description: 'A robust trend-follower using an SMA for trend bias. Enters on pullbacks, with entries confirmed by strong momentum from both RSI and On-Balance Volume (OBV). All signals are filtered to avoid entries on climactic, high-volume candles.',
+        indicators: ['SMA (Trend)', 'EMA (Pullback)', 'RSI (Momentum)', 'OBV (Confirmation)'],
     },
     {
         id: 13,
         name: 'The Chameleon',
-        description: 'An advanced trend-following agent that uses the Ichimoku Cloud to define the market trend. It seeks high-probability entries on pullbacks to the Kijun-sen (Base Line), a key institutional level. Thrives in volatile, trending conditions. Optimal Timeframes: 5m, 15m, 1h. Leverage: Medium (10-20x).',
-        indicators: ['Ichimoku Cloud', 'Kijun-sen Pullback', 'Vortex Indicator', 'Volatility Trailing Stop'],
+        description: 'An aggressive Ichimoku system. It trades with the trend (Kumo Cloud) and enters on high-momentum Tenkan/Kijun crosses, with final confirmation from the Chikou Span and KST indicator. All signals are filtered to avoid entries on climactic, high-volume candles.',
+        indicators: ['Ichimoku Cloud', 'Tenkan/Kijun Cross', 'Chikou Span', 'KST'],
     },
     {
         id: 14,
         name: 'The Sentinel',
-        description: 'A comprehensive market-scoring engine. Analyzes Trend (35%), Momentum (40%), and Confirmation (25%) factors. It provides a detailed score breakdown and only enters when a high-confluence setup is detected. An all-rounder for most market conditions. Optimal Timeframes: 5m, 15m. Leverage: Medium (5-15x).',
-        indicators: ['Weighted Scoring', 'Vortex Indicator', 'Confluence', 'Multi-Indicator Analysis'],
+        description: 'A comprehensive scoring engine. Analyzes Trend (35%), Momentum (40%), and Confirmation (25%) factors, using On-Balance Volume to weigh momentum and confirm entries. All signals are filtered to avoid entries on climactic, high-volume candles.',
+        indicators: ['Weighted Scoring', 'Vortex Indicator', 'OBV', 'Multi-Indicator Analysis'],
     },
     {
         id: 15,
         name: 'Institutional Flow Tracer',
-        description: 'Tracks institutional activity by using the VWAP as a key dynamic level. It aligns with the long-term trend (200-EMA) and enters on confirmed bounces or rejections from the VWAP. Best for intraday trading. Optimal Timeframes: 5m, 15m. Leverage: Medium (10-20x).',
-        indicators: ['VWAP', 'EMA (Trend)', 'Price Action'],
+        description: 'Tracks institutional activity using VWAP. Aligns with the long-term trend (200-EMA) and enters on confirmed bounces with RSI and OBV flow to confirm momentum. All signals are filtered to avoid entries on climactic, high-volume candles.',
+        indicators: ['VWAP', 'EMA (Trend)', 'Price Action', 'RSI', 'OBV'],
     },
     {
         id: 16,
         name: 'Ichimoku Trend Rider',
-        description: 'A pure trend-following system using the full Ichimoku Kinko Hyo indicator. Enters on strong Kumo (Cloud) breakouts and uses the cloud\'s boundaries as a dynamic trailing stop-loss. Excels in markets with strong, sustained trends. Optimal Timeframes: 1h, 4h. Leverage: Low to Medium (3-10x).',
-        indicators: ['Ichimoku Cloud', 'Price Action'],
+        description: 'A pure trend system using Ichimoku. Enters on Kumo breakouts confirmed with the Vortex Indicator and On-Balance Volume to validate breakout momentum. All signals are filtered to avoid entries on climactic, high-volume candles.',
+        indicators: ['Ichimoku Cloud', 'Vortex Indicator', 'OBV'],
     },
     {
         id: 17,
         name: 'The Detonator',
-        description: 'A high-momentum scalper that uses a multi-layer Bollinger Band system to detect explosive volatility. It enters only on high-volume breakouts that are confirmed by trend and momentum filters.',
-        indicators: ['Bollinger Bands (x4)', 'EMA', 'RSI', 'Volume', 'ATR'],
+        description: 'A high-momentum scalper using multi-layer Bollinger Bands to detect explosive volatility. Breakouts are confirmed by trend, momentum, and On-Balance Volume accumulation. All signals are filtered to avoid entries on climactic, high-volume candles.',
+        indicators: ['Bollinger Bands (x4)', 'EMA', 'RSI', 'Volume', 'OBV'],
     },
 ];
 
@@ -83,10 +83,12 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     atrPeriod: 14,
     adxPeriod: 14,
     viPeriod: 14,
+    obvPeriod: 20,
     macdFastPeriod: 12,
     macdSlowPeriod: 26,
     macdSignalPeriod: 9,
     invalidationCandleLimit: 10,
+    cooldownCandles: 3,
 
     // Agent 1: Momentum Master - REMOVED
     adxTrendThreshold: 25,
@@ -140,7 +142,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     mi_volumeMultiplier: 1.75, // Breakout volume must be 1.75x the average
     mi_emaBiasPeriod: 50,
 
-    // Agent 6: Profit Locker (uses old scalping logic) - REMOVED
+    // Agent 6: Profit Locker - REMOVED
     scalp_scoreThreshold: 4,
     scalp_emaPeriod: 50,
     scalp_rsiPeriod: 14,
@@ -151,8 +153,6 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     scalp_superTrendMultiplier: 2,
     scalp_psarStep: 0.02,
     scalp_psarMax: 0.2,
-    scalp_obvLookback: 10,
-    scalp_obvScore: 2,
 
     // Agent 7: Market Structure Maven
     msm_htfEmaPeriod: 50,
@@ -161,8 +161,6 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     isCandleConfirmationEnabled: false,
 
     // Agent 9: Quantum Scalper
-    qsc_fastEmaPeriod: 9,
-    qsc_slowEmaPeriod: 21,
     qsc_adxPeriod: 10,
     qsc_adxThreshold: 25,
     qsc_adxChopBuffer: 3,
@@ -178,8 +176,12 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     qsc_psarMax: 0.2,
     qsc_atrPeriod: 14,
     qsc_atrMultiplier: 1.5,
-    qsc_trendScoreThreshold: 3,
-    qsc_rangeScoreThreshold: 3,
+    qsc_trendScoreThreshold: 2,
+    qsc_rangeScoreThreshold: 2,
+    qsc_ichi_conversionPeriod: 9,
+    qsc_ichi_basePeriod: 26,
+    qsc_ichi_laggingSpanPeriod: 52,
+    qsc_ichi_displacement: 26,
     qsc_vwapDeviationPercent: 0.2,
 
     // Agent 11: Historic Expert
@@ -188,6 +190,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     he_slowEmaPeriod: 21,
     he_rsiPeriod: 14,
     he_rsiMidline: 50,
+    he_adxTrendThreshold: 20,
     
     // Agent 13: The Chameleon
     ch_rsiPeriod: 14,
@@ -205,6 +208,16 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     ch_adxThreshold: 22,
     ch_volumeMultiplier: 1.5,
     ch_breathingRoomCandles: 2,
+    // KST Defaults for Agent 13
+    ch_kst_rocPer1: 10,
+    ch_kst_rocPer2: 15,
+    ch_kst_rocPer3: 20,
+    ch_kst_rocPer4: 30,
+    ch_kst_smaRocPer1: 10,
+    ch_kst_smaRocPer2: 10,
+    ch_kst_smaRocPer3: 10,
+    ch_kst_smaRocPer4: 15,
+    ch_kst_signalPeriod: 9,
     
     // Agent 14: The Sentinel
     sentinel_scoreThreshold: 70,
@@ -239,86 +252,84 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     det_rr_mult: 1.6,
     det_max_bar_move_pct: 18.0,
     det_bb_margin_pct: 0.08,
+    det_maxSlAtrMult: 2.5,
 };
 
 
 // --- TIMEFRAME-SPECIFIC PARAMETER OVERRIDES ---
 
 export const MARKET_STRUCTURE_MAVEN_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '1m':  { msm_htfEmaPeriod: 21, msm_swingPointLookback: 5 },
-    '3m':  { msm_htfEmaPeriod: 34, msm_swingPointLookback: 5 },
-    '5m':  { msm_htfEmaPeriod: 50, msm_swingPointLookback: 8 },
-    '15m': { msm_htfEmaPeriod: 50, msm_swingPointLookback: 10 },
-    '1h':  { msm_htfEmaPeriod: 89, msm_swingPointLookback: 12 },
-    '4h':  { msm_htfEmaPeriod: 100, msm_swingPointLookback: 15 },
-    '1d':  { msm_htfEmaPeriod: 100, msm_swingPointLookback: 20 },
+    '1m':  { msm_htfEmaPeriod: 21, msm_swingPointLookback: 5, viPeriod: 10 },
+    '3m':  { msm_htfEmaPeriod: 34, msm_swingPointLookback: 5, viPeriod: 12 },
+    '5m':  { msm_htfEmaPeriod: 50, msm_swingPointLookback: 8, viPeriod: 14 },
+    '15m': { msm_htfEmaPeriod: 50, msm_swingPointLookback: 10, viPeriod: 14 },
+    '1h':  { msm_htfEmaPeriod: 89, msm_swingPointLookback: 12, viPeriod: 18 },
+    '4h':  { msm_htfEmaPeriod: 100, msm_swingPointLookback: 15, viPeriod: 20 },
+    '1d':  { msm_htfEmaPeriod: 100, msm_swingPointLookback: 20, viPeriod: 20 },
 };
 
 export const QUANTUM_SCALPER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    // Tighter settings for noisy, low timeframes
-    '1m': { qsc_stochRsiOversold: 20, qsc_stochRsiOverbought: 80, qsc_vwapDeviationPercent: 0.1, qsc_adxThreshold: 28 },
-    '3m': { qsc_stochRsiOversold: 25, qsc_stochRsiOverbought: 75, qsc_vwapDeviationPercent: 0.15, qsc_adxThreshold: 26 },
-    // Baseline settings for its optimal range
-    '5m': { qsc_stochRsiOversold: 25, qsc_stochRsiOverbought: 75, qsc_vwapDeviationPercent: 0.2, qsc_adxThreshold: 25 },
-    // Relaxed settings as it becomes less effective on higher timeframes
-    '15m': { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_vwapDeviationPercent: 0.3, qsc_adxThreshold: 22 },
+    '1m':  { qsc_stochRsiOversold: 20, qsc_stochRsiOverbought: 80, qsc_adxThreshold: 28, viPeriod: 10 },
+    '3m':  { qsc_stochRsiOversold: 25, qsc_stochRsiOverbought: 75, qsc_adxThreshold: 26, viPeriod: 12 },
+    '5m':  { qsc_stochRsiOversold: 25, qsc_stochRsiOverbought: 75, qsc_adxThreshold: 25, viPeriod: 14 },
+    '15m': { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 22, viPeriod: 14 },
+    '1h':  { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 20, viPeriod: 18 },
+    '4h':  { qsc_stochRsiOversold: 35, qsc_stochRsiOverbought: 65, qsc_adxThreshold: 20, viPeriod: 20 },
+    '1d':  { qsc_stochRsiOversold: 35, qsc_stochRsiOverbought: 65, qsc_adxThreshold: 20, viPeriod: 20 },
 };
 
 export const HISTORIC_EXPERT_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '1m':  { he_trendSmaPeriod: 50, he_fastEmaPeriod: 5, he_slowEmaPeriod: 10 },
-    '3m':  { he_trendSmaPeriod: 50, he_fastEmaPeriod: 7, he_slowEmaPeriod: 14 },
-    '5m':  { he_trendSmaPeriod: 40, he_fastEmaPeriod: 8, he_slowEmaPeriod: 18 },
-    '15m': { he_trendSmaPeriod: 30, he_fastEmaPeriod: 9, he_slowEmaPeriod: 21 },
-    '1h':  { he_trendSmaPeriod: 20, he_fastEmaPeriod: 12, he_slowEmaPeriod: 26 },
-    '4h':  { he_trendSmaPeriod: 20, he_fastEmaPeriod: 12, he_slowEmaPeriod: 26 },
-    '1d':  { he_trendSmaPeriod: 20, he_fastEmaPeriod: 12, he_slowEmaPeriod: 26 },
+    '1m':  { he_trendSmaPeriod: 50, he_fastEmaPeriod: 5, he_slowEmaPeriod: 10, he_adxTrendThreshold: 25 },
+    '3m':  { he_trendSmaPeriod: 50, he_fastEmaPeriod: 7, he_slowEmaPeriod: 14, he_adxTrendThreshold: 25 },
+    '5m':  { he_trendSmaPeriod: 40, he_fastEmaPeriod: 8, he_slowEmaPeriod: 18, he_adxTrendThreshold: 22 },
+    '15m': { he_trendSmaPeriod: 30, he_fastEmaPeriod: 9, he_slowEmaPeriod: 21, he_adxTrendThreshold: 20 },
+    '1h':  { he_trendSmaPeriod: 20, he_fastEmaPeriod: 12, he_slowEmaPeriod: 26, he_adxTrendThreshold: 20 },
+    '4h':  { he_trendSmaPeriod: 20, he_fastEmaPeriod: 12, he_slowEmaPeriod: 26, he_adxTrendThreshold: 20 },
+    '1d':  { he_trendSmaPeriod: 20, he_fastEmaPeriod: 12, he_slowEmaPeriod: 26, he_adxTrendThreshold: 20 },
 };
 
 export const CHAMELEON_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    // Shorter timeframes: faster Ichimoku settings to react to quick changes
     '1m':  { ichi_conversionPeriod: 7,  ichi_basePeriod: 22 },
     '3m':  { ichi_conversionPeriod: 7,  ichi_basePeriod: 22 },
-    '5m':  { ichi_conversionPeriod: 9,  ichi_basePeriod: 26 }, // Default
+    '5m':  { ichi_conversionPeriod: 9,  ichi_basePeriod: 26 },
     '15m': { ichi_conversionPeriod: 9,  ichi_basePeriod: 26 },
-    // Longer timeframes: slower settings to capture major trends
     '1h':  { ichi_conversionPeriod: 12, ichi_basePeriod: 30 },
     '4h':  { ichi_conversionPeriod: 12, ichi_basePeriod: 30 },
     '1d':  { ichi_conversionPeriod: 12, ichi_basePeriod: 30 },
 };
 
 export const SENTINEL_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    // Higher threshold to filter out noise on low timeframes
-    '1m':  { sentinel_scoreThreshold: 75 },
-    '3m':  { sentinel_scoreThreshold: 75 },
-    '5m':  { sentinel_scoreThreshold: 70 }, // Default
-    '15m': { sentinel_scoreThreshold: 70 },
-    // Lower threshold as signals on higher timeframes are more reliable
-    '1h':  { sentinel_scoreThreshold: 65 },
-    '4h':  { sentinel_scoreThreshold: 65 },
+    '1m':  { sentinel_scoreThreshold: 75, viPeriod: 10 },
+    '3m':  { sentinel_scoreThreshold: 75, viPeriod: 12 },
+    '5m':  { sentinel_scoreThreshold: 70, viPeriod: 14 },
+    '15m': { sentinel_scoreThreshold: 70, viPeriod: 14 },
+    '1h':  { sentinel_scoreThreshold: 65, viPeriod: 18 },
+    '4h':  { sentinel_scoreThreshold: 65, viPeriod: 20 },
+    '1d':  { sentinel_scoreThreshold: 60, viPeriod: 20 },
 };
 
 export const INSTITUTIONAL_FLOW_TRACER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '1m':  { vwap_emaTrendPeriod: 100, vwap_proximityPercent: 0.1 },
-    '3m':  { vwap_emaTrendPeriod: 150, vwap_proximityPercent: 0.15 },
-    '5m':  { vwap_emaTrendPeriod: 200, vwap_proximityPercent: 0.2 }, // Default
-    '15m': { vwap_emaTrendPeriod: 200, vwap_proximityPercent: 0.25 },
-    '1h':  { vwap_emaTrendPeriod: 200, vwap_proximityPercent: 0.3 },
-    '4h':  { vwap_emaTrendPeriod: 200, vwap_proximityPercent: 0.4 },
-    '1d':  { vwap_emaTrendPeriod: 200, vwap_proximityPercent: 0.5 },
+    '1m':  { vwap_emaTrendPeriod: 100, vwap_proximityPercent: 0.1, rsiPeriod: 10 },
+    '3m':  { vwap_emaTrendPeriod: 150, vwap_proximityPercent: 0.15, rsiPeriod: 12 },
+    '5m':  { vwap_emaTrendPeriod: 200, vwap_proximityPercent: 0.2, rsiPeriod: 14 },
+    '15m': { vwap_emaTrendPeriod: 200, vwap_proximityPercent: 0.25, rsiPeriod: 14 },
+    '1h':  { vwap_emaTrendPeriod: 200, vwap_proximityPercent: 0.3, rsiPeriod: 14 },
+    '4h':  { vwap_emaTrendPeriod: 200, vwap_proximityPercent: 0.4, rsiPeriod: 14 },
+    '1d':  { vwap_emaTrendPeriod: 200, vwap_proximityPercent: 0.5, rsiPeriod: 14 },
 };
 
 export const ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '1m':  { ichi_conversionPeriod: 7,  ichi_basePeriod: 22 },
-    '3m':  { ichi_conversionPeriod: 7,  ichi_basePeriod: 22 },
-    '5m':  { ichi_conversionPeriod: 9,  ichi_basePeriod: 26 }, // Default
-    '15m': { ichi_conversionPeriod: 9,  ichi_basePeriod: 26 },
-    '1h':  { ichi_conversionPeriod: 12, ichi_basePeriod: 30 },
-    '4h':  { ichi_conversionPeriod: 12, ichi_basePeriod: 30 },
-    '1d':  { ichi_conversionPeriod: 20, ichi_basePeriod: 60 },
+    '1m':  { ichi_conversionPeriod: 7,  ichi_basePeriod: 22, viPeriod: 10 },
+    '3m':  { ichi_conversionPeriod: 7,  ichi_basePeriod: 22, viPeriod: 12 },
+    '5m':  { ichi_conversionPeriod: 9,  ichi_basePeriod: 26, viPeriod: 14 },
+    '15m': { ichi_conversionPeriod: 9,  ichi_basePeriod: 26, viPeriod: 14 },
+    '1h':  { ichi_conversionPeriod: 12, ichi_basePeriod: 30, viPeriod: 18 },
+    '4h':  { ichi_conversionPeriod: 12, ichi_basePeriod: 30, viPeriod: 20 },
+    '1d':  { ichi_conversionPeriod: 20, ichi_basePeriod: 60, viPeriod: 20 },
 };
 
 export const THE_DETONATOR_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '1m':  { det_rsi_thresh: 52, det_rr_mult: 1.6, det_sl_atr_mult: 0.9 }, // Default
+    '1m':  { det_rsi_thresh: 52, det_rr_mult: 1.6, det_sl_atr_mult: 0.9 },
     '3m':  { det_rsi_thresh: 53, det_rr_mult: 1.8, det_sl_atr_mult: 1.0 },
     '5m':  { det_rsi_thresh: 55, det_rr_mult: 2.0, det_sl_atr_mult: 1.1 },
     '15m': { det_rsi_thresh: 58, det_rr_mult: 2.2, det_sl_atr_mult: 1.2 },
@@ -347,7 +358,7 @@ export const MOCK_PAPER_FUTURES_WALLET: WalletBalance[] = [
  * This is the maximum percentage of the *investment amount* that a trade is allowed to lose.
  * E.g., a value of 40 means a maximum loss of 40%, which is $40 on a $100 investment.
  */
-export const MAX_STOP_LOSS_PERCENT_OF_INVESTMENT = 25;
+export const MAX_STOP_LOSS_PERCENT_OF_INVESTMENT = 10;
 
 // New, wider ATR multipliers for initial stop loss placement to give trades more "breathing room"
 export const TIMEFRAME_ATR_CONFIG: Record<string, { atrMultiplier: number, riskRewardRatio: number }> = {

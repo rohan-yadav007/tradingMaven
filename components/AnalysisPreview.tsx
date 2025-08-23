@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { Agent, TradeSignal, AgentParams } from '../types';
+import { Agent, TradeSignal, AgentParams, SentinelAnalysis } from '../types';
 import { ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, InfoIcon } from './icons';
 
 interface AnalysisPreviewProps {
@@ -61,10 +61,50 @@ const ReasonItem: React.FC<{ reason: string }> = ({ reason }) => {
             </li>
         );
     }
-
-    // Default for non-checklist items (headers, summaries)
-    return <li className="font-semibold text-slate-700 dark:text-slate-200">{reason}</li>;
+    
+    // Default for plain text reasons
+    return <li className="text-slate-700 dark:text-slate-200">{reason}</li>;
 };
+
+const ProgressBar: React.FC<{ value: number; colorClass: string }> = ({ value, colorClass }) => (
+    <div className="w-full bg-slate-200 dark:bg-slate-600 rounded-full h-2">
+        <div className={`${colorClass} h-2 rounded-full transition-all duration-300`} style={{ width: `${Math.min(value, 100)}%` }}></div>
+    </div>
+);
+
+const SentinelAnalysisDisplay: React.FC<{ analysis: SentinelAnalysis }> = ({ analysis }) => {
+    const { bullish, bearish } = analysis;
+
+    return (
+        <div className="space-y-4 text-sm">
+            <div>
+                <div className="flex justify-between items-baseline mb-1">
+                    <span className="font-bold text-emerald-600 dark:text-emerald-400">Bullish Score</span>
+                    <span className="font-bold text-lg text-emerald-600 dark:text-emerald-400">{bullish.total.toFixed(0)}</span>
+                </div>
+                <ProgressBar value={bullish.total} colorClass="bg-emerald-500" />
+                <div className="grid grid-cols-3 gap-2 text-xs text-center mt-1.5 text-slate-500 dark:text-slate-400">
+                    <span>Trend: {bullish.trend.toFixed(0)}%</span>
+                    <span>Momentum: {bullish.momentum.toFixed(0)}%</span>
+                    <span>Confirm: {bullish.confirmation.toFixed(0)}%</span>
+                </div>
+            </div>
+             <div>
+                <div className="flex justify-between items-baseline mb-1">
+                    <span className="font-bold text-rose-600 dark:text-rose-400">Bearish Score</span>
+                    <span className="font-bold text-lg text-rose-600 dark:text-rose-400">{bearish.total.toFixed(0)}</span>
+                </div>
+                <ProgressBar value={bearish.total} colorClass="bg-rose-500" />
+                <div className="grid grid-cols-3 gap-2 text-xs text-center mt-1.5 text-slate-500 dark:text-slate-400">
+                    <span>Trend: {bearish.trend.toFixed(0)}%</span>
+                    <span>Momentum: {bearish.momentum.toFixed(0)}%</span>
+                    <span>Confirm: {bearish.confirmation.toFixed(0)}%</span>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 
 export const AnalysisPreview: React.FC<AnalysisPreviewProps> = ({ analysis, isLoading, agent, agentParams = {} }) => {
     const hasCustomParams = Object.keys(agentParams).length > 0;
@@ -77,6 +117,7 @@ export const AnalysisPreview: React.FC<AnalysisPreviewProps> = ({ analysis, isLo
     }, [analysis]);
     
     const displayAnalysis = analysis || prevAnalysisRef.current;
+    const isSentinelAgent = agent.id === 14;
 
     return (
         <div className="relative">
@@ -89,15 +130,34 @@ export const AnalysisPreview: React.FC<AnalysisPreviewProps> = ({ analysis, isLo
             
             <div className={`transition-opacity duration-200 ${isLoading ? 'opacity-40 blur-sm pointer-events-none' : 'opacity-100'}`}>
                 {displayAnalysis ? (
-                     <div className="flex items-start gap-4">
-                        <SignalTag signal={displayAnalysis.signal} />
-                        <div className="text-xs text-slate-600 dark:text-slate-400 flex-grow">
-                            <ul className="space-y-1.5">
-                                {displayAnalysis.reasons.map((reason, index) => (
-                                    <ReasonItem key={index} reason={reason} />
-                                ))}
-                            </ul>
+                     <div className="space-y-3">
+                        <div className="flex items-start justify-between">
+                           <SignalTag signal={displayAnalysis.signal} />
                         </div>
+                        
+                        {isSentinelAgent && displayAnalysis.sentinelAnalysis && (
+                            <SentinelAnalysisDisplay analysis={displayAnalysis.sentinelAnalysis} />
+                        )}
+
+                        {(!isSentinelAgent || !displayAnalysis.sentinelAnalysis) && (
+                             <div className="text-xs text-slate-600 dark:text-slate-400 flex-grow">
+                                <ul className="space-y-1.5">
+                                    {displayAnalysis.reasons.map((reason, index) => (
+                                        <ReasonItem key={index} reason={reason} />
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+
+                        {isSentinelAgent && displayAnalysis.reasons.length > 0 && (
+                            <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                                 <ul className="space-y-1.5 text-xs">
+                                    {displayAnalysis.reasons.map((reason, index) => (
+                                        <ReasonItem key={index} reason={reason} />
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
                      </div>
                 ) : (
                     <div className="text-center text-sm text-slate-500 pt-4">

@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, TradeSignal, TradingMode, RiskMode, LogType } from '../types';
 import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, LockIcon, UnlockIcon, InfoIcon, ZapIcon } from './icons';
@@ -70,6 +68,7 @@ const getStatusInfo = (status: BotStatus): { text: string; bg: string; text_colo
         case BotStatus.Monitoring: return { text: status, bg: 'bg-sky-100 dark:bg-sky-900/50', text_color: 'text-sky-700 dark:text-sky-300', icon: <ActivityIcon className="w-3 h-3"/>, pulse: true };
         case BotStatus.PositionOpen: return { text: 'Position Open', bg: 'bg-emerald-100 dark:bg-emerald-900/50', text_color: 'text-emerald-700 dark:text-emerald-300', icon: <CheckCircleIcon className="w-3 h-3"/>, pulse: false };
         case BotStatus.ExecutingTrade: return { text: 'Executing...', bg: 'bg-amber-100 dark:bg-amber-900/50', text_color: 'text-amber-700 dark:text-amber-300', icon: <CpuIcon className="w-3 h-3"/>, pulse: true };
+        case BotStatus.FlipPending: return { text: 'Flip Pending', bg: 'bg-indigo-100 dark:bg-indigo-900/50', text_color: 'text-indigo-700 dark:text-indigo-300', icon: <ZapIcon className="w-3 h-3"/>, pulse: true };
         case BotStatus.Error: return { text: status, bg: 'bg-rose-100 dark:bg-rose-900/50', text_color: 'text-rose-700 dark:text-rose-300', icon: <XCircleIcon className="w-3 h-3"/>, pulse: false };
         case BotStatus.Paused: return { text: status, bg: 'bg-slate-200 dark:bg-slate-700', text_color: 'text-slate-600 dark:text-slate-300', icon: <PauseIcon className="w-3 h-3"/>, pulse: false };
         case BotStatus.Stopped: return { text: status, bg: 'bg-slate-200 dark:bg-slate-700', text_color: 'text-slate-600 dark:text-slate-300', icon: <StopIcon className="w-3 h-3"/>, pulse: false };
@@ -158,9 +157,9 @@ const BotConfigDetails: React.FC<{ bot: RunningBot; onUpdate: (change: Partial<B
                 onChange={(checked) => onUpdate({ isMinRrEnabled: checked })}
             />
              <ConfigToggle
-                label="Trade Invalidation Check"
-                description="Closes stale losing trades"
-                tooltip="Affects the current open trade."
+                label="Proactive Exit & Invalidation"
+                description="Protects profit & cuts losses"
+                tooltip="Protects profits by exiting on fading momentum. Actively cuts losses on losing trades if the thesis is invalidated or strong counter-signals appear. Affects the current open trade."
                 checked={config.isInvalidationCheckEnabled ?? false}
                 onChange={(checked) => onUpdate({ isInvalidationCheckEnabled: checked })}
             />
@@ -522,7 +521,7 @@ export const RunningBots: React.FC<RunningBotsProps> = ({ bots, ...actions }) =>
         const openPositionBots: RunningBot[] = [];
         const monitoringBots: RunningBot[] = [];
         bots.forEach(bot => {
-            if (bot.status === BotStatus.PositionOpen) {
+            if (bot.status === BotStatus.PositionOpen || bot.status === BotStatus.FlipPending) {
                 openPositionBots.push(bot);
             } else {
                 monitoringBots.push(bot);

@@ -1,9 +1,6 @@
-
-
 import { Kline, BotConfig, BacktestResult, SimulatedTrade, AgentParams, Position, RiskMode, TradingMode, OptimizationResultItem } from '../types';
-import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability } from './localAgentService';
+import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, checkMomentumFadingSignal, checkLossMinimizationSignal } from './localAgentService';
 import * as constants from '../constants';
-import { ATR } from 'technicalindicators';
 
 // --- Worker-local Helper Functions ---
 
@@ -62,9 +59,7 @@ function aggregateKlines(klines: Kline[], timeframe: string): Kline[] {
 }
 
 
-interface SimulatedPosition extends Omit<Position, 'id' | 'entryTime' | 'botId' | 'orderId' | 'exitReason' | 'pnl' | 'exitTime'> {
-    entryTime: number; 
-}
+type SimulatedPosition = Position;
 
 
 function formatDuration(ms: number): string {
@@ -144,8 +139,8 @@ async function runBacktest(
     const STARTING_CAPITAL = 10000;
     let equity = STARTING_CAPITAL;
     const minCandles = 200;
+    let cooldownUntil: { time: number; direction: 'LONG' | 'SHORT'; } | null = null;
 
-    // *** BUG FIX: Aggregate 1m klines to the target timeframe for the backtest ***
     const targetTimeframeKlines = aggregateKlines(klines, config.timeFrame);
 
     if (targetTimeframeKlines.length < minCandles) {
@@ -161,184 +156,197 @@ async function runBacktest(
         const fees = (entryValue + exitValue) * constants.TAKER_FEE_RATE;
         const netPnl = grossPnl - fees;
         equity += netPnl;
+        const closedDirection = openPosition.direction;
         trades.push({
             id: trades.length + 1, pair: openPosition.pair, direction: openPosition.direction,
-            entryPrice: openPosition.entryPrice, exitPrice, entryTime: openPosition.entryTime, exitTime,
+            entryPrice: openPosition.entryPrice, exitPrice, entryTime: openPosition.entryTime.getTime(), exitTime,
             size: openPosition.size, investedAmount: config.investmentAmount, pnl: netPnl, exitReason,
             entryReason: openPosition.entryReason
         });
         openPosition = null;
+
+        if (config.isCooldownEnabled) {
+            const params = { ...constants.DEFAULT_AGENT_PARAMS, ...config.agentParams };
+            const cooldownCandles = params.cooldownCandles;
+            const timeframeMs = getTimeframeDuration(config.timeFrame);
+            const cooldownEndTime = exitTime + (cooldownCandles * timeframeMs);
+            cooldownUntil = { time: cooldownEndTime, direction: closedDirection };
+        }
+
         return true;
     };
 
     for (let i = minCandles; i < targetTimeframeKlines.length; i++) {
-        const currentCandle = targetTimeframeKlines[i - 1];
         const historySlice = targetTimeframeKlines.slice(0, i);
+        const currentCandle = targetTimeframeKlines[i]; // This is the candle we are simulating
         let hasTradedInThisCandle = false;
 
+        if (cooldownUntil && currentCandle.time >= cooldownUntil.time) {
+            cooldownUntil = null;
+        }
+
+        // --- MANAGE OPEN POSITION ---
         if (openPosition) {
             const isLong = openPosition.direction === 'LONG';
+            const stopReason = openPosition.activeStopLossReason.includes('Trail') || openPosition.activeStopLossReason.includes('Secure') || openPosition.activeStopLossReason === 'Breakeven' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
+            
+            // --- INTRA-CANDLE PRICE SIMULATION ---
+            // Simulates price movement within the candle to catch SL/TP hits more accurately.
+            const pricePath = currentCandle.open < currentCandle.close 
+                ? [currentCandle.open, currentCandle.high, currentCandle.low, currentCandle.close] // Bullish candle
+                : [currentCandle.open, currentCandle.low, currentCandle.high, currentCandle.close]; // Bearish candle
 
-            // --- Update Position State ---
+            for (const pricePoint of pricePath) {
+                if (!openPosition) break; // Position was closed mid-candle
+
+                if (isLong) {
+                    if (pricePoint <= openPosition.stopLossPrice) {
+                        hasTradedInThisCandle = closePosition(openPosition.stopLossPrice, stopReason, currentCandle.time);
+                        break;
+                    }
+                    if (pricePoint >= openPosition.takeProfitPrice) {
+                        hasTradedInThisCandle = closePosition(openPosition.takeProfitPrice, 'Take Profit Hit', currentCandle.time);
+                        break;
+                    }
+                } else { // Short
+                    if (pricePoint >= openPosition.stopLossPrice) {
+                        hasTradedInThisCandle = closePosition(openPosition.stopLossPrice, stopReason, currentCandle.time);
+                        break;
+                    }
+                    if (pricePoint <= openPosition.takeProfitPrice) {
+                        hasTradedInThisCandle = closePosition(openPosition.takeProfitPrice, 'Take Profit Hit', currentCandle.time);
+                        break;
+                    }
+                }
+            }
+            if (hasTradedInThisCandle) {
+                equityCurve.push(equity);
+                continue; // Position closed, move to next candle
+            }
+
+            // --- ON-CANDLE-CLOSE MANAGEMENT (Mirrors live bot) ---
             openPosition.candlesSinceEntry!++;
 
-            if (!openPosition.hasBeenProfitable) {
-                const isInProfit = isLong ? currentCandle.high > openPosition.entryPrice : currentCandle.low < openPosition.entryPrice;
-                if (isInProfit) {
-                    openPosition.hasBeenProfitable = true;
+            let updatedPosition = { ...openPosition };
+            const currentPrice = currentCandle.close;
+            const isInProfit = isLong ? currentPrice > updatedPosition.entryPrice : currentPrice < updatedPosition.entryPrice;
+
+            if (!isInProfit) {
+                if (config.isInvalidationCheckEnabled) {
+                    const lossSignal = checkLossMinimizationSignal(updatedPosition, historySlice, config);
+                    if (lossSignal.closePosition) {
+                        hasTradedInThisCandle = closePosition(currentPrice, lossSignal.reason, currentCandle.time);
+                    }
                 }
-            }
-
-            // Update peak price
-            if (isLong) {
-                openPosition.peakPrice = Math.max(openPosition.peakPrice!, currentCandle.high);
-            } else {
-                openPosition.peakPrice = Math.min(openPosition.peakPrice!, currentCandle.low);
-            }
-
-            // --- Trade Management Logic ---
-            const params = { ...constants.DEFAULT_AGENT_PARAMS, ...config.agentParams };
-            if (
-                config.isInvalidationCheckEnabled &&
-                !openPosition.hasBeenProfitable &&
-                !openPosition.proactiveLossCheckTriggered &&
-                openPosition.candlesSinceEntry! >= params.invalidationCandleLimit!
-            ) {
-                openPosition.proactiveLossCheckTriggered = true;
-                const signal = await getTradingSignal(config.agent, historySlice, config);
-                const isInvalidated = signal.signal === 'HOLD' || (isLong && signal.signal === 'SELL') || (!isLong && signal.signal === 'BUY');
-                if (isInvalidated) {
-                    hasTradedInThisCandle = closePosition(currentCandle.close, `Trade Invalidated`, currentCandle.time);
-                    equityCurve.push(equity);
-                    continue; // Skip the rest of the logic for this candle
+                if(!hasTradedInThisCandle) {
+                    const tightenSlSignal = getAgentExitSignal(updatedPosition, historySlice, currentPrice, config);
+                    if (tightenSlSignal.newStopLoss && ((isLong && tightenSlSignal.newStopLoss > updatedPosition.stopLossPrice) || (!isLong && tightenSlSignal.newStopLoss < updatedPosition.stopLossPrice))) {
+                        updatedPosition.stopLossPrice = tightenSlSignal.newStopLoss;
+                        updatedPosition.activeStopLossReason = 'Agent Trail';
+                    }
                 }
-            }
-
-            // --- Trailing Stop Logic ---
-            let bestNewStop = openPosition.stopLossPrice;
-            let bestReason = openPosition.activeStopLossReason;
-            
-            // For backtesting, Chameleon's hybrid trail isn't a user toggle, but a conceptual split.
-            const isChameleonAgent = config.agent.id === 13;
-
-            // 1. Universal Profit Trail (always runs if enabled)
-            if (config.isUniversalProfitTrailEnabled) {
-                const tempPos: Position = { ...openPosition, id: 0, botId: 'sim', orderId: null, entryTime: new Date(openPosition.entryTime) };
-                const up_signal = getMultiStageProfitSecureSignal(tempPos, isLong ? currentCandle.high : currentCandle.low);
-                if(up_signal.newStopLoss && ((isLong && up_signal.newStopLoss > bestNewStop) || (!isLong && up_signal.newStopLoss < bestNewStop))) {
-                    bestNewStop = up_signal.newStopLoss;
-                    bestReason = up_signal.newState?.isBreakevenSet ? 'Breakeven' : 'Profit Secure';
+            } else { // Is in profit
+                if (config.isInvalidationCheckEnabled) {
+                    const momentumSignal = checkMomentumFadingSignal(updatedPosition, historySlice, config);
+                    if (momentumSignal.closePosition) {
+                        hasTradedInThisCandle = closePosition(currentPrice, momentumSignal.reason, currentCandle.time);
+                    }
                 }
-            }
-            
-            // 2. Agent-specific trail (runs if universal is off)
-            if (!config.isUniversalProfitTrailEnabled) {
-                const tempPos: Position = { ...openPosition, id: 0, botId: 'sim', orderId: null, entryTime: new Date(openPosition.entryTime) };
-                if (isChameleonAgent) {
-                     // Simplified Chameleon logic for backtesting (candle-based ATR trail)
-                    const { ch_atrPeriod, ch_volatilityMultiplier } = params;
-                    if (historySlice.length > ch_atrPeriod && ch_volatilityMultiplier) {
-                        const atr = getLast(ATR.calculate({ high: historySlice.map(k => k.high), low: historySlice.map(k => k.low), close: historySlice.map(k => k.close), period: ch_atrPeriod }))!;
-                        const atrStop = isLong ? openPosition.peakPrice! - (atr * ch_volatilityMultiplier) : openPosition.peakPrice! + (atr * ch_volatilityMultiplier);
-                        if ((isLong && atrStop > bestNewStop) || (!isLong && atrStop < bestNewStop)) {
-                             bestNewStop = atrStop;
-                             bestReason = 'Agent Trail';
+                if (!hasTradedInThisCandle) {
+                    let bestNewStop = updatedPosition.stopLossPrice;
+                    let bestReason: Position['activeStopLossReason'] = updatedPosition.activeStopLossReason;
+                    
+                    if (config.isUniversalProfitTrailEnabled) {
+                        const signal = getMultiStageProfitSecureSignal(updatedPosition, currentPrice);
+                        if (signal.newStopLoss && ((isLong && signal.newStopLoss > bestNewStop) || (!isLong && signal.newStopLoss < bestNewStop))) {
+                            bestNewStop = signal.newStopLoss;
+                            bestReason = (signal.newState?.profitLockTier && signal.newState.profitLockTier > 3) ? 'Profit Secure' : 'Breakeven';
                         }
                     }
-                } else { // For other agents
-                     const agent_signal = getAgentExitSignal(tempPos, historySlice, currentCandle.close, config);
-                     if (agent_signal.closePosition) {
-                         hasTradedInThisCandle = closePosition(currentCandle.close, `Agent Exit: ${agent_signal.reasons.join(' ')}`, currentCandle.time);
-                     } else if (agent_signal.newStopLoss && ((isLong && agent_signal.newStopLoss > bestNewStop) || (!isLong && agent_signal.newStopLoss < bestNewStop))) {
-                         bestNewStop = agent_signal.newStopLoss;
-                         bestReason = 'Agent Trail';
-                     }
-                }
-            }
+                    
+                    const agentTrailSignal = getAgentExitSignal(updatedPosition, historySlice, currentPrice, config);
+                    if (agentTrailSignal.newStopLoss && ((isLong && agentTrailSignal.newStopLoss > bestNewStop) || (!isLong && agentTrailSignal.newStopLoss < bestNewStop))) {
+                        bestNewStop = agentTrailSignal.newStopLoss;
+                        bestReason = 'Agent Trail';
+                    }
 
+                    updatedPosition.stopLossPrice = bestNewStop;
+                    updatedPosition.activeStopLossReason = bestReason;
 
-            openPosition.stopLossPrice = bestNewStop;
-            openPosition.activeStopLossReason = bestReason;
-            
-            // --- Check for SL/TP Hit ---
-            const stopReason = openPosition.activeStopLossReason.includes('Trail') || openPosition.activeStopLossReason.includes('Secure') || openPosition.activeStopLossReason === 'Breakeven' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
-            if (isLong) {
-                if (currentCandle.low <= openPosition.stopLossPrice) hasTradedInThisCandle = closePosition(openPosition.stopLossPrice, stopReason, currentCandle.time);
-                else if (currentCandle.high >= openPosition.takeProfitPrice) hasTradedInThisCandle = closePosition(openPosition.takeProfitPrice, 'Take Profit Hit', currentCandle.time);
-            } else {
-                if (currentCandle.high >= openPosition.stopLossPrice) hasTradedInThisCandle = closePosition(openPosition.stopLossPrice, stopReason, currentCandle.time);
-                else if (currentCandle.low <= openPosition.takeProfitPrice) hasTradedInThisCandle = closePosition(openPosition.takeProfitPrice, 'Take Profit Hit', currentCandle.time);
-            }
-
-            // --- Trailing Take Profit ---
-             if (openPosition && config.isTrailingTakeProfitEnabled) {
-                const isInProfit = isLong ? currentCandle.close > openPosition.entryPrice : currentCandle.close < openPosition.entryPrice;
-                if (isInProfit) {
-                    const targets = getInitialAgentTargets(historySlice, currentCandle.close, isLong ? 'LONG' : 'SHORT', config);
-                    if ((isLong && targets.takeProfitPrice > openPosition.takeProfitPrice) || (!isLong && targets.takeProfitPrice < openPosition.takeProfitPrice)) {
-                        openPosition.takeProfitPrice = targets.takeProfitPrice;
+                    if (config.isTrailingTakeProfitEnabled) {
+                        const targets = getInitialAgentTargets(historySlice, currentPrice, isLong ? 'LONG' : 'SHORT', config);
+                        if ((isLong && targets.takeProfitPrice > updatedPosition.takeProfitPrice) || (!isLong && targets.takeProfitPrice < updatedPosition.takeProfitPrice)) {
+                            updatedPosition.takeProfitPrice = targets.takeProfitPrice;
+                        }
                     }
                 }
+            }
+            if(!hasTradedInThisCandle) {
+                 openPosition = updatedPosition;
             }
         }
         
+        // --- CHECK FOR NEW ENTRY ---
         if (!openPosition && !hasTradedInThisCandle) {
             const htfHistorySlice = allHtfKlines ? allHtfKlines.filter(k => k.time <= currentCandle.time) : undefined;
             const signal = await getTradingSignal(config.agent, historySlice, config, htfHistorySlice);
-            if (signal.signal !== 'HOLD') {
-                const entryPrice = targetTimeframeKlines[i].open;
+            
+            let isVetoedByCooldown = false;
+            if (signal.signal !== 'HOLD' && cooldownUntil) {
+                const signalDirection = signal.signal === 'BUY' ? 'LONG' : 'SHORT';
+                if (signalDirection === cooldownUntil.direction) {
+                    isVetoedByCooldown = true;
+                }
+            }
+
+            if (signal.signal !== 'HOLD' && !isVetoedByCooldown) {
+                const entryPrice = currentCandle.close; // Enter on close of signal candle
                 const isLong = signal.signal === 'BUY';
-                if (config.investmentAmount > 0 && entryPrice > 0) {
-                    const agentTargets = getInitialAgentTargets(historySlice, entryPrice, isLong ? 'LONG' : 'SHORT', config);
-                    let { stopLossPrice, takeProfitPrice } = agentTargets;
-                    let slReason: 'Agent Logic' | 'Hard Cap' = 'Agent Logic';
-                    if (config.isTakeProfitLocked && config.agent.id !== 13) {
-                        const posVal = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
-                        const size = posVal / entryPrice;
-                        if(config.takeProfitMode === RiskMode.Percent) {
-                            const pnl = config.investmentAmount * (config.takeProfitValue / 100);
-                            takeProfitPrice = isLong ? entryPrice + (pnl / size) : entryPrice - (pnl / size);
-                        } else {
-                            takeProfitPrice = isLong ? entryPrice + (config.takeProfitValue / size) : entryPrice - (config.takeProfitValue / size);
-                        }
+                
+                const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(historySlice, entryPrice, isLong ? 'LONG' : 'SHORT', config);
+                let finalTp = takeProfitPrice;
+
+                if (config.isTakeProfitLocked && config.agent.id !== 13) {
+                    const posVal = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
+                    const size = posVal / entryPrice;
+                    if(config.takeProfitMode === RiskMode.Percent) {
+                        const pnl = config.investmentAmount * (config.takeProfitValue / 100);
+                        finalTp = isLong ? entryPrice + (pnl / size) : entryPrice - (pnl / size);
+                    } else {
+                        finalTp = isLong ? entryPrice + (config.takeProfitValue / size) : entryPrice - (config.takeProfitValue / size);
                     }
-                     const maxLossOnMargin = config.investmentAmount * (constants.MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
-                     const posValForCap = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
-                     const sizeForCap = posValForCap / entryPrice;
-                    if (sizeForCap > 0) {
-                        const hardCapSl = isLong ? entryPrice - (maxLossOnMargin / sizeForCap) : entryPrice + (maxLossOnMargin / sizeForCap);
-                        const agentSlIsRiskier = isLong ? agentTargets.stopLossPrice < hardCapSl : agentTargets.stopLossPrice > hardCapSl;
-                        if (agentSlIsRiskier) {
-                             stopLossPrice = hardCapSl;
-                             slReason = 'Hard Cap';
-                        }
-                    }
-                    if (!validateTradeProfitability(entryPrice, stopLossPrice, takeProfitPrice, isLong ? 'LONG' : 'SHORT', config).isValid) continue;
+                }
+                
+                if (validateTradeProfitability(entryPrice, stopLossPrice, finalTp, isLong ? 'LONG' : 'SHORT', config).isValid) {
                     const posVal = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
                     const size = posVal / entryPrice;
                     if (size > 0) {
                         openPosition = {
+                            id: currentCandle.time,
+                            orderId: null,
+                            botId: 'backtest',
                             pair: config.pair, mode: config.mode, executionMode: config.executionMode, direction: isLong ? 'LONG' : 'SHORT',
-                            entryPrice, size, leverage: config.leverage, entryTime: currentCandle.time,
-                            entryReason: signal.reasons.join(' '), agentName: config.agent.name, takeProfitPrice,
-                            stopLossPrice, initialStopLossPrice: agentTargets.stopLossPrice, initialTakeProfitPrice: agentTargets.takeProfitPrice,
+                            entryPrice, size, leverage: config.leverage, entryTime: new Date(currentCandle.time),
+                            entryReason: signal.reasons.join(' '), agentName: config.agent.name, takeProfitPrice: finalTp,
+                            stopLossPrice, initialStopLossPrice: agentStopLoss, initialTakeProfitPrice: takeProfitPrice,
                             pricePrecision: config.pricePrecision, timeFrame: config.timeFrame, marginType: config.marginType,
-                            activeStopLossReason: slReason,
-                            isBreakevenSet: false,
-                            profitLockTier: 0,
-                            peakPrice: entryPrice,
-                            proactiveLossCheckTriggered: false,
-                            candlesSinceEntry: 0,
-                            hasBeenProfitable: false,
+                            activeStopLossReason: slReason, isBreakevenSet: false, profitLockTier: 0,
+                            peakPrice: entryPrice, proactiveLossCheckTriggered: false, candlesSinceEntry: 0,
+                            hasBeenProfitable: false, takerFeeRate: config.takerFeeRate,
                         };
                     }
                 }
             }
         }
+        
         let currentPnl = openPosition ? (currentCandle.close - openPosition.entryPrice) * openPosition.size * (openPosition.direction === 'LONG' ? 1 : -1) : 0;
         equityCurve.push(equity + currentPnl);
     }
-    if (openPosition) closePosition(targetTimeframeKlines[targetTimeframeKlines.length - 1].close, 'End of backtest', targetTimeframeKlines[targetTimeframeKlines.length - 1].time);
+    
+    if (openPosition) {
+        closePosition(targetTimeframeKlines[targetTimeframeKlines.length - 1].close, 'End of backtest', targetTimeframeKlines[targetTimeframeKlines.length - 1].time);
+    }
+    
     return calculateResults(trades, equityCurve, STARTING_CAPITAL);
 }
 

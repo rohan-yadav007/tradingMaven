@@ -1,4 +1,3 @@
-
 import React, { createContext, useState, useContext, useMemo, useEffect, useCallback } from 'react';
 import { TradingMode, Agent, AgentParams, RiskMode } from '../types';
 import * as constants from '../constants';
@@ -25,6 +24,7 @@ interface TradingConfigState {
     isTrailingTakeProfitEnabled: boolean;
     isMinRrEnabled: boolean;
     isInvalidationCheckEnabled: boolean;
+    isCooldownEnabled: boolean;
     htfTimeFrame: 'auto' | string;
     agentParams: AgentParams;
     isApiConnected: boolean; // Managed from App.tsx but needed here
@@ -57,6 +57,7 @@ interface TradingConfigActions {
     setIsTrailingTakeProfitEnabled: (isEnabled: boolean) => void;
     setIsMinRrEnabled: (isEnabled: boolean) => void;
     setIsInvalidationCheckEnabled: (isEnabled: boolean) => void;
+    setIsCooldownEnabled: (isEnabled: boolean) => void;
     setHtfTimeFrame: (tf: 'auto' | string) => void;
     setAgentParams: (params: AgentParams) => void;
     setIsApiConnected: (isConnected: boolean) => void;
@@ -93,6 +94,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [isTrailingTakeProfitEnabled, setIsTrailingTakeProfitEnabled] = useState<boolean>(false);
     const [isMinRrEnabled, setIsMinRrEnabled] = useState<boolean>(true);
     const [isInvalidationCheckEnabled, setIsInvalidationCheckEnabled] = useState<boolean>(true);
+    const [isCooldownEnabled, setIsCooldownEnabled] = useState<boolean>(true);
     const [htfTimeFrame, setHtfTimeFrame] = useState<'auto' | string>('auto');
     const [isApiConnected, setIsApiConnected] = useState(false);
     const [walletViewMode, setWalletViewMode] = useState<TradingMode>(TradingMode.Spot);
@@ -222,6 +224,39 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         }
     }, [selectedPair, tradingMode]);
 
+    // Reset agent-specific parameters when the agent or timeframe changes
+    useEffect(() => {
+        const agent = selectedAgent;
+        const timeFrame = chartTimeFrame;
+        
+        let finalParams: Partial<AgentParams> = {};
+        
+        let timeframeSettings: Partial<AgentParams> = {};
+        switch (agent.id) {
+            case 7:  timeframeSettings = constants.MARKET_STRUCTURE_MAVEN_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+            case 9:  timeframeSettings = constants.QUANTUM_SCALPER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+            case 11: timeframeSettings = constants.HISTORIC_EXPERT_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+            case 13: timeframeSettings = constants.CHAMELEON_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+            case 14: timeframeSettings = constants.SENTINEL_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+            case 15: timeframeSettings = constants.INSTITUTIONAL_FLOW_TRACER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+            case 16: timeframeSettings = constants.ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+            case 17: timeframeSettings = constants.THE_DETONATOR_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+        }
+
+        finalParams = { ...timeframeSettings };
+
+        // Special handling for params that might not be in timeframe settings but have a default
+        if (agent.id === 7) {
+            if (finalParams.isCandleConfirmationEnabled === undefined) {
+                 finalParams.isCandleConfirmationEnabled = constants.DEFAULT_AGENT_PARAMS.isCandleConfirmationEnabled;
+            }
+        }
+        
+        // This resets any user customizations, which is the desired behavior.
+        setAgentParams(finalParams);
+
+    }, [selectedAgent, chartTimeFrame]);
+
     // --- Action Definitions ---
 
     const onSetMultiAssetMode = useCallback(async (isEnabled: boolean) => {
@@ -245,7 +280,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setAgentParams, setIsApiConnected, setWalletViewMode,
         setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError, setIsUniversalProfitTrailEnabled,
-        setIsTrailingTakeProfitEnabled, setIsMinRrEnabled, setIsInvalidationCheckEnabled,
+        setIsTrailingTakeProfitEnabled, setIsMinRrEnabled, setIsInvalidationCheckEnabled, setIsCooldownEnabled,
     }), [onSetMultiAssetMode]);
     
     const state = {
@@ -253,7 +288,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         selectedAgent, agentParams, investmentAmount, availableBalance,
         takeProfitMode, takeProfitValue, isTakeProfitLocked,
         isHtfConfirmationEnabled, isUniversalProfitTrailEnabled: isUniversalProfitTrailEnabled, 
-        isTrailingTakeProfitEnabled: isTrailingTakeProfitEnabled, isMinRrEnabled, isInvalidationCheckEnabled, htfTimeFrame,
+        isTrailingTakeProfitEnabled: isTrailingTakeProfitEnabled, isMinRrEnabled, isInvalidationCheckEnabled, isCooldownEnabled, htfTimeFrame,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
         futuresSettingsError, multiAssetModeError
     };

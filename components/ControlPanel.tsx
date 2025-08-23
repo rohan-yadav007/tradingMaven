@@ -1,9 +1,4 @@
 
-
-
-
-
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig } from '../types';
 import * as constants from '../constants';
@@ -18,6 +13,7 @@ interface ControlPanelProps {
     isBotCombinationActive: boolean;
     theme: 'light' | 'dark';
     klines: Kline[];
+    livePrice: number;
 }
 
 const formGroupClass = "flex flex-col gap-1.5";
@@ -151,7 +147,7 @@ const RiskInputWithLock: React.FC<{
 
 export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
     const {
-        onStartBot, isBotCombinationActive, theme, klines
+        onStartBot, isBotCombinationActive, theme, klines, livePrice
     } = props;
     
     const config = useTradingConfigState();
@@ -164,7 +160,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         isTakeProfitLocked, agentParams,
         marginType, futuresSettingsError, isMultiAssetMode, multiAssetModeError,
         maxLeverage, isLeverageLoading, isHtfConfirmationEnabled, htfTimeFrame,
-        isUniversalProfitTrailEnabled, isTrailingTakeProfitEnabled, isMinRrEnabled, isInvalidationCheckEnabled
+        isUniversalProfitTrailEnabled, isTrailingTakeProfitEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
+        isCooldownEnabled,
     } = config;
 
     const {
@@ -173,7 +170,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
         setMarginType, onSetMultiAssetMode, setAgentParams,
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setIsUniversalProfitTrailEnabled,
-        setIsTrailingTakeProfitEnabled, setIsMinRrEnabled, setIsInvalidationCheckEnabled
+        setIsTrailingTakeProfitEnabled, setIsMinRrEnabled, setIsInvalidationCheckEnabled,
+        setIsCooldownEnabled,
     } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -197,8 +195,20 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
 
     useEffect(() => {
         const fetchAnalysis = async () => {
-            if (klines.length > 50) { // Check for sufficient data
+            if (klines.length > 0 && livePrice > 0) {
                 setIsAnalysisLoading(true);
+
+                // Construct a preview kline array with the latest live price to ensure real-time analysis
+                const lastKline = klines[klines.length - 1];
+                const previewKline: Kline = {
+                    ...lastKline,
+                    high: Math.max(lastKline.high, livePrice),
+                    low: Math.min(lastKline.low, livePrice),
+                    close: livePrice,
+                    isFinal: false,
+                };
+                const previewKlines = [...klines.slice(0, -1), previewKline];
+
                 try {
                     const previewConfig: BotConfig = {
                         pair: config.selectedPair,
@@ -217,15 +227,16 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         isTrailingTakeProfitEnabled: config.isTrailingTakeProfitEnabled,
                         isMinRrEnabled: config.isMinRrEnabled,
                         isInvalidationCheckEnabled: config.isInvalidationCheckEnabled,
+                        isCooldownEnabled: config.isCooldownEnabled,
                         htfTimeFrame: config.htfTimeFrame,
                         agentParams: agentParams,
-                        // Dummy precision data for preview analysis, not used for trade execution
                         pricePrecision: 8,
                         quantityPrecision: 8,
-                        stepSize: 0.00000001
+                        stepSize: 0.00000001,
+                        takerFeeRate: constants.TAKER_FEE_RATE,
                     };
 
-                    const signal = await getTradingSignal(selectedAgent, klines, previewConfig);
+                    const signal = await getTradingSignal(selectedAgent, previewKlines, previewConfig);
                     setAnalysisSignal(signal);
                 } catch (e) {
                     console.error("Error fetching analysis signal:", e);
@@ -236,7 +247,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             }
         };
         fetchAnalysis();
-    }, [selectedAgent, klines, timeFrame, agentParams, config]);
+    }, [selectedAgent, klines, timeFrame, agentParams, config, livePrice]);
 
     useEffect(() => {
         const updateSmartTargets = () => {
@@ -245,14 +256,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             const currentPrice = klines[klines.length - 1].close;
             if (currentPrice <= 0) return;
             
-            let finalParams: Required<AgentParams> = { ...constants.DEFAULT_AGENT_PARAMS };
-            if (selectedAgent.id === 13) {
-                const chameleonTimeframeSettings = constants.CHAMELEON_TIMEFRAME_SETTINGS[timeFrame] || {};
-                finalParams = { ...finalParams, ...chameleonTimeframeSettings };
-            }
-            finalParams = { ...finalParams, ...agentParams };
-            
-             const fullConfig: BotConfig = {
+            const { stopLossPrice, takeProfitPrice } = getInitialAgentTargets(klines, currentPrice, 'LONG', {
                 pair: selectedPair,
                 mode: tradingMode,
                 executionMode: executionMode,
@@ -260,7 +264,6 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 agent: selectedAgent,
                 timeFrame: timeFrame,
                 investmentAmount: investmentAmount,
-                // These don't affect initial target generation
                 takeProfitMode: takeProfitMode,
                 takeProfitValue: takeProfitValue,
                 isTakeProfitLocked: isTakeProfitLocked,
@@ -268,15 +271,14 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 isUniversalProfitTrailEnabled: false,
                 isTrailingTakeProfitEnabled: false,
                 isMinRrEnabled: false,
-                agentParams: finalParams,
+                agentParams: agentParams,
                 pricePrecision: 8,
                 quantityPrecision: 8,
-                stepSize: 0.00000001
-            };
-
-            const longTargets = getInitialAgentTargets(klines, currentPrice, 'LONG', fullConfig);
+                stepSize: 0.00000001,
+                takerFeeRate: constants.TAKER_FEE_RATE,
+            });
             
-            const profitDistance = longTargets.takeProfitPrice - currentPrice;
+            const profitDistance = takeProfitPrice - currentPrice;
             
             let newTpValue: number;
             if (takeProfitMode === RiskMode.Percent) {
@@ -502,6 +504,12 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                             onChange={(v) => setAgentParams({ ...agentParams, ichi_basePeriod: v })}
                             min={20} max={60} step={1}
                         />
+                        <ParamSlider 
+                            label="KST Signal Period"
+                            value={agentParams.ch_kst_signalPeriod ?? constants.DEFAULT_AGENT_PARAMS.ch_kst_signalPeriod}
+                            onChange={(v) => setAgentParams({ ...agentParams, ch_kst_signalPeriod: v })}
+                            min={3} max={20} step={1}
+                        />
                     </div>
                 )}
                  {selectedAgent.id === 14 && (
@@ -646,7 +654,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             <div className={formGroupClass}>
                 <div className="flex items-center justify-between">
                     <label htmlFor="invalidation-toggle" className={formLabelClass}>
-                        Trade Invalidation Check
+                        Proactive Exit & Invalidation
                     </label>
                     <ToggleSwitch
                         checked={isInvalidationCheckEnabled}
@@ -654,7 +662,21 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     />
                 </div>
                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Proactively closes losing trades if the entry thesis is no longer valid after a set time.
+                    Secures profits when momentum fades. Actively minimizes losses by exiting early if the market turns decisively against a losing trade.
+                </p>
+            </div>
+             <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="cooldown-toggle" className={formLabelClass}>
+                        Post-Trade Cooldown
+                    </label>
+                    <ToggleSwitch
+                        checked={isCooldownEnabled}
+                        onChange={setIsCooldownEnabled}
+                    />
+                </div>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Prevents immediate re-entry in the same direction for a few candles after a trade closes.
                 </p>
             </div>
 

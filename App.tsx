@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { ChartComponent } from './components/ChartComponent';
@@ -65,10 +66,92 @@ const AppContent: React.FC = () => {
     const [openPositions, setOpenPositions] = useState<Position[]>([]);
     const [closingPositionIds, setClosingPositionIds] = useState<Set<number>>(new Set());
     
+    // New state for dynamic fee rate
+    const [currentFeeRate, setCurrentFeeRate] = useState(constants.TAKER_FEE_RATE);
+
     // Refs for stable handlers
     const handlersRef = useRef<BotHandlers | null>(null);
     const openPositionsCountRef = useRef(openPositions.length);
     const audioContextRef = useRef<AudioContext | null>(null);
+
+    const isBotCombinationActive = useMemo(() => {
+        // If the user wants to start a paper bot, never block them.
+        // They can run multiple paper bots with the same settings for comparison.
+        if (executionMode === 'paper') {
+            return false;
+        }
+        
+        // For live bots, prevent starting a duplicate.
+        return runningBots.some(bot => 
+            bot.config.executionMode === 'live' && // Important: Only check against other LIVE bots
+            bot.config.pair === selectedPair &&
+            bot.config.agent.id === selectedAgent.id &&
+            bot.config.timeFrame === chartTimeFrame &&
+            bot.status !== BotStatus.Stopped &&
+            bot.status !== BotStatus.Error
+        );
+    }, [runningBots, selectedPair, selectedAgent, chartTimeFrame, executionMode]);
+
+    const handleStartBot = useCallback(() => {
+        if (isBotCombinationActive) return;
+
+        const start = async () => {
+            try {
+                const formattedPair = selectedPair.replace('/', '');
+                
+                const symbolInfoForBot = tradingMode === TradingMode.USDSM_Futures
+                    ? await binanceService.getFuturesSymbolInfo(formattedPair)
+                    : await binanceService.getSymbolInfo(formattedPair);
+
+                if (!symbolInfoForBot) {
+                    console.error(`Could not fetch symbol info for ${selectedPair}. Cannot start bot.`);
+                    // TODO: Show this error in UI
+                    return;
+                }
+                
+                const pricePrecisionForBot = binanceService.getPricePrecision(symbolInfoForBot);
+                const quantityPrecisionForBot = binanceService.getQuantityPrecision(symbolInfoForBot);
+                const stepSizeForBot = binanceService.getStepSize(symbolInfoForBot);
+
+                const botConfig: BotConfig = {
+                    pair: selectedPair,
+                    mode: tradingMode,
+                    executionMode,
+                    leverage,
+                    marginType,
+                    agent: selectedAgent,
+                    timeFrame: chartTimeFrame,
+                    investmentAmount,
+                    takeProfitMode,
+                    takeProfitValue,
+                    isTakeProfitLocked,
+                    isHtfConfirmationEnabled,
+                    htfTimeFrame,
+                    isUniversalProfitTrailEnabled,
+                    isTrailingTakeProfitEnabled,
+                    isMinRrEnabled,
+                    isInvalidationCheckEnabled,
+                    agentParams,
+                    pricePrecision: pricePrecisionForBot,
+                    quantityPrecision: quantityPrecisionForBot,
+                    stepSize: stepSizeForBot,
+                    takerFeeRate: currentFeeRate,
+                };
+
+                botManagerService.startBot(botConfig);
+            } catch (error) {
+                console.error("Failed to start bot:", error);
+            }
+        };
+
+        start();
+    }, [
+        isBotCombinationActive, selectedPair, tradingMode, executionMode, leverage, marginType,
+        selectedAgent, chartTimeFrame, investmentAmount, takeProfitMode, takeProfitValue,
+        isTakeProfitLocked, isHtfConfirmationEnabled, htfTimeFrame, agentParams,
+        isUniversalProfitTrailEnabled, isTrailingTakeProfitEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
+        currentFeeRate
+    ]);
 
     // ---- Handlers ----
     const handleClosePosition = useCallback(async (posToClose: Position, exitReason: string = "Manual Close", exitPriceOverride?: number) => {
@@ -164,7 +247,8 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                  
                  const entryValue = posToClose.entryPrice * posToClose.size;
                  const exitValue = finalExitPrice * posToClose.size;
-                 const totalFees = (entryValue + exitValue) * constants.TAKER_FEE_RATE;
+                 const feeRate = posToClose.takerFeeRate || constants.TAKER_FEE_RATE; // Fallback
+                 const totalFees = (entryValue + exitValue) * feeRate;
 
                  closePositionInState(finalExitPrice, totalFees);
 
@@ -197,7 +281,8 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
         } else {
             const entryValue = posToClose.entryPrice * posToClose.size;
             const exitValue = exitPrice * posToClose.size;
-            const simulatedFees = (entryValue + exitValue) * constants.TAKER_FEE_RATE;
+            const feeRate = posToClose.takerFeeRate || constants.TAKER_FEE_RATE; // Fallback
+            const simulatedFees = (entryValue + exitValue) * feeRate;
 
             closePositionInState(exitPrice, simulatedFees);
         }
@@ -362,6 +447,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             peakPrice: finalEntryPrice,
             candlesSinceEntry: 0,
             hasBeenProfitable: false,
+            takerFeeRate: config.takerFeeRate,
         };
 
         if (config.executionMode === 'live') {
@@ -388,6 +474,40 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
     }, [accountInfo]);
     
     // ---- Effects ----
+
+    // Effect to fetch and update the current taker fee rate
+    useEffect(() => {
+        const updateFeeRate = async () => {
+             // If API is disconnected, always use default.
+            if (!isApiConnected) {
+                setCurrentFeeRate(constants.TAKER_FEE_RATE);
+                return;
+            }
+    
+            // For both 'live' and 'paper' (if connected), try to fetch the fee.
+            if (tradingMode === TradingMode.Spot) {
+                if (accountInfo?.takerCommission) {
+                    // takerCommission from Binance is in basis points, e.g., 10 for 0.10%
+                    setCurrentFeeRate(accountInfo.takerCommission / 10000);
+                } else {
+                    setCurrentFeeRate(constants.TAKER_FEE_RATE); // Fallback
+                }
+            } else if (tradingMode === TradingMode.USDSM_Futures) {
+                try {
+                    const commissionInfo = await binanceService.fetchFuturesCommissionRate(selectedPair);
+                    if (commissionInfo) {
+                        setCurrentFeeRate(commissionInfo.takerCommissionRate);
+                    } else {
+                        setCurrentFeeRate(constants.TAKER_FEE_RATE); // Fallback
+                    }
+                } catch (error) {
+                    console.error("Failed to fetch futures commission rate, using default.", error);
+                    setCurrentFeeRate(constants.TAKER_FEE_RATE);
+                }
+            }
+        };
+        updateFeeRate();
+    }, [tradingMode, selectedPair, isApiConnected, accountInfo]);
 
     // Keep the refs updated with the latest versions of the handlers
     useEffect(() => {
@@ -433,270 +553,117 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
 
         const trades = historyService.loadTrades();
         setTradeHistory(trades);
-        
+        setIsInitialized(true);
         telegramBotService.start();
-
-        setIsInitialized(true); // Signal that initialization is complete
 
         return () => {
             botManagerService.stopAllBots();
-        }
-    }, []); // Empty dependency array ensures this runs only once.
+        };
+    }, []);
 
+    // Fetch chart klines and other pair-specific data
     useEffect(() => {
-        configActions.setIsApiConnected(isApiConnected);
-    }, [isApiConnected, configActions]);
-
-    // Fetch chart and symbol data when pair or timeframe changes
-    const fetchChartData = useCallback(async () => {
-        setIsChartLoading(true);
-        try {
-            const formattedPair = selectedPair.replace('/', '');
-
-            const symbolInfoFetcher = tradingMode === TradingMode.USDSM_Futures
-                ? binanceService.getFuturesSymbolInfo(formattedPair)
-                : binanceService.getSymbolInfo(formattedPair);
-
-            const [klineData, info] = await Promise.all([
-                binanceService.fetchKlines(formattedPair, chartTimeFrame, { mode: tradingMode }),
-                symbolInfoFetcher
-            ]);
-
-            if (!info) {
-                 throw new Error(`Symbol information not found for ${selectedPair} in ${tradingMode} mode. This pair may not be available for this type of trading.`);
+        let isCancelled = false;
+        const fetchAllData = async () => {
+             // Fetch chart klines
+            setIsChartLoading(true);
+            try {
+                const formattedPair = selectedPair.replace('/', '');
+                const data = await binanceService.fetchKlines(formattedPair, chartTimeFrame, { limit: 500, mode: tradingMode });
+                if (!isCancelled) {
+                    setKlines(data);
+                    if (data.length > 0) setLivePrice(data[data.length - 1].close);
+                }
+            } catch (err) {
+                console.error("Failed to fetch klines:", err);
+                if (!isCancelled) setKlines([]);
+            } finally {
+                if (!isCancelled) setIsChartLoading(false);
             }
 
-            setKlines(klineData);
-            setSymbolInfo(info as SymbolInfo);
-            botManagerService.updateKlines(formattedPair, chartTimeFrame, klineData);
-        } catch (error) {
-            console.error("Failed to fetch chart data:", error);
-            setKlines([]);
-            setSymbolInfo(undefined);
-        } finally {
-            setIsChartLoading(false);
-        }
-    }, [selectedPair, chartTimeFrame, tradingMode]);
+            // Fetch symbol info and funding rate
+            try {
+                const formattedPair = selectedPair.replace('/', '');
+                const info = tradingMode === TradingMode.USDSM_Futures
+                    ? await binanceService.getFuturesSymbolInfo(formattedPair)
+                    : await binanceService.getSymbolInfo(formattedPair);
+                
+                if (!isCancelled) setSymbolInfo(info);
+                
+                if (tradingMode === TradingMode.USDSM_Futures) {
+                    const funding = await binanceService.fetchFundingRate(formattedPair);
+                    if (!isCancelled) setFundingInfo(funding ? { rate: funding.fundingRate, time: funding.fundingTime } : null);
+                } else {
+                    if (!isCancelled) setFundingInfo(null);
+                }
+            } catch (err) {
+                console.error("Failed to fetch symbol info:", err);
+                 if (!isCancelled) {
+                     setSymbolInfo(undefined);
+                     setFundingInfo(null);
+                 }
+            }
+        };
 
-    useEffect(() => {
-        fetchChartData();
-    }, [fetchChartData]);
+        fetchAllData();
 
-    // Subscribe to live kline and ticker data
-    useEffect(() => {
-        const formattedPair = selectedPair.replace('/', '').toLowerCase();
-        
+         // WebSocket subscriptions
+        const formattedPair = selectedPair.replace('/', '');
         const tickerCallback = (data: any) => {
-            const ticker: LiveTicker = {
-                pair: data.s,
-                closePrice: parseFloat(data.c),
-                highPrice: parseFloat(data.h),
-                lowPrice: parseFloat(data.l),
-                volume: parseFloat(data.v),
-                quoteVolume: parseFloat(data.q)
-            };
-            if (ticker.pair && ticker.pair.toLowerCase() === formattedPair) {
+            const ticker: LiveTicker = { pair: data.s, closePrice: parseFloat(data.c), highPrice: parseFloat(data.h), lowPrice: parseFloat(data.l), volume: parseFloat(data.v), quoteVolume: parseFloat(data.q) };
+             if (ticker.pair.toLowerCase() === formattedPair.toLowerCase()) {
                 setLivePrice(ticker.closePrice);
                 setLiveTicker(ticker);
             }
         };
 
         const klineCallback = (data: any) => {
-            const newKline: Kline = {
-                time: data.k.t,
-                open: parseFloat(data.k.o),
-                high: parseFloat(data.k.h),
-                low: parseFloat(data.k.l),
-                close: parseFloat(data.k.c),
-                volume: parseFloat(data.k.v),
-                isFinal: data.k.x
-            };
-
-            if (newKline.isFinal) {
-                setKlines(prevKlines => {
-                    if (prevKlines.length === 0) return [newKline];
-                    const lastKline = prevKlines[prevKlines.length - 1];
-                    if (lastKline && newKline.time === lastKline.time) {
-                        const updatedKlines = [...prevKlines];
-                        updatedKlines[prevKlines.length - 1] = newKline;
-                        return updatedKlines;
-                    } 
-                    else if (lastKline && newKline.time > lastKline.time) {
-                        return [...prevKlines.slice(1), newKline];
+             const newKline: Kline = { time: data.k.t, open: parseFloat(data.k.o), high: parseFloat(data.k.h), low: parseFloat(data.k.l), close: parseFloat(data.k.c), volume: parseFloat(data.k.v), isFinal: data.k.x };
+             setKlines(prev => {
+                const last = prev[prev.length - 1];
+                if (last && newKline.time === last.time) {
+                    // For tick updates within a candle, we don't update the main klines state here.
+                    // The livePrice state, updated by the ticker, drives real-time analysis previews.
+                    // We only update the kline array when the candle is final to prevent excessive re-renders.
+                    if (newKline.isFinal) {
+                        const newKlines = [...prev];
+                        newKlines[newKlines.length - 1] = newKline;
+                        return newKlines;
                     }
-                    return prevKlines;
-                });
-            }
+                    return prev;
+                } else if (!last || newKline.time > last.time) {
+                    // A new candle has started.
+                    return [...prev, newKline];
+                }
+                return prev;
+            });
         };
         
         botManagerService.subscribeToTickerUpdates(formattedPair, tradingMode, tickerCallback);
         botManagerService.subscribeToKlineUpdates(formattedPair, chartTimeFrame, tradingMode, klineCallback);
-        
-        return () => {
+
+        return () => { 
+            isCancelled = true;
             botManagerService.unsubscribeFromTickerUpdates(formattedPair, tradingMode, tickerCallback);
             botManagerService.unsubscribeFromKlineUpdates(formattedPair, chartTimeFrame, tradingMode, klineCallback);
         };
     }, [selectedPair, chartTimeFrame, tradingMode]);
 
-    // Fetch funding rate for futures
-    useEffect(() => {
-        if (tradingMode !== TradingMode.USDSM_Futures) {
-            setFundingInfo(null);
-            return;
-        }
-        let isCancelled = false;
-        const fetchFunding = async () => {
-            const formattedPair = selectedPair.replace('/', '');
-            const info = await binanceService.fetchFundingRate(formattedPair);
-            if (!isCancelled) {
-                setFundingInfo(info ? { rate: info.fundingRate, time: info.fundingTime } : null);
-            }
-        };
-        fetchFunding();
-        const interval = setInterval(fetchFunding, 60000); // Refresh every minute
-        return () => {
-            isCancelled = true;
-            clearInterval(interval);
-        };
-    }, [selectedPair, tradingMode]);
 
-    // Fetch wallet balances
-    const fetchWalletBalances = useCallback(async () => {
-        if (!isApiConnected) {
-            setAccountInfo(null);
-            setLiveBalances([]);
-            setWalletError(null);
-            return;
-        }
-        setIsWalletLoading(true);
-        setWalletError(null);
-        try {
-            let info;
-            switch (configState.walletViewMode) {
-                case TradingMode.Spot:
-                    info = await binanceService.fetchSpotWalletBalance();
-                    break;
-                case TradingMode.USDSM_Futures:
-                    info = await binanceService.fetchFuturesWalletBalance();
-                    break;
-                default:
-                    setWalletError("Invalid trading mode selected for wallet view.");
-                    return;
-            }
-            setAccountInfo(info);
-            setLiveBalances(info.balances);
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : "An unknown error occurred. Make sure your API keys are correct.";
-            setWalletError(errorMessage);
-            setAccountInfo(null);
-            setLiveBalances([]);
-        } finally {
-            setIsWalletLoading(false);
-        }
-    }, [isApiConnected, configState.walletViewMode]);
-
-    useEffect(() => {
-        fetchWalletBalances();
-    }, [fetchWalletBalances]);
-
-    // Initialize Audio Context and handle user interaction to enable it
-    useEffect(() => {
-        if (!audioContextRef.current) {
-            try {
-                // Create the AudioContext once and store it in the ref.
-                audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-            } catch (e) {
-                console.error("Web Audio API is not supported in this browser.", e);
-                return; // Exit if not supported
-            }
-        }
-
-        const resumeAudio = () => {
-            if (audioContextRef.current?.state === 'suspended') {
-                audioContextRef.current.resume();
-            }
-            // Listener cleans itself up after first interaction.
-            document.body.removeEventListener('click', resumeAudio);
-            document.body.removeEventListener('keydown', resumeAudio);
-        };
-
-        document.body.addEventListener('click', resumeAudio);
-        document.body.addEventListener('keydown', resumeAudio);
-
-        return () => {
-            document.body.removeEventListener('click', resumeAudio);
-            document.body.removeEventListener('keydown', resumeAudio);
-            audioContextRef.current?.close().catch(e => console.error("Error closing AudioContext", e));
-        };
-    }, []); // Empty dependency array ensures this runs only once on mount.
-
-    // Synchronize open positions from running bots
-    useEffect(() => {
-        const positionsFromBots = runningBots
-            .filter(bot => bot.openPosition)
-            .map(bot => bot.openPosition!);
-        setOpenPositions(positionsFromBots);
-    }, [runningBots]);
-
-    // Audio Alert Effect for New Positions
-    useEffect(() => {
-        const playNotificationSound = () => {
-            const audioContext = audioContextRef.current;
-            if (!audioContext || audioContext.state !== 'running') {
-                console.warn('AudioContext not ready, sound blocked. Interact with the page to enable audio.');
-                return;
-            }
-            const oscillator = audioContext.createOscillator();
-            const gainNode = audioContext.createGain();
-            oscillator.connect(gainNode);
-            gainNode.connect(audioContext.destination);
-            oscillator.type = 'sine';
-            oscillator.frequency.setValueAtTime(440, audioContext.currentTime); // A4 note
-            gainNode.gain.setValueAtTime(0.5, audioContext.currentTime);
-            oscillator.start();
-            gainNode.gain.exponentialRampToValueAtTime(0.00001, audioContext.currentTime + 0.5);
-            oscillator.stop(audioContext.currentTime + 0.5);
-        };
-
-        if (openPositions.length > openPositionsCountRef.current) {
-            playNotificationSound();
-        }
-        openPositionsCountRef.current = openPositions.length;
-    }, [openPositions]);
-
-    const getAvailableBalanceForInvestment = useCallback(() => {
-        if (executionMode !== 'live') return Infinity;
-        if (!isApiConnected || !accountInfo || !symbolInfo) return 0;
-        if (configState.walletViewMode !== tradingMode) return 0;
-        
-        const quoteAsset = symbolInfo.quoteAsset;
-        if (!quoteAsset) return 0;
-        
-        const balance = liveBalances.find(b => b.asset === quoteAsset);
-        return balance ? balance.free : 0;
-
-    }, [executionMode, isApiConnected, accountInfo, symbolInfo, configState.walletViewMode, tradingMode, liveBalances]);
-
-    useEffect(() => {
-        configActions.setAvailableBalance(getAvailableBalanceForInvestment());
-    }, [getAvailableBalanceForInvestment, configActions]);
-
-    const handleLoadMoreChartData = useCallback(async () => {
+    const handleLoadMoreData = useCallback(async () => {
         if (isFetchingMoreChartData || klines.length === 0) return;
-        
+    
         setIsFetchingMoreChartData(true);
         try {
+            const firstKlineTime = klines[0].time;
             const formattedPair = selectedPair.replace('/', '');
-            const oldestKlineTime = klines[0].time;
-            
-            const newKlines = await binanceService.fetchKlines(formattedPair, chartTimeFrame, { endTime: oldestKlineTime - 1, mode: tradingMode });
-            
-            const uniqueNewKlines = newKlines.filter(nk => !klines.some(ok => ok.time === nk.time));
-            
-            if (uniqueNewKlines.length > 0) {
-                 const updatedKlines = [...uniqueNewKlines, ...klines];
-                 setKlines(updatedKlines);
-                 botManagerService.updateKlines(formattedPair, chartTimeFrame, updatedKlines);
+            const moreData = await binanceService.fetchKlines(
+                formattedPair, 
+                chartTimeFrame, 
+                { endTime: firstKlineTime - 1, limit: 200, mode: tradingMode }
+            );
+            if (moreData.length > 0) {
+                setKlines(prev => [...moreData, ...prev]);
             }
         } catch (error) {
             console.error("Failed to load more chart data:", error);
@@ -704,137 +671,81 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
             setIsFetchingMoreChartData(false);
         }
     }, [isFetchingMoreChartData, klines, selectedPair, chartTimeFrame, tradingMode]);
-    
-    const isBotCombinationActive = useCallback(() => {
-        if (executionMode === 'live') {
-            // For live trading, prevent running more than one bot per trading pair.
-            return runningBots.some(bot => 
-                bot.config.executionMode === 'live' &&
-                bot.config.pair === selectedPair &&
-                bot.status !== BotStatus.Stopped &&
-                bot.status !== BotStatus.Error
-            );
-        }
-        
-        // For paper trading, always allow creating a new bot, regardless of existing combinations.
-        return false;
-    }, [runningBots, selectedPair, executionMode]);
-    
-    const handleStartBot = useCallback(() => {
-        if (!isInitialized) {
-            console.warn("Cannot start bot: App is not yet initialized.");
-            return;
-        }
-        if (!symbolInfo) {
-            console.error("Cannot start bot: symbol information is not yet loaded.");
-            return;
-        }
 
-        const botConfig: BotConfig = {
-            pair: selectedPair,
-            mode: tradingMode,
-            executionMode,
-            leverage: leverage,
-            marginType,
-            agent: selectedAgent,
-            timeFrame: chartTimeFrame,
-            investmentAmount,
-            takeProfitMode,
-            takeProfitValue,
-            isTakeProfitLocked,
-            isHtfConfirmationEnabled,
-            htfTimeFrame,
-            agentParams,
-            pricePrecision: binanceService.getPricePrecision(symbolInfo),
-            quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
-            stepSize: binanceService.getStepSize(symbolInfo),
-            isUniversalProfitTrailEnabled,
-            isTrailingTakeProfitEnabled,
-            isMinRrEnabled,
-            isInvalidationCheckEnabled,
-        };
-        botManagerService.startBot(botConfig);
-    }, [
-        isInitialized,
-        selectedPair, tradingMode, leverage, marginType, selectedAgent, chartTimeFrame, executionMode,
-        investmentAmount, takeProfitMode, takeProfitValue,
-        isTakeProfitLocked, isHtfConfirmationEnabled, htfTimeFrame, agentParams, symbolInfo, isUniversalProfitTrailEnabled,
-        isTrailingTakeProfitEnabled, isMinRrEnabled, isInvalidationCheckEnabled
-    ]);
-
-    const handleUpdateBotConfig = useCallback((botId: string, partialConfig: Partial<BotConfig>) => {
-        botManagerService.updateBotConfig(botId, partialConfig);
-    }, []);
+    if (!isInitialized) {
+        return (
+            <div className="flex items-center justify-center h-screen bg-slate-900 text-white">
+                <div className="text-lg font-semibold">Initializing Trading Assistant...</div>
+            </div>
+        );
+    }
     
-    const botActions = {
-        onClosePosition: handleClosePosition,
-        onPauseBot: useCallback((botId: string) => botManagerService.pauseBot(botId), []),
-        onResumeBot: useCallback((botId: string) => botManagerService.resumeBot(botId), []),
-        onStopBot: useCallback((botId: string) => botManagerService.stopBot(botId), []),
-        onDeleteBot: useCallback((botId: string) => botManagerService.deleteBot(botId), []),
-        onUpdateBotConfig: handleUpdateBotConfig,
-    };
-
     return (
-        <div className="bg-slate-100 dark:bg-slate-900 min-h-screen">
-            <Header 
-                isApiConnected={isApiConnected} 
-                theme={theme} 
+        <div className={`min-h-screen font-sans bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-50 ${theme}`}>
+            <Header
+                isApiConnected={isApiConnected}
+                executionMode={executionMode}
+                theme={theme}
                 setTheme={setTheme}
                 activeView={activeView}
                 setActiveView={setActiveView}
-                executionMode={executionMode}
             />
-            
-            {activeView === 'trading' && (
-                <main className="container mx-auto p-2 sm:p-4 grid grid-cols-12 gap-4">
-                    <div className="col-span-12 lg:col-span-3 order-last lg:order-first">
-                        <Sidebar
-                            klines={klines}
-                            isBotCombinationActive={isBotCombinationActive()}
-                            onStartBot={handleStartBot}
-                            theme={theme}
-                            isApiConnected={isApiConnected}
-                            pricePrecision={pricePrecision}
-                            accountInfo={accountInfo}
-                            isWalletLoading={isWalletLoading}
-                            walletError={walletError}
-                        />
-                    </div>
-                    <div className="col-span-12 lg:col-span-9 flex flex-col gap-4">
-                        <ChartComponent
-                            data={klines}
-                            pair={selectedPair}
-                            isLoading={isChartLoading}
-                            pricePrecision={pricePrecision}
-                            livePrice={livePrice}
-                            liveTicker={liveTicker}
-                            chartTimeFrame={chartTimeFrame}
-                            onTimeFrameChange={configActions.setTimeFrame}
-                            allPairs={configState.allPairs}
-                            onPairChange={setSelectedPair}
-                            onLoadMoreData={handleLoadMoreChartData}
-                            isFetchingMoreData={isFetchingMoreChartData}
-                            theme={theme}
-                            fundingInfo={fundingInfo}
-                        />
-                        <RunningBots bots={runningBots} {...botActions} />
-                        <TradingLog tradeHistory={tradeHistory} />
-                    </div>
-                </main>
-            )}
-
-            {activeView === 'backtesting' && (
-                 <main className="container mx-auto p-2 sm:p-4">
-                    <BacktestingPanel 
-                        backtestResult={backtestResult}
-                        setBacktestResult={setBacktestResult}
-                        setActiveView={setActiveView}
+            <main className="container mx-auto p-3 lg:p-4">
+              {activeView === 'trading' ? (
+                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                  <div className="col-span-12 lg:col-span-3 order-last lg:order-first">
+                    <Sidebar
+                        onStartBot={handleStartBot}
                         klines={klines}
+                        livePrice={livePrice}
+                        isBotCombinationActive={isBotCombinationActive}
                         theme={theme}
+                        isApiConnected={isApiConnected}
+                        pricePrecision={pricePrecision}
+                        accountInfo={accountInfo}
+                        isWalletLoading={isWalletLoading}
+                        walletError={walletError}
                     />
-                 </main>
-            )}
+                  </div>
+                  <div className="col-span-12 lg:col-span-9 flex flex-col gap-4">
+                    <ChartComponent
+                        data={klines}
+                        pair={selectedPair}
+                        allPairs={configState.allPairs}
+                        onPairChange={setSelectedPair}
+                        isLoading={isChartLoading}
+                        pricePrecision={pricePrecision}
+                        livePrice={livePrice}
+                        liveTicker={liveTicker}
+                        chartTimeFrame={chartTimeFrame}
+                        onTimeFrameChange={configActions.setTimeFrame}
+                        onLoadMoreData={handleLoadMoreData}
+                        isFetchingMoreData={isFetchingMoreChartData}
+                        theme={theme}
+                        fundingInfo={fundingInfo}
+                    />
+                    <RunningBots
+                      bots={runningBots}
+                      onClosePosition={handleClosePosition}
+                      onPauseBot={botManagerService.pauseBot}
+                      onResumeBot={botManagerService.resumeBot}
+                      onStopBot={botManagerService.stopBot}
+                      onDeleteBot={botManagerService.deleteBot}
+                      onUpdateBotConfig={botManagerService.updateBotConfig}
+                    />
+                    <TradingLog tradeHistory={tradeHistory} />
+                  </div>
+                </div>
+              ) : (
+                <BacktestingPanel
+                  backtestResult={backtestResult}
+                  setBacktestResult={setBacktestResult}
+                  setActiveView={setActiveView}
+                  klines={klines}
+                  theme={theme}
+                />
+              )}
+            </main>
         </div>
     );
 };
@@ -844,6 +755,5 @@ const App: React.FC = () => (
         <AppContent />
     </TradingConfigProvider>
 );
-
 
 export default App;

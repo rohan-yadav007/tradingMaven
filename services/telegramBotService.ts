@@ -1,3 +1,4 @@
+
 import { BotConfig, TradingMode, RiskMode } from '../types';
 import { botManagerService } from './botManagerService';
 import { historyService } from './historyService';
@@ -158,9 +159,11 @@ ID: \`${bot.id}\``;
                     isUniversalProfitTrailEnabled: true,
                     isTrailingTakeProfitEnabled: false,
                     isMinRrEnabled: true,
+                    isInvalidationCheckEnabled: true,
                     pricePrecision: binanceService.getPricePrecision(symbolInfo),
                     quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                     stepSize: binanceService.getStepSize(symbolInfo),
+                    takerFeeRate: constants.TAKER_FEE_RATE,
                 };
                 
                 const newBot = botManagerService.startBot(config);

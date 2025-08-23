@@ -1,16 +1,25 @@
 
-
-
-
 import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, RiskMode, TradingMode, BinanceOrderResponse, ChameleonAgentState, TradeManagementSignal, AgentParams } from '../types';
 import * as binanceService from './binanceService';
-import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getChameleonManagementSignal, getChameleonStrategicUpdate } from './localAgentService';
+import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getChameleonManagementSignal, getChameleonStrategicUpdate, checkMomentumFadingSignal, checkLossMinimizationSignal } from './localAgentService';
 import { DEFAULT_AGENT_PARAMS, MAX_STOP_LOSS_PERCENT_OF_INVESTMENT, TIME_FRAMES, TAKER_FEE_RATE, CHAMELEON_TIMEFRAME_SETTINGS, MIN_PROFIT_BUFFER_MULTIPLIER } from '../constants';
 import { telegramBotService } from './telegramBotService';
 
 const MAX_LOG_ENTRIES = 100;
 const RECONNECT_DELAY = 5000; // 5 seconds
 let nextRequestId = 1;
+
+const getTimeframeDuration = (timeframe: string): number => {
+    const unit = timeframe.slice(-1);
+    const value = parseInt(timeframe.slice(0, -1), 10);
+    if (isNaN(value)) return 0;
+    switch (unit) {
+        case 'm': return value * 60 * 1000;
+        case 'h': return value * 60 * 60 * 1000;
+        case 'd': return value * 24 * 60 * 60 * 1000;
+        default: return 0;
+    }
+};
 
 // --- New WebSocket Manager for Combined Streams ---
 class WebSocketManager {
@@ -187,6 +196,7 @@ class BotInstance {
             lastAnalysisTimestamp: null,
             lastPriceUpdateTimestamp: null,
             agentState: undefined,
+            cooldownUntil: undefined,
         };
         this.onUpdate = onUpdate;
         this.handlers = handlers;
@@ -248,16 +258,36 @@ class BotInstance {
                 this.bot.analysis = signal;
 
                 if (signal.signal !== 'HOLD') {
-                    if (isFlipAttempt) {
-                        const flipDirection = this.bot.openPosition?.direction === 'LONG' ? 'SELL' : 'BUY';
-                        if (signal.signal !== flipDirection) {
-                            this.addLog(`Flip aborted: new signal (${signal.signal}) does not oppose current position.`, LogType.Info);
-                            this.isFlippingPosition = false;
-                            return;
+                    const { cooldownUntil } = this.bot;
+                    const currentCandleTime = klinesForAnalysis[klinesForAnalysis.length - 1].time;
+                    let isVetoed = false;
+
+                    if (cooldownUntil) {
+                        if (currentCandleTime < cooldownUntil.time) {
+                            const signalDirection = signal.signal === 'BUY' ? 'LONG' : 'SHORT';
+                            if (signalDirection === cooldownUntil.direction) {
+                                const cooldownEndsDate = new Date(cooldownUntil.time + getTimeframeDuration(this.bot.config.timeFrame)).toLocaleTimeString();
+                                this.addLog(`Trade VETOED: In cooldown for ${cooldownUntil.direction} trades until after candle closing at ${cooldownEndsDate}.`, LogType.Info);
+                                isVetoed = true;
+                            }
+                        } else {
+                            this.updateState({ cooldownUntil: undefined });
+                            this.addLog('Trade cooldown has expired.', LogType.Info);
                         }
                     }
-                    this.updateState({ status: BotStatus.ExecutingTrade });
-                    await this.executeTrade(signal, klinesForAnalysis);
+                    
+                    if (!isVetoed) {
+                        if (isFlipAttempt) {
+                            const flipDirection = this.bot.openPosition?.direction === 'LONG' ? 'SELL' : 'BUY';
+                            if (signal.signal !== flipDirection) {
+                                this.addLog(`Flip aborted: new signal (${signal.signal}) does not oppose current position.`, LogType.Info);
+                                this.isFlippingPosition = false;
+                                return;
+                            }
+                        }
+                        this.updateState({ status: BotStatus.ExecutingTrade });
+                        await this.executeTrade(signal, klinesForAnalysis);
+                    }
                 } else {
                     const primaryReason = signal.reasons.find(r => r.startsWith('❌') || r.startsWith('ℹ️')) || "Conditions not met.";
                     this.addLog(`Analysis: HOLD. ${primaryReason.substring(2)}`, LogType.Info);
@@ -302,26 +332,29 @@ class BotInstance {
             this.checkPriceBoundaries(price);
         }
 
-        const isEligibleForPreview = [BotStatus.Monitoring].includes(this.bot.status);
-        if (isEligibleForPreview && this.klines.length > 0 && !this.bot.openPosition) {
-            
+        // Always update the analysis for UI preview purposes, regardless of bot status (as long as it's receiving ticks)
+        if (this.klines.length > 0) {
             const lastFinalKline = this.klines[this.klines.length - 1];
             const previewKline: Kline = {
                 ...lastFinalKline,
                 high: Math.max(lastFinalKline.high, price),
                 low: Math.min(lastFinalKline.low, price),
                 close: price,
-                isFinal: false
+                isFinal: false,
             };
             const previewKlines = [...this.klines.slice(0, -1), previewKline];
-            
+
+            // Run getTradingSignal for the preview. This is a read-only operation.
             getTradingSignal(this.bot.config.agent, previewKlines, this.bot.config)
                 .then(signal => {
-                    if ([BotStatus.Monitoring].includes(this.bot.status)) {
-                        this.bot.analysis = signal;
-                        this.onUpdate();
-                    }
-                }).catch(e => { /* Silently fail for UI preview */ });
+                    // Update the analysis property on the bot state for the UI to consume.
+                    // No status check is needed here as this is purely for display and doesn't trigger actions.
+                    this.bot.analysis = signal;
+                    this.onUpdate(); // Trigger a UI update
+                }).catch(e => {
+                    // It's a preview, so we can fail silently in the console without crashing.
+                    console.error(`[Bot ${this.bot.id}] Analysis preview failed:`, e);
+                });
         }
 
         // Tick-based analysis for Chameleon Agent
@@ -363,53 +396,13 @@ class BotInstance {
         if (newKline.isFinal) {
             this.bot.lastAnalysisTimestamp = new Date().getTime();
             if (this.bot.openPosition) {
-                const updatedPosition = { ...this.bot.openPosition };
-
-                if(updatedPosition.candlesSinceEntry !== undefined) {
-                    updatedPosition.candlesSinceEntry++;
+                // Update candle count for agent state
+                if(this.bot.openPosition.candlesSinceEntry !== undefined) {
+                    const newPosition = { ...this.bot.openPosition, candlesSinceEntry: this.bot.openPosition.candlesSinceEntry + 1 };
+                    this.updateState({openPosition: newPosition});
                 }
-                
-                // Trade Invalidation Check
-                const { config } = this.bot;
-                
-                let params: Required<AgentParams> = { ...DEFAULT_AGENT_PARAMS };
-                if (config.agent.id === 13) {
-                    const chameleonTimeframeSettings = CHAMELEON_TIMEFRAME_SETTINGS[config.timeFrame] || {};
-                    params = { ...params, ...chameleonTimeframeSettings };
-                }
-                params = { ...params, ...config.agentParams };
-                
-                const currentPrice = newKline.close;
-                const isLong = updatedPosition.direction === 'LONG';
-                const isInLoss = isLong ? currentPrice < updatedPosition.entryPrice : currentPrice > updatedPosition.entryPrice;
-
-                if (
-                    config.isInvalidationCheckEnabled &&
-                    isInLoss && // Check if currently in loss
-                    !updatedPosition.proactiveLossCheckTriggered && // Check if it hasn't been triggered in this loss-cycle
-                    updatedPosition.candlesSinceEntry && updatedPosition.candlesSinceEntry >= params.invalidationCandleLimit!
-                ) {
-                    this.addLog(`Trade Invalidation Check: Re-analyzing losing trade...`, LogType.Action);
-                    updatedPosition.proactiveLossCheckTriggered = true; // Mark as checked for this loss cycle
-                    this.updateState({ openPosition: updatedPosition });
-
-                    const signal = await getTradingSignal(config.agent, this.klines, config);
-                    
-                    const isInvalidated = signal.signal === 'HOLD' || (isLong && signal.signal === 'SELL') || (!isLong && signal.signal === 'BUY');
-                    
-                    if (isInvalidated) {
-                        const reason = `Trade Invalidated: ${signal.reasons.join(' ')}`;
-                        this.addLog(reason, LogType.Action);
-                        this.handlers.onClosePosition(updatedPosition, reason, newKline.close);
-                        return; // Exit as position is being closed
-                    } else {
-                        this.addLog(`Invalidation Check: Trade thesis still valid. Holding position.`, LogType.Info);
-                    }
-                }
-                 this.updateState({ openPosition: updatedPosition });
-
-                this.updateAgentStrategicState(); // Update strategic context for managers
-                this.managePositionOnKlineClose(); // Run candle-based managers
+                this.updateAgentStrategicState(); // Update context for managers
+                await this.managePositionOnKlineClose(); // Run candle-based managers
             } else if (this.bot.config.agent.id !== 13 && [BotStatus.Monitoring].includes(this.bot.status)) { // Exclude Chameleon from candle-close analysis
                  this.addLog(`Final kline on ${this.bot.config.timeFrame}. Running analysis for new entry.`, LogType.Info);
                  this.runAnalysis();
@@ -477,9 +470,9 @@ class BotInstance {
         const isLong = signal.signal === 'BUY';
         const { config } = this.bot;
 
-        const agentTargets = getInitialAgentTargets(klinesForAnalysis, currentPrice, isLong ? 'LONG' : 'SHORT', config);
+        const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(klinesForAnalysis, currentPrice, isLong ? 'LONG' : 'SHORT', config);
 
-        let finalTp = agentTargets.takeProfitPrice;
+        let finalTp = takeProfitPrice;
         if (this.bot.config.isTakeProfitLocked && this.bot.config.agent.id !== 13) {
             const positionValue = this.bot.config.mode === TradingMode.USDSM_Futures ? this.bot.config.investmentAmount * this.bot.config.leverage : this.bot.config.investmentAmount;
             const tradeSize = positionValue / currentPrice;
@@ -507,44 +500,20 @@ class BotInstance {
             }
         }
         
-        const agentStopLoss = agentTargets.stopLossPrice;
-        let finalSl = agentStopLoss;
-        let slReason: 'Agent Logic' | 'Hard Cap' = 'Agent Logic';
-
-        // Corrected Hard Cap Logic
-        const investment = config.investmentAmount;
-        const leverage = config.mode === TradingMode.USDSM_Futures ? config.leverage : 1;
-        const positionValueForCap = investment * leverage;
-        const tradeSizeForCap = positionValueForCap / currentPrice;
-
-        if (tradeSizeForCap > 0) {
-            const maxLossOnInvestment = investment * (MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
-            const hardCapPriceDistance = maxLossOnInvestment / tradeSizeForCap;
-            const hardCapStopLossPrice = isLong
-                ? currentPrice - hardCapPriceDistance
-                : currentPrice + hardCapPriceDistance;
-
-            const agentSlIsRiskier = isLong ? agentStopLoss < hardCapStopLossPrice : agentStopLoss > hardCapStopLossPrice;
-            if (agentSlIsRiskier) {
-                finalSl = hardCapStopLossPrice;
-                slReason = 'Hard Cap';
-            }
-        }
-
-        const validation = validateTradeProfitability(currentPrice, finalSl, finalTp, signal.signal === 'BUY' ? 'LONG' : 'SHORT', this.bot.config);
+        const validation = validateTradeProfitability(currentPrice, stopLossPrice, finalTp, signal.signal === 'BUY' ? 'LONG' : 'SHORT', this.bot.config);
         if (!validation.isValid) {
             this.notifyTradeExecutionFailed(validation.reason);
             return;
         }
 
-        this.addLog(`Executing ${signal.signal} at ~${currentPrice.toFixed(this.bot.config.pricePrecision)}. SL: ${finalSl.toFixed(this.bot.config.pricePrecision)} (${slReason}), TP: ${finalTp.toFixed(this.bot.config.pricePrecision)}`, LogType.Action);
+        this.addLog(`Executing ${signal.signal} at ~${currentPrice.toFixed(this.bot.config.pricePrecision)}. SL: ${stopLossPrice.toFixed(this.bot.config.pricePrecision)} (${slReason}), TP: ${finalTp.toFixed(this.bot.config.pricePrecision)}`, LogType.Action);
         this.addLog(validation.reason, LogType.Success);
 
         const execSignal: TradeSignal = {
             ...signal,
             entryPrice: currentPrice,
             takeProfitPrice: finalTp,
-            stopLossPrice: finalSl,
+            stopLossPrice: stopLossPrice,
         };
         
         this.handlers.onExecuteTrade(
@@ -601,16 +570,52 @@ class BotInstance {
         const openPosition = this.bot.openPosition!;
         const { config, agentState } = this.bot;
         
+        // --- Proactive Exit & Invalidation on Tick ---
+        if (config.isInvalidationCheckEnabled) {
+            const lastFinalKline = this.klines[this.klines.length - 1];
+            if (lastFinalKline) {
+                const previewKline: Kline = {
+                    ...lastFinalKline,
+                    high: Math.max(lastFinalKline.high, currentPrice),
+                    low: Math.min(lastFinalKline.low, currentPrice),
+                    close: currentPrice,
+                    isFinal: false,
+                };
+                const previewKlines = [...this.klines.slice(0, -1), previewKline];
+                
+                if (isInProfit) {
+                    const momentumSignal = checkMomentumFadingSignal(openPosition, previewKlines, config);
+                    if (momentumSignal.closePosition) {
+                        this.addLog(`Proactive Profit Protection (Tick): ${momentumSignal.reason}`, LogType.Action);
+                        this.handlers.onClosePosition(openPosition, momentumSignal.reason, currentPrice);
+                        return; // Position closed, exit manager
+                    }
+                } else { // Is in loss
+                    // Only trigger this check once per loss state to avoid spamming exits
+                    if (!openPosition.proactiveLossCheckTriggered) {
+                        const lossSignal = checkLossMinimizationSignal(openPosition, previewKlines, config);
+                        if (lossSignal.closePosition) {
+                            this.addLog(`Loss Minimization (Tick): ${lossSignal.reason}`, LogType.Action);
+                            // Mark as triggered before closing
+                            this.updateState({ openPosition: { ...openPosition, proactiveLossCheckTriggered: true } });
+                            this.handlers.onClosePosition(openPosition, lossSignal.reason, currentPrice);
+                            return; // Position closed, exit manager
+                        }
+                    }
+                }
+            }
+        }
+
         // --- Proactive Exit/Flip Signals ---
         if (config.agent.id === 13) {
             const managementSignal = getChameleonManagementSignal(openPosition, currentPrice, agentState, config);
-            if (managementSignal.closeAndFlipPosition) {
+            if (managementSignal.action === 'flip') {
                 this.isFlippingPosition = true;
                 this.addLog(`Proactive FLIP triggered: ${managementSignal.reasons.join(' ')}`, LogType.Action);
                 this.handlers.onClosePosition(openPosition, `Proactive Flip: ${managementSignal.reasons.join(' ')}`, currentPrice);
                 return;
             }
-            if (managementSignal.closePosition) {
+            if (managementSignal.action === 'close') {
                 this.addLog(`Proactive exit: ${managementSignal.reasons.join(' ')}`, LogType.Action);
                 this.handlers.onClosePosition(openPosition, `Proactive Exit: ${managementSignal.reasons.join(' ')}`, currentPrice);
                 return;
@@ -679,58 +684,75 @@ class BotInstance {
 
     private async managePositionOnKlineClose() {
         const { openPosition, config } = this.bot;
-        if (!openPosition || !this.handlers || config.agent.id === 13) return;
+        if (!openPosition || !this.handlers) return;
 
-        const currentPriceForManagement = this.bot.livePrice || this.klines[this.klines.length - 1]?.close;
-        if (!currentPriceForManagement) return;
+        const currentPrice = this.bot.livePrice || this.klines[this.klines.length - 1]?.close;
+        if (!currentPrice) return;
 
-        let updatedPositionData: Partial<Position> = {};
+        let updatedPosition = { ...this.bot.openPosition! };
         let hasUpdate = false;
+        
+        const isLong = updatedPosition.direction === 'LONG';
+        const isInProfit = isLong ? currentPrice > updatedPosition.entryPrice : currentPrice < updatedPosition.entryPrice;
 
-        if (!config.isUniversalProfitTrailEnabled && this.klines.length > 5) {
-            const slSignal = getAgentExitSignal(openPosition, this.klines, currentPriceForManagement, config);
-
-            if (slSignal.closePosition) {
-                this.addLog(`Agent exit triggered: ${slSignal.reasons.join(' ')}`, LogType.Action);
-                this.handlers.onClosePosition(openPosition, `Agent Exit: ${slSignal.reasons.join(' ')}`, currentPriceForManagement);
-                return;
-            }
-            
-            if (slSignal.newStopLoss && slSignal.newStopLoss !== openPosition.stopLossPrice) {
-                this.addLog(`Agent trailing stop updated to ${slSignal.newStopLoss.toFixed(config.pricePrecision)}. Reason: ${slSignal.reasons.join(' ')}`, LogType.Info);
-                updatedPositionData.stopLossPrice = slSignal.newStopLoss;
-                updatedPositionData.activeStopLossReason = 'Agent Trail';
-                hasUpdate = true;
-            } else {
-                this.addLog(`Agent trail check: No improved SL found. Conditions not met for update.`, LogType.Info);
+        // --- Step 1: Handle Losing Trades ---
+        if (!isInProfit) {
+            // Only run agent-specific SL tightening on close. The aggressive exit is now on tick.
+            const tightenSlSignal = getAgentExitSignal(updatedPosition, this.klines, currentPrice, config);
+            if (tightenSlSignal.newStopLoss && ((isLong && tightenSlSignal.newStopLoss > updatedPosition.stopLossPrice) || (!isLong && tightenSlSignal.newStopLoss < updatedPosition.stopLossPrice))) {
+                 updatedPosition.stopLossPrice = tightenSlSignal.newStopLoss;
+                 updatedPosition.activeStopLossReason = 'Agent Trail';
+                 hasUpdate = true;
+                 this.addLog(`SL tightened on losing trade to ${updatedPosition.stopLossPrice.toFixed(config.pricePrecision)}.`, LogType.Info);
             }
         }
+        // --- Step 2: Handle Profitable Trades ---
+        else {
+            // The aggressive exit on momentum fade is now on tick.
+            // We only need to handle trailing SL/TP here.
+            
+            // Best-of-breed Trailing Stop Logic
+            let bestNewStop = updatedPosition.stopLossPrice;
+            let bestReason: Position['activeStopLossReason'] = updatedPosition.activeStopLossReason;
+            
+            // Source 1: Universal Profit Trail
+            if (config.isUniversalProfitTrailEnabled) {
+                const signal = getMultiStageProfitSecureSignal(updatedPosition, currentPrice);
+                if (signal.newStopLoss && ((isLong && signal.newStopLoss > bestNewStop) || (!isLong && signal.newStopLoss < bestNewStop))) {
+                    bestNewStop = signal.newStopLoss;
+                    bestReason = (signal.newState?.profitLockTier && signal.newState.profitLockTier > 3) ? 'Profit Secure' : 'Breakeven';
+                }
+            }
 
-        if (config.isTrailingTakeProfitEnabled) {
-            const isLong = openPosition.direction === 'LONG';
-            const isInProfit = isLong ? currentPriceForManagement > openPosition.entryPrice : currentPriceForManagement < openPosition.entryPrice;
+            // Source 2: Agent-specific Trail
+            const agentTrailSignal = getAgentExitSignal(updatedPosition, this.klines, currentPrice, config);
+            if (agentTrailSignal.newStopLoss && ((isLong && agentTrailSignal.newStopLoss > bestNewStop) || (!isLong && agentTrailSignal.newStopLoss < bestNewStop))) {
+                bestNewStop = agentTrailSignal.newStopLoss;
+                bestReason = 'Agent Trail';
+            }
 
-            if (isInProfit) {
-                const agentTargets = getInitialAgentTargets(this.klines, currentPriceForManagement, isLong ? 'LONG' : 'SHORT', config);
-                const newTp = agentTargets.takeProfitPrice;
-                
-                const currentTp = updatedPositionData.takeProfitPrice || openPosition.takeProfitPrice;
-                const isTpImprovement = isLong ? newTp > currentTp : newTp < currentTp;
-
-                if (isTpImprovement) {
-                    this.addLog(`Trailing TP updated to ${newTp.toFixed(config.pricePrecision)}.`, LogType.Info);
-                    updatedPositionData.takeProfitPrice = newTp;
+            if (bestNewStop !== updatedPosition.stopLossPrice) {
+                updatedPosition.stopLossPrice = bestNewStop;
+                updatedPosition.activeStopLossReason = bestReason;
+                hasUpdate = true;
+                this.addLog(`Trailing SL (On Close) updated to ${bestNewStop.toFixed(config.pricePrecision)}. Reason: ${bestReason}.`, LogType.Info);
+            }
+            
+            // Source 3: Trailing Take Profit
+            if (config.isTrailingTakeProfitEnabled) {
+                const targets = getInitialAgentTargets(this.klines, currentPrice, isLong ? 'LONG' : 'SHORT', config);
+                if ((isLong && targets.takeProfitPrice > updatedPosition.takeProfitPrice) || (!isLong && targets.takeProfitPrice < updatedPosition.takeProfitPrice)) {
+                    updatedPosition.takeProfitPrice = targets.takeProfitPrice;
                     hasUpdate = true;
+                    this.addLog(`Trailing TP updated to ${updatedPosition.takeProfitPrice.toFixed(config.pricePrecision)}.`, LogType.Info);
                 }
             }
         }
 
         if (hasUpdate) {
-            const newPositionState: Position = { ...this.bot.openPosition!, ...updatedPositionData };
-            this.updateState({ openPosition: newPositionState });
+            this.updateState({ openPosition: updatedPosition });
         }
     }
-
 
     public notifyTradeExecutionFailed(reason: string) {
         this.addLog(`Trade execution failed: ${reason}`, LogType.Error);
@@ -889,7 +911,7 @@ class BotManagerService {
         this.bots.get(botId)?.updateState(partialState);
     }
     
-    public updateBotConfig(botId: string, partialConfig: Partial<BotConfig>) {
+    public updateBotConfig = (botId: string, partialConfig: Partial<BotConfig>) => {
         const botInstance = this.bots.get(botId);
         if (botInstance) {
             const newConfig = { ...botInstance.bot.config, ...partialConfig };
@@ -904,6 +926,19 @@ class BotManagerService {
             const isProfit = pnl >= 0;
             const openPositionDirection = bot.bot.openPosition?.direction || null;
             
+            const { config } = bot.bot;
+            let cooldownState: Partial<RunningBot> = {};
+            if (config.isCooldownEnabled && bot.klines.length > 0 && openPositionDirection) {
+                const params = { ...DEFAULT_AGENT_PARAMS, ...config.agentParams };
+                const cooldownCandles = params.cooldownCandles;
+                const timeframeMs = getTimeframeDuration(config.timeFrame);
+                const lastKlineTime = bot.klines[bot.klines.length - 1].time;
+                const cooldownEndTime = lastKlineTime + (cooldownCandles * timeframeMs);
+                cooldownState.cooldownUntil = { time: cooldownEndTime, direction: openPositionDirection };
+                const cooldownEndsDate = new Date(cooldownEndTime + timeframeMs).toLocaleTimeString();
+                this.addBotLog(botId, `Cooldown enabled for ${openPositionDirection} trades until after candle closing at ${cooldownEndsDate}.`, LogType.Info);
+            }
+
             bot.updateState({
                 status: BotStatus.Monitoring,
                 openPositionId: null,
@@ -915,7 +950,8 @@ class BotManagerService {
                 losses: bot.bot.losses + (isProfit ? 0 : 1),
                 totalGrossProfit: bot.bot.totalGrossProfit + (pnl > 0 ? pnl : 0),
                 totalGrossLoss: bot.bot.totalGrossLoss + (pnl < 0 ? Math.abs(pnl) : 0),
-                lastProfitableTradeDirection: isProfit ? openPositionDirection : bot.bot.lastProfitableTradeDirection
+                lastProfitableTradeDirection: isProfit ? openPositionDirection : bot.bot.lastProfitableTradeDirection,
+                ...cooldownState
             });
             this.addBotLog(botId, `Position closed. Net PNL: $${pnl.toFixed(2)}. Bot is now monitoring for new entries.`, isProfit ? LogType.Success : LogType.Error);
             
@@ -950,7 +986,7 @@ class BotManagerService {
         }
     }
 
-    public stopBot(botId: string) {
+    public stopBot = (botId: string) => {
         const bot = this.bots.get(botId);
         if (bot) {
             if (bot.bot.openPosition && this.handlers) {
@@ -962,15 +998,15 @@ class BotManagerService {
         }
     }
 
-    public pauseBot(botId: string) {
+    public pauseBot = (botId: string) => {
         this.bots.get(botId)?.pause();
     }
     
-    public resumeBot(botId: string) {
+    public resumeBot = (botId: string) => {
         this.bots.get(botId)?.resume();
     }
     
-    public deleteBot(botId: string) {
+    public deleteBot = (botId: string) => {
         const bot = this.bots.get(botId);
         if (bot && (bot.bot.status === BotStatus.Stopped || bot.bot.status === BotStatus.Error)) {
             this.bots.delete(botId);

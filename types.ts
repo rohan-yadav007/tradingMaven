@@ -29,6 +29,13 @@ export interface KSTOutput {
   signal: number;
 }
 
+export interface IchimokuCloudOutput {
+  conversion: number;
+  base: number;
+  spanA: number;
+  spanB: number;
+}
+
 
 export enum TradingMode {
     Spot = 'Spot',
@@ -271,6 +278,7 @@ export interface BotConfig {
     quantityPrecision: number;
     stepSize: number;
     takerFeeRate: number;
+    refreshInterval?: number; // In seconds
 }
 
 export enum BotStatus {
@@ -301,18 +309,6 @@ export interface BinanceOrderResponse {
     avgPrice?: string; // For futures
 }
 
-export interface ChameleonAgentState {
-    // Strategic context (updated on candle close)
-    lastAtr: number;
-    lastRsi: number;
-    swingPoint: number; // The most recent valid swing low/high
-    fastEma: number;
-    slowEma: number;
-    lastPsar?: number;
-    lastAdx?: ADXOutput;
-}
-
-
 export interface RunningBot {
     id: string;
     config: BotConfig;
@@ -337,7 +333,6 @@ export interface RunningBot {
     klinesLoaded?: number;
     lastAnalysisTimestamp: number | null;
     lastPriceUpdateTimestamp: number | null;
-    agentState?: ChameleonAgentState;
     cooldownUntil?: { time: number; direction: 'LONG' | 'SHORT' };
 }
 
@@ -468,22 +463,10 @@ export interface AgentParams {
     he_adxTrendThreshold?: number;
 
     // Agent 13: The Chameleon
-    ch_rsiPeriod?: number;
-    ch_atrPeriod?: number;
-    ch_momentumThreshold?: number; // e.g., 65 for bullish, 35 for bearish
-    ch_volatilityMultiplier?: number; // Base ATR multiplier for SL
-    ch_lookbackPeriod?: number; // For swing points and divergence
-    ch_bbPeriod?: number;
-    ch_bbStdDev?: number;
-    ch_profitLockMultiplier?: number; // For aggressive trailing
-    ch_volatilitySpikeMultiplier?: number; // For entry veto
-    ch_psarStep?: number;
-    ch_psarMax?: number;
-    ch_scoreThreshold?: number;
-    // V2 Params
+    ch_fastEmaPeriod?: number;
+    ch_slowEmaPeriod?: number;
+    ch_trendEmaPeriod?: number;
     ch_adxThreshold?: number;
-    ch_volumeMultiplier?: number;
-    ch_breathingRoomCandles?: number;
     // KST parameters
     ch_kst_rocPer1?: number;
     ch_kst_rocPer2?: number;
@@ -529,6 +512,9 @@ export interface AgentParams {
     det_max_bar_move_pct?: number;
     det_bb_margin_pct?: number;
     det_maxSlAtrMult?: number;
+
+    // Agent 18: Candlestick Prophet
+    csp_emaMomentumPeriod?: number;
 }
 
 

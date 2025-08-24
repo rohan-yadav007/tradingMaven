@@ -50,7 +50,7 @@ export const Header: React.FC<HeaderProps> = ({ isApiConnected, executionMode, t
                 <div className="flex items-center justify-between h-16">
                     <div className="flex items-center gap-3">
                         <BotIcon className="w-8 h-8 text-sky-500" />
-                        <span className="font-bold text-lg text-slate-900 dark:text-white">Gemini Trading Assistant</span>
+                        <span className="font-bold text-lg text-slate-900 dark:text-white">Binni Trading Assistant</span>
                     </div>
 
                     <div className="hidden md:flex items-center gap-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-lg">

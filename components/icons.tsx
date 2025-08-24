@@ -182,18 +182,6 @@ export const FlaskIcon: React.FC<IconProps> = ({ title, ...props }) => (
     </svg>
 );
 
-export const FlaskConical: React.FC<IconProps> = ({ title, ...props }) => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
-        <IconTitle title={title} />
-        <path d="M10 2v7.31" />
-        <path d="M14 9.31V2" />
-        <path d="M12 12.31A3 3 0 0 0 9.69 9.5a2.5 2.5 0 0 1-1.42-3.21L6 2" />
-        <path d="M14.31 9.5a3 3 0 0 0 2.38-2.81 2.5 2.5 0 0 0-1.42-3.21L18 2" />
-        <path d="M8.69 16.5A6.5 6.5 0 0 0 15.3 16.5" />
-        <path d="M7 22h10" />
-    </svg>
-);
-
 export const SparklesIcon: React.FC<IconProps> = ({ title, ...props }) => (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
         <IconTitle title={title} />
@@ -241,5 +229,15 @@ export const ZapIcon: React.FC<IconProps> = ({ title, ...props }) => (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
         <IconTitle title={title} />
         <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+    </svg>
+);
+
+export const RefreshIcon: React.FC<IconProps> = ({ title, ...props }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+        <IconTitle title={title} />
+        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+        <path d="M21 3v5h-5" />
+        <path d="M3 12a9 9 0 0 1 9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+        <path d="M8 16H3v5" />
     </svg>
 );

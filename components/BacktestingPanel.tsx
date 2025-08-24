@@ -222,6 +222,15 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                     valueDisplay={(v) => `${(v * 100).toFixed(0)}%`}
                 />
             </div>);
+        case 18: // Candlestick Prophet
+            return (<div className="space-y-4">
+                <ParamSlider
+                    label="Momentum EMA Period"
+                    value={allParams.csp_emaMomentumPeriod}
+                    onChange={v => updateParam('csp_emaMomentumPeriod', v)}
+                    min={5} max={30} step={1}
+                />
+            </div>);
         default: return <p className="text-sm text-slate-500">This agent does not have any customizable parameters.</p>;
     }
 };
@@ -282,7 +291,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     const [loadingMessage, setLoadingMessage] = useState('Running Simulation...');
     const [isParamsOpen, setIsParamsOpen] = useState(false);
 
-    const canOptimize = [7, 9, 11, 13, 14, 15, 16, 17].includes(config.selectedAgent.id);
+    const canOptimize = [7, 9, 11, 13, 14, 15, 16, 17, 18].includes(config.selectedAgent.id);
     
     const updateConfig = <K extends keyof BacktestConfig>(key: K, value: BacktestConfig[K]) => {
         setConfig(prev => ({...prev, [key]: value}));

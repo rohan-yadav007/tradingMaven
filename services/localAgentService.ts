@@ -1,5 +1,6 @@
-import { TradingMode, type Agent, type TradeSignal, type Kline, type AgentParams, type Position, type ADXOutput, type MACDOutput, type BollingerBandsOutput, type StochasticRSIOutput, type TradeManagementSignal, type BotConfig, ChameleonAgentState, VortexIndicatorOutput, SentinelAnalysis, KSTOutput } from '../types';
-import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, VWAP, IchimokuCloud, KST } from 'technicalindicators';
+
+import { TradingMode, type Agent, type TradeSignal, type Kline, type AgentParams, type Position, type ADXOutput, type MACDOutput, type BollingerBandsOutput, type StochasticRSIOutput, type TradeManagementSignal, type BotConfig, VortexIndicatorOutput, SentinelAnalysis, KSTOutput, type IchimokuCloudOutput } from '../types';
+import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, VWAP, IchimokuCloud, KST, abandonedbaby, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, downsidetasukigap, dragonflydoji, gravestonedoji, bullishharami, bearishharami, bullishharamicross, bearishharamicross, hammerpattern, hangingman, morningdojistar, morningstar, eveningdojistar, eveningstar, piercingline, shootingstar, threeblackcrows, threewhitesoldiers } from 'technicalindicators';
 import * as constants from '../constants';
 import { calculateSupportResistance } from './chartAnalysisService';
 
@@ -138,6 +139,7 @@ function applyTimeframeSettings(config: BotConfig): BotConfig {
         case 15: timeframeSettings = constants.INSTITUTIONAL_FLOW_TRACER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 16: timeframeSettings = constants.ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 17: timeframeSettings = constants.THE_DETONATOR_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+        case 18: timeframeSettings = constants.CANDLESTICK_PROPHET_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
     }
     
     finalParams = { ...finalParams, ...timeframeSettings };
@@ -212,21 +214,25 @@ export const getInitialAgentTargets = (
             if (isTrending) { // Use PSAR for trending SL
                 const psarInput = { high: highs, low: lows, step: params.qsc_psarStep, max: params.qsc_psarMax };
                 const psar = getLast(PSAR.calculate(psarInput)) as number | undefined;
-                agentStopLoss = psar || fallbackStop();
+                // CRITICAL FIX: Ensure PSAR is on the correct, protective side of the entry price.
+                if (psar && ((isLong && psar < entryPrice) || (!isLong && psar > entryPrice))) {
+                    agentStopLoss = psar;
+                } else {
+                    agentStopLoss = fallbackStop(); // Use fallback if PSAR is invalid or undefined
+                }
             } else { // Use BB for ranging/reversion SL
                 const bb = getLast(BollingerBands.calculate({ period: params.qsc_bbPeriod!, stdDev: params.qsc_bbStdDev!, values: closes }))!;
                 agentStopLoss = isLong ? bb.lower - currentAtr * 0.2 : bb.upper + currentAtr * 0.2;
             }
             break;
             
-        case 13: // The Chameleon
         case 16: // Ichimoku Trend Rider
             const ichi_params_ch = {
                 high: highs, low: lows,
                 conversionPeriod: params.ichi_conversionPeriod, basePeriod: params.ichi_basePeriod,
                 spanPeriod: params.ichi_laggingSpanPeriod, displacement: params.ichi_displacement
             };
-            const ichi = getLast(IchimokuCloud.calculate(ichi_params_ch));
+            const ichi = getLast(IchimokuCloud.calculate(ichi_params_ch)) as IchimokuCloudOutput | undefined;
             if (ichi?.base) {
                 const kijunSen = ichi.base;
                 // Check if Kijun is on the protective side
@@ -281,41 +287,70 @@ export const getInitialAgentTargets = (
                 }
             }
             break;
+        
+        case 18: // Candlestick Prophet
+            const { patternInfo } = findLastCandlestickPattern(klines, direction);
+            if (patternInfo) {
+                 const buffer = currentAtr * 0.1;
+                 agentStopLoss = isLong ? patternInfo.low - buffer : patternInfo.high + buffer;
+            } else {
+                agentStopLoss = fallbackStop();
+            }
+            break;
 
         default:
             agentStopLoss = fallbackStop();
             break;
     }
+    
+    let stopLossAfterInitialChecks = agentStopLoss;
+    
+    // --- Step 2: Enforce Minimum SL Distance (prevents stops that are too tight) ---
+    const minSlOffset = entryPrice * (MIN_STOP_LOSS_PERCENT / 100);
+    const minSafeStopLoss = isLong ? entryPrice - minSlOffset : entryPrice + minSlOffset;
 
-    // --- Step 2: Validate Agent SL against Hard Cap ---
-    let finalStopLoss = agentStopLoss;
+    // If agent's stop is tighter than the minimum, widen it to the minimum safe distance.
+    if ((isLong && stopLossAfterInitialChecks > minSafeStopLoss) || (!isLong && stopLossAfterInitialChecks < minSafeStopLoss)) {
+        stopLossAfterInitialChecks = minSafeStopLoss;
+    }
+
+
+    // --- Step 3: Apply Hard Cap as the FINAL, non-negotiable limit ---
+    let finalStopLoss = stopLossAfterInitialChecks;
     let slReason: 'Agent Logic' | 'Hard Cap' = 'Agent Logic';
-    const positionValueForCap = mode === TradingMode.USDSM_Futures ? investmentAmount * leverage : investmentAmount;
-    const tradeSizeForCap = positionValueForCap / entryPrice;
 
-    if (tradeSizeForCap > 0) {
-        const maxLossOnInvestment = investmentAmount * (constants.MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
-        const hardCapPriceDistance = maxLossOnInvestment / tradeSizeForCap;
-        const hardCapStopLossPrice = isLong ? entryPrice - hardCapPriceDistance : entryPrice + hardCapPriceDistance;
-        const agentSlIsRiskier = isLong ? agentStopLoss < hardCapStopLossPrice : agentStopLoss > hardCapStopLossPrice;
-        if (agentSlIsRiskier) {
+    const maxLossInDollars = investmentAmount * (constants.MAX_MARGIN_LOSS_PERCENT / 100);
+    const positionValue = mode === TradingMode.USDSM_Futures ? investmentAmount * leverage : investmentAmount;
+    const positionSize = positionValue / entryPrice;
+
+    if (positionSize > 0) {
+        const priceDistanceForMaxLoss = maxLossInDollars / positionSize;
+        const hardCapStopLossPrice = isLong
+            ? entryPrice - priceDistanceForMaxLoss
+            : entryPrice + priceDistanceForMaxLoss;
+            
+        // Check if the current stop loss (agent's or min distance) is riskier than the hard cap.
+        const currentSlIsRiskier = isLong
+            ? finalStopLoss < hardCapStopLossPrice
+            : finalStopLoss > hardCapStopLossPrice;
+
+        if (currentSlIsRiskier) {
             finalStopLoss = hardCapStopLossPrice;
             slReason = 'Hard Cap';
         }
     }
 
 
-    // --- Step 3: Calculate Take Profit based on the final, intelligent SL ---
+    // --- Step 4: Calculate Take Profit based on the final, intelligent SL ---
     const timeframeConfig = TIMEFRAME_ATR_CONFIG[timeFrame] || TIMEFRAME_ATR_CONFIG['5m'];
     let riskRewardRatio = timeframeConfig.riskRewardRatio;
 
     if (agent.id === 13) {
-        riskRewardRatio = 10; // Use a very high R:R to set a distant, failsafe TP for the Chameleon agent
+        riskRewardRatio = 4; // Use a high R:R to set a distant, failsafe TP for the flip-focused agent
     } else if (agent.id === 17) {
         riskRewardRatio = params.det_rr_mult;
     }
     
-    // This value is potentially invalid if agentStopLoss is on the wrong side, but it will be corrected by the safety net.
     const stopLossDistance = Math.abs(entryPrice - finalStopLoss);
     let suggestedTakeProfit = isLong ? entryPrice + (stopLossDistance * riskRewardRatio) : entryPrice - (stopLossDistance * riskRewardRatio);
 
@@ -324,38 +359,38 @@ export const getInitialAgentTargets = (
     const { supports: tp_supports, resistances: tp_resistances } = calculateSupportResistance(klines, srTpLookback);
 
     if (isLong && tp_resistances.length > 0) {
-        // Find the closest resistance above the entry price
         const potentialTps = tp_resistances.filter(r => r > entryPrice);
         if (potentialTps.length > 0) {
             const potentialTp = Math.min(...potentialTps);
             const bufferedTp = potentialTp * 0.999;
-             // Only use S/R if it's a tighter (more conservative) TP
-             if (bufferedTp > entryPrice && bufferedTp < suggestedTakeProfit) {
-                 suggestedTakeProfit = bufferedTp;
-             }
+            const newRewardDistance = Math.abs(bufferedTp - entryPrice);
+            const newRrRatio = stopLossDistance > 0 ? newRewardDistance / stopLossDistance : Infinity;
+            // Only adjust if the S/R target is closer (more realistic) but still meets the minimum R:R
+            if (bufferedTp > entryPrice && bufferedTp < suggestedTakeProfit && newRrRatio >= constants.MIN_RISK_REWARD_RATIO) {
+                suggestedTakeProfit = bufferedTp;
+            }
         }
     } else if (!isLong && tp_supports.length > 0) {
-        // Find the closest support below the entry price
         const potentialTps = tp_supports.filter(s => s < entryPrice);
         if (potentialTps.length > 0) {
             const potentialTp = Math.max(...potentialTps);
             const bufferedTp = potentialTp * 1.001;
-            // Only use S/R if it's a tighter (more conservative) TP
-             if (bufferedTp < entryPrice && bufferedTp > suggestedTakeProfit) {
+            const newRewardDistance = Math.abs(bufferedTp - entryPrice);
+            const newRrRatio = stopLossDistance > 0 ? newRewardDistance / stopLossDistance : Infinity;
+            // Only adjust if the S/R target is closer (more realistic) but still meets the minimum R:R
+            if (bufferedTp < entryPrice && bufferedTp > suggestedTakeProfit && newRrRatio >= constants.MIN_RISK_REWARD_RATIO) {
                 suggestedTakeProfit = bufferedTp;
             }
         }
     }
 
 
-    // --- Step 4: CRITICAL FINAL SAFETY CHECKS ---
-    
-    // Fee-Awareness Check (pre-validation)
+    // --- Step 5: CRITICAL FINAL SAFETY CHECKS ---
     let finalTakeProfit = suggestedTakeProfit;
 
-    if (tradeSizeForCap > 0) {
-        const roundTripFee = positionValueForCap * TAKER_FEE_RATE * 2;
-        const feeInPrice = roundTripFee / tradeSizeForCap;
+    if (positionSize > 0) {
+        const roundTripFee = positionValue * TAKER_FEE_RATE * 2;
+        const feeInPrice = roundTripFee / positionSize;
         const minProfitDistance = feeInPrice * MIN_PROFIT_BUFFER_MULTIPLIER;
         const currentRewardDistance = Math.abs(finalTakeProfit - entryPrice);
 
@@ -366,35 +401,23 @@ export const getInitialAgentTargets = (
         }
     }
     
-    // Min SL Distance Check
-    const minSlOffset = entryPrice * (MIN_STOP_LOSS_PERCENT / 100);
-    const minSafeStopLoss = isLong ? entryPrice - minSlOffset : entryPrice + minSlOffset;
-
-    let finalValidatedStopLoss = isLong
-        ? Math.min(finalStopLoss, minSafeStopLoss)
-        : Math.max(finalStopLoss, minSafeStopLoss);
-
-    // UNIVERSAL SAFETY NET: Final sanity check to ensure SL is on the correct side of entry.
-    // If any agent logic fails, this overrides it with a safe ATR-based stop.
-    if ((isLong && finalValidatedStopLoss >= entryPrice) || (!isLong && finalValidatedStopLoss <= entryPrice)) {
-        finalValidatedStopLoss = fallbackStop();
-        // If the fallback is still invalid, something is deeply wrong. The initial SL reason may be inaccurate but we must have a valid SL.
-        if ((isLong && finalValidatedStopLoss >= entryPrice) || (!isLong && finalValidatedStopLoss <= entryPrice)) {
-            finalValidatedStopLoss = isLong ? entryPrice * (1 - (MIN_STOP_LOSS_PERCENT/100)) : entryPrice * (1 + (MIN_STOP_LOSS_PERCENT/100));
+    if ((isLong && finalStopLoss >= entryPrice) || (!isLong && finalStopLoss <= entryPrice)) {
+        finalStopLoss = fallbackStop();
+        if ((isLong && finalStopLoss >= entryPrice) || (!isLong && finalStopLoss <= entryPrice)) {
+            finalStopLoss = isLong ? entryPrice * (1 - (MIN_STOP_LOSS_PERCENT/100)) : entryPrice * (1 + (MIN_STOP_LOSS_PERCENT/100));
         }
     }
     
-    // Final TP check to ensure it's also on the correct side after all calculations.
     if ((isLong && finalTakeProfit <= entryPrice) || (!isLong && finalTakeProfit >= entryPrice)) {
-        const finalSlDistance = Math.abs(entryPrice - finalValidatedStopLoss);
+        const finalSlDistance = Math.abs(entryPrice - finalStopLoss);
         finalTakeProfit = isLong ? entryPrice + (finalSlDistance * riskRewardRatio) : entryPrice - (finalSlDistance * riskRewardRatio);
     }
 
     return {
-        stopLossPrice: finalValidatedStopLoss,
+        stopLossPrice: finalStopLoss,
         takeProfitPrice: finalTakeProfit,
         slReason,
-        agentStopLoss: agentStopLoss
+        agentStopLoss: agentStopLoss // Return original agent SL for transparency
     };
 };
 
@@ -498,6 +521,7 @@ export function getAgentExitSignal(
 
     switch (agent.id) {
         case 7: // Market Structure Maven
+        case 18: // Candlestick Prophet (uses S/R for trailing)
             const srLookback = params.msm_swingPointLookback;
             const { supports, resistances } = calculateSupportResistance(klines, srLookback);
             let trailStopCandidateSR: number | undefined;
@@ -522,8 +546,8 @@ export function getAgentExitSignal(
 
         case 9: // Quantum Scalper: PSAR-based trailing stop
         case 17: // The Detonator: Also uses aggressive PSAR trailing for breakouts
-            const step = agent.id === 9 ? params.qsc_psarStep : params.ch_psarStep; // Use Chameleon default for Detonator
-            const max = agent.id === 9 ? params.qsc_psarMax : params.ch_psarMax;
+            const step = agent.id === 9 ? params.qsc_psarStep : params.scalp_psarStep;
+            const max = agent.id === 9 ? params.qsc_psarMax : params.scalp_psarMax;
             const psarInput = { high: klines.map(k => k.high), low: klines.map(k => k.low), step, max };
             if (psarInput.high.length >= 2) {
                 const psar = PSAR.calculate(psarInput);
@@ -545,7 +569,9 @@ export function getAgentExitSignal(
             break;
 
         case 11: // Historic Expert
-            const slowEma = getLast(EMA.calculate({ period: params.he_slowEmaPeriod, values: closes }));
+        case 13: // The Chameleon
+            const slowEmaPeriod = agent.id === 11 ? params.he_slowEmaPeriod : params.ch_slowEmaPeriod!;
+            const slowEma = getLast(EMA.calculate({ period: slowEmaPeriod, values: closes }));
             if (slowEma &&
                 ((isLong && slowEma > position.stopLossPrice && slowEma < currentPrice) ||
                  (!isLong && slowEma < position.stopLossPrice && slowEma > currentPrice))
@@ -585,7 +611,7 @@ export function getAgentExitSignal(
                 spanPeriod: params.ichi_laggingSpanPeriod,
                 displacement: params.ichi_displacement
             };
-            const ichiValues = IchimokuCloud.calculate(ichi_params);
+            const ichiValues = IchimokuCloud.calculate(ichi_params) as IchimokuCloudOutput[];
             const lastIchi = getLast(ichiValues);
             if(lastIchi) {
                 // For a long trade, trail with the top of the cloud (Senkou Span A). For short, use bottom (Senkou Span B)
@@ -769,7 +795,7 @@ const getQuantumScalperSignal = (klines: Kline[], params: Required<AgentParams>)
             conversionPeriod: params.qsc_ichi_conversionPeriod, basePeriod: params.qsc_ichi_basePeriod,
             spanPeriod: params.qsc_ichi_laggingSpanPeriod, displacement: params.qsc_ichi_displacement
         };
-        const ichi = getLast(IchimokuCloud.calculate(ichi_params));
+        const ichi = getLast(IchimokuCloud.calculate(ichi_params)) as IchimokuCloudOutput | undefined;
         const isPriceAboveKumo = ichi && ichi.spanA && ichi.spanB && currentPrice > ichi.spanA && currentPrice > ichi.spanB;
         const isPriceBelowKumo = ichi && ichi.spanA && ichi.spanB && currentPrice < ichi.spanA && currentPrice < ichi.spanB;
         
@@ -895,102 +921,75 @@ const getHistoricExpertSignal = (klines: Kline[], params: Required<AgentParams>)
     return { signal: 'HOLD', reasons };
 };
 
-// --- Agent 13: The Chameleon (V3 - Aggressive Ichimoku System with KST Confirmation) ---
+// --- Agent 13: The Chameleon (V6 - KST Momentum Flip Strategy with Zero-Line Confirmation) ---
 const getChameleonSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
     const minKlines = Math.max(
-        params.ichi_basePeriod!, 
-        params.ichi_displacement!, 
-        params.ichi_laggingSpanPeriod!,
-        params.ch_kst_rocPer4! + params.ch_kst_smaRocPer4!
+        params.ch_trendEmaPeriod!,
+        params.ch_kst_rocPer4! + params.ch_kst_smaRocPer4!,
+        params.adxPeriod
     ) + 5;
     if (klines.length < minKlines) return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data for analysis.'] };
 
     const closes = klines.map(k => k.close);
     const highs = klines.map(k => k.high);
     const lows = klines.map(k => k.low);
+    const volumes = klines.map(k => k.volume || 0);
     const currentPrice = getLast(closes)!;
     const reasons: string[] = [];
 
-    const ichi_params = {
-        high: highs, low: lows,
-        conversionPeriod: params.ichi_conversionPeriod!,
-        basePeriod: params.ichi_basePeriod!,
-        spanPeriod: params.ichi_laggingSpanPeriod!,
-        displacement: params.ichi_displacement!
-    };
-    const ichiValues = IchimokuCloud.calculate(ichi_params);
-    const lastIchi = getLast(ichiValues);
-    const prevIchi = getPenultimate(ichiValues);
+    // 1. Trend Filter
+    const trendEma = getLast(EMA.calculate({ period: params.ch_trendEmaPeriod!, values: closes }))!;
+    const isMacroBullish = currentPrice > trendEma;
+    const isMacroBearish = currentPrice < trendEma;
     
-    if (!lastIchi || !prevIchi || !lastIchi.spanA || !lastIchi.spanB || !lastIchi.conversion || !lastIchi.base || !prevIchi.conversion || !prevIchi.base) {
-        return { signal: 'HOLD', reasons: ['ℹ️ Ichimoku Cloud not yet fully formed.'] };
-    }
-    
-    const { conversion: lastTenkan, base: lastKijun, spanA, spanB } = lastIchi;
-    const { conversion: prevTenkan, base: prevKijun } = prevIchi;
+    // 2. Regime Filter
+    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.adxPeriod }))! as ADXOutput;
+    const isTrending = adx.adx > params.ch_adxThreshold!;
 
-    // KST Calculation
+    // 3. Primary Signal: KST with Zero-Line Confirmation
     const kstInput = {
         values: closes,
-        ROCPer1: params.ch_kst_rocPer1,
-        ROCPer2: params.ch_kst_rocPer2,
-        ROCPer3: params.ch_kst_rocPer3,
-        ROCPer4: params.ch_kst_rocPer4,
-        SMAROCPer1: params.ch_kst_smaRocPer1,
-        SMAROCPer2: params.ch_kst_smaRocPer2,
-        SMAROCPer3: params.ch_kst_smaRocPer3,
-        SMAROCPer4: params.ch_kst_smaRocPer4,
-        signalPeriod: params.ch_kst_signalPeriod,
+        ROCPer1: params.ch_kst_rocPer1!, ROCPer2: params.ch_kst_rocPer2!, ROCPer3: params.ch_kst_rocPer3!, ROCPer4: params.ch_kst_rocPer4!,
+        SMAROCPer1: params.ch_kst_smaRocPer1!, SMAROCPer2: params.ch_kst_smaRocPer2!, SMAROCPer3: params.ch_kst_smaRocPer3!, SMAROCPer4: params.ch_kst_smaRocPer4!,
+        signalPeriod: params.ch_kst_signalPeriod!,
     };
     const kstValues = KST.calculate(kstInput) as KSTOutput[];
-    const lastKst = getLast(kstValues);
+    const lastKst = getLast(kstValues)!;
+    const prevKst = getPenultimate(kstValues)!;
+    const kstBullishCross = prevKst.kst < prevKst.signal && lastKst.kst > lastKst.signal;
+    const kstBearishCross = prevKst.kst > prevKst.signal && lastKst.kst < lastKst.signal;
+    const isKstBullishBias = lastKst.kst > 0;
+    const isKstBearishBias = lastKst.kst < 0;
 
-    if (!lastKst) {
-        return { signal: 'HOLD', reasons: ['ℹ️ KST indicator not yet fully formed.'] };
-    }
-    const isKstBullish = lastKst.kst > lastKst.signal;
-    const isKstBearish = lastKst.kst < lastKst.signal;
-
+    // 4. Entry Trigger: Fast EMA Cross (Removed as KST cross is sufficient)
+    
+    // 5. Volume Confirmation
+    const obv = OBV.calculate({ close: closes, volume: volumes });
+    const isObvBullish = isObvTrending(obv, 'bullish');
+    const isObvBearish = isObvTrending(obv, 'bearish');
 
     // --- Bullish Logic ---
-    const isPriceAboveKumo = currentPrice > spanA && currentPrice > spanB;
-    if (isPriceAboveKumo) {
-        reasons.push(`✅ Trend: Bullish (Price above Kumo)`);
+    reasons.push(isMacroBullish ? `✅ Trend: Bullish (Price > ${params.ch_trendEmaPeriod}-EMA)` : `❌ Trend: Not Bullish`);
+    reasons.push(isTrending ? `✅ Regime: Trending (ADX ${adx.adx.toFixed(1)})` : `❌ Regime: Not Trending`);
+    reasons.push(kstBullishCross ? `✅ KST: Bullish Cross` : `❌ KST: No Bullish Cross`);
+    reasons.push(isKstBullishBias ? `✅ KST > 0 (Bullish Bias)` : `❌ KST: Not in Bullish Territory`);
+    reasons.push(isObvBullish ? `✅ Volume: Bullish Flow` : `❌ Volume: Not Bullish`);
 
-        const bullishCross = prevTenkan <= prevKijun && lastTenkan > lastKijun;
-        reasons.push(bullishCross ? `✅ Entry: Bullish Tenkan/Kijun Cross` : `❌ Entry: No Bullish Cross`);
-
-        const chikouSpanIndex = klines.length - 1 - params.ichi_displacement!;
-        const isChikouClear = chikouSpanIndex >= 0 ? closes[klines.length - 1] > highs[chikouSpanIndex] : false;
-        reasons.push(isChikouClear ? `✅ Confirmation: Chikou Span is clear` : `❌ Confirmation: Chikou Span obstructed`);
-        
-        reasons.push(isKstBullish ? `✅ KST Confirmation: Bullish` : `❌ KST Confirmation: Not Bullish`);
-
-        if (bullishCross && isChikouClear && isKstBullish) {
-            return { signal: 'BUY', reasons };
-        }
+    if (isMacroBullish && isTrending && kstBullishCross && isKstBullishBias && isObvBullish) {
+        return { signal: 'BUY', reasons };
     }
 
     // --- Bearish Logic ---
-    const isPriceBelowKumo = currentPrice < spanA && currentPrice < spanB;
-    if (isPriceBelowKumo) {
-        reasons.push(`✅ Trend: Bearish (Price below Kumo)`);
-
-        const bearishCross = prevTenkan >= prevKijun && lastTenkan < lastKijun;
-        reasons.push(bearishCross ? `✅ Entry: Bearish Tenkan/Kijun Cross` : `❌ Entry: No Bearish Cross`);
-
-        const chikouSpanIndex = klines.length - 1 - params.ichi_displacement!;
-        const isChikouClear = chikouSpanIndex >= 0 ? closes[klines.length - 1] < lows[chikouSpanIndex] : false;
-        reasons.push(isChikouClear ? `✅ Confirmation: Chikou Span is clear` : `❌ Confirmation: Chikou Span obstructed`);
-
-        reasons.push(isKstBearish ? `✅ KST Confirmation: Bearish` : `❌ KST Confirmation: Not Bearish`);
-
-        if (bearishCross && isChikouClear && isKstBearish) {
-            return { signal: 'SELL', reasons };
-        }
+    reasons.push(isMacroBearish ? `✅ Trend: Bearish (Price < ${params.ch_trendEmaPeriod}-EMA)` : `❌ Trend: Not Bearish`);
+    reasons.push(kstBearishCross ? `✅ KST: Bearish Cross` : `❌ KST: No Bearish Cross`);
+    reasons.push(isKstBearishBias ? `✅ KST < 0 (Bearish Bias)` : `❌ KST: Not in Bearish Territory`);
+    reasons.push(isObvBearish ? `✅ Volume: Bearish Flow` : `❌ Volume: Not Bearish`);
+    
+    if (isMacroBearish && isTrending && kstBearishCross && isKstBearishBias && isObvBearish) {
+        return { signal: 'SELL', reasons };
     }
 
-    reasons.push(`ℹ️ No valid Ichimoku signal detected.`);
+    reasons.push(`ℹ️ No valid KST signal detected.`);
     return { signal: 'HOLD', reasons };
 };
 
@@ -1045,7 +1044,7 @@ const getTheSentinelSignal = (klines: Kline[], params: Required<AgentParams>): T
     }
     
     const finalBullishScore = bullTrend + bullMomentum + bullConfirm;
-    const finalBearishScore = bearTrend + bearMomentum + bearConfirm;
+    const finalBearishScore = bearTrend + bearMomentum + bullConfirm;
 
     const sentinelAnalysis: SentinelAnalysis = {
         bullish: {
@@ -1070,7 +1069,7 @@ const getTheSentinelSignal = (klines: Kline[], params: Required<AgentParams>): T
         return { signal: 'BUY', reasons, sentinelAnalysis };
     }
     
-    if (finalBearishScore >= threshold && finalBearishScore > finalBullishScore) {
+    if (finalBearishScore >= threshold && finalBearishScore > finalBearishScore) {
         reasons.push(`✅ Bearish score exceeds threshold of ${threshold}%.`);
         return { signal: 'SELL', reasons, sentinelAnalysis };
     }
@@ -1149,7 +1148,7 @@ const getIchimokuTrendRiderSignal = (klines: Kline[], params: Required<AgentPara
         conversionPeriod: params.ichi_conversionPeriod, basePeriod: params.ichi_basePeriod,
         spanPeriod: params.ichi_laggingSpanPeriod, displacement: params.ichi_displacement
     };
-    const ichiValues = IchimokuCloud.calculate(ichi_params);
+    const ichiValues = IchimokuCloud.calculate(ichi_params) as IchimokuCloudOutput[];
     const lastIchi = getLast(ichiValues);
     const prevIchi = getPenultimate(ichiValues);
     if (!lastIchi || !prevIchi || !lastIchi.spanA || !lastIchi.spanB || !prevIchi.spanA || !prevIchi.spanB) {
@@ -1235,7 +1234,7 @@ const getTheDetonatorSignal = (klines: Kline[], params: Required<AgentParams>): 
     reasons.push(`ℹ️ BB Breakout Count: ${bb_bull_count} (Bull), ${bb_bear_count} (Bear)`);
 
     const trend_ok_long = emaFast > emaSlow && currentPrice > emaFast;
-    const trend_ok_short = emaFast < emaSlow && currentPrice < emaSlow;
+    const trend_ok_short = emaFast < emaSlow && currentPrice < emaFast;
     reasons.push(trend_ok_long ? `✅ Trend: Bullish` : trend_ok_short ? `✅ Trend: Bearish` : `❌ Trend: Sideways`);
 
     const rsi_ok_long = rsi >= params.det_rsi_thresh;
@@ -1259,6 +1258,106 @@ const getTheDetonatorSignal = (klines: Kline[], params: Required<AgentParams>): 
     return { signal: 'HOLD', reasons };
 };
 
+// --- Agent 18: Candlestick Prophet ---
+const bullishPatterns = { 'Bullish Engulfing': bullishengulfingpattern, 'Dragonfly Doji': dragonflydoji, 'Bullish Harami': bullishharami, 'Bullish Harami Cross': bullishharamicross, 'Hammer': hammerpattern, 'Morning Doji Star': morningdojistar, 'Morning Star': morningstar, 'Piercing Line': piercingline, 'Three White Soldiers': threewhitesoldiers };
+const bearishPatterns = { 'Abandoned Baby': abandonedbaby, 'Bearish Engulfing': bearishengulfingpattern, 'Dark Cloud Cover': darkcloudcover, 'Downside Tasuki Gap': downsidetasukigap, 'Gravestone Doji': gravestonedoji, 'Bearish Harami': bearishharami, 'Bearish Harami Cross': bearishharamicross, 'Hanging Man': hangingman, 'Evening Doji Star': eveningdojistar, 'Evening Star': eveningstar, 'Shooting Star': shootingstar, 'Three Black Crows': threeblackcrows };
+
+const getCandlestickProphetSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
+    const minKlines = Math.max(params.csp_emaMomentumPeriod, params.obvPeriod, 20);
+    if (klines.length < minKlines) return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data.'] };
+    
+    const opens = klines.map(k => k.open);
+    const highs = klines.map(k => k.high);
+    const lows = klines.map(k => k.low);
+    const closes = klines.map(k => k.close);
+    const volumes = klines.map(k => k.volume || 0);
+    const currentPrice = getLast(closes)!;
+    
+    const input = { open: opens, high: highs, low: lows, close: closes };
+
+    const emaMomentum = getLast(EMA.calculate({ period: params.csp_emaMomentumPeriod, values: closes }))!;
+    const obv = OBV.calculate({ close: closes, volume: volumes });
+
+    let bullishSignal: TradeSignal | null = null;
+    let bearishSignal: TradeSignal | null = null;
+
+    // Check for Bullish Patterns
+    for (const [name, patternFunc] of Object.entries(bullishPatterns)) {
+        if (getLast(patternFunc(input))) {
+            const reasons = [`✅ Pattern: ${name}`];
+            const isMomentumConfirmed = currentPrice > emaMomentum;
+            reasons.push(isMomentumConfirmed ? `✅ Momentum: Price > ${params.csp_emaMomentumPeriod}-EMA` : `❌ Momentum: Price not > EMA`);
+            const isVolumeConfirmed = isObvTrending(obv, 'bullish');
+            reasons.push(isVolumeConfirmed ? `✅ Volume: OBV Confirmed` : `❌ Volume: Not bullish`);
+
+            bullishSignal = { signal: (isMomentumConfirmed && isVolumeConfirmed) ? 'BUY' : 'HOLD', reasons };
+            break; // Found one, no need to check for more bullish patterns
+        }
+    }
+
+    // Check for Bearish Patterns
+    for (const [name, patternFunc] of Object.entries(bearishPatterns)) {
+        if (getLast(patternFunc(input))) {
+            const reasons = [`✅ Pattern: ${name}`];
+            const isMomentumConfirmed = currentPrice < emaMomentum;
+            reasons.push(isMomentumConfirmed ? `✅ Momentum: Price < ${params.csp_emaMomentumPeriod}-EMA` : `❌ Momentum: Price not < EMA`);
+            const isVolumeConfirmed = isObvTrending(obv, 'bearish');
+            reasons.push(isVolumeConfirmed ? `✅ Volume: OBV Confirmed` : `❌ Volume: OBV not bearish`);
+            
+            bearishSignal = { signal: (isMomentumConfirmed && isVolumeConfirmed) ? 'SELL' : 'HOLD', reasons };
+            break; // Found one, no need to check for more bearish patterns
+        }
+    }
+
+    // --- Decision Logic ---
+    const isBullishConfirmed = bullishSignal?.signal === 'BUY';
+    const isBearishConfirmed = bearishSignal?.signal === 'SELL';
+
+    if (isBullishConfirmed && isBearishConfirmed) {
+        return { signal: 'HOLD', reasons: ['ℹ️ Conflicting bullish and bearish candlestick patterns detected.'] };
+    }
+    if (isBullishConfirmed) {
+        return bullishSignal!;
+    }
+    if (isBearishConfirmed) {
+        return bearishSignal!;
+    }
+
+    // If patterns were found but not confirmed, return the reasons for the first one found.
+    if (bullishSignal) return bullishSignal;
+    if (bearishSignal) return bearishSignal;
+
+    return { signal: 'HOLD', reasons: ['ℹ️ No recognized candlestick patterns.'] };
+};
+
+// Helper for Agent 18 SL placement
+const findLastCandlestickPattern = (klines: Kline[], direction: 'LONG' | 'SHORT'): { patternInfo: { name: string; index: number; low: number; high: number } | null } => {
+    const patternsToCheck = direction === 'LONG' ? bullishPatterns : bearishPatterns;
+    const opens = klines.map(k => k.open);
+    const highs = klines.map(k => k.high);
+    const lows = klines.map(k => k.low);
+    const closes = klines.map(k => k.close);
+    
+    // Check last 3 candles for a pattern completion
+    for (let i = klines.length - 1; i >= Math.max(0, klines.length - 3); i--) {
+        const tempInput = { open: opens.slice(0, i + 1), high: highs.slice(0, i + 1), low: lows.slice(0, i + 1), close: closes.slice(0, i + 1) };
+        for (const [name, patternFunc] of Object.entries(patternsToCheck)) {
+            try {
+                if (getLast(patternFunc(tempInput))) {
+                    const multiCandlePatterns: Record<string, number> = { 'Morning Star': 3, 'Evening Star': 3, 'Three White Soldiers': 3, 'Three Black Crows': 3, 'Bullish Engulfing': 2, 'Bearish Engulfing': 2 };
+                    const patternLength = multiCandlePatterns[name] || 1;
+                    const patternCandles = klines.slice(Math.max(0, i - patternLength + 1), i + 1);
+                    
+                    const patternLow = Math.min(...patternCandles.map(c => c.low));
+                    const patternHigh = Math.max(...patternCandles.map(c => c.high));
+                    
+                    return { patternInfo: { name, index: i, low: patternLow, high: patternHigh } };
+                }
+            } catch (e) { /* Ignore errors from insufficient data for a pattern */ }
+        }
+    }
+    return { patternInfo: null };
+};
 
 // ----------------------------------------------------------------------------------
 // --- #4: MAIN ORCHESTRATOR & HELPERS ---
@@ -1384,6 +1483,49 @@ function isClimacticMove(
     return { isClimactic: false, reason: '' };
 }
 
+/**
+ * Checks if the price is overextended from its Volume-Weighted Average Price (VWAP).
+ * This prevents chasing trades far from their local "fair value".
+ */
+function isOverextendedFromVwap(
+    klines: Kline[],
+    direction: 'BUY' | 'SELL',
+    vwapDeviationPercent: number
+): { isOverextended: boolean, reason: string } {
+    if (klines.length < 20) return { isOverextended: false, reason: '' };
+
+    const inputs = {
+        high: klines.map(k => k.high),
+        low: klines.map(k => k.low),
+        close: klines.map(k => k.close),
+        volume: klines.map(k => k.volume || 0),
+    };
+    const vwapValues = VWAP.calculate(inputs);
+    const lastVwap = getLast(vwapValues);
+    const currentPrice = getLast(inputs.close);
+
+    if (!lastVwap || !currentPrice) return { isOverextended: false, reason: '' };
+
+    const deviation = ((currentPrice - lastVwap) / lastVwap) * 100;
+    const deviationThreshold = vwapDeviationPercent;
+
+    if (direction === 'BUY' && deviation > deviationThreshold) {
+        return { 
+            isOverextended: true, 
+            reason: `❌ [VETO] Price is ${deviation.toFixed(2)}% above VWAP (>${deviationThreshold}%), suggesting overextension.` 
+        };
+    }
+
+    if (direction === 'SELL' && deviation < -deviationThreshold) {
+        return { 
+            isOverextended: true, 
+            reason: `❌ [VETO] Price is ${Math.abs(deviation).toFixed(2)}% below VWAP (>${deviationThreshold}%), suggesting overextension.` 
+        };
+    }
+    
+    return { isOverextended: false, reason: '' };
+}
+
 
 /**
  * Checks for signs of fading momentum on a profitable trade, suggesting a proactive exit.
@@ -1476,6 +1618,7 @@ export async function getTradingSignal(
         case 15: agentSignal = getInstitutionalFlowTracerSignal(klines, finalParams); break;
         case 16: agentSignal = getIchimokuTrendRiderSignal(klines, finalParams); break;
         case 17: agentSignal = getTheDetonatorSignal(klines, finalParams); break;
+        case 18: agentSignal = getCandlestickProphetSignal(klines, finalParams); break;
         default:
             return { signal: 'HOLD', reasons: ['Agent not found'] };
     }
@@ -1493,6 +1636,17 @@ export async function getTradingSignal(
     if (agentSignal.signal !== 'HOLD') {
         const { isClimactic, reason } = isClimacticMove(klines);
         if (isClimactic) {
+            agentSignal.signal = 'HOLD';
+            agentSignal.reasons.push(reason);
+        }
+    }
+    
+    // --- Universal VWAP Proximity Veto ---
+    if (agentSignal.signal !== 'HOLD') {
+        // Use a specific param for agents that need tuning, otherwise a sensible default.
+        const deviationPercent = finalParams.qsc_vwapDeviationPercent ?? 0.25; // Default to 0.25% if not specified
+        const { isOverextended, reason } = isOverextendedFromVwap(klines, agentSignal.signal, deviationPercent);
+        if (isOverextended) {
             agentSignal.signal = 'HOLD';
             agentSignal.reasons.push(reason);
         }
@@ -1528,102 +1682,23 @@ export async function getTradingSignal(
     return agentSignal;
 }
 
-export function getChameleonStrategicUpdate(
-    klines: Kline[],
-    originalConfig: BotConfig,
-    position: Position
-): ChameleonAgentState {
-    const config = applyTimeframeSettings(originalConfig);
-    const params = config.agentParams as Required<AgentParams>;
-    
-    const closes = klines.map(k => k.close);
-    const highs = klines.map(k => k.high);
-    const lows = klines.map(k => k.low);
-
-    const lastAtr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: params.ch_atrPeriod! })) || 0;
-    const lastRsi = getLast(RSI.calculate({ values: closes, period: params.ch_rsiPeriod! })) || 50;
-    
-    const lookback = params.ch_lookbackPeriod!;
-    const recentKlines = klines.slice(-lookback);
-    const swingPoint = position.direction === 'LONG' 
-        ? Math.min(...recentKlines.map(k => k.low)) 
-        : Math.max(...recentKlines.map(k => k.high));
-
-    const fastEma = getLast(EMA.calculate({ period: 9, values: closes }))!;
-    const slowEma = getLast(EMA.calculate({ period: 21, values: closes }))!;
-    
-    const psarInput = { high: highs, low: lows, step: params.ch_psarStep!, max: params.ch_psarMax! };
-    const lastPsar = psarInput.high.length >= 2 ? getLast(PSAR.calculate(psarInput)) as number | undefined : undefined;
-    
-    const lastAdx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.adxPeriod! }));
-
-    return {
-        lastAtr,
-        lastRsi,
-        swingPoint,
-        fastEma,
-        slowEma,
-        lastPsar,
-        lastAdx,
-    };
-}
-
-
 export function getChameleonManagementSignal(
     position: Position,
-    currentPrice: number,
-    agentState: ChameleonAgentState | undefined,
+    klines: Kline[],
     originalConfig: BotConfig,
 ): TradeManagementSignal {
     const config = applyTimeframeSettings(originalConfig);
     const reasons: string[] = [];
-    if (!agentState || !position.peakPrice) {
-        return { reasons: ['State not initialized or peak price missing'] };
-    }
     
-    const params = config.agentParams as Required<AgentParams>;
-
-    const { lastAtr, fastEma, slowEma, lastRsi, lastPsar, lastAdx } = agentState;
-    const { ch_volatilityMultiplier, ch_breathingRoomCandles } = params;
+    // --- Proactive Flip Logic ---
+    // Check if a valid, opposing signal has formed
+    const opposingSignal = getChameleonSignal(klines, config.agentParams as Required<AgentParams>);
     const isLong = position.direction === 'LONG';
 
-    // --- 1. Proactive Exit & Flip Logic ---
-    const isInProfit = isLong ? currentPrice > position.entryPrice : currentPrice < position.entryPrice;
-    if (isInProfit) {
-        const strongReversal = isLong 
-            ? (fastEma < slowEma && lastRsi < 45 && (lastAdx?.mdi ?? 0) > (lastAdx?.pdi ?? 0))
-            : (fastEma > slowEma && lastRsi > 55 && (lastAdx?.pdi ?? 0) > (lastAdx?.mdi ?? 0));
-
-        if (strongReversal) {
-            reasons.push('Proactive Flip: Strong trend reversal detected.');
-            return { action: 'flip', reasons };
-        }
+    if ((isLong && opposingSignal.signal === 'SELL') || (!isLong && opposingSignal.signal === 'BUY')) {
+        reasons.push('Proactive Flip: Strong trend reversal detected.');
+        return { action: 'flip', reasons };
     }
 
-    // --- 2. State-Based Trailing: "Stalk" vs "Hunt" mode ---
-    // Phase 1: "Stalk Mode" (Breathing Room)
-    if (position.candlesSinceEntry !== undefined && position.candlesSinceEntry < ch_breathingRoomCandles!) {
-        const breathingRoomStop = isLong
-            ? agentState.swingPoint - (agentState.lastAtr * 0.5)
-            : agentState.swingPoint + (agentState.lastAtr * 0.5);
-        if ((isLong && breathingRoomStop > position.stopLossPrice) || (!isLong && breathingRoomStop < position.stopLossPrice)) {
-             return {
-                newStopLoss: breathingRoomStop,
-                reasons: [`Agent Trail: Stalk mode active, SL set below swing point.`]
-            };
-        }
-    }
-    // Phase 2: "Hunt Mode" (Aggressive Trail)
-    else {
-        if (lastPsar) {
-             if ((isLong && lastPsar > position.stopLossPrice && lastPsar < currentPrice) || (!isLong && lastPsar < position.stopLossPrice && lastPsar > currentPrice)) {
-                 return {
-                     newStopLoss: lastPsar,
-                     reasons: [`Agent Trail: Hunt mode active, trailing with PSAR.`]
-                 };
-             }
-        }
-    }
-
-    return { reasons };
+    return { reasons: ['No flip signal detected'] };
 }

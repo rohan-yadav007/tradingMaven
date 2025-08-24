@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig } from '../types';
 import * as constants from '../constants';
@@ -360,27 +361,18 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 )}
             </div>
 
-            {selectedAgent.id === 13 ? (
-                 <div className="flex flex-col gap-3">
-                    <div className="text-xs text-slate-500 dark:text-slate-400 p-2 bg-slate-100 dark:bg-slate-900/50 rounded-md">
-                        <p className="font-semibold text-sky-600 dark:text-sky-400">Dynamic Profit Management</p>
-                        The Chameleon agent uses a dynamic model to trail stops instead of a fixed take profit target.
-                    </div>
-                </div>
-            ) : (
-                <div className="grid grid-cols-1 gap-4">
-                    <RiskInputWithLock
-                        label="Take Profit"
-                        mode={takeProfitMode}
-                        value={takeProfitValue}
-                        isLocked={isTakeProfitLocked}
-                        investmentAmount={investmentAmount}
-                        onModeChange={setTakeProfitMode}
-                        onValueChange={setTakeProfitValue}
-                        onLockToggle={() => setIsTakeProfitLocked(!isTakeProfitLocked)}
-                    />
-                </div>
-            )}
+            <div className="grid grid-cols-1 gap-4">
+                <RiskInputWithLock
+                    label="Take Profit"
+                    mode={takeProfitMode}
+                    value={takeProfitValue}
+                    isLocked={isTakeProfitLocked}
+                    investmentAmount={investmentAmount}
+                    onModeChange={setTakeProfitMode}
+                    onValueChange={setTakeProfitValue}
+                    onLockToggle={() => setIsTakeProfitLocked(!isTakeProfitLocked)}
+                />
+            </div>
             
              <p className="text-xs text-slate-500 dark:text-slate-400 -mt-2">
                 Stop Loss is fully automated by the agent's logic and the universal profit-locking system.
@@ -491,18 +483,29 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 )}
                  {selectedAgent.id === 13 && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
-                         <p className="text-xs text-slate-500 dark:text-slate-400">Standard Ichimoku parameters (9, 26, 52, 26) are recommended. Adjust with caution.</p>
                          <ParamSlider 
-                            label="Conversion Line Period"
-                            value={agentParams.ichi_conversionPeriod ?? constants.DEFAULT_AGENT_PARAMS.ichi_conversionPeriod}
-                            onChange={(v) => setAgentParams({ ...agentParams, ichi_conversionPeriod: v })}
+                            label="Trend EMA Period"
+                            value={agentParams.ch_trendEmaPeriod ?? constants.DEFAULT_AGENT_PARAMS.ch_trendEmaPeriod}
+                            onChange={(v) => setAgentParams({ ...agentParams, ch_trendEmaPeriod: v })}
+                            min={50} max={200} step={10}
+                        />
+                        <ParamSlider 
+                            label="ADX Threshold"
+                            value={agentParams.ch_adxThreshold ?? constants.DEFAULT_AGENT_PARAMS.ch_adxThreshold}
+                            onChange={(v) => setAgentParams({ ...agentParams, ch_adxThreshold: v })}
+                            min={18} max={30} step={1}
+                        />
+                         <ParamSlider 
+                            label="Fast EMA Period"
+                            value={agentParams.ch_fastEmaPeriod ?? constants.DEFAULT_AGENT_PARAMS.ch_fastEmaPeriod}
+                            onChange={(v) => setAgentParams({ ...agentParams, ch_fastEmaPeriod: v })}
                             min={5} max={20} step={1}
                         />
                         <ParamSlider 
-                            label="Base Line Period"
-                            value={agentParams.ichi_basePeriod ?? constants.DEFAULT_AGENT_PARAMS.ichi_basePeriod}
-                            onChange={(v) => setAgentParams({ ...agentParams, ichi_basePeriod: v })}
-                            min={20} max={60} step={1}
+                            label="Slow EMA Period"
+                            value={agentParams.ch_slowEmaPeriod ?? constants.DEFAULT_AGENT_PARAMS.ch_slowEmaPeriod}
+                            onChange={(v) => setAgentParams({ ...agentParams, ch_slowEmaPeriod: v })}
+                            min={20} max={50} step={1}
                         />
                         <ParamSlider 
                             label="KST Signal Period"

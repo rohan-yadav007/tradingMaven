@@ -12,7 +12,7 @@ export const TIME_FRAMES: string[] = ['1m', '3m', '5m', '15m', '1h', '4h', '1d']
  * The standard taker fee rate for Binance Spot and Futures.
  * Used to calculate estimated PNL after fees.
  */
-export const TAKER_FEE_RATE = 0.0004; // 0.04% fee per trade side.
+export const TAKER_FEE_RATE = 0.0005; // 0.05% fee per trade side.
 
 /**
  * A non-negotiable, system-wide minimum risk-to-reward ratio for a trade to be considered valid.
@@ -48,8 +48,8 @@ export const AGENTS: Agent[] = [
     {
         id: 13,
         name: 'The Chameleon',
-        description: 'An aggressive Ichimoku system. It trades with the trend (Kumo Cloud) and enters on high-momentum Tenkan/Kijun crosses, with final confirmation from the Chikou Span and KST indicator. All signals are filtered to avoid entries on climactic, high-volume candles.',
-        indicators: ['Ichimoku Cloud', 'Tenkan/Kijun Cross', 'Chikou Span', 'KST'],
+        description: 'A dynamic momentum agent centered on the KST indicator. It uses a long-period EMA for trend direction and ADX to filter for trending conditions. Entries require both a KST/signal line crossover and confirmation that KST is in bullish/bearish territory (above/below the zero line), ensuring it trades with strong, confirmed momentum. Best suited for lower timeframes (1m-15m).',
+        indicators: ['KST', 'EMA Cross', 'ADX', 'OBV'],
     },
     {
         id: 14,
@@ -74,6 +74,12 @@ export const AGENTS: Agent[] = [
         name: 'The Detonator',
         description: 'A high-momentum scalper using multi-layer Bollinger Bands to detect explosive volatility. Breakouts are confirmed by trend, momentum, and On-Balance Volume accumulation. All signals are filtered to avoid entries on climactic, high-volume candles.',
         indicators: ['Bollinger Bands (x4)', 'EMA', 'RSI', 'Volume', 'OBV'],
+    },
+    {
+        id: 18,
+        name: 'Candlestick Prophet',
+        description: 'A pure price action agent that trades based on classic single and multi-candlestick reversal patterns. It filters entries with a short-term EMA to confirm momentum and OBV for volume validation.',
+        indicators: ['Candlestick Patterns', 'EMA (Momentum)', 'OBV'],
     },
 ];
 
@@ -193,21 +199,10 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     he_adxTrendThreshold: 20,
     
     // Agent 13: The Chameleon
-    ch_rsiPeriod: 14,
-    ch_atrPeriod: 14,
-    ch_momentumThreshold: 65,
-    ch_volatilityMultiplier: 1.8,
-    ch_lookbackPeriod: 10,
-    ch_bbPeriod: 20,
-    ch_bbStdDev: 2,
-    ch_profitLockMultiplier: 1.2,
-    ch_volatilitySpikeMultiplier: 2.5,
-    ch_psarStep: 0.02,
-    ch_psarMax: 0.2,
-    ch_scoreThreshold: 5,
+    ch_fastEmaPeriod: 9,
+    ch_slowEmaPeriod: 21,
+    ch_trendEmaPeriod: 200,
     ch_adxThreshold: 22,
-    ch_volumeMultiplier: 1.5,
-    ch_breathingRoomCandles: 2,
     // KST Defaults for Agent 13
     ch_kst_rocPer1: 10,
     ch_kst_rocPer2: 15,
@@ -253,6 +248,9 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     det_max_bar_move_pct: 18.0,
     det_bb_margin_pct: 0.08,
     det_maxSlAtrMult: 2.5,
+
+    // Agent 18: Candlestick Prophet
+    csp_emaMomentumPeriod: 10,
 };
 
 
@@ -289,13 +287,9 @@ export const HISTORIC_EXPERT_TIMEFRAME_SETTINGS: Record<string, Partial<AgentPar
 };
 
 export const CHAMELEON_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '1m':  { ichi_conversionPeriod: 7,  ichi_basePeriod: 22 },
-    '3m':  { ichi_conversionPeriod: 7,  ichi_basePeriod: 22 },
-    '5m':  { ichi_conversionPeriod: 9,  ichi_basePeriod: 26 },
-    '15m': { ichi_conversionPeriod: 9,  ichi_basePeriod: 26 },
-    '1h':  { ichi_conversionPeriod: 12, ichi_basePeriod: 30 },
-    '4h':  { ichi_conversionPeriod: 12, ichi_basePeriod: 30 },
-    '1d':  { ichi_conversionPeriod: 12, ichi_basePeriod: 30 },
+    '1m':  { ch_trendEmaPeriod: 100, ch_adxThreshold: 25, ch_kst_rocPer1: 8, ch_kst_rocPer2: 12, ch_kst_rocPer3: 16, ch_kst_rocPer4: 24, ch_kst_smaRocPer1: 8, ch_kst_smaRocPer2: 8, ch_kst_smaRocPer3: 8, ch_kst_smaRocPer4: 12 },
+    '3m':  { ch_trendEmaPeriod: 150, ch_adxThreshold: 23, ch_kst_rocPer1: 9, ch_kst_rocPer2: 13, ch_kst_rocPer3: 17, ch_kst_rocPer4: 26, ch_kst_smaRocPer1: 9, ch_kst_smaRocPer2: 9, ch_kst_smaRocPer3: 9, ch_kst_smaRocPer4: 13 },
+    '5m':  { ch_trendEmaPeriod: 200, ch_adxThreshold: 22 }, // Uses default KST params
 };
 
 export const SENTINEL_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
@@ -338,6 +332,15 @@ export const THE_DETONATOR_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParam
     '1d':  { det_rsi_thresh: 65, det_rr_mult: 3.5, det_sl_atr_mult: 2.0 },
 };
 
+export const CANDLESTICK_PROPHET_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
+    '1m':  { csp_emaMomentumPeriod: 21 },
+    '3m':  { csp_emaMomentumPeriod: 13 },
+    '5m':  { csp_emaMomentumPeriod: 10 },
+    '15m': { csp_emaMomentumPeriod: 8 },
+    '1h':  { csp_emaMomentumPeriod: 8 },
+    '4h':  { csp_emaMomentumPeriod: 5 },
+    '1d':  { csp_emaMomentumPeriod: 5 },
+};
 
 // --- PAPER TRADING WALLETS ---
 export const MOCK_PAPER_SPOT_WALLET: WalletBalance[] = [
@@ -355,10 +358,11 @@ export const MOCK_PAPER_FUTURES_WALLET: WalletBalance[] = [
 
 /**
  * A non-configurable hard cap on risk to prevent catastrophic single-trade losses.
- * This is the maximum percentage of the *investment amount* that a trade is allowed to lose.
- * E.g., a value of 40 means a maximum loss of 40%, which is $40 on a $100 investment.
+ * This is the maximum percentage of the *invested margin* that a trade is allowed to lose.
+ * For example, a value of 5 with a $100 investment means the max loss (before fees/slippage)
+ * is hard-capped at $5, regardless of leverage or the agent's calculated stop loss.
  */
-export const MAX_STOP_LOSS_PERCENT_OF_INVESTMENT = 10;
+export const MAX_MARGIN_LOSS_PERCENT = 10;
 
 // New, wider ATR multipliers for initial stop loss placement to give trades more "breathing room"
 export const TIMEFRAME_ATR_CONFIG: Record<string, { atrMultiplier: number, riskRewardRatio: number }> = {

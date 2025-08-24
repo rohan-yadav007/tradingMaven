@@ -48,7 +48,7 @@ async function handleCommand(command: string, args: string[], chatId: string) {
         case '/help':
         case '/start':
             await sendMessage(
-`*Gemini Trading Assistant Commands*
+`*Binni Trading Assistant Commands*
 
 */status* - View all running bots.
 */agents* - List available trading agents.

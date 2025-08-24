@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, TradeSignal, TradingMode, RiskMode, LogType } from '../types';
-import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, LockIcon, UnlockIcon, InfoIcon, ZapIcon } from './icons';
+import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, LockIcon, UnlockIcon, InfoIcon, ZapIcon, RefreshIcon } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
-import { MAX_STOP_LOSS_PERCENT_OF_INVESTMENT, TAKER_FEE_RATE } from '../constants';
+import { MAX_MARGIN_LOSS_PERCENT, TAKER_FEE_RATE } from '../constants';
 
 
 interface RunningBotsProps {
@@ -267,15 +267,15 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
     const profitSecureStatus = getProfitSecureStatus();
 
     const isFutures = config.mode === TradingMode.USDSM_Futures;
-    let hardCapLabel = `Hard Cap (${MAX_STOP_LOSS_PERCENT_OF_INVESTMENT}%)`;
+    let hardCapLabel = `Hard Cap (${MAX_MARGIN_LOSS_PERCENT}%)`;
     let hardCapDescription: string;
 
     if (isFutures && config.leverage > 1) {
-        const maxLossInDollars = (config.investmentAmount * MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100).toFixed(2);
-        hardCapLabel = `Hard Cap (${MAX_STOP_LOSS_PERCENT_OF_INVESTMENT}% of Investment)`;
-        hardCapDescription = `Caps max loss to ${MAX_STOP_LOSS_PERCENT_OF_INVESTMENT}% of your invested margin ($${maxLossInDollars}).`;
+        const maxLossInDollars = (config.investmentAmount * MAX_MARGIN_LOSS_PERCENT / 100).toFixed(2);
+        hardCapLabel = `Hard Cap (${MAX_MARGIN_LOSS_PERCENT}% of Margin)`;
+        hardCapDescription = `Caps max loss to ${MAX_MARGIN_LOSS_PERCENT}% of your invested margin ($${maxLossInDollars}).`;
     } else {
-        hardCapDescription = `Caps max loss to ${MAX_STOP_LOSS_PERCENT_OF_INVESTMENT}% of your investment if the agent's logic is riskier.`;
+        hardCapDescription = `Caps max loss to ${MAX_MARGIN_LOSS_PERCENT}% of your investment if the agent's logic is riskier.`;
     }
 
     return (
@@ -411,6 +411,15 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
         : { text: 'PAPER', bg: 'bg-sky-100 dark:bg-sky-900', text_color: 'text-sky-700 dark:text-sky-300' };
     
     const roundTripFee = position ? position.entryPrice * position.size * TAKER_FEE_RATE * 2 : 0;
+    
+    const REFRESH_INTERVALS = [10, 20, 30, 60];
+    const handleIntervalChange = () => {
+        const currentInterval = bot.config.refreshInterval ?? 30;
+        const currentIndex = REFRESH_INTERVALS.indexOf(currentInterval);
+        const nextIndex = (currentIndex + 1) % REFRESH_INTERVALS.length;
+        const newInterval = REFRESH_INTERVALS[nextIndex];
+        actions.onUpdateBotConfig(bot.id, { refreshInterval: newInterval });
+    };
 
 
     return (
@@ -496,7 +505,17 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {position && <StopLossDetails position={position} config={bot.config} />}
                         <div className={position ? '' : 'lg:col-span-1'}>
-                             <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">AI Analysis</h4>
+                            <div className="flex justify-between items-center mb-2">
+                                 <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base">AI Analysis</h4>
+                                <button 
+                                    onClick={handleIntervalChange} 
+                                    className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-sky-500 dark:hover:text-sky-400 bg-slate-100 dark:bg-slate-700/50 px-2 py-1 rounded-full transition-colors"
+                                    title="Change AI analysis refresh interval"
+                                >
+                                    <RefreshIcon className="w-3.5 h-3.5" />
+                                    <span>{bot.config.refreshInterval ?? 30}s</span>
+                                </button>
+                            </div>
                              <AnalysisPreview agent={bot.config.agent} agentParams={bot.config.agentParams} analysis={bot.analysis} isLoading={false} />
                         </div>
                          <div className={position ? '' : 'lg:col-span-1'}>

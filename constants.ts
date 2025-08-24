@@ -362,7 +362,7 @@ export const MOCK_PAPER_FUTURES_WALLET: WalletBalance[] = [
  * For example, a value of 5 with a $100 investment means the max loss (before fees/slippage)
  * is hard-capped at $5, regardless of leverage or the agent's calculated stop loss.
  */
-export const MAX_MARGIN_LOSS_PERCENT = 10;
+export const MAX_MARGIN_LOSS_PERCENT = 5;
 
 // New, wider ATR multipliers for initial stop loss placement to give trades more "breathing room"
 export const TIMEFRAME_ATR_CONFIG: Record<string, { atrMultiplier: number, riskRewardRatio: number }> = {

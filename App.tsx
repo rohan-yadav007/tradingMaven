@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -435,6 +434,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             stopLossPrice,
             initialTakeProfitPrice: takeProfitPrice,
             initialStopLossPrice: executionDetails.agentStopLoss,
+            initialRiskInPrice: Math.abs(finalEntryPrice - executionDetails.agentStopLoss),
             activeStopLossReason: executionDetails.slReason,
             pricePrecision: config.pricePrecision,
             timeFrame: config.timeFrame,

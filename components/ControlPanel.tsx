@@ -665,7 +665,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     />
                 </div>
                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Secures profits when momentum fades. Actively minimizes losses by exiting early if the market turns decisively against a losing trade.
+                    The ultimate safety net. Secures high profits on early signs of reversal and minimizes losses by exiting invalidated trades before the stop loss is hit. Functions as an always-on 'emergency brake' for every trade.
                 </p>
             </div>
              <div className={formGroupClass}>

@@ -1,4 +1,3 @@
-
 import { TradingMode, type Agent, type TradeSignal, type Kline, type AgentParams, type Position, type ADXOutput, type MACDOutput, type BollingerBandsOutput, type StochasticRSIOutput, type TradeManagementSignal, type BotConfig, VortexIndicatorOutput, SentinelAnalysis, KSTOutput, type IchimokuCloudOutput } from '../types';
 import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, VWAP, IchimokuCloud, KST, abandonedbaby, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, downsidetasukigap, dragonflydoji, gravestonedoji, bullishharami, bearishharami, bullishharamicross, bearishharamicross, hammerpattern, hangingman, morningdojistar, morningstar, eveningdojistar, eveningstar, piercingline, shootingstar, threeblackcrows, threewhitesoldiers } from 'technicalindicators';
 import * as constants from '../constants';
@@ -151,6 +150,36 @@ function applyTimeframeSettings(config: BotConfig): BotConfig {
     return { ...config, agentParams: finalParams };
 }
 
+const bullishPatterns = { 'Bullish Engulfing': bullishengulfingpattern, 'Dragonfly Doji': dragonflydoji, 'Bullish Harami': bullishharami, 'Bullish Harami Cross': bullishharamicross, 'Hammer': hammerpattern, 'Morning Doji Star': morningdojistar, 'Morning Star': morningstar, 'Piercing Line': piercingline, 'Three White Soldiers': threewhitesoldiers };
+const bearishPatterns = { 'Abandoned Baby': abandonedbaby, 'Bearish Engulfing': bearishengulfingpattern, 'Dark Cloud Cover': darkcloudcover, 'Downside Tasuki Gap': downsidetasukigap, 'Gravestone Doji': gravestonedoji, 'Bearish Harami': bearishharami, 'Bearish Harami Cross': bearishharamicross, 'Hanging Man': hangingman, 'Evening Doji Star': eveningdojistar, 'Evening Star': eveningstar, 'Shooting Star': shootingstar, 'Three Black Crows': threeblackcrows };
+
+function findLastCandlestickPattern(klines: Kline[], direction: 'LONG' | 'SHORT'): { patternInfo: { name: string; index: number; low: number; high: number } | null } {
+    const patternsToCheck = direction === 'LONG' ? bullishPatterns : bearishPatterns;
+    const opens = klines.map(k => k.open);
+    const highs = klines.map(k => k.high);
+    const lows = klines.map(k => k.low);
+    const closes = klines.map(k => k.close);
+    
+    for (let i = klines.length - 1; i >= Math.max(0, klines.length - 3); i--) {
+        const tempInput = { open: opens.slice(0, i + 1), high: highs.slice(0, i + 1), low: lows.slice(0, i + 1), close: closes.slice(0, i + 1) };
+        for (const [name, patternFunc] of Object.entries(patternsToCheck)) {
+            try {
+                if (getLast(patternFunc(tempInput))) {
+                    const multiCandlePatterns: Record<string, number> = { 'Morning Star': 3, 'Evening Star': 3, 'Three White Soldiers': 3, 'Three Black Crows': 3, 'Bullish Engulfing': 2, 'Bearish Engulfing': 2 };
+                    const patternLength = multiCandlePatterns[name] || 1;
+                    const patternCandles = klines.slice(Math.max(0, i - patternLength + 1), i + 1);
+                    
+                    const patternLow = Math.min(...patternCandles.map(c => c.low));
+                    const patternHigh = Math.max(...patternCandles.map(c => c.high));
+                    
+                    return { patternInfo: { name, index: i, low: patternLow, high: patternHigh } };
+                }
+            } catch (e) { /* Ignore errors from insufficient data for a pattern */ }
+        }
+    }
+    return { patternInfo: null };
+}
+
 
 // ----------------------------------------------------------------------------------
 // --- #1: INITIAL TARGET CALCULATION (SL/TP) - THE CORE RISK FIX ---
@@ -211,14 +240,32 @@ export const getInitialAgentTargets = (
         case 9: // Quantum Scalper: Context-aware SL (Trending vs. Ranging).
             const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.qsc_adxPeriod! }))! as ADXOutput;
             const isTrending = adx.adx > params.qsc_adxThreshold!;
-            if (isTrending) { // Use PSAR for trending SL
+            if (isTrending) { 
                 const psarInput = { high: highs, low: lows, step: params.qsc_psarStep, max: params.qsc_psarMax };
                 const psar = getLast(PSAR.calculate(psarInput)) as number | undefined;
-                // CRITICAL FIX: Ensure PSAR is on the correct, protective side of the entry price.
+
+                const stInput = { high: highs, low: lows, close: closes, period: params.qsc_superTrendPeriod, multiplier: params.qsc_superTrendMultiplier };
+                const st = getLast(Supertrend.calculate(stInput)) as number | undefined;
+
+                let psarCandidate: number | undefined;
                 if (psar && ((isLong && psar < entryPrice) || (!isLong && psar > entryPrice))) {
-                    agentStopLoss = psar;
+                    psarCandidate = psar;
+                }
+
+                let stCandidate: number | undefined;
+                if (st && ((isLong && st < entryPrice) || (!isLong && st > entryPrice))) {
+                    stCandidate = st;
+                }
+
+                if (psarCandidate && stCandidate) {
+                    // Both are valid, pick the one that gives a tighter stop (better R:R)
+                    agentStopLoss = isLong ? Math.max(psarCandidate, stCandidate) : Math.min(psarCandidate, stCandidate);
+                } else if (stCandidate) {
+                    agentStopLoss = stCandidate;
+                } else if (psarCandidate) {
+                    agentStopLoss = psarCandidate;
                 } else {
-                    agentStopLoss = fallbackStop(); // Use fallback if PSAR is invalid or undefined
+                    agentStopLoss = fallbackStop();
                 }
             } else { // Use BB for ranging/reversion SL
                 const bb = getLast(BollingerBands.calculate({ period: params.qsc_bbPeriod!, stdDev: params.qsc_bbStdDev!, values: closes }))!;
@@ -427,7 +474,7 @@ export const getInitialAgentTargets = (
 
 /**
  * A multi-stage, fee-multiple-based profit-locking mechanism.
- * 1. Moves SL to fee-adjusted breakeven once profit reaches 2x the fee cost.
+ * 1. Moves SL to fee-adjusted breakeven once profit reaches 30% of the initial TP distance.
  * 2. Moves SL to lock in profits at N-1 fee-multiple milestones thereafter.
  * Called on every price tick.
  * @param position - The current open position.
@@ -438,38 +485,47 @@ export function getMultiStageProfitSecureSignal(
     position: Position,
     currentPrice: number
 ): TradeManagementSignal {
-    const { entryPrice, stopLossPrice, direction, isBreakevenSet, profitLockTier, size } = position;
+    const { entryPrice, stopLossPrice, direction, isBreakevenSet, profitLockTier, size, initialTakeProfitPrice } = position;
     const isLong = direction === 'LONG';
     const reasons: string[] = [];
-
-    const positionValue = entryPrice * size;
-    const roundTripFee = positionValue * TAKER_FEE_RATE * 2;
-    const feeInPrice = roundTripFee > 0 ? (roundTripFee / size) : 0;
-    if (feeInPrice <= 0) return { reasons };
 
     const currentGrossProfitInPrice = (currentPrice - entryPrice) * (isLong ? 1 : -1);
     if (currentGrossProfitInPrice <= 0) return { reasons }; // Not in profit
 
-    const currentFeeMultiple = currentGrossProfitInPrice / feeInPrice;
-
-    // Trigger 1: Move to Breakeven at 2x fee profit
+    // --- Trigger 1: Move to Breakeven based on achieving a percentage of the initial profit target ---
     if (!isBreakevenSet) {
-        if (currentFeeMultiple >= 2) {
+        const initialProfitDistance = Math.abs(initialTakeProfitPrice - entryPrice);
+        if (initialProfitDistance <= 0) return { reasons }; // Avoid division by zero
+
+        const progressToTp = currentGrossProfitInPrice / initialProfitDistance;
+
+        // NEW LOGIC: Trigger breakeven at 30% progress to the initial TP target.
+        if (progressToTp >= 0.30) {
+            const positionValue = entryPrice * size;
+            const roundTripFee = positionValue * TAKER_FEE_RATE * 2;
+            const feeInPrice = roundTripFee > 0 ? (roundTripFee / size) : 0;
             const breakevenStop = entryPrice + (feeInPrice * (isLong ? 1 : -1)); // Covers round-trip fee
+            
             if ((isLong && breakevenStop > stopLossPrice) || (!isLong && breakevenStop < stopLossPrice)) {
                 return {
                     newStopLoss: breakevenStop,
-                    reasons: [`Profit Secure: Breakeven set at 2x fee gain.`],
-                    newState: { isBreakevenSet: true, profitLockTier: 2 }
+                    reasons: [`Profit Secure: Breakeven set at 30% to TP.`],
+                    newState: { isBreakevenSet: true, profitLockTier: 3 } // Set tier to 3 to start next stage
                 };
             }
-        } else {
-            return { reasons };
         }
+        return { reasons }; // Not yet ready for breakeven
     }
 
-    // Trigger 2: Dynamic (N)x -> (N-1)x profit lock for N >= 3
-    if (currentFeeMultiple >= 3) {
+    // --- Trigger 2: Dynamic (N)x -> (N-1)x fee-multiple based profit lock (for N >= 4) ---
+    const positionValue = entryPrice * size;
+    const roundTripFee = positionValue * TAKER_FEE_RATE * 2;
+    const feeInPrice = roundTripFee > 0 ? (roundTripFee / size) : 0;
+    if(feeInPrice <= 0) return { reasons };
+
+    const currentFeeMultiple = currentGrossProfitInPrice / feeInPrice;
+    
+    if (currentFeeMultiple >= 4) {
         const triggerFeeMultiple = Math.floor(currentFeeMultiple); // This is our 'N'
         
         if (triggerFeeMultiple > profitLockTier) {
@@ -477,7 +533,7 @@ export function getMultiStageProfitSecureSignal(
             const newStopLoss = entryPrice + (feeInPrice * lockFeeMultiple * (isLong ? 1 : -1));
 
             if ((isLong && newStopLoss > stopLossPrice) || (!isLong && newStopLoss < stopLossPrice)) {
-                const reason = `Profit Secure: Tier ${lockFeeMultiple} activated at ${triggerFeeMultiple}x fee gain.`;
+                const reason = `Profit Secure: Tier ${lockFeeMultiple - 2} activated at ${triggerFeeMultiple}x fee gain.`;
                 return {
                     newStopLoss,
                     reasons: [reason],
@@ -494,7 +550,8 @@ export function getMultiStageProfitSecureSignal(
 
 /**
  * Calculates a potential new Stop Loss based on agent-specific, indicator-based logic (e.g., PSAR).
- * This is a heavier function designed to be called only on candle closes.
+ * The agent's only job is to report the current value of its trailing indicator.
+ * The manager loop is responsible for deciding if it's a valid and better stop loss.
  * @param position - The current open position.
  * @param klines - The historical klines needed for indicator calculation.
  * @param currentPrice - The price at the time of the candle close.
@@ -519,88 +576,62 @@ export function getAgentExitSignal(
     const highs = klines.map(k => k.high);
     const lows = klines.map(k => k.low);
 
+    // --- Profit Acceleration Logic ---
+    const initialRiskInPrice = position.initialRiskInPrice;
+    const currentProfitInPrice = Math.abs(currentPrice - position.entryPrice);
+    const isHighlyProfitable = initialRiskInPrice > 0 && currentProfitInPrice > (initialRiskInPrice * 2);
+
     switch (agent.id) {
         case 7: // Market Structure Maven
         case 18: // Candlestick Prophet (uses S/R for trailing)
             const srLookback = params.msm_swingPointLookback;
             const { supports, resistances } = calculateSupportResistance(klines, srLookback);
-            let trailStopCandidateSR: number | undefined;
             if (isLong) {
                 const protectiveSupports = supports.filter(s => s < currentPrice);
-                if (protectiveSupports.length > 0) {
-                    trailStopCandidateSR = Math.max(...protectiveSupports); // Closest support below current price
-                }
+                if (protectiveSupports.length > 0) newStopLoss = Math.max(...protectiveSupports);
             } else { // SHORT
                 const protectiveResistances = resistances.filter(r => r > currentPrice);
-                if (protectiveResistances.length > 0) {
-                    trailStopCandidateSR = Math.min(...protectiveResistances); // Closest resistance above current price
-                }
+                if (protectiveResistances.length > 0) newStopLoss = Math.min(...protectiveResistances);
             }
-            if (trailStopCandidateSR &&
-                ((isLong && trailStopCandidateSR > position.stopLossPrice) || (!isLong && trailStopCandidateSR < position.stopLossPrice))
-            ) {
-                newStopLoss = trailStopCandidateSR;
-                reasons.push('Agent S/R Trail');
-            }
+            if (newStopLoss) reasons.push('Agent S/R Trail');
             break;
 
         case 9: // Quantum Scalper: PSAR-based trailing stop
         case 17: // The Detonator: Also uses aggressive PSAR trailing for breakouts
-            const step = agent.id === 9 ? params.qsc_psarStep : params.scalp_psarStep;
-            const max = agent.id === 9 ? params.qsc_psarMax : params.scalp_psarMax;
+            let step = agent.id === 9 ? params.qsc_psarStep : params.scalp_psarStep;
+            let max = agent.id === 9 ? params.qsc_psarMax : params.scalp_psarMax;
+            if (isHighlyProfitable) {
+                step *= 2;
+                max *= 2;
+                reasons.push('Profit Acceleration Active');
+            }
             const psarInput = { high: klines.map(k => k.high), low: klines.map(k => k.low), step, max };
             if (psarInput.high.length >= 2) {
                 const psar = PSAR.calculate(psarInput);
-                const lastPsar = getLast(psar) as number | undefined;
-                if (lastPsar) {
-                    // CRITICAL FIX: Ensure the new SL is on the correct side of the current price.
-                    // For a LONG, the new SL must be higher than the old one, but still BELOW the current price.
-                    if (isLong && lastPsar > position.stopLossPrice && lastPsar < currentPrice) {
-                        newStopLoss = lastPsar;
-                        reasons.push('Agent PSAR Trail');
-                    }
-                    // For a SHORT, the new SL must be lower than the old one, but still ABOVE the current price.
-                    else if (!isLong && lastPsar < position.stopLossPrice && lastPsar > currentPrice) {
-                        newStopLoss = lastPsar;
-                        reasons.push('Agent PSAR Trail');
-                    }
-                }
+                newStopLoss = getLast(psar) as number | undefined;
+                if (newStopLoss) reasons.push('Agent PSAR Trail');
             }
             break;
 
         case 11: // Historic Expert
         case 13: // The Chameleon
-            const slowEmaPeriod = agent.id === 11 ? params.he_slowEmaPeriod : params.ch_slowEmaPeriod!;
-            const slowEma = getLast(EMA.calculate({ period: slowEmaPeriod, values: closes }));
-            if (slowEma &&
-                ((isLong && slowEma > position.stopLossPrice && slowEma < currentPrice) ||
-                 (!isLong && slowEma < position.stopLossPrice && slowEma > currentPrice))
-            ) {
-                newStopLoss = slowEma;
-                reasons.push('Agent EMA Trail');
-            }
+            const baseEmaPeriod = agent.id === 11 ? params.he_slowEmaPeriod : params.ch_slowEmaPeriod!;
+            const fastEmaPeriod = agent.id === 11 ? params.he_fastEmaPeriod : params.ch_fastEmaPeriod!;
+            const trailEmaPeriod = isHighlyProfitable ? fastEmaPeriod : baseEmaPeriod;
+            if (isHighlyProfitable) reasons.push('Profit Acceleration Active');
+
+            newStopLoss = getLast(EMA.calculate({ period: trailEmaPeriod, values: closes }));
+            if (newStopLoss) reasons.push('Agent EMA Trail');
             break;
 
         case 14: // The Sentinel
-            const st = getLast(Supertrend.calculate({ high: highs, low: lows, close: closes, period: 10, multiplier: 3 }));
-            if (st &&
-                ((isLong && st > position.stopLossPrice && st < currentPrice) ||
-                 (!isLong && st < position.stopLossPrice && st > currentPrice))
-            ) {
-                newStopLoss = st;
-                reasons.push('Agent Supertrend Trail');
-            }
+            newStopLoss = getLast(Supertrend.calculate({ high: highs, low: lows, close: closes, period: 10, multiplier: 3 }));
+            if (newStopLoss) reasons.push('Agent Supertrend Trail');
             break;
 
         case 15: // Institutional Flow Tracer
-            const vwap = getLast(VWAP.calculate({ high: highs, low: lows, close: closes, volume: klines.map(k => k.volume || 0) }));
-             if (vwap &&
-                ((isLong && vwap > position.stopLossPrice && vwap < currentPrice) ||
-                 (!isLong && vwap < position.stopLossPrice && vwap > currentPrice))
-            ) {
-                newStopLoss = vwap;
-                reasons.push('Agent VWAP Trail');
-            }
+            newStopLoss = getLast(VWAP.calculate({ high: highs, low: lows, close: closes, volume: klines.map(k => k.volume || 0) }));
+             if (newStopLoss) reasons.push('Agent VWAP Trail');
             break;
 
         case 16: // Ichimoku Trend Rider
@@ -614,16 +645,8 @@ export function getAgentExitSignal(
             const ichiValues = IchimokuCloud.calculate(ichi_params) as IchimokuCloudOutput[];
             const lastIchi = getLast(ichiValues);
             if(lastIchi) {
-                // For a long trade, trail with the top of the cloud (Senkou Span A). For short, use bottom (Senkou Span B)
-                const trailStopCandidate = isLong ? lastIchi.spanA : lastIchi.spanB;
-                if(trailStopCandidate) {
-                    // Ratchet check: is the new SL tighter and still safe?
-                    if ((isLong && trailStopCandidate > position.stopLossPrice && trailStopCandidate < currentPrice) ||
-                        (!isLong && trailStopCandidate < position.stopLossPrice && trailStopCandidate > currentPrice)) {
-                        newStopLoss = trailStopCandidate;
-                        reasons.push('Agent Ichimoku Cloud Trail');
-                    }
-                }
+                newStopLoss = isLong ? lastIchi.spanA : lastIchi.spanB;
+                if(newStopLoss) reasons.push('Agent Ichimoku Cloud Trail');
             }
             break;
 
@@ -1259,9 +1282,6 @@ const getTheDetonatorSignal = (klines: Kline[], params: Required<AgentParams>): 
 };
 
 // --- Agent 18: Candlestick Prophet ---
-const bullishPatterns = { 'Bullish Engulfing': bullishengulfingpattern, 'Dragonfly Doji': dragonflydoji, 'Bullish Harami': bullishharami, 'Bullish Harami Cross': bullishharamicross, 'Hammer': hammerpattern, 'Morning Doji Star': morningdojistar, 'Morning Star': morningstar, 'Piercing Line': piercingline, 'Three White Soldiers': threewhitesoldiers };
-const bearishPatterns = { 'Abandoned Baby': abandonedbaby, 'Bearish Engulfing': bearishengulfingpattern, 'Dark Cloud Cover': darkcloudcover, 'Downside Tasuki Gap': downsidetasukigap, 'Gravestone Doji': gravestonedoji, 'Bearish Harami': bearishharami, 'Bearish Harami Cross': bearishharamicross, 'Hanging Man': hangingman, 'Evening Doji Star': eveningdojistar, 'Evening Star': eveningstar, 'Shooting Star': shootingstar, 'Three Black Crows': threeblackcrows };
-
 const getCandlestickProphetSignal = (klines: Kline[], params: Required<AgentParams>): TradeSignal => {
     const minKlines = Math.max(params.csp_emaMomentumPeriod, params.obvPeriod, 20);
     if (klines.length < minKlines) return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data.'] };
@@ -1302,403 +1322,240 @@ const getCandlestickProphetSignal = (klines: Kline[], params: Required<AgentPara
             const isMomentumConfirmed = currentPrice < emaMomentum;
             reasons.push(isMomentumConfirmed ? `✅ Momentum: Price < ${params.csp_emaMomentumPeriod}-EMA` : `❌ Momentum: Price not < EMA`);
             const isVolumeConfirmed = isObvTrending(obv, 'bearish');
-            reasons.push(isVolumeConfirmed ? `✅ Volume: OBV Confirmed` : `❌ Volume: OBV not bearish`);
-            
+            reasons.push(isVolumeConfirmed ? `✅ Volume: OBV Confirmed` : `❌ Volume: Not bearish`);
+
             bearishSignal = { signal: (isMomentumConfirmed && isVolumeConfirmed) ? 'SELL' : 'HOLD', reasons };
-            break; // Found one, no need to check for more bearish patterns
+            break; // Found one
         }
     }
 
-    // --- Decision Logic ---
-    const isBullishConfirmed = bullishSignal?.signal === 'BUY';
-    const isBearishConfirmed = bearishSignal?.signal === 'SELL';
-
-    if (isBullishConfirmed && isBearishConfirmed) {
-        return { signal: 'HOLD', reasons: ['ℹ️ Conflicting bullish and bearish candlestick patterns detected.'] };
-    }
-    if (isBullishConfirmed) {
-        return bullishSignal!;
-    }
-    if (isBearishConfirmed) {
-        return bearishSignal!;
-    }
-
-    // If patterns were found but not confirmed, return the reasons for the first one found.
-    if (bullishSignal) return bullishSignal;
-    if (bearishSignal) return bearishSignal;
-
-    return { signal: 'HOLD', reasons: ['ℹ️ No recognized candlestick patterns.'] };
-};
-
-// Helper for Agent 18 SL placement
-const findLastCandlestickPattern = (klines: Kline[], direction: 'LONG' | 'SHORT'): { patternInfo: { name: string; index: number; low: number; high: number } | null } => {
-    const patternsToCheck = direction === 'LONG' ? bullishPatterns : bearishPatterns;
-    const opens = klines.map(k => k.open);
-    const highs = klines.map(k => k.high);
-    const lows = klines.map(k => k.low);
-    const closes = klines.map(k => k.close);
+    if (bullishSignal?.signal === 'BUY') return bullishSignal;
+    if (bearishSignal?.signal === 'SELL') return bearishSignal;
     
-    // Check last 3 candles for a pattern completion
-    for (let i = klines.length - 1; i >= Math.max(0, klines.length - 3); i--) {
-        const tempInput = { open: opens.slice(0, i + 1), high: highs.slice(0, i + 1), low: lows.slice(0, i + 1), close: closes.slice(0, i + 1) };
-        for (const [name, patternFunc] of Object.entries(patternsToCheck)) {
-            try {
-                if (getLast(patternFunc(tempInput))) {
-                    const multiCandlePatterns: Record<string, number> = { 'Morning Star': 3, 'Evening Star': 3, 'Three White Soldiers': 3, 'Three Black Crows': 3, 'Bullish Engulfing': 2, 'Bearish Engulfing': 2 };
-                    const patternLength = multiCandlePatterns[name] || 1;
-                    const patternCandles = klines.slice(Math.max(0, i - patternLength + 1), i + 1);
-                    
-                    const patternLow = Math.min(...patternCandles.map(c => c.low));
-                    const patternHigh = Math.max(...patternCandles.map(c => c.high));
-                    
-                    return { patternInfo: { name, index: i, low: patternLow, high: patternHigh } };
-                }
-            } catch (e) { /* Ignore errors from insufficient data for a pattern */ }
-        }
-    }
-    return { patternInfo: null };
+    const finalReasons = bullishSignal?.reasons || bearishSignal?.reasons || ['ℹ️ No actionable candlestick pattern detected.'];
+    return { signal: 'HOLD', reasons: finalReasons };
 };
 
+
 // ----------------------------------------------------------------------------------
-// --- #4: MAIN ORCHESTRATOR & HELPERS ---
+// --- #4: MASTER SIGNAL DISPATCHER ---
 // ----------------------------------------------------------------------------------
+export const getTradingSignal = async (
+    agent: Agent,
+    klines: Kline[],
+    originalConfig: BotConfig,
+    htfKlines?: Kline[]
+): Promise<TradeSignal> => {
+    // 1. Get the raw signal from the agent's logic
+    const config = applyTimeframeSettings(originalConfig);
+    const params = config.agentParams as Required<AgentParams>;
+
+    let rawSignal: TradeSignal;
+    switch (agent.id) {
+        case 7:  rawSignal = getMarketStructureMavenSignal(klines, params); break;
+        case 9:  rawSignal = getQuantumScalperSignal(klines, params); break;
+        case 11: rawSignal = getHistoricExpertSignal(klines, params); break;
+        case 13: rawSignal = getChameleonSignal(klines, params); break;
+        case 14: rawSignal = getTheSentinelSignal(klines, params); break;
+        case 15: rawSignal = getInstitutionalFlowTracerSignal(klines, params); break;
+        case 16: rawSignal = getIchimokuTrendRiderSignal(klines, params); break;
+        case 17: rawSignal = getTheDetonatorSignal(klines, params); break;
+        case 18: rawSignal = getCandlestickProphetSignal(klines, params); break;
+        default: return { signal: 'HOLD', reasons: ['Agent not found'] };
+    }
+    
+    if (rawSignal.signal === 'HOLD') {
+        return rawSignal;
+    }
+
+    // 2. Apply HTF Confirmation Filter
+    if (config.isHtfConfirmationEnabled && htfKlines && htfKlines.length > 50) {
+        const htfCloses = htfKlines.map(k => k.close);
+        const htfEma = getLast(EMA.calculate({ period: 50, values: htfCloses }))!;
+        const currentPrice = getLast(klines)!.close;
+
+        const isHtfBullish = currentPrice > htfEma;
+        const isHtfBearish = currentPrice < htfEma;
+        
+        if (rawSignal.signal === 'BUY' && !isHtfBullish) {
+            rawSignal.reasons.push(`❌ VETO: Higher timeframe trend is bearish.`);
+            return { ...rawSignal, signal: 'HOLD' };
+        }
+        if (rawSignal.signal === 'SELL' && !isHtfBearish) {
+            rawSignal.reasons.push(`❌ VETO: Higher timeframe trend is bullish.`);
+            return { ...rawSignal, signal: 'HOLD' };
+        }
+        rawSignal.reasons.push(isHtfBullish ? `✅ HTF Trend: Bullish` : `✅ HTF Trend: Bearish`);
+    }
+
+    // 3. Apply Minimum R:R Veto Filter
+    if (config.isMinRrEnabled) {
+        const entryPrice = getLast(klines)!.close;
+        const { stopLossPrice, takeProfitPrice } = getInitialAgentTargets(klines, entryPrice, rawSignal.signal === 'BUY' ? 'LONG' : 'SHORT', config);
+        const risk = Math.abs(entryPrice - stopLossPrice);
+        const reward = Math.abs(takeProfitPrice - entryPrice);
+        
+        if (risk > 0) {
+            const rr = reward / risk;
+            if (rr < constants.MIN_RISK_REWARD_RATIO) {
+                rawSignal.reasons.push(`❌ VETO: R:R of ${rr.toFixed(2)} is below minimum of ${constants.MIN_RISK_REWARD_RATIO}.`);
+                return { ...rawSignal, signal: 'HOLD' };
+            }
+            rawSignal.reasons.push(`✅ R:R Check: OK (${rr.toFixed(2)}:1)`);
+        }
+    }
+    
+    return rawSignal;
+};
+
+// --- Chameleon V2 Management Logic ---
+export function getChameleonManagementSignal(
+    position: Position,
+    klines: Kline[],
+    currentPrice: number,
+    originalConfig: BotConfig
+): TradeManagementSignal {
+    const config = applyTimeframeSettings(originalConfig);
+    const params = config.agentParams as Required<AgentParams>;
+
+    const closes = klines.map(k => k.close);
+    const kstInput = {
+        values: closes,
+        ROCPer1: params.ch_kst_rocPer1!, ROCPer2: params.ch_kst_rocPer2!, ROCPer3: params.ch_kst_rocPer3!, ROCPer4: params.ch_kst_rocPer4!,
+        SMAROCPer1: params.ch_kst_smaRocPer1!, SMAROCPer2: params.ch_kst_smaRocPer2!, SMAROCPer3: params.ch_kst_smaRocPer3!, SMAROCPer4: params.ch_kst_smaRocPer4!,
+        signalPeriod: params.ch_kst_signalPeriod!,
+    };
+    const kstValues = KST.calculate(kstInput) as KSTOutput[];
+    const lastKst = getLast(kstValues)!;
+    const prevKst = getPenultimate(kstValues)!;
+    
+    const isLong = position.direction === 'LONG';
+    const kstBearishCross = prevKst.kst > prevKst.signal && lastKst.kst < lastKst.signal;
+    const kstBullishCross = prevKst.kst < prevKst.signal && lastKst.kst > lastKst.signal;
+
+    if (isLong && kstBearishCross) {
+        return { action: 'flip', reasons: ['Chameleon: KST bearish cross detected, flipping LONG to SHORT.'] };
+    }
+    if (!isLong && kstBullishCross) {
+         return { action: 'flip', reasons: ['Chameleon: KST bullish cross detected, flipping SHORT to LONG.'] };
+    }
+    
+    return { reasons: [] }; // No action
+}
+
+
+// --- SUPERVISOR: Proactive Exit and Invalidation ---
+export async function getSupervisorSignal(
+    position: Position,
+    klines: Kline[],
+    config: BotConfig
+): Promise<{ action: 'hold' | 'close', reason: string }> {
+
+    const { entryPrice, direction, initialRiskInPrice, candlesSinceEntry } = position;
+    const params = { ...constants.DEFAULT_AGENT_PARAMS, ...config.agentParams };
+    if (klines.length < 20) return { action: 'hold', reason: '' };
+
+    const closes = klines.map(k => k.close);
+    const currentPrice = closes[closes.length - 1];
+    const currentCandle = klines[klines.length - 1];
+    const prevCandle = klines[klines.length - 2];
+    const isLong = direction === 'LONG';
+    const isInProfit = isLong ? currentPrice > entryPrice : currentPrice < entryPrice;
+
+    // --- 1. Catastrophic Reversal Check (Emergency Brake) ---
+    const atr = getLast(ATR.calculate({ high: klines.map(k=>k.high), low: klines.map(k=>k.low), close: closes, period: 14 }))!;
+    const bodySize = Math.abs(currentCandle.close - currentCandle.open);
+    const isStrongReversalCandle = bodySize > atr * 1.5;
+    const isBearishEngulfing = currentCandle.close < currentCandle.open && prevCandle.close > prevCandle.open && currentCandle.open > prevCandle.close && currentCandle.close < prevCandle.open;
+    const isBullishEngulfing = currentCandle.close > currentCandle.open && prevCandle.close < prevCandle.open && currentCandle.open < prevCandle.close && currentCandle.close > prevCandle.open;
+
+    if (isLong && isStrongReversalCandle && isBearishEngulfing) {
+        return { action: 'close', reason: `Supervisor: Catastrophic reversal candle detected.` };
+    }
+    if (!isLong && isStrongReversalCandle && isBullishEngulfing) {
+        return { action: 'close', reason: `Supervisor: Catastrophic reversal candle detected.` };
+    }
+
+    // --- 2. Profit Preservation Check ---
+    if (isInProfit && initialRiskInPrice > 0) {
+        const currentProfitInPrice = Math.abs(currentPrice - entryPrice);
+        const rrAchieved = currentProfitInPrice / initialRiskInPrice;
+        
+        if (rrAchieved > 1.5) { // Check for reversal after achieving a decent profit
+            const fastEma = getLast(EMA.calculate({ period: 9, values: closes }))!;
+            const momentumIsFlipping = (isLong && currentPrice < fastEma) || (!isLong && currentPrice > fastEma);
+            
+            if (momentumIsFlipping) {
+                return { action: 'close', reason: `Supervisor: Secured ${rrAchieved.toFixed(1)}R profit on reversal signal.` };
+            }
+        }
+    }
+    
+    // --- 3. Trade Invalidation Check (Market Structure Break) ---
+    if (!isInProfit) {
+        // Find the swing low/high that supported the entry
+        const entryCandleIndex = klines.findIndex(k => k.time >= position.entryTime.getTime());
+        if(entryCandleIndex > 10) {
+            const lookbackSlice = klines.slice(entryCandleIndex - 10, entryCandleIndex);
+            const keyLevel = isLong 
+                ? Math.min(...lookbackSlice.map(k => k.low))
+                : Math.max(...lookbackSlice.map(k => k.high));
+            
+            const isStructureBroken = (isLong && currentPrice < keyLevel) || (!isLong && currentPrice > keyLevel);
+
+            if(isStructureBroken) {
+                 return { action: 'close', reason: `Supervisor: Invalidation - key market structure broken.` };
+            }
+        }
+    }
+    
+    // --- 4. Stagnation Check ---
+     if (candlesSinceEntry !== undefined && candlesSinceEntry > params.invalidationCandleLimit) {
+        const rrAchieved = initialRiskInPrice > 0 ? (Math.abs(currentPrice - entryPrice) / initialRiskInPrice) : 0;
+        if(rrAchieved < 0.5) { // Hasn't made meaningful progress
+             return { action: 'close', reason: `Supervisor: Stagnation - trade closed after ${params.invalidationCandleLimit} candles with no progress.` };
+        }
+    }
+    
+    return { action: 'hold', reason: '' };
+}
+
 
 export function validateTradeProfitability(
     entryPrice: number,
     stopLossPrice: number,
     takeProfitPrice: number,
     direction: 'LONG' | 'SHORT',
-    originalConfig: BotConfig
+    config: BotConfig
 ): { isValid: boolean, reason: string } {
-    const config = applyTimeframeSettings(originalConfig);
-    const riskDistance = Math.abs(entryPrice - stopLossPrice);
-    const rewardDistance = Math.abs(takeProfitPrice - entryPrice);
+    const { investmentAmount, mode, leverage, isMinRrEnabled } = config;
 
-    // 1. Risk-to-Reward Check
-    if (config.isMinRrEnabled) {
-        if (riskDistance <= 0) {
-            return { isValid: false, reason: '❌ VETO: Risk distance is zero.' };
-        }
+    const isLong = direction === 'LONG';
+    const positionValue = mode === TradingMode.USDSM_Futures ? investmentAmount * leverage : investmentAmount;
+    const size = positionValue / entryPrice;
 
-        const rrRatio = rewardDistance / riskDistance;
-        if (rrRatio < constants.MIN_RISK_REWARD_RATIO) {
-            return {
-                isValid: false,
-                reason: `❌ VETO: R:R Ratio of ${rrRatio.toFixed(2)}:1 is below the minimum of ${constants.MIN_RISK_REWARD_RATIO}:1.`
-            };
-        }
+    if (size <= 0) {
+        return { isValid: false, reason: 'Calculated position size is zero.' };
     }
 
-    return { isValid: true, reason: `✅ Profitability checks passed.` };
-}
+    const stopLossDistance = Math.abs(entryPrice - stopLossPrice);
+    const takeProfitDistance = Math.abs(takeProfitPrice - entryPrice);
 
-
-/**
- * A simple check for RSI divergence to prevent entering trades at points of exhaustion.
- */
-function detectMomentumExhaustion(
-    klines: Kline[],
-    direction: 'BUY' | 'SELL'
-): { isExhausted: boolean, reason: string } {
-    const lookback = 20; // Lookback for finding peaks/troughs
-    const closes = klines.map(k => k.close);
-    if (closes.length < lookback + 14) return { isExhausted: false, reason: '' };
-
-    const rsiValues = RSI.calculate({ values: closes, period: 14 });
-    const priceSlice = closes.slice(-lookback);
-    const rsiSlice = rsiValues.slice(-lookback);
-    if (rsiSlice.length === 0) return { isExhausted: false, reason: ''};
-
-    if (direction === 'BUY') { // Check for bearish divergence
-        const currentPrice = priceSlice[priceSlice.length - 1];
-        const currentRsi = rsiSlice[rsiSlice.length - 1];
-
-        let prevPricePeak = 0;
-        let prevRsiPeak = 0;
-        // Find the highest high before the last 2 bars
-        for (let i = 0; i < priceSlice.length - 2; i++) {
-            if (priceSlice[i] > prevPricePeak) {
-                prevPricePeak = priceSlice[i];
-                prevRsiPeak = rsiSlice[i];
-            }
-        }
-        
-        // If current price makes a higher high, but RSI makes a lower high
-        if (currentPrice > prevPricePeak && currentRsi < prevRsiPeak) {
-            return { isExhausted: true, reason: '❌ [VETO] Bearish RSI divergence detected (peak exhaustion).' };
-        }
-
-    } else { // Check for bullish divergence
-        const currentPrice = priceSlice[priceSlice.length - 1];
-        const currentRsi = rsiSlice[rsiSlice.length - 1];
-
-        let prevPriceTrough = Infinity;
-        let prevRsiTrough = Infinity;
-        // Find the lowest low before the last 2 bars
-        for (let i = 0; i < priceSlice.length - 2; i++) {
-            if (priceSlice[i] < prevPriceTrough) {
-                prevPriceTrough = priceSlice[i];
-                prevRsiTrough = rsiSlice[i];
-            }
-        }
-
-        if (currentPrice < prevPriceTrough && currentRsi > prevRsiTrough) {
-            return { isExhausted: true, reason: '❌ [VETO] Bullish RSI divergence detected (bottom exhaustion).' };
-        }
-    }
-
-    return { isExhausted: false, reason: '' };
-}
-
-/**
- * Checks if the signal candle represents a climactic, exhaustive move.
- * Such moves are often traps, and entering on them is high-risk.
- */
-function isClimacticMove(
-    klines: Kline[],
-): { isClimactic: boolean, reason: string } {
-    const minKlines = 21; // For 20-period SMA volume
-    if (klines.length < minKlines) return { isClimactic: false, reason: '' };
-    
-    const lastKline = klines[klines.length - 1];
-    const closes = klines.map(k => k.close);
-    const highs = klines.map(k => k.high);
-    const lows = klines.map(k => k.low);
-    const volumes = klines.map(k => k.volume || 0);
-
-    const candleRange = lastKline.high - lastKline.low;
-    const lastAtr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: 14 })) || 0;
-    const lastVolume = getLast(volumes) || 0;
-    const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes })) || 0;
-
-    // A climactic move is defined by an unusually large price range combined with high volume.
-    // We use a generous multiplier to only catch truly exceptional, exhaustive moves.
-    const isLargeRange = candleRange > (lastAtr * 3.5);
-    const isHighVolume = lastVolume > (volumeSma * 2.0);
-
-    if (isLargeRange && isHighVolume) {
-        return { isClimactic: true, reason: `❌ [VETO] Signal on climactic candle (3.5x ATR, 2.0x Vol), suggesting exhaustion.` };
+    if (stopLossDistance <= 0 || takeProfitDistance <= 0) {
+        return { isValid: false, reason: 'Stop loss or take profit is at or inside the entry price.' };
     }
     
-    return { isClimactic: false, reason: '' };
-}
-
-/**
- * Checks if the price is overextended from its Volume-Weighted Average Price (VWAP).
- * This prevents chasing trades far from their local "fair value".
- */
-function isOverextendedFromVwap(
-    klines: Kline[],
-    direction: 'BUY' | 'SELL',
-    vwapDeviationPercent: number
-): { isOverextended: boolean, reason: string } {
-    if (klines.length < 20) return { isOverextended: false, reason: '' };
-
-    const inputs = {
-        high: klines.map(k => k.high),
-        low: klines.map(k => k.low),
-        close: klines.map(k => k.close),
-        volume: klines.map(k => k.volume || 0),
-    };
-    const vwapValues = VWAP.calculate(inputs);
-    const lastVwap = getLast(vwapValues);
-    const currentPrice = getLast(inputs.close);
-
-    if (!lastVwap || !currentPrice) return { isOverextended: false, reason: '' };
-
-    const deviation = ((currentPrice - lastVwap) / lastVwap) * 100;
-    const deviationThreshold = vwapDeviationPercent;
-
-    if (direction === 'BUY' && deviation > deviationThreshold) {
-        return { 
-            isOverextended: true, 
-            reason: `❌ [VETO] Price is ${deviation.toFixed(2)}% above VWAP (>${deviationThreshold}%), suggesting overextension.` 
-        };
+    const riskRewardRatio = takeProfitDistance / stopLossDistance;
+    if (isMinRrEnabled && riskRewardRatio < constants.MIN_RISK_REWARD_RATIO) {
+        return { isValid: false, reason: `Trade VETOED: R:R of ${riskRewardRatio.toFixed(2)} is below minimum of ${constants.MIN_RISK_REWARD_RATIO}.` };
     }
 
-    if (direction === 'SELL' && deviation < -deviationThreshold) {
-        return { 
-            isOverextended: true, 
-            reason: `❌ [VETO] Price is ${Math.abs(deviation).toFixed(2)}% below VWAP (>${deviationThreshold}%), suggesting overextension.` 
-        };
-    }
-    
-    return { isOverextended: false, reason: '' };
-}
+    const totalFees = (entryPrice + takeProfitPrice) * size * constants.TAKER_FEE_RATE;
+    const grossPnlOnTp = takeProfitDistance * size;
 
-
-/**
- * Checks for signs of fading momentum on a profitable trade, suggesting a proactive exit.
- */
-export function checkMomentumFadingSignal(
-    position: Position,
-    klines: Kline[],
-    config: BotConfig,
-): { closePosition: boolean, reason: string } {
-    const isLong = position.direction === 'LONG';
-    const closes = klines.map(k => k.close);
-    const currentPrice = getLast(closes)!;
-    const isInProfit = isLong ? currentPrice > position.entryPrice : currentPrice < position.entryPrice;
-
-    // This check is only for profitable trades.
-    if (!isInProfit) {
-        return { closePosition: false, reason: '' };
-    }
-    
-    if(closes.length < 25) return { closePosition: false, reason: '' }; // Need enough data for EMAs
-
-    const fastEma = getLast(EMA.calculate({ period: 9, values: closes }))!;
-    const slowEma = getLast(EMA.calculate({ period: 21, values: closes }))!;
-
-    if (isLong) {
-        // Bearish crossover is a strong sign of fading momentum
-        if (fastEma < slowEma) {
-            return { closePosition: true, reason: 'Proactive Exit: Fading momentum detected (EMA crossover).' };
-        }
-    } else { // SHORT
-        // Bullish crossover
-        if (fastEma > slowEma) {
-            return { closePosition: true, reason: 'Proactive Exit: Fading momentum detected (EMA crossover).' };
-        }
-    }
-    
-    return { closePosition: false, reason: '' };
-}
-
-/**
- * Checks for strong counter-trend signals on a losing trade to minimize loss.
- */
-export function checkLossMinimizationSignal(
-    position: Position,
-    klines: Kline[],
-    config: BotConfig,
-): { closePosition: boolean, reason: string } {
-    const isLong = position.direction === 'LONG';
-    const closes = klines.map(k => k.close);
-    
-    if(closes.length < 25) return { closePosition: false, reason: '' };
-
-    const fastEma = getLast(EMA.calculate({ period: 9, values: closes }))!;
-    const slowEma = getLast(EMA.calculate({ period: 21, values: closes }))!;
-    
-    // Check if the momentum is decisively against the position.
-    if (isLong) {
-        // Bearish crossover exists
-        if (fastEma < slowEma) {
-            return { closePosition: true, reason: 'Loss Minimization: Bearish momentum confirmed (EMA cross).' };
-        }
-    } else { // SHORT
-        // Bullish crossover exists
-        if (fastEma > slowEma) {
-            return { closePosition: true, reason: 'Loss Minimization: Bullish momentum confirmed (EMA cross).' };
-        }
-    }
-    
-    return { closePosition: false, reason: '' };
-}
-
-
-export async function getTradingSignal(
-    agent: Agent, 
-    klines: Kline[], 
-    originalConfig: BotConfig, 
-    htfKlines?: Kline[]
-): Promise<TradeSignal> {
-    const config = applyTimeframeSettings(originalConfig);
-    const finalParams = config.agentParams as Required<AgentParams>;
-
-    let agentSignal: TradeSignal;
-
-    switch (agent.id) {
-        case 7: agentSignal = getMarketStructureMavenSignal(klines, finalParams); break;
-        case 9: agentSignal = getQuantumScalperSignal(klines, finalParams); break;
-        case 11: agentSignal = getHistoricExpertSignal(klines, finalParams); break;
-        case 13: agentSignal = getChameleonSignal(klines, finalParams); break;
-        case 14: agentSignal = getTheSentinelSignal(klines, finalParams); break;
-        case 15: agentSignal = getInstitutionalFlowTracerSignal(klines, finalParams); break;
-        case 16: agentSignal = getIchimokuTrendRiderSignal(klines, finalParams); break;
-        case 17: agentSignal = getTheDetonatorSignal(klines, finalParams); break;
-        case 18: agentSignal = getCandlestickProphetSignal(klines, finalParams); break;
-        default:
-            return { signal: 'HOLD', reasons: ['Agent not found'] };
+    if (grossPnlOnTp <= totalFees) {
+        return { isValid: false, reason: 'VETO: Take profit target is not high enough to cover estimated trading fees.' };
     }
 
-    // --- Universal RSI Divergence Veto ---
-    if (agentSignal.signal !== 'HOLD') {
-        const { isExhausted, reason } = detectMomentumExhaustion(klines, agentSignal.signal);
-        if (isExhausted) {
-            agentSignal.signal = 'HOLD';
-            agentSignal.reasons.push(reason);
-        }
-    }
-
-    // --- Universal Climactic Move Veto ---
-    if (agentSignal.signal !== 'HOLD') {
-        const { isClimactic, reason } = isClimacticMove(klines);
-        if (isClimactic) {
-            agentSignal.signal = 'HOLD';
-            agentSignal.reasons.push(reason);
-        }
-    }
-    
-    // --- Universal VWAP Proximity Veto ---
-    if (agentSignal.signal !== 'HOLD') {
-        // Use a specific param for agents that need tuning, otherwise a sensible default.
-        const deviationPercent = finalParams.qsc_vwapDeviationPercent ?? 0.25; // Default to 0.25% if not specified
-        const { isOverextended, reason } = isOverextendedFromVwap(klines, agentSignal.signal, deviationPercent);
-        if (isOverextended) {
-            agentSignal.signal = 'HOLD';
-            agentSignal.reasons.push(reason);
-        }
-    }
-
-    // --- Universal HTF Confirmation Filter ---
-    if (config.isHtfConfirmationEnabled && htfKlines && htfKlines.length > 50) {
-        if (agentSignal.signal !== 'HOLD') {
-            const htfEmaPeriod = 50;
-            const htfCloses = htfKlines.map(k => k.close);
-            const htfEma = getLast(EMA.calculate({ period: htfEmaPeriod, values: htfCloses })) as number | undefined;
-            const currentPrice = getLast(klines.map(k => k.close))!;
-
-            if (htfEma) {
-                const isHtfBullish = currentPrice > htfEma;
-                const isHtfBearish = currentPrice < htfEma;
-
-                const signalDirection = agentSignal.signal === 'BUY' ? 'LONG' : 'SHORT';
-
-                if (isHtfBearish && signalDirection === 'LONG') {
-                    agentSignal.signal = 'HOLD';
-                    agentSignal.reasons.push(`❌ [HTF VETO] Signal contradicts bearish HTF trend (Price < ${htfEmaPeriod}-EMA).`);
-                } else if (isHtfBullish && signalDirection === 'SHORT') {
-                    agentSignal.signal = 'HOLD';
-                    agentSignal.reasons.push(`❌ [HTF VETO] Signal contradicts bullish HTF trend (Price > ${htfEmaPeriod}-EMA).`);
-                } else {
-                    agentSignal.reasons.push(`✅ [HTF CONFIRMED] Signal aligns with ${isHtfBullish ? 'bullish' : 'bearish'} HTF trend.`);
-                }
-            }
-        }
-    }
-
-    return agentSignal;
-}
-
-export function getChameleonManagementSignal(
-    position: Position,
-    klines: Kline[],
-    originalConfig: BotConfig,
-): TradeManagementSignal {
-    const config = applyTimeframeSettings(originalConfig);
-    const reasons: string[] = [];
-    
-    // --- Proactive Flip Logic ---
-    // Check if a valid, opposing signal has formed
-    const opposingSignal = getChameleonSignal(klines, config.agentParams as Required<AgentParams>);
-    const isLong = position.direction === 'LONG';
-
-    if ((isLong && opposingSignal.signal === 'SELL') || (!isLong && opposingSignal.signal === 'BUY')) {
-        reasons.push('Proactive Flip: Strong trend reversal detected.');
-        return { action: 'flip', reasons };
-    }
-
-    return { reasons: ['No flip signal detected'] };
+    return { isValid: true, reason: `✅ R:R Check: OK (${riskRewardRatio.toFixed(2)}:1)` };
 }

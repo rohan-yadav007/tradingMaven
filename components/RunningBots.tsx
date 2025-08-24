@@ -358,11 +358,11 @@ const BotLog: React.FC<{ log: BotLogEntry[] }> = ({ log }) => {
             case LogType.Success: return 'text-emerald-500';
             case LogType.Action: return 'text-sky-500';
             case LogType.Status: return 'text-amber-500';
-            default: return 'text-slate-500 dark:text-slate-400';
+            default: return 'text-slate-500 dark:text-slate-200';
         }
     };
     return (
-        <div className="bg-slate-900 text-white font-mono text-xs rounded-lg p-3 h-48 overflow-y-auto">
+        <div className="bg-slate-900 text-white font-mono text-xs rounded-lg p-3 h-[28rem] overflow-y-auto">
             {log.map((entry, index) => (
                 <div key={index} className="flex">
                     <span className="text-slate-500 mr-2">{new Date(entry.timestamp).toLocaleTimeString()}</span>

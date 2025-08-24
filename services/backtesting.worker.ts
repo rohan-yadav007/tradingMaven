@@ -1,5 +1,5 @@
 import { Kline, BotConfig, BacktestResult, SimulatedTrade, AgentParams, Position, RiskMode, TradingMode, OptimizationResultItem } from '../types';
-import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, checkMomentumFadingSignal, checkLossMinimizationSignal } from './localAgentService';
+import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getSupervisorSignal } from './localAgentService';
 import * as constants from '../constants';
 
 // --- Worker-local Helper Functions ---
@@ -177,7 +177,7 @@ async function runBacktest(
     };
 
     for (let i = minCandles; i < targetTimeframeKlines.length; i++) {
-        const historySlice = targetTimeframeKlines.slice(0, i);
+        const historySlice = targetTimeframeKlines.slice(0, i + 1);
         const currentCandle = targetTimeframeKlines[i]; // This is the candle we are simulating
         let hasTradedInThisCandle = false;
 
@@ -190,100 +190,79 @@ async function runBacktest(
             const isLong = openPosition.direction === 'LONG';
             const stopReason = openPosition.activeStopLossReason.includes('Trail') || openPosition.activeStopLossReason.includes('Secure') || openPosition.activeStopLossReason === 'Breakeven' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
             
-            // --- INTRA-CANDLE PRICE SIMULATION ---
-            // Simulates price movement within the candle to catch SL/TP hits more accurately.
             const pricePath = currentCandle.open < currentCandle.close 
-                ? [currentCandle.open, currentCandle.high, currentCandle.low, currentCandle.close] // Bullish candle
-                : [currentCandle.open, currentCandle.low, currentCandle.high, currentCandle.close]; // Bearish candle
+                ? [currentCandle.open, currentCandle.high, currentCandle.low, currentCandle.close] 
+                : [currentCandle.open, currentCandle.low, currentCandle.high, currentCandle.close];
 
             for (const pricePoint of pricePath) {
-                if (!openPosition) break; // Position was closed mid-candle
-
+                if (!openPosition) break;
                 if (isLong) {
-                    if (pricePoint <= openPosition.stopLossPrice) {
-                        hasTradedInThisCandle = closePosition(openPosition.stopLossPrice, stopReason, currentCandle.time);
-                        break;
-                    }
-                    if (pricePoint >= openPosition.takeProfitPrice) {
-                        hasTradedInThisCandle = closePosition(openPosition.takeProfitPrice, 'Take Profit Hit', currentCandle.time);
-                        break;
-                    }
-                } else { // Short
-                    if (pricePoint >= openPosition.stopLossPrice) {
-                        hasTradedInThisCandle = closePosition(openPosition.stopLossPrice, stopReason, currentCandle.time);
-                        break;
-                    }
-                    if (pricePoint <= openPosition.takeProfitPrice) {
-                        hasTradedInThisCandle = closePosition(openPosition.takeProfitPrice, 'Take Profit Hit', currentCandle.time);
-                        break;
-                    }
+                    if (pricePoint <= openPosition.stopLossPrice) { hasTradedInThisCandle = closePosition(openPosition.stopLossPrice, stopReason, currentCandle.time); break; }
+                    if (pricePoint >= openPosition.takeProfitPrice) { hasTradedInThisCandle = closePosition(openPosition.takeProfitPrice, 'Take Profit Hit', currentCandle.time); break; }
+                } else {
+                    if (pricePoint >= openPosition.stopLossPrice) { hasTradedInThisCandle = closePosition(openPosition.stopLossPrice, stopReason, currentCandle.time); break; }
+                    if (pricePoint <= openPosition.takeProfitPrice) { hasTradedInThisCandle = closePosition(openPosition.takeProfitPrice, 'Take Profit Hit', currentCandle.time); break; }
                 }
             }
-            if (hasTradedInThisCandle) {
-                equityCurve.push(equity);
-                continue; // Position closed, move to next candle
-            }
+            if (hasTradedInThisCandle) { equityCurve.push(equity); continue; }
 
-            // --- ON-CANDLE-CLOSE MANAGEMENT (Mirrors live bot) ---
+            // --- ON-CANDLE-CLOSE MANAGEMENT ---
             openPosition.candlesSinceEntry!++;
-
-            let updatedPosition = { ...openPosition };
             const currentPrice = currentCandle.close;
-            const isInProfit = isLong ? currentPrice > updatedPosition.entryPrice : currentPrice < updatedPosition.entryPrice;
 
-            if (!isInProfit) {
-                if (config.isInvalidationCheckEnabled) {
-                    const lossSignal = checkLossMinimizationSignal(updatedPosition, historySlice, config);
-                    if (lossSignal.closePosition) {
-                        hasTradedInThisCandle = closePosition(currentPrice, lossSignal.reason, currentCandle.time);
-                    }
+            // Tier 3: Emergency Brake
+            if (config.isInvalidationCheckEnabled) {
+                const invalidationSignal = await getSupervisorSignal(openPosition, historySlice, config);
+                if (invalidationSignal.action === 'close') {
+                    hasTradedInThisCandle = closePosition(currentPrice, invalidationSignal.reason, currentCandle.time);
+                    if (hasTradedInThisCandle) { equityCurve.push(equity); continue; }
                 }
-                if(!hasTradedInThisCandle) {
-                    const tightenSlSignal = getAgentExitSignal(updatedPosition, historySlice, currentPrice, config);
-                    if (tightenSlSignal.newStopLoss && ((isLong && tightenSlSignal.newStopLoss > updatedPosition.stopLossPrice) || (!isLong && tightenSlSignal.newStopLoss < updatedPosition.stopLossPrice))) {
-                        updatedPosition.stopLossPrice = tightenSlSignal.newStopLoss;
-                        updatedPosition.activeStopLossReason = 'Agent Trail';
-                    }
-                }
-            } else { // Is in profit
-                if (config.isInvalidationCheckEnabled) {
-                    const momentumSignal = checkMomentumFadingSignal(updatedPosition, historySlice, config);
-                    if (momentumSignal.closePosition) {
-                        hasTradedInThisCandle = closePosition(currentPrice, momentumSignal.reason, currentCandle.time);
-                    }
-                }
-                if (!hasTradedInThisCandle) {
-                    let bestNewStop = updatedPosition.stopLossPrice;
-                    let bestReason: Position['activeStopLossReason'] = updatedPosition.activeStopLossReason;
-                    
-                    if (config.isUniversalProfitTrailEnabled) {
-                        const signal = getMultiStageProfitSecureSignal(updatedPosition, currentPrice);
-                        if (signal.newStopLoss && ((isLong && signal.newStopLoss > bestNewStop) || (!isLong && signal.newStopLoss < bestNewStop))) {
-                            bestNewStop = signal.newStopLoss;
-                            bestReason = (signal.newState?.profitLockTier && signal.newState.profitLockTier > 3) ? 'Profit Secure' : 'Breakeven';
-                        }
-                    }
-                    
-                    const agentTrailSignal = getAgentExitSignal(updatedPosition, historySlice, currentPrice, config);
-                    if (agentTrailSignal.newStopLoss && ((isLong && agentTrailSignal.newStopLoss > bestNewStop) || (!isLong && agentTrailSignal.newStopLoss < bestNewStop))) {
-                        bestNewStop = agentTrailSignal.newStopLoss;
-                        bestReason = 'Agent Trail';
-                    }
+            }
+            
+            let updatedPosition = { ...openPosition };
+            
+            const potentialStops: { price: number; reason: Position['activeStopLossReason']; newState?: any }[] = [];
+            potentialStops.push({ price: updatedPosition.stopLossPrice, reason: updatedPosition.activeStopLossReason });
 
-                    updatedPosition.stopLossPrice = bestNewStop;
-                    updatedPosition.activeStopLossReason = bestReason;
+            if (config.isUniversalProfitTrailEnabled) {
+                const signal = getMultiStageProfitSecureSignal(updatedPosition, currentPrice);
+                if (signal.newStopLoss) {
+                    const reason = (signal.newState?.profitLockTier && signal.newState.profitLockTier > 3) ? 'Profit Secure' : 'Breakeven';
+                    potentialStops.push({ price: signal.newStopLoss, reason, newState: signal.newState });
+                }
+            }
 
-                    if (config.isTrailingTakeProfitEnabled) {
-                        const targets = getInitialAgentTargets(historySlice, currentPrice, isLong ? 'LONG' : 'SHORT', config);
-                        if ((isLong && targets.takeProfitPrice > updatedPosition.takeProfitPrice) || (!isLong && targets.takeProfitPrice < updatedPosition.takeProfitPrice)) {
-                            updatedPosition.takeProfitPrice = targets.takeProfitPrice;
-                        }
+            const agentTrailSignal = getAgentExitSignal(updatedPosition, historySlice, currentPrice, config);
+            if (agentTrailSignal.newStopLoss) {
+                potentialStops.push({ price: agentTrailSignal.newStopLoss, reason: 'Agent Trail' });
+            }
+
+            let bestStop = potentialStops[0];
+            for (let i = 1; i < potentialStops.length; i++) {
+                const candidate = potentialStops[i];
+                if ((isLong && candidate.price > bestStop.price) || (!isLong && candidate.price < bestStop.price)) {
+                    bestStop = candidate;
+                }
+            }
+
+            if (bestStop.price !== updatedPosition.stopLossPrice) {
+                const isValid = isLong ? bestStop.price < currentPrice : bestStop.price > currentPrice;
+                if (isValid) {
+                    updatedPosition.stopLossPrice = bestStop.price;
+                    updatedPosition.activeStopLossReason = bestStop.reason;
+                    if (bestStop.newState) {
+                        updatedPosition = { ...updatedPosition, ...bestStop.newState };
                     }
                 }
             }
-            if(!hasTradedInThisCandle) {
-                 openPosition = updatedPosition;
+
+            if (config.isTrailingTakeProfitEnabled) {
+                const targets = getInitialAgentTargets(historySlice, currentPrice, isLong ? 'LONG' : 'SHORT', config);
+                if ((isLong && targets.takeProfitPrice > updatedPosition.takeProfitPrice) || (!isLong && targets.takeProfitPrice < updatedPosition.takeProfitPrice)) {
+                    updatedPosition.takeProfitPrice = targets.takeProfitPrice;
+                }
             }
+            openPosition = updatedPosition;
         }
         
         // --- CHECK FOR NEW ENTRY ---
@@ -300,7 +279,7 @@ async function runBacktest(
             }
 
             if (signal.signal !== 'HOLD' && !isVetoedByCooldown) {
-                const entryPrice = currentCandle.close; // Enter on close of signal candle
+                const entryPrice = currentCandle.close;
                 const isLong = signal.signal === 'BUY';
                 
                 const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(historySlice, entryPrice, isLong ? 'LONG' : 'SHORT', config);
@@ -333,6 +312,7 @@ async function runBacktest(
                             activeStopLossReason: slReason, isBreakevenSet: false, profitLockTier: 0,
                             peakPrice: entryPrice, proactiveLossCheckTriggered: false, candlesSinceEntry: 0,
                             hasBeenProfitable: false, takerFeeRate: config.takerFeeRate,
+                            initialRiskInPrice: Math.abs(entryPrice - agentStopLoss),
                         };
                     }
                 }
@@ -387,7 +367,7 @@ async function runOptimization(
         results.push({ params: paramCombinations[i], result });
         self.postMessage({ type: 'progress', id, progress: { percent: ((i + 1) / paramCombinations.length) * 100, combinations: paramCombinations.length } });
     }
-    return results.filter(item => item.result.totalTrades > 0).sort((a, b) => b.result.profitFactor - a.result.profitFactor || b.result.totalPnl - a.result.totalPnl);
+    return results.filter(item => item.result.totalTrades > 0).sort((a, b) => b.result.profitFactor - a.result.profitFactor || b.result.totalPnl - b.result.totalPnl);
 }
 
 

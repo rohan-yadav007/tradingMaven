@@ -287,8 +287,8 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         executionMode, tradingMode, selectedPair, allPairs, isPairsLoading, leverage, marginType, chartTimeFrame,
         selectedAgent, agentParams, investmentAmount, availableBalance,
         takeProfitMode, takeProfitValue, isTakeProfitLocked,
-        isHtfConfirmationEnabled, isUniversalProfitTrailEnabled: isUniversalProfitTrailEnabled, 
-        isTrailingTakeProfitEnabled: isTrailingTakeProfitEnabled, isMinRrEnabled, isInvalidationCheckEnabled, isCooldownEnabled, htfTimeFrame,
+        isHtfConfirmationEnabled, isUniversalProfitTrailEnabled, 
+        isTrailingTakeProfitEnabled, isMinRrEnabled, isInvalidationCheckEnabled, isCooldownEnabled, htfTimeFrame,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
         futuresSettingsError, multiAssetModeError
     };

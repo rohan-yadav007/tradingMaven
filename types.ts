@@ -109,6 +109,7 @@ export interface Position {
     // For R:R based trailing
     initialStopLossPrice: number;
     initialTakeProfitPrice: number;
+    initialRiskInPrice: number;
     // For SL transparency
     activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Profit Secure' | 'Agent Trail' | 'Breakeven';
     isBreakevenSet?: boolean;
@@ -278,7 +279,7 @@ export interface BotConfig {
     quantityPrecision: number;
     stepSize: number;
     takerFeeRate: number;
-    refreshInterval?: number; // In seconds
+    refreshInterval?: number;
 }
 
 export enum BotStatus {

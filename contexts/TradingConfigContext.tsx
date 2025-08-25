@@ -1,4 +1,3 @@
-
 import React, { createContext, useState, useContext, useMemo, useEffect, useCallback } from 'react';
 import { TradingMode, Agent, AgentParams, RiskMode } from '../types';
 import * as constants from '../constants';
@@ -10,19 +9,24 @@ interface TradingConfigState {
     tradingMode: TradingMode;
     selectedPair: string;
     allPairs: string[];
+    isPairsLoading: boolean;
     leverage: number;
     marginType: 'ISOLATED' | 'CROSSED';
     chartTimeFrame: string;
     selectedAgent: Agent;
     investmentAmount: number;
     availableBalance: number;
-    stopLossMode: RiskMode;
-    stopLossValue: number;
     takeProfitMode: RiskMode;
     takeProfitValue: number;
-    isStopLossLocked: boolean;
     isTakeProfitLocked: boolean;
+    isHtfConfirmationEnabled: boolean;
+    isUniversalProfitTrailEnabled: boolean;
+    isTrailingTakeProfitEnabled: boolean;
+    isMinRrEnabled: boolean;
+    isReanalysisEnabled: boolean;
+    isInvalidationCheckEnabled: boolean;
     isCooldownEnabled: boolean;
+    htfTimeFrame: 'auto' | string;
     agentParams: AgentParams;
     isApiConnected: boolean; // Managed from App.tsx but needed here
     walletViewMode: TradingMode;
@@ -46,13 +50,17 @@ interface TradingConfigActions {
     setSelectedAgent: (agent: Agent) => void;
     setInvestmentAmount: (amount: number) => void;
     setAvailableBalance: (balance: number) => void;
-    setStopLossMode: (mode: RiskMode) => void;
-    setStopLossValue: (value: number) => void;
     setTakeProfitMode: (mode: RiskMode) => void;
     setTakeProfitValue: (value: number) => void;
-    setIsStopLossLocked: (isLocked: boolean) => void;
     setIsTakeProfitLocked: (isLocked: boolean) => void;
+    setIsHtfConfirmationEnabled: (isEnabled: boolean) => void;
+    setIsUniversalProfitTrailEnabled: (isEnabled: boolean) => void;
+    setIsTrailingTakeProfitEnabled: (isEnabled: boolean) => void;
+    setIsMinRrEnabled: (isEnabled: boolean) => void;
+    setIsReanalysisEnabled: (isEnabled: boolean) => void;
+    setIsInvalidationCheckEnabled: (isEnabled: boolean) => void;
     setIsCooldownEnabled: (isEnabled: boolean) => void;
+    setHtfTimeFrame: (tf: 'auto' | string) => void;
     setAgentParams: (params: AgentParams) => void;
     setIsApiConnected: (isConnected: boolean) => void;
     setWalletViewMode: (mode: TradingMode) => void;
@@ -77,21 +85,26 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [marginType, setMarginType] = useState<'ISOLATED' | 'CROSSED'>('ISOLATED');
     const [chartTimeFrame, setTimeFrame] = useState<string>('5m');
     const [selectedAgent, setSelectedAgent] = useState<Agent>(constants.AGENTS[0]);
-    const [agentParams, setAgentParams] = useState<AgentParams>({});
+    const [agentParams, setAgentParams] = useState<AgentParams>({ isCandleConfirmationEnabled: constants.DEFAULT_AGENT_PARAMS.isCandleConfirmationEnabled });
     const [investmentAmount, setInvestmentAmount] = useState<number>(100);
     const [availableBalance, setAvailableBalance] = useState<number>(Infinity);
-    const [stopLossMode, setStopLossMode] = useState<RiskMode>(RiskMode.Percent);
-    const [stopLossValue, setStopLossValue] = useState<number>(2);
-    const [isStopLossLocked, setIsStopLossLocked] = useState<boolean>(false);
     const [takeProfitMode, setTakeProfitMode] = useState<RiskMode>(RiskMode.Percent);
     const [takeProfitValue, setTakeProfitValue] = useState<number>(4);
     const [isTakeProfitLocked, setIsTakeProfitLocked] = useState<boolean>(false);
+    const [isHtfConfirmationEnabled, setIsHtfConfirmationEnabled] = useState<boolean>(false);
+    const [isUniversalProfitTrailEnabled, setIsUniversalProfitTrailEnabled] = useState<boolean>(true);
+    const [isTrailingTakeProfitEnabled, setIsTrailingTakeProfitEnabled] = useState<boolean>(false);
+    const [isMinRrEnabled, setIsMinRrEnabled] = useState<boolean>(true);
+    const [isReanalysisEnabled, setIsReanalysisEnabled] = useState<boolean>(true);
+    const [isInvalidationCheckEnabled, setIsInvalidationCheckEnabled] = useState<boolean>(true);
     const [isCooldownEnabled, setIsCooldownEnabled] = useState<boolean>(true);
+    const [htfTimeFrame, setHtfTimeFrame] = useState<'auto' | string>('auto');
     const [isApiConnected, setIsApiConnected] = useState(false);
     const [walletViewMode, setWalletViewMode] = useState<TradingMode>(TradingMode.Spot);
     const [isMultiAssetMode, setIsMultiAssetMode] = useState(false);
 
     // Context-internal state
+    const [isPairsLoading, setIsPairsLoading] = useState(true);
     const [maxLeverage, setMaxLeverage] = useState(125);
     const [isLeverageLoading, setIsLeverageLoading] = useState(false);
     const [futuresSettingsError, setFuturesSettingsError] = useState<string | null>(null);
@@ -99,34 +112,47 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
 
     // --- Effects moved from App.tsx ---
 
-    // Fetch tradable pairs when trading mode or API connection changes
+    // Fetch tradable pairs when trading mode changes
     useEffect(() => {
-        const fetchPairs = async () => {
-            if (!isApiConnected) {
-                setAllPairs(constants.TRADING_PAIRS);
-                return;
-            }
+        let isCancelled = false;
 
+        const fetchPairs = async () => {
+            setIsPairsLoading(true);
             const pairFetcher = tradingMode === TradingMode.USDSM_Futures 
                 ? binanceService.fetchFuturesPairs 
                 : binanceService.fetchSpotPairs;
             
             try {
                 const pairs = await pairFetcher();
-                if (pairs.length > 0) {
-                    setAllPairs(pairs);
-                    if (!pairs.includes(selectedPair)) {
-                        setSelectedPair(pairs[0] || 'BTC/USDT');
+                if (!isCancelled) {
+                    if (pairs.length > 0) {
+                        setAllPairs(pairs);
+                        if (!pairs.includes(selectedPair)) {
+                            setSelectedPair(pairs[0] || 'BTC/USDT');
+                        }
+                    } else {
+                        setAllPairs(constants.TRADING_PAIRS);
                     }
                 }
             } catch (err) {
-                console.error(`Could not fetch pairs for mode ${tradingMode}:`, err);
-                setAllPairs(constants.TRADING_PAIRS);
+                 if (!isCancelled) {
+                    console.error(`Could not fetch pairs for mode ${tradingMode}:`, err);
+                    setAllPairs(constants.TRADING_PAIRS); // Fallback on error
+                 }
+            } finally {
+                if (!isCancelled) {
+                    setIsPairsLoading(false);
+                }
             }
         };
 
         fetchPairs();
-    }, [tradingMode, isApiConnected, selectedPair]);
+
+        return () => {
+            isCancelled = true;
+        };
+    }, [tradingMode]);
+
 
     // Sync wallet view with trading mode
     useEffect(() => {
@@ -187,7 +213,8 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
                     if (bracketInfo && bracketInfo.brackets && bracketInfo.brackets.length > 0) {
                         const max = bracketInfo.brackets.find(b => b.initialLeverage > 1)?.initialLeverage || 125;
                         setMaxLeverage(max);
-                        if (leverage > max) setLeverage(max);
+                        // Use functional update to avoid adding 'leverage' as a dependency, preventing an infinite loop.
+                        setLeverage(currentLeverage => currentLeverage > max ? max : currentLeverage);
                     } else {
                         setMaxLeverage(125);
                     }
@@ -198,7 +225,40 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
                 })
                 .finally(() => setIsLeverageLoading(false));
         }
-    }, [selectedPair, tradingMode, leverage]);
+    }, [selectedPair, tradingMode]);
+
+    // Reset agent-specific parameters when the agent or timeframe changes
+    useEffect(() => {
+        const agent = selectedAgent;
+        const timeFrame = chartTimeFrame;
+        
+        let finalParams: Partial<AgentParams> = {};
+        
+        let timeframeSettings: Partial<AgentParams> = {};
+        switch (agent.id) {
+            case 7:  timeframeSettings = constants.MARKET_STRUCTURE_MAVEN_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+            case 9:  timeframeSettings = constants.QUANTUM_SCALPER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+            case 11: timeframeSettings = constants.HISTORIC_EXPERT_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+            case 13: timeframeSettings = constants.CHAMELEON_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+            case 14: timeframeSettings = constants.SENTINEL_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+            case 15: timeframeSettings = constants.INSTITUTIONAL_FLOW_TRACER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+            case 16: timeframeSettings = constants.ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+            case 17: timeframeSettings = constants.THE_DETONATOR_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+        }
+
+        finalParams = { ...timeframeSettings };
+
+        // Special handling for params that might not be in timeframe settings but have a default
+        if (agent.id === 7) {
+            if (finalParams.isCandleConfirmationEnabled === undefined) {
+                 finalParams.isCandleConfirmationEnabled = constants.DEFAULT_AGENT_PARAMS.isCandleConfirmationEnabled;
+            }
+        }
+        
+        // This resets any user customizations, which is the desired behavior.
+        setAgentParams(finalParams);
+
+    }, [selectedAgent, chartTimeFrame]);
 
     // --- Action Definitions ---
 
@@ -219,16 +279,19 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const actions = useMemo(() => ({
         setExecutionMode, setTradingMode, setSelectedPair, setAllPairs,
         setLeverage, setMarginType, setTimeFrame, setSelectedAgent,
-        setInvestmentAmount, setAvailableBalance, setStopLossMode, setStopLossValue,
-        setTakeProfitMode, setTakeProfitValue, setIsStopLossLocked, setIsTakeProfitLocked,
-        setIsCooldownEnabled, setAgentParams, setIsApiConnected, setWalletViewMode,
-        setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError,
+        setInvestmentAmount, setAvailableBalance,
+        setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
+        setIsHtfConfirmationEnabled, setHtfTimeFrame, setAgentParams, setIsApiConnected, setWalletViewMode,
+        setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError, setIsUniversalProfitTrailEnabled,
+        setIsTrailingTakeProfitEnabled, setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled, setIsCooldownEnabled,
     }), [onSetMultiAssetMode]);
     
     const state = {
-        executionMode, tradingMode, selectedPair, allPairs, leverage, marginType, chartTimeFrame,
-        selectedAgent, agentParams, investmentAmount, availableBalance, stopLossMode, stopLossValue,
-        takeProfitMode, takeProfitValue, isStopLossLocked, isTakeProfitLocked, isCooldownEnabled,
+        executionMode, tradingMode, selectedPair, allPairs, isPairsLoading, leverage, marginType, chartTimeFrame,
+        selectedAgent, agentParams, investmentAmount, availableBalance,
+        takeProfitMode, takeProfitValue, isTakeProfitLocked,
+        isHtfConfirmationEnabled, isUniversalProfitTrailEnabled, 
+        isTrailingTakeProfitEnabled, isMinRrEnabled, isReanalysisEnabled, isInvalidationCheckEnabled, isCooldownEnabled, htfTimeFrame,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
         futuresSettingsError, multiAssetModeError
     };

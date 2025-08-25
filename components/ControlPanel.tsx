@@ -1,11 +1,11 @@
 
-import React, { useState, useEffect } from 'react';
-import { TradingMode, Kline, RiskMode, TradeSignal } from '../types';
+
+import React, { useState, useEffect, useMemo } from 'react';
+import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig } from '../types';
 import * as constants from '../constants';
 import { PlayIcon, LockIcon, UnlockIcon, CpuIcon, ChevronDown, ChevronUp } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
-import * as binanceService from './../services/binanceService';
-import { getTradingSignal } from '../services/localAgentService';
+import { getTradingSignal, getInitialAgentTargets } from '../services/localAgentService';
 import { SearchableDropdown } from './SearchableDropdown';
 import { useTradingConfigState, useTradingConfigActions } from '../contexts/TradingConfigContext';
 
@@ -14,6 +14,7 @@ interface ControlPanelProps {
     isBotCombinationActive: boolean;
     theme: 'light' | 'dark';
     klines: Kline[];
+    livePrice: number;
 }
 
 const formGroupClass = "flex flex-col gap-1.5";
@@ -21,6 +22,26 @@ const formLabelClass = "text-sm font-medium text-slate-700 dark:text-slate-300";
 const formInputClass = "w-full px-3 py-2 bg-white dark:bg-slate-700/50 border border-slate-300 dark:border-slate-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors";
 const buttonClass = "w-full flex items-center justify-center gap-2 px-4 py-2.5 text-white font-semibold rounded-md shadow-sm transition-colors duration-200";
 const primaryButtonClass = `${buttonClass} bg-sky-600 hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 focus:ring-offset-slate-50 dark:dark:focus:ring-offset-slate-800 disabled:bg-slate-400 dark:disabled:bg-slate-600 disabled:cursor-not-allowed`;
+
+const ParamSlider: React.FC<{label: string, value: number, onChange: (val: number) => void, min: number, max: number, step: number, valueDisplay?: (v: number) => string}> = 
+({ label, value, onChange, min, max, step, valueDisplay }) => (
+    <div className="flex flex-col gap-1.5">
+        <div className="flex justify-between items-baseline">
+            <label className={formLabelClass}>{label}</label>
+            <span className="text-sm font-semibold text-sky-500">{valueDisplay ? valueDisplay(value) : value}</span>
+        </div>
+        <input
+            type="range"
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            onChange={e => onChange(Number(e.target.value))}
+            className="w-full h-2 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer"
+        />
+    </div>
+);
+
 
 const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) => void }> = ({ checked, onChange }) => (
     <button
@@ -127,24 +148,32 @@ const RiskInputWithLock: React.FC<{
 
 export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
     const {
-        onStartBot, isBotCombinationActive, theme, klines
+        onStartBot, isBotCombinationActive, theme, klines, livePrice
     } = props;
+    
+    const config = useTradingConfigState();
+    const actions = useTradingConfigActions();
     
     const {
         executionMode, availableBalance, tradingMode, allPairs, selectedPair,
-        leverage, chartTimeFrame: timeFrame, selectedAgent, investmentAmount,
-        stopLossMode, stopLossValue, takeProfitMode, takeProfitValue,
-        isStopLossLocked, isTakeProfitLocked, isCooldownEnabled, agentParams,
+        isPairsLoading, leverage, chartTimeFrame: timeFrame, selectedAgent, investmentAmount,
+        takeProfitMode, takeProfitValue,
+        isTakeProfitLocked, agentParams,
         marginType, futuresSettingsError, isMultiAssetMode, multiAssetModeError,
-        maxLeverage, isLeverageLoading
-    } = useTradingConfigState();
+        maxLeverage, isLeverageLoading, isHtfConfirmationEnabled, htfTimeFrame,
+        isUniversalProfitTrailEnabled, isTrailingTakeProfitEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
+        isReanalysisEnabled, isCooldownEnabled,
+    } = config;
 
     const {
         setExecutionMode, setTradingMode, setSelectedPair, setLeverage, setTimeFrame,
-        setSelectedAgent, setInvestmentAmount, setStopLossMode, setStopLossValue,
-        setTakeProfitMode, setTakeProfitValue, setIsStopLossLocked, setIsTakeProfitLocked,
-        setIsCooldownEnabled, setMarginType, onSetMultiAssetMode
-    } = useTradingConfigActions();
+        setSelectedAgent, setInvestmentAmount,
+        setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
+        setMarginType, onSetMultiAssetMode, setAgentParams,
+        setIsHtfConfirmationEnabled, setHtfTimeFrame, setIsUniversalProfitTrailEnabled,
+        setIsTrailingTakeProfitEnabled, setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled,
+        setIsCooldownEnabled,
+    } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
 
@@ -152,12 +181,64 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
     const [isAnalysisLoading, setIsAnalysisLoading] = useState(false);
     const [isAnalysisOpen, setIsAnalysisOpen] = useState(true); // Open by default
 
+    const higherTimeFrames = useMemo(() => {
+        const currentIndex = constants.TIME_FRAMES.indexOf(timeFrame);
+        if (currentIndex === -1) return [];
+        return constants.TIME_FRAMES.slice(currentIndex + 1);
+    }, [timeFrame]);
+
+    useEffect(() => {
+        // When the base timeframe changes, if the selected HTF is no longer valid, reset to 'auto'
+        if (htfTimeFrame !== 'auto' && !higherTimeFrames.includes(htfTimeFrame)) {
+            setHtfTimeFrame('auto');
+        }
+    }, [timeFrame, htfTimeFrame, higherTimeFrames, setHtfTimeFrame]);
+
     useEffect(() => {
         const fetchAnalysis = async () => {
-            if (klines.length > 50) { // Check for sufficient data
+            if (klines.length > 0 && livePrice > 0) {
                 setIsAnalysisLoading(true);
+
+                // Construct a preview kline array with the latest live price to ensure real-time analysis
+                const lastKline = klines[klines.length - 1];
+                const previewKline: Kline = {
+                    ...lastKline,
+                    high: Math.max(lastKline.high, livePrice),
+                    low: Math.min(lastKline.low, livePrice),
+                    close: livePrice,
+                    isFinal: false,
+                };
+                const previewKlines = [...klines.slice(0, -1), previewKline];
+
                 try {
-                    const signal = await getTradingSignal(selectedAgent, klines, timeFrame, agentParams);
+                    const previewConfig: BotConfig = {
+                        pair: config.selectedPair,
+                        mode: config.tradingMode,
+                        executionMode: config.executionMode,
+                        leverage: config.leverage,
+                        marginType: config.marginType,
+                        agent: selectedAgent,
+                        timeFrame: timeFrame,
+                        investmentAmount: config.investmentAmount,
+                        takeProfitMode: config.takeProfitMode,
+                        takeProfitValue: config.takeProfitValue,
+                        isTakeProfitLocked: config.isTakeProfitLocked,
+                        isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
+                        isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
+                        isTrailingTakeProfitEnabled: config.isTrailingTakeProfitEnabled,
+                        isMinRrEnabled: config.isMinRrEnabled,
+                        isInvalidationCheckEnabled: config.isInvalidationCheckEnabled,
+                        isReanalysisEnabled: config.isReanalysisEnabled,
+                        isCooldownEnabled: config.isCooldownEnabled,
+                        htfTimeFrame: config.htfTimeFrame,
+                        agentParams: agentParams,
+                        pricePrecision: 8,
+                        quantityPrecision: 8,
+                        stepSize: 0.00000001,
+                        takerFeeRate: constants.TAKER_FEE_RATE,
+                    };
+
+                    const signal = await getTradingSignal(selectedAgent, previewKlines, previewConfig);
                     setAnalysisSignal(signal);
                 } catch (e) {
                     console.error("Error fetching analysis signal:", e);
@@ -168,8 +249,55 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             }
         };
         fetchAnalysis();
-    }, [selectedAgent, klines, timeFrame, agentParams]);
+    }, [selectedAgent, klines, timeFrame, agentParams, config, livePrice]);
 
+    useEffect(() => {
+        const updateSmartTargets = () => {
+            if (klines.length < 50 || isTakeProfitLocked) return;
+
+            const currentPrice = klines[klines.length - 1].close;
+            if (currentPrice <= 0) return;
+            
+            const { stopLossPrice, takeProfitPrice } = getInitialAgentTargets(klines, currentPrice, 'LONG', {
+                pair: selectedPair,
+                mode: tradingMode,
+                executionMode: executionMode,
+                leverage: leverage,
+                agent: selectedAgent,
+                timeFrame: timeFrame,
+                investmentAmount: investmentAmount,
+                takeProfitMode: takeProfitMode,
+                takeProfitValue: takeProfitValue,
+                isTakeProfitLocked: isTakeProfitLocked,
+                isHtfConfirmationEnabled: false,
+                isUniversalProfitTrailEnabled: false,
+                isTrailingTakeProfitEnabled: false,
+                isMinRrEnabled: false,
+                agentParams: agentParams,
+                pricePrecision: 8,
+                quantityPrecision: 8,
+                stepSize: 0.00000001,
+                takerFeeRate: constants.TAKER_FEE_RATE,
+            });
+            
+            const profitDistance = takeProfitPrice - currentPrice;
+            
+            let newTpValue: number;
+            if (takeProfitMode === RiskMode.Percent) {
+                newTpValue = (profitDistance / currentPrice) * 100;
+            } else { // Amount
+                const positionValue = tradingMode === TradingMode.USDSM_Futures ? investmentAmount * leverage : investmentAmount;
+                newTpValue = positionValue * (profitDistance / currentPrice);
+            }
+            setTakeProfitValue(parseFloat(newTpValue.toFixed(2)));
+        };
+
+        updateSmartTargets();
+    }, [
+        klines, isTakeProfitLocked, selectedAgent, timeFrame, agentParams, 
+        investmentAmount, takeProfitMode, setTakeProfitValue, tradingMode, leverage, selectedPair, executionMode
+    ]);
+    
     return (
         <div className="flex flex-col gap-4">
              <div className="flex flex-col gap-2 p-3 bg-slate-100 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg">
@@ -194,6 +322,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     value={selectedPair}
                     onChange={setSelectedPair}
                     theme={theme}
+                    disabled={isPairsLoading}
                 />
             </div>
             
@@ -233,17 +362,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 )}
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-                <RiskInputWithLock
-                    label="Stop Loss"
-                    mode={stopLossMode}
-                    value={stopLossValue}
-                    isLocked={isStopLossLocked}
-                    investmentAmount={investmentAmount}
-                    onModeChange={setStopLossMode}
-                    onValueChange={setStopLossValue}
-                    onLockToggle={() => setIsStopLossLocked(!isStopLossLocked)}
-                />
+            <div className="grid grid-cols-1 gap-4">
                 <RiskInputWithLock
                     label="Take Profit"
                     mode={takeProfitMode}
@@ -255,6 +374,10 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     onLockToggle={() => setIsTakeProfitLocked(!isTakeProfitLocked)}
                 />
             </div>
+            
+             <p className="text-xs text-slate-500 dark:text-slate-400 -mt-2">
+                Stop Loss is fully automated by the agent's logic and the universal profit-locking system.
+            </p>
             
             {tradingMode === TradingMode.USDSM_Futures && (
                  <>
@@ -313,15 +436,171 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
 
             <div className={formGroupClass}>
-                <label htmlFor="agent-select" className={formLabelClass}>Trading Agent</label>
-                <select id="agent-select" value={selectedAgent.id} onChange={e => setSelectedAgent(constants.AGENTS.find(a => a.id === Number(e.target.value))!)} className={formInputClass}>
+                <div className="flex justify-between items-center">
+                    <label htmlFor="agent-select" className={formLabelClass}>Trading Agent</label>
+                    <button 
+                        onClick={() => setAgentParams({})}
+                        className="text-xs font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-500 transition-colors"
+                        title="Reset agent-specific parameters to their default values"
+                    >
+                        Reset to Default
+                    </button>
+                </div>
+                <select 
+                    id="agent-select" 
+                    value={selectedAgent.id} 
+                    onChange={e => {
+                        const agent = constants.AGENTS.find(a => a.id === Number(e.target.value));
+                        if (agent) setSelectedAgent(agent);
+                    }} 
+                    className={formInputClass}
+                >
                     {constants.AGENTS.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
                 </select>
                 <p className="text-xs text-slate-500 dark:text-slate-400">{selectedAgent.description}</p>
+                 {selectedAgent.id === 7 && (
+                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-200 dark:border-slate-700">
+                        <label htmlFor="candle-confirm-toggle" className={formLabelClass}>
+                            Candlestick Confirmation
+                        </label>
+                        <ToggleSwitch
+                            checked={agentParams.isCandleConfirmationEnabled || false}
+                            onChange={(isChecked) => setAgentParams({ ...agentParams, isCandleConfirmationEnabled: isChecked })}
+                        />
+                    </div>
+                )}
+                 {selectedAgent.id === 9 && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-4">
+                        <div>
+                            <label className={formLabelClass}>Entry Mode</label>
+                            <div className="flex items-center gap-1 p-1 bg-slate-200 dark:bg-slate-900/70 rounded-md mt-1">
+                                <button 
+                                    onClick={() => setAgentParams({ ...agentParams, qsc_entryMode: 'breakout' })} 
+                                    className={`flex-1 text-center text-xs font-semibold p-1.5 rounded-md transition-colors ${ (agentParams.qsc_entryMode ?? 'breakout') === 'breakout' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
+                                >
+                                    Breakout
+                                </button>
+                                <button 
+                                    onClick={() => setAgentParams({ ...agentParams, qsc_entryMode: 'pullback' })}
+                                    className={`flex-1 text-center text-xs font-semibold p-1.5 rounded-md transition-colors ${ agentParams.qsc_entryMode === 'pullback' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
+                                >
+                                    Pullback
+                                </button>
+                            </div>
+                        </div>
+                        <ParamSlider 
+                            label="ADX Trend Threshold" 
+                            value={agentParams.qsc_adxThreshold ?? constants.DEFAULT_AGENT_PARAMS.qsc_adxThreshold}
+                            onChange={(v) => setAgentParams({ ...agentParams, qsc_adxThreshold: v })}
+                            min={20} max={40} step={1}
+                        />
+                        {(agentParams.qsc_entryMode ?? 'breakout') === 'breakout' ? (
+                            <ParamSlider 
+                                label="RSI Breakout Threshold" 
+                                value={agentParams.qsc_rsiMomentumThreshold ?? constants.DEFAULT_AGENT_PARAMS.qsc_rsiMomentumThreshold}
+                                onChange={(v) => setAgentParams({ ...agentParams, qsc_rsiMomentumThreshold: v })}
+                                min={51} max={70} step={1}
+                            />
+                        ) : (
+                            <ParamSlider 
+                                label="RSI Pullback Threshold" 
+                                value={agentParams.qsc_rsiPullbackThreshold ?? constants.DEFAULT_AGENT_PARAMS.qsc_rsiPullbackThreshold}
+                                onChange={(v) => setAgentParams({ ...agentParams, qsc_rsiPullbackThreshold: v })}
+                                min={30} max={49} step={1}
+                            />
+                        )}
+                        <ParamSlider 
+                            label="Entry Score Threshold" 
+                            value={agentParams.qsc_trendScoreThreshold ?? constants.DEFAULT_AGENT_PARAMS.qsc_trendScoreThreshold}
+                            onChange={(v) => setAgentParams({ ...agentParams, qsc_trendScoreThreshold: v })}
+                            min={50} max={95} step={1}
+                            valueDisplay={(v) => `${v}%`}
+                        />
+                    </div>
+                )}
+                 {selectedAgent.id === 13 && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
+                         <ParamSlider 
+                            label="Trend EMA Period"
+                            value={agentParams.ch_trendEmaPeriod ?? constants.DEFAULT_AGENT_PARAMS.ch_trendEmaPeriod}
+                            onChange={(v) => setAgentParams({ ...agentParams, ch_trendEmaPeriod: v })}
+                            min={50} max={200} step={10}
+                        />
+                        <ParamSlider 
+                            label="ADX Threshold"
+                            value={agentParams.ch_adxThreshold ?? constants.DEFAULT_AGENT_PARAMS.ch_adxThreshold}
+                            onChange={(v) => setAgentParams({ ...agentParams, ch_adxThreshold: v })}
+                            min={18} max={30} step={1}
+                        />
+                         <ParamSlider 
+                            label="Fast EMA Period"
+                            value={agentParams.ch_fastEmaPeriod ?? constants.DEFAULT_AGENT_PARAMS.ch_fastEmaPeriod}
+                            onChange={(v) => setAgentParams({ ...agentParams, ch_fastEmaPeriod: v })}
+                            min={5} max={20} step={1}
+                        />
+                        <ParamSlider 
+                            label="Slow EMA Period"
+                            value={agentParams.ch_slowEmaPeriod ?? constants.DEFAULT_AGENT_PARAMS.ch_slowEmaPeriod}
+                            onChange={(v) => setAgentParams({ ...agentParams, ch_slowEmaPeriod: v })}
+                            min={20} max={50} step={1}
+                        />
+                        <ParamSlider 
+                            label="KST Signal Period"
+                            value={agentParams.ch_kst_signalPeriod ?? constants.DEFAULT_AGENT_PARAMS.ch_kst_signalPeriod}
+                            onChange={(v) => setAgentParams({ ...agentParams, ch_kst_signalPeriod: v })}
+                            min={3} max={20} step={1}
+                        />
+                    </div>
+                )}
+                 {selectedAgent.id === 14 && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700">
+                         <ParamSlider 
+                            label="Entry Score Threshold" 
+                            value={agentParams.sentinel_scoreThreshold ?? constants.DEFAULT_AGENT_PARAMS.sentinel_scoreThreshold}
+                            onChange={(v) => setAgentParams({ ...agentParams, sentinel_scoreThreshold: v })}
+                            min={50}
+                            max={95}
+                            step={1}
+                            valueDisplay={(v) => `${v}%`}
+                         />
+                    </div>
+                )}
+                {selectedAgent.id === 15 && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
+                        <ParamSlider 
+                            label="Trend EMA Period"
+                            value={agentParams.vwap_emaTrendPeriod ?? constants.DEFAULT_AGENT_PARAMS.vwap_emaTrendPeriod}
+                            onChange={(v) => setAgentParams({ ...agentParams, vwap_emaTrendPeriod: v })}
+                            min={50} max={200} step={10}
+                        />
+                        <ParamSlider 
+                            label="VWAP Proximity"
+                            value={agentParams.vwap_proximityPercent ?? constants.DEFAULT_AGENT_PARAMS.vwap_proximityPercent}
+                            onChange={(v) => setAgentParams({ ...agentParams, vwap_proximityPercent: v })}
+                            min={0.1} max={1} step={0.05}
+                            valueDisplay={(v) => `${v.toFixed(2)}%`}
+                        />
+                    </div>
+                )}
+                 {selectedAgent.id === 16 && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
+                         <p className="text-xs text-slate-500 dark:text-slate-400">Standard Ichimoku parameters (9, 26, 52, 26) are recommended. Adjust with caution.</p>
+                         <ParamSlider 
+                            label="Conversion Line Period"
+                            value={agentParams.ichi_conversionPeriod ?? constants.DEFAULT_AGENT_PARAMS.ichi_conversionPeriod}
+                            onChange={(v) => setAgentParams({ ...agentParams, ichi_conversionPeriod: v })}
+                            min={5} max={20} step={1}
+                        />
+                        <ParamSlider 
+                            label="Base Line Period"
+                            value={agentParams.ichi_basePeriod ?? constants.DEFAULT_AGENT_PARAMS.ichi_basePeriod}
+                            onChange={(v) => setAgentParams({ ...agentParams, ichi_basePeriod: v })}
+                            min={20} max={60} step={1}
+                        />
+                    </div>
+                )}
             </div>
             
-            <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
-
             <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
                 <button
                     onClick={() => setIsAnalysisOpen(!isAnalysisOpen)}
@@ -345,6 +624,101 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 )}
             </div>
 
+            <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
+
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="htf-toggle" className={formLabelClass}>
+                        Higher Timeframe Confirmation
+                    </label>
+                    <ToggleSwitch
+                        checked={isHtfConfirmationEnabled}
+                        onChange={setIsHtfConfirmationEnabled}
+                    />
+                </div>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Aligns trade signals with the dominant trend on a higher timeframe.
+                </p>
+                {isHtfConfirmationEnabled && higherTimeFrames.length > 0 && (
+                    <div className="flex flex-col gap-1.5 mt-2">
+                        <label className={formLabelClass}>Confirmation Timeframe</label>
+                        <select value={htfTimeFrame} onChange={e => setHtfTimeFrame(e.target.value)} className={formInputClass}>
+                            <option value="auto">Auto</option>
+                            {higherTimeFrames.map(tf => <option key={tf} value={tf}>{tf}</option>)}
+                        </select>
+                    </div>
+                )}
+            </div>
+             <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="profit-trail-toggle" className={formLabelClass}>
+                        Universal Profit Trail
+                    </label>
+                    <ToggleSwitch
+                        checked={isUniversalProfitTrailEnabled}
+                        onChange={setIsUniversalProfitTrailEnabled}
+                    />
+                </div>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                    A fee-based profit-locking system. Disabling allows agent-specific exit logic.
+                </p>
+            </div>
+             <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="tp-trail-toggle" className={formLabelClass}>
+                        Trailing Take Profit
+                    </label>
+                    <ToggleSwitch
+                        checked={isTrailingTakeProfitEnabled}
+                        onChange={setIsTrailingTakeProfitEnabled}
+                    />
+                </div>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Dynamically adjusts the TP target upwards on profitable trades to capture more of a trend.
+                </p>
+            </div>
+             <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="rr-veto-toggle" className={formLabelClass}>
+                        Minimum R:R Veto
+                    </label>
+                    <ToggleSwitch
+                        checked={isMinRrEnabled}
+                        onChange={setIsMinRrEnabled}
+                    />
+                </div>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Enforces a minimum risk-to-reward ratio of {constants.MIN_RISK_REWARD_RATIO}:1 on all new trades.
+                </p>
+            </div>
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="reanalysis-toggle" className={formLabelClass}>
+                        Agent Re-analysis
+                    </label>
+                    <ToggleSwitch
+                        checked={isReanalysisEnabled}
+                        onChange={setIsReanalysisEnabled}
+                    />
+                </div>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                    On a set interval, the agent re-evaluates the market. If the original entry conditions are no longer met, the bot will proactively exit the trade.
+                </p>
+            </div>
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="invalidation-toggle" className={formLabelClass}>
+                        Proactive Exit & Invalidation
+                    </label>
+                    <ToggleSwitch
+                        checked={isInvalidationCheckEnabled}
+                        onChange={setIsInvalidationCheckEnabled}
+                    />
+                </div>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                    The ultimate safety net. Secures high profits on early signs of reversal and minimizes losses by exiting invalidated trades before the stop loss is hit. Functions as an always-on 'emergency brake' for every trade.
+                </p>
+            </div>
              <div className={formGroupClass}>
                 <div className="flex items-center justify-between">
                     <label htmlFor="cooldown-toggle" className={formLabelClass}>
@@ -356,7 +730,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     />
                 </div>
                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Bot will pause for {constants.BOT_COOLDOWN_CANDLES} candles after a trade closes.
+                    Prevents immediate re-entry in the same direction for a few candles after a trade closes.
                 </p>
             </div>
 

@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { OrderBook, OrderBookEntry } from '../types';
 import { ActivityIcon } from './icons';
@@ -26,7 +25,7 @@ const DepthRow: React.FC<{
                 className={`absolute top-0 bottom-0 ${barColor} transition-all duration-200 ${isBid ? 'right-0' : 'left-0'}`}
                 style={{ width: `${barWidth}%` }}
             ></div>
-            <span className={`relative z-10 ${isBid ? 'text-left' : `text-left ${textColor}`}`}>
+            <span className={`relative z-10 ${isBid ? `text-left ${textColor}` : 'text-left'}`}>
                 {entry.price.toFixed(pricePrecision)}
             </span>
             <span className="relative z-10 text-right text-slate-800 dark:text-slate-200">{entry.amount.toFixed(4)}</span>
@@ -47,21 +46,21 @@ export const DepthChart: React.FC<DepthChartProps> = ({ orderBook, pricePrecisio
     }
     
     const { bids, asks, spread, spreadPercentage } = orderBook;
-    const maxBidTotal = bids[bids.length - 1]?.total || 0;
+    const maxBidTotal = bids[0]?.total || 0;
     const maxAskTotal = asks[asks.length - 1]?.total || 0;
     const maxCumulativeTotal = Math.max(maxBidTotal, maxAskTotal);
 
     return (
         <div className="flex flex-col gap-2 h-full text-sm">
              <div className="grid grid-cols-2 gap-4 text-xs font-semibold text-slate-500 dark:text-slate-400 px-2">
-                <span>Bids (Buyers)</span>
-                <span className="text-right">Asks (Sellers)</span>
+                <span className="text-right">Bids (Buyers)</span>
+                <span>Asks (Sellers)</span>
              </div>
-             <div className="grid grid-cols-2 gap-4">
+             <div className="grid grid-cols-2 gap-4 h-full overflow-hidden">
                 {/* Bids Column */}
-                <div className="flex flex-col">
-                     <div className="grid grid-cols-3 text-xs text-slate-500 dark:text-slate-400 px-2 mb-1">
-                        <span>Price</span>
+                <div className="flex flex-col overflow-y-auto">
+                     <div className="grid grid-cols-3 text-xs text-slate-500 dark:text-slate-400 px-2 mb-1 sticky top-0 bg-white dark:bg-slate-800 py-1">
+                        <span className="text-left">Price</span>
                         <span className="text-right">Amount</span>
                         <span className="text-right">Total</span>
                     </div>
@@ -73,9 +72,9 @@ export const DepthChart: React.FC<DepthChartProps> = ({ orderBook, pricePrecisio
                 </div>
 
                 {/* Asks Column */}
-                 <div className="flex flex-col">
-                     <div className="grid grid-cols-3 text-xs text-slate-500 dark:text-slate-400 px-2 mb-1">
-                        <span>Price</span>
+                 <div className="flex flex-col overflow-y-auto">
+                     <div className="grid grid-cols-3 text-xs text-slate-500 dark:text-slate-400 px-2 mb-1 sticky top-0 bg-white dark:bg-slate-800 py-1">
+                        <span className="text-left">Price</span>
                         <span className="text-right">Amount</span>
                         <span className="text-right">Total</span>
                     </div>

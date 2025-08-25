@@ -1,18 +1,27 @@
-
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, TradeSignal, TradingMode, RiskMode, LogType } from '../types';
-import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, LockIcon, UnlockIcon, InfoIcon, ZapIcon } from './icons';
+import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, LockIcon, UnlockIcon, InfoIcon, ZapIcon, RefreshIcon } from './icons';
+import { AnalysisPreview } from './AnalysisPreview';
+import { MAX_MARGIN_LOSS_PERCENT, TAKER_FEE_RATE } from '../constants';
+
 
 interface RunningBotsProps {
     bots: RunningBot[];
-    onClosePosition: (position: Position, exitReason?: string, exitPriceOverride?: number) => void;
+    onClosePosition: (pos: Position, reason?: string, price?: number) => void;
     onPauseBot: (botId: string) => void;
     onResumeBot: (botId: string) => void;
     onStopBot: (botId: string) => void;
     onDeleteBot: (botId: string) => void;
     onUpdateBotConfig: (botId: string, partialConfig: Partial<BotConfig>) => void;
+    onRefreshBotAnalysis: (botId: string) => void;
 }
+
+const InfoItem: React.FC<{ label: string; value: React.ReactNode; valueClassName?: string, labelClassName?: string }> = ({ label, value, valueClassName, labelClassName }) => (
+    <div>
+        <div className={`text-xs text-slate-500 dark:text-slate-400 ${labelClassName}`}>{label}</div>
+        <div className={`font-medium font-mono ${valueClassName}`}>{value}</div>
+    </div>
+);
 
 const useDuration = (bot: RunningBot) => {
     const [duration, setDuration] = useState('00:00:00');
@@ -60,7 +69,7 @@ const getStatusInfo = (status: BotStatus): { text: string; bg: string; text_colo
         case BotStatus.Monitoring: return { text: status, bg: 'bg-sky-100 dark:bg-sky-900/50', text_color: 'text-sky-700 dark:text-sky-300', icon: <ActivityIcon className="w-3 h-3"/>, pulse: true };
         case BotStatus.PositionOpen: return { text: 'Position Open', bg: 'bg-emerald-100 dark:bg-emerald-900/50', text_color: 'text-emerald-700 dark:text-emerald-300', icon: <CheckCircleIcon className="w-3 h-3"/>, pulse: false };
         case BotStatus.ExecutingTrade: return { text: 'Executing...', bg: 'bg-amber-100 dark:bg-amber-900/50', text_color: 'text-amber-700 dark:text-amber-300', icon: <CpuIcon className="w-3 h-3"/>, pulse: true };
-        case BotStatus.Cooldown: return { text: 'Cooldown', bg: 'bg-amber-100 dark:bg-amber-900/50', text_color: 'text-amber-700 dark:text-amber-300', icon: <PauseIcon className="w-3 h-3"/>, pulse: false };
+        case BotStatus.FlipPending: return { text: 'Flip Pending', bg: 'bg-indigo-100 dark:bg-indigo-900/50', text_color: 'text-indigo-700 dark:text-indigo-300', icon: <ZapIcon className="w-3 h-3"/>, pulse: true };
         case BotStatus.Error: return { text: status, bg: 'bg-rose-100 dark:bg-rose-900/50', text_color: 'text-rose-700 dark:text-rose-300', icon: <XCircleIcon className="w-3 h-3"/>, pulse: false };
         case BotStatus.Paused: return { text: status, bg: 'bg-slate-200 dark:bg-slate-700', text_color: 'text-slate-600 dark:text-slate-300', icon: <PauseIcon className="w-3 h-3"/>, pulse: false };
         case BotStatus.Stopped: return { text: status, bg: 'bg-slate-200 dark:bg-slate-700', text_color: 'text-slate-600 dark:text-slate-300', icon: <StopIcon className="w-3 h-3"/>, pulse: false };
@@ -91,11 +100,32 @@ const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) =>
     );
 };
 
-const formatRiskValue = (mode: RiskMode, value: number) => {
-    return mode === RiskMode.Percent ? `${value}%` : `$${value}`;
-};
+const ConfigToggle: React.FC<{label: string; description: string; tooltip: string; checked: boolean; onChange: (checked: boolean) => void}> = ({label, description, tooltip, checked, onChange}) => (
+    <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
+        <div className="flex flex-col">
+            <div className="flex items-center gap-1.5">
+                <span className="font-medium text-slate-700 dark:text-slate-300">{label}</span>
+                 <div className="relative group">
+                    <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                    <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                        {tooltip}
+                    </div>
+                </div>
+            </div>
+            <span className="text-xs text-slate-500 dark:text-slate-400">{description}</span>
+        </div>
+        <ToggleSwitch
+            checked={checked}
+            onChange={onChange}
+            size="sm"
+        />
+    </div>
+);
 
-const BotConfigDetails: React.FC<{ config: BotConfig; onUpdate: (change: Partial<BotConfig>) => void }> = ({ config, onUpdate }) => (
+
+const BotConfigDetails: React.FC<{ bot: RunningBot; onUpdate: (change: Partial<BotConfig>) => void }> = ({ bot, onUpdate }) => {
+    const { config } = bot;
+    return (
     <div>
         <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Configuration</h4>
         <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg space-y-2 text-sm">
@@ -106,493 +136,441 @@ const BotConfigDetails: React.FC<{ config: BotConfig; onUpdate: (change: Partial
                 {config.mode === TradingMode.USDSM_Futures && <InfoItem label="Margin" value={config.marginType || 'N/A'} />}
                 <InfoItem label="Investment" value={`$${config.investmentAmount}`} />
             </div>
-             <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
-                 <div className="flex flex-col">
-                    <span className="font-medium text-slate-700 dark:text-slate-300">Cooldown</span>
-                    <span className="text-xs text-slate-500 dark:text-slate-400">Pause after trades</span>
-                </div>
-                <ToggleSwitch
-                    checked={config.isCooldownEnabled}
-                    onChange={(checked) => onUpdate({ isCooldownEnabled: checked })}
-                    size="sm"
+            <ConfigToggle
+                label="Universal Profit Trail"
+                description="Fee-based profit locking"
+                tooltip="Affects the current open trade."
+                checked={config.isUniversalProfitTrailEnabled}
+                onChange={(checked) => onUpdate({ isUniversalProfitTrailEnabled: checked })}
+            />
+            <ConfigToggle
+                label="Trailing Take Profit"
+                description="Dynamically raises TP target"
+                tooltip="Affects the current open trade."
+                checked={config.isTrailingTakeProfitEnabled}
+                onChange={(checked) => onUpdate({ isTrailingTakeProfitEnabled: checked })}
+            />
+             <ConfigToggle
+                label="Minimum R:R Veto"
+                description="Enforces minimum risk-reward"
+                tooltip="Affects the NEXT trade only."
+                checked={config.isMinRrEnabled}
+                onChange={(checked) => onUpdate({ isMinRrEnabled: checked })}
+            />
+             <ConfigToggle
+                label="Agent Re-analysis"
+                description="Proactively exits on signal loss"
+                tooltip="On a set interval, the agent re-evaluates the market. If the original entry conditions are no longer met, the bot will proactively exit the trade. Affects the current open trade."
+                checked={config.isReanalysisEnabled ?? false}
+                onChange={(checked) => onUpdate({ isReanalysisEnabled: checked })}
+            />
+             <ConfigToggle
+                label="Proactive Exit & Invalidation"
+                description="Protects profit & cuts losses"
+                tooltip="Protects profits by exiting on fading momentum. Actively cuts losses on losing trades if the thesis is invalidated or strong counter-signals appear. Affects the current open trade."
+                checked={config.isInvalidationCheckEnabled ?? false}
+                onChange={(checked) => onUpdate({ isInvalidationCheckEnabled: checked })}
+            />
+            {config.agent.id === 7 && (
+                 <ConfigToggle
+                    label="Candlestick Confirmation"
+                    description="Requires candle pattern for entry"
+                    tooltip="Affects the NEXT trade only."
+                    checked={config.agentParams?.isCandleConfirmationEnabled ?? false}
+                    onChange={(checked) => onUpdate({ agentParams: { ...config.agentParams, isCandleConfirmationEnabled: checked } })}
                 />
-            </div>
+            )}
         </div>
     </div>
-);
+)};
 
-const BotHealthDisplay: React.FC<{ bot: RunningBot }> = ({ bot }) => (
-    <div>
-        <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Data & Health</h4>
-        <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-            <InfoItem label="Candles Loaded" value={bot.klinesLoaded ?? 'N/A'} />
-        </div>
-    </div>
-);
-
-
-const BotAnalysisDisplay: React.FC<{ analysis: TradeSignal | null }> = ({ analysis }) => {
-    if (!analysis) return null;
-    const isBuy = analysis.signal === 'BUY', isSell = analysis.signal === 'SELL';
-    const colorClasses = isBuy ? 'bg-emerald-100 dark:bg-emerald-900/50 border-emerald-500 text-emerald-800 dark:text-emerald-300' : isSell ? 'bg-rose-100 dark:bg-rose-900/50 border-rose-500 text-rose-800 dark:text-rose-300' : 'bg-amber-100 dark:bg-amber-900/50 border-amber-500 text-amber-800 dark:text-amber-300';
-
-    return (
-        <div>
-            <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Latest Analysis</h4>
-            <div className={`p-3 rounded-lg border-l-4 ${colorClasses}`}>
-                <div className="flex items-center gap-2 font-bold text-base">
-                    <CpuIcon className="w-5 h-5"/>{analysis.signal}
-                </div>
-                <hr className="my-2 border-slate-300 dark:border-slate-600"/>
-                <ul className="list-disc list-inside space-y-1 text-sm">
-                    {analysis.reasons.map((reason, i) => <li key={i}>{reason}</li>)}
-                </ul>
-            </div>
-        </div>
-    );
-};
-
-const TargetInput: React.FC<{
-    label: string;
-    botConfig: BotConfig;
-    position: Position;
-    isTP: boolean;
-    onConfigChange: (change: Partial<BotConfig>) => void;
-}> = ({ label, botConfig, position, isTP, onConfigChange }) => {
-    
-    const { entryPrice, size, leverage, direction } = position;
-    const {
-        isTakeProfitLocked, takeProfitMode, takeProfitValue,
-        isStopLossLocked, stopLossMode, stopLossValue
-    } = botConfig;
-
-    const isLocked = isTP ? isTakeProfitLocked : isStopLossLocked;
-    const mode = isTP ? takeProfitMode : stopLossMode;
-    const value = isTP ? takeProfitValue : stopLossValue;
-
-    const [inputValue, setInputValue] = useState<string>(String(value));
-
-    useEffect(() => {
-        let displayValue: string;
-        // This effect correctly displays the value from the bot's central config
-        if (mode === RiskMode.Percent) {
-            displayValue = String(value);
-        } else { // RiskMode.Amount (PNL)
-            displayValue = String(value);
-        }
-        setInputValue(displayValue);
-    }, [value, mode]);
-
-    const handleValueChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setInputValue(e.target.value);
-    };
-
-    const handleUpdateOnBlur = () => {
-        const numValue = parseFloat(inputValue);
-        if (isNaN(numValue) || numValue === value) {
-            // Revert if invalid or unchanged
-            setInputValue(String(value));
-            return;
-        }
-        // Send update to the central handler
-        const configKey = isTP ? 'takeProfitValue' : 'stopLossValue';
-        onConfigChange({ [configKey]: numValue });
-    };
-    
-    const handleToggleMode = () => {
-        const currentValue = parseFloat(inputValue);
-        if (isNaN(currentValue) || size <= 0) return;
-
-        const nextMode = mode === RiskMode.Percent ? RiskMode.Amount : RiskMode.Percent;
-        let nextValue: number;
-
-        if (nextMode === RiskMode.Amount) { // from % to $
-            const pnlAmount = botConfig.investmentAmount * (currentValue / 100);
-            nextValue = parseFloat(pnlAmount.toFixed(2));
-        } else { // from $ to %
-            const percentage = (currentValue / botConfig.investmentAmount) * 100;
-            nextValue = parseFloat(percentage.toFixed(2));
-        }
-        
-        // Send both mode and value updates to the central handler
-        const modeKey = isTP ? 'takeProfitMode' : 'stopLossMode';
-        const valueKey = isTP ? 'takeProfitValue' : 'stopLossValue';
-        onConfigChange({
-            [modeKey]: nextMode,
-            [valueKey]: nextValue
-        });
-    };
-
-    const handleLockToggle = () => {
-        const lockKey = isTP ? 'isTakeProfitLocked' : 'isStopLossLocked';
-        onConfigChange({ [lockKey]: !isLocked });
-    };
-
-    const inputClass = "w-full pl-7 pr-3 py-2 bg-white dark:bg-slate-700/50 border border-slate-300 dark:border-slate-600 rounded-l-md shadow-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500 transition-colors text-sm";
-    const buttonClass = "px-3 py-2 bg-slate-100 dark:bg-slate-600 border border-l-0 border-slate-300 dark:border-slate-600 rounded-r-md font-bold text-sm hover:bg-slate-200 dark:hover:bg-slate-500 transition-colors";
-    
-    return (
-        <div className="flex flex-col gap-1">
-            <div className="text-sm font-medium text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                <span>{label}</span>
-                <button 
-                    onClick={handleLockToggle} 
-                    className={`p-1 rounded-full enabled:hover:bg-slate-200 enabled:dark:hover:bg-slate-600`}
-                    title={isLocked ? 'Unlock to enable auto-management' : 'Lock to set a hard target'}
-                >
-                    {isLocked ? <LockIcon className="w-3 h-3 text-slate-400"/> : <UnlockIcon className="w-3 h-3 text-sky-500"/>}
-                </button>
-            </div>
-            <div className="flex relative">
-                 <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 text-sm pointer-events-none">
-                    {mode === RiskMode.Percent ? '%' : '$'}
-                </span>
-                <input 
-                    type="number" 
-                    value={inputValue} 
-                    onChange={handleValueChange}
-                    onBlur={handleUpdateOnBlur}
-                    className={inputClass}
-                />
-                <button 
-                    onClick={handleToggleMode} 
-                    aria-label={`Switch to ${mode === RiskMode.Percent ? 'PNL Amount ($)' : 'Percentage (%)'}`}
-                    title={`Switch to ${mode === RiskMode.Percent ? 'PNL Amount ($)' : 'Percentage (%)'}`}
-                    className={buttonClass} style={{width: '50px'}}
-                >
-                    {mode === RiskMode.Percent ? '$' : '%'}
-                </button>
-            </div>
-        </div>
-    );
-};
 
 const PositionPnlProgress: React.FC<{position: Position; livePrice: number}> = ({ position, livePrice }) => {
     const { entryPrice, takeProfitPrice, stopLossPrice, direction } = position;
     const isLong = direction === 'LONG';
     
-    const actualSL = isLong ? stopLossPrice : takeProfitPrice;
-    const actualTP = isLong ? takeProfitPrice : stopLossPrice;
+    let progressPercent = 0;
+    if (isLong) {
+        const totalRange = takeProfitPrice - stopLossPrice;
+        if (totalRange > 0) {
+            progressPercent = ((livePrice - stopLossPrice) / totalRange) * 100;
+        }
+    } else { // SHORT
+        const totalRange = stopLossPrice - takeProfitPrice;
+        if (totalRange > 0) {
+            progressPercent = ((stopLossPrice - livePrice) / totalRange) * 100;
+        }
+    }
 
-    const totalRange = Math.abs(actualTP - actualSL);
-    if(totalRange === 0) return null;
+    const clampedProgress = Math.min(100, Math.max(0, progressPercent));
 
-    const progressFromSL = livePrice - actualSL;
-    let progressPercent = (progressFromSL / totalRange) * 100;
-    
-    if(!isLong) progressPercent = 100 - progressPercent;
+    const grossPnl = (livePrice - entryPrice) * position.size * (isLong ? 1 : -1);
+    const pnlIsProfit = grossPnl >= 0;
 
-    progressPercent = Math.min(100, Math.max(0, progressPercent));
-    
     return (
-        <div className="w-full bg-rose-200 dark:bg-rose-900/50 rounded-full h-5 relative overflow-hidden">
-            <div 
-                className="bg-emerald-500 dark:bg-emerald-600 h-full rounded-full transition-all duration-300" 
-                style={{ width: `${progressPercent}%`}}
-            ></div>
-            <div className="absolute inset-0 flex justify-between items-center px-2 text-xs text-white font-bold">
-                 <span>SL</span>
-                 <span>TP</span>
+        <div className="flex flex-col gap-1.5 pt-2">
+            <div className="w-full bg-rose-200 dark:bg-rose-900/50 rounded-full h-4 relative">
+                <div 
+                    className="bg-emerald-500 dark:bg-emerald-600 h-full rounded-full transition-all duration-300" 
+                    style={{ width: `${clampedProgress}%`}}
+                ></div>
+                
+                <div 
+                    className="absolute top-0 h-full flex items-center" 
+                    style={{ left: `calc(${clampedProgress}% - 8px)`}}
+                >
+                    <div className="w-1 h-5 bg-slate-800 dark:bg-white rounded-full border border-white dark:border-slate-800 shadow-lg"></div>
+                    <div className={`absolute top-5 whitespace-nowrap px-1.5 py-0.5 rounded text-xs font-bold shadow-md ${pnlIsProfit ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}`}
+                         style={{ transform: 'translateX(-50%)' }}
+                    >
+                         <span title="Unrealized PNL (Gross)">{pnlIsProfit ? '+' : ''}${grossPnl.toFixed(2)}</span>
+                    </div>
+                </div>
+            </div>
+            <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 font-mono">
+                <span>SL: {formatPrice(stopLossPrice, position.pricePrecision)}</span>
+                <span>TP: {formatPrice(takeProfitPrice, position.pricePrecision)}</span>
             </div>
         </div>
     );
 };
 
-const PositionManager: React.FC<{ 
-    bot: RunningBot;
-    onConfigChange: (change: Partial<BotConfig>) => void;
-}> = ({ bot, onConfigChange }) => {
-    const { config, openPosition, livePrice } = bot;
-    if (!openPosition || !livePrice) return null;
+interface StopLossDetailsProps {
+    position: Position;
+    config: BotConfig;
+}
 
-    return (
-        <div className="flex flex-col gap-3">
-            <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-0">Manage Position</h4>
-            <div className="grid grid-cols-2 gap-4 text-sm mt-1 mb-2 bg-slate-100 dark:bg-slate-900/50 p-2 rounded-lg">
-                <InfoItem label="Entry Price" value={formatPrice(openPosition.entryPrice, openPosition.pricePrecision)} />
-                {openPosition.liquidationPrice && openPosition.liquidationPrice > 0 ? (
-                    <InfoItem 
-                        label="Liq. Price" 
-                        value={<span className="flex items-center gap-1">{formatPrice(openPosition.liquidationPrice, openPosition.pricePrecision)} <InfoIcon title="Position will be liquidated if price reaches this level." className="w-3 h-3"/></span>}
-                        valueClassName="text-rose-600 dark:text-rose-400 font-semibold"
-                    />
-                ) : (
-                    <InfoItem label="Live Price" value={formatPrice(livePrice, openPosition.pricePrecision)} />
-                )}
-            </div>
-            <PositionPnlProgress position={openPosition} livePrice={livePrice}/>
-            <div className="grid grid-cols-2 gap-3">
-                <TargetInput 
-                    label="Take Profit" 
-                    botConfig={config}
-                    position={openPosition} 
-                    isTP={true} 
-                    onConfigChange={onConfigChange}
-                />
-                <TargetInput 
-                    label="Stop Loss" 
-                    botConfig={config}
-                    position={openPosition} 
-                    isTP={false} 
-                    onConfigChange={onConfigChange}
-                />
-            </div>
-        </div>
-    )
-};
+const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) => {
+    const {
+        stopLossPrice, initialStopLossPrice, activeStopLossReason, pricePrecision,
+        profitLockTier, isBreakevenSet
+    } = position;
 
-const BotPerformanceSummary: React.FC<{ bot: RunningBot }> = ({ bot }) => {
-    if (!bot.closedTradesCount || bot.closedTradesCount === 0) {
-        return null;
-    }
+    const isBreakevenActive = activeStopLossReason === 'Breakeven';
+    const isProfitSecureActive = activeStopLossReason === 'Profit Secure';
+    const isAgentTrailActive = activeStopLossReason === 'Agent Trail';
+    
+    const isUniversalTrailEnabled = config.isUniversalProfitTrailEnabled;
 
-    const totalPnl = bot.totalPnl || 0;
-    const pnlIsProfit = totalPnl >= 0;
+    const universalTrailStatus = useMemo(() => {
+        if (!isUniversalTrailEnabled) return { text: 'Disabled by user', className: 'bg-slate-200 dark:bg-slate-600' };
+        if (isProfitSecureActive) {
+            const tier = profitLockTier >= 4 ? profitLockTier - 2 : 0;
+            return { text: tier > 0 ? `Tier ${tier} Active` : 'Active', className: 'bg-teal-500 text-white' };
+        }
+        return { text: 'Enabled', className: 'bg-slate-500 dark:bg-slate-400 text-white dark:text-slate-900' };
+    }, [isUniversalTrailEnabled, isProfitSecureActive, profitLockTier]);
+
+    const agentTrailStatus = useMemo(() => {
+        if (isAgentTrailActive) {
+            return { text: 'ACTIVE', className: 'bg-indigo-500 text-white' };
+        }
+        // It's always enabled if a position is open, just might be overridden
+        return { text: 'Enabled', className: 'bg-slate-500 dark:bg-slate-400 text-white dark:text-slate-900' };
+    }, [isAgentTrailActive]);
+
+    const initialSlReasonText = position.activeStopLossReason === 'Hard Cap' &&
+        (isBreakevenActive || isProfitSecureActive || isAgentTrailActive)
+        ? 'Hard Cap'
+        : 'Agent Logic';
 
     return (
         <div>
-            <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Performance</h4>
-             <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg grid grid-cols-2 gap-4">
-                <InfoItem label="Total PNL" value={`$${totalPnl.toFixed(2)}`} valueClassName={`font-bold font-mono text-lg ${pnlIsProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`} />
-                <InfoItem label="Closed Trades" value={bot.closedTradesCount} valueClassName="text-lg" />
+            <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Stop-Loss Details</h4>
+            <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg space-y-3 text-sm">
+                <div className="flex justify-between items-center">
+                    <span className="font-bold">Active SL Price</span>
+                    <span className="font-bold font-mono bg-slate-200 dark:bg-slate-700 px-2 py-1 rounded-md">{formatPrice(stopLossPrice, pricePrecision)}</span>
+                </div>
+
+                <div className={`p-2 rounded-md ${isBreakevenActive ? 'bg-sky-100 dark:bg-sky-900 border border-sky-300 dark:border-sky-700' : ''}`}>
+                    <div className="flex justify-between items-center">
+                        <span className={isBreakevenActive ? 'font-semibold text-sky-700 dark:text-sky-300' : 'font-medium'}>
+                            Mandatory Breakeven
+                        </span>
+                        <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${isBreakevenSet ? 'bg-sky-500 text-white' : 'bg-slate-200 dark:bg-slate-600'}`}>
+                            {isBreakevenSet ? 'Risk-Free' : 'Pending'}
+                        </span>
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                        System rule. Secures trade once profit exceeds 3x fee.
+                    </p>
+                </div>
+
+                <div className={`p-2 rounded-md ${isProfitSecureActive ? 'bg-teal-100 dark:bg-teal-900 border border-teal-300 dark:border-teal-700' : ''}`}>
+                    <div className="flex justify-between items-center">
+                         <span className={isProfitSecureActive ? 'font-semibold text-teal-700 dark:text-teal-300' : 'font-medium'}>
+                            Universal Profit Trail
+                        </span>
+                         <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${universalTrailStatus.className}`}>
+                            {universalTrailStatus.text}
+                         </span>
+                    </div>
+                </div>
+
+                <div className={`p-2 rounded-md ${isAgentTrailActive ? 'bg-indigo-100 dark:bg-indigo-900 border border-indigo-300 dark:border-indigo-700' : ''}`}>
+                    <div className="flex justify-between items-center">
+                         <span className={isAgentTrailActive ? 'font-semibold text-indigo-700 dark:text-indigo-300' : 'font-medium'}>
+                            Agent Trail
+                        </span>
+                         <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${agentTrailStatus.className}`}>
+                            {agentTrailStatus.text}
+                         </span>
+                    </div>
+                </div>
+
+                <div className="text-xs text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">
+                    Initial SL: {formatPrice(initialStopLossPrice, pricePrecision)} ({initialSlReasonText}).
+                </div>
             </div>
         </div>
     );
 };
 
-const CooldownDisplay: React.FC<{ endTime: number }> = ({ endTime }) => {
-    const [remaining, setRemaining] = useState(Math.max(0, endTime - Date.now()));
 
-    useEffect(() => {
-        const intervalId = window.setInterval(() => {
-            const newRemaining = Math.max(0, endTime - Date.now());
-            setRemaining(newRemaining);
-            if (newRemaining === 0) {
-                window.clearInterval(intervalId);
-            }
-        }, 250);
-
-        return () => window.clearInterval(intervalId);
-    }, [endTime]);
-    
-    const minutes = Math.floor((remaining / 1000) / 60);
-    const seconds = Math.floor((remaining / 1000) % 60);
-
+const BotLog: React.FC<{ log: BotLogEntry[] }> = ({ log }) => {
+    const getLogColor = (type: LogType) => {
+        switch (type) {
+            case LogType.Error: return 'text-rose-500';
+            case LogType.Success: return 'text-emerald-500';
+            case LogType.Action: return 'text-sky-500';
+            case LogType.Status: return 'text-amber-500';
+            default: return 'text-slate-500 dark:text-slate-200';
+        }
+    };
     return (
-        <div className="text-center">
-            <p className="font-semibold text-amber-600 dark:text-amber-400">Resuming in {String(minutes).padStart(2, '0')}:{String(seconds).padStart(2, '0')}</p>
+        <div className="bg-slate-900 text-white font-mono text-xs rounded-lg p-3 h-[28rem] overflow-y-auto">
+            {log.map((entry, index) => (
+                <div key={index} className="flex">
+                    <span className="text-slate-500 mr-2">{new Date(entry.timestamp).toLocaleTimeString()}</span>
+                    <span className={getLogColor(entry.type)}>{entry.message}</span>
+                </div>
+            ))}
         </div>
     );
 };
 
-const InfoItem: React.FC<{ label: string; value: React.ReactNode; valueClassName?: string, labelClassName?: string }> = ({ label, value, valueClassName, labelClassName }) => (
-    <div>
-        <div className={`text-xs text-slate-500 dark:text-slate-400 ${labelClassName}`}>{label}</div>
-        <div className={`font-medium font-mono ${valueClassName}`}>{value}</div>
-    </div>
-);
 
-const logTypeStyles: Record<LogType, { icon: React.FC<any>; color: string; iconColor: string }> = {
-    [LogType.Info]: { icon: InfoIcon, color: 'text-slate-600 dark:text-slate-300', iconColor: 'text-slate-400' },
-    [LogType.Status]: { icon: ActivityIcon, color: 'text-sky-700 dark:text-sky-300', iconColor: 'text-sky-500' },
-    [LogType.Success]: { icon: CheckCircleIcon, color: 'text-emerald-700 dark:text-emerald-300', iconColor: 'text-emerald-500' },
-    [LogType.Error]: { icon: XCircleIcon, color: 'text-rose-700 dark:text-rose-300', iconColor: 'text-rose-500' },
-    [LogType.Action]: { icon: ZapIcon, color: 'text-indigo-700 dark:text-indigo-300', iconColor: 'text-indigo-500' },
-};
+const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots'> }> = ({ bot, actions }) => {
+    const [isExpanded, setIsExpanded] = useState(false);
+    
+    const [priceChange, setPriceChange] = useState<'up' | 'down' | 'none'>('none');
+    const prevPriceRef = useRef(bot.livePrice);
 
-const StructuredActivityLog: React.FC<{ log: BotLogEntry[] }> = ({ log }) => {
+    useEffect(() => {
+        const currentPrice = bot.livePrice || 0;
+        const prevPrice = prevPriceRef.current || 0;
+        
+        if (currentPrice > prevPrice) {
+            setPriceChange('up');
+        } else if (currentPrice < prevPrice) {
+            setPriceChange('down');
+        }
+        
+        prevPriceRef.current = currentPrice;
+        
+        const timeout = setTimeout(() => setPriceChange('none'), 500);
+        return () => clearTimeout(timeout);
+    }, [bot.livePrice]);
+
+    const duration = useDuration(bot);
+    const statusInfo = getStatusInfo(bot.status);
+    const position = bot.openPosition;
+    const pnlIsProfit = bot.totalPnl >= 0;
+    const winRate = bot.closedTradesCount > 0 ? (bot.wins / bot.closedTradesCount) * 100 : 0;
+    const winRateIsGood = winRate >= 50;
+    
+    const isPaused = bot.status === BotStatus.Paused;
+    const isStopped = bot.status === BotStatus.Stopped || bot.status === BotStatus.Error;
+
+    const executionModeTag = bot.config.executionMode === 'live'
+        ? { text: 'LIVE', bg: 'bg-amber-100 dark:bg-amber-900', text_color: 'text-amber-700 dark:text-amber-300' }
+        : { text: 'PAPER', bg: 'bg-sky-100 dark:bg-sky-900', text_color: 'text-sky-700 dark:text-sky-300' };
+    
+    const roundTripFee = position ? position.entryPrice * position.size * TAKER_FEE_RATE * 2 : 0;
+    
+    const REFRESH_INTERVALS = [10, 20, 30, 60];
+    const handleIntervalChange = () => {
+        // Trigger an immediate refresh first
+        actions.onRefreshBotAnalysis(bot.id);
+
+        // Then cycle to the next interval and update the config
+        const currentInterval = bot.config.refreshInterval ?? 30;
+        const currentIndex = REFRESH_INTERVALS.indexOf(currentInterval);
+        const nextIndex = (currentIndex + 1) % REFRESH_INTERVALS.length;
+        const newInterval = REFRESH_INTERVALS[nextIndex];
+        actions.onUpdateBotConfig(bot.id, { refreshInterval: newInterval });
+    };
+
+
     return (
-        <div className="font-mono text-xs bg-slate-50 dark:bg-slate-900/50 rounded-lg p-2 flex-grow overflow-y-auto" style={{maxHeight: '400px'}}>
-            {log.length > 0 ? (
-                log.slice().reverse().map((logEntry, index) => {
-                    const style = logTypeStyles[logEntry.type] || logTypeStyles[LogType.Info];
-                    const Icon = style.icon;
-                    return (
-                         <div key={index} className="flex items-start gap-2 p-1.5 hover:bg-slate-200 dark:hover:bg-slate-700/50 rounded">
-                            <Icon className={`w-4 h-4 flex-shrink-0 mt-0.5 ${style.iconColor}`} title={logEntry.type} />
-                            <div className="flex-grow">
-                                <p className={`mb-0 whitespace-pre-wrap break-words ${style.color}`}>{logEntry.message}</p>
-                                <span className="text-slate-400 dark:text-slate-500 text-[10px]">{new Date(logEntry.timestamp).toLocaleTimeString()}</span>
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm overflow-hidden transition-all duration-300">
+            <div className="p-4">
+                {/* Header */}
+                <div className="flex justify-between items-start gap-3">
+                    <div>
+                        <div className="flex items-center gap-2 mb-1">
+                            <h3 className="font-bold text-lg text-slate-900 dark:text-slate-100">{bot.config.pair}</h3>
+                            <div className={`text-xs font-bold px-2 py-0.5 rounded-full ${executionModeTag.bg} ${executionModeTag.text_color}`}>{executionModeTag.text}</div>
+                        </div>
+                        <p className="text-sm text-slate-500 dark:text-slate-400">{bot.config.agent.name} on {bot.config.timeFrame}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        {isStopped ? (
+                            <button onClick={() => actions.onDeleteBot(bot.id)} className="p-2 text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-900/50 rounded-full transition-colors" title="Delete Bot"><TrashIcon className="w-5 h-5"/></button>
+                        ) : (
+                            <>
+                                <button onClick={() => isPaused ? actions.onResumeBot(bot.id) : actions.onPauseBot(bot.id)} className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors" title={isPaused ? "Resume Bot" : "Pause Bot"}>
+                                    {isPaused ? <PlayIcon className="w-5 h-5"/> : <PauseIcon className="w-5 h-5"/>}
+                                </button>
+                                <button onClick={() => actions.onStopBot(bot.id)} className="p-2 text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-900/50 rounded-full transition-colors" title="Stop Bot"><StopIcon className="w-5 h-5"/></button>
+                            </>
+                        )}
+                         <button onClick={() => setIsExpanded(!isExpanded)} className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors">
+                            {isExpanded ? <ChevronUp className="w-5 h-5"/> : <ChevronDown className="w-5 h-5"/>}
+                        </button>
+                    </div>
+                </div>
+
+                {/* Status & Performance */}
+                <div className="mt-3 flex items-center justify-between gap-4 flex-wrap border-t border-slate-200 dark:border-slate-700 pt-3">
+                    <div className={`flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-semibold ${statusInfo.bg} ${statusInfo.text_color}`}>
+                         {statusInfo.pulse && <div className="w-2 h-2 rounded-full bg-current animate-pulse"></div>}
+                        {statusInfo.icon}
+                        <span>{statusInfo.text}</span>
+                    </div>
+                     <div className="flex items-center gap-4 text-sm">
+                        <InfoItem 
+                            label="Live Price" 
+                            value={formatPrice(bot.livePrice, bot.config.pricePrecision)} 
+                            valueClassName={`transition-colors duration-300 ${priceChange === 'up' ? 'text-emerald-500' : priceChange === 'down' ? 'text-rose-500' : 'dark:text-slate-100'}`} 
+                        />
+                        <InfoItem label="Net PNL" value={`$${bot.totalPnl.toFixed(2)}`} valueClassName={pnlIsProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'} />
+                        <InfoItem label="Win Rate" value={`${winRate.toFixed(1)}%`} valueClassName={winRateIsGood ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'} />
+                        <InfoItem label="Trades" value={`${bot.wins}/${bot.losses}`} />
+                        <InfoItem label="Duration" value={duration} />
+                    </div>
+                </div>
+
+                {/* Open Position */}
+                {position && (
+                    <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-700">
+                        <div className="flex justify-between items-center">
+                            <div>
+                                <h4 className="font-semibold text-base text-slate-800 dark:text-slate-200">
+                                    <span className={position.direction === 'LONG' ? 'text-emerald-500' : 'text-rose-500'}>{position.direction} Position</span>
+                                </h4>
+                                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                                    Entry: {formatPrice(position.entryPrice, position.pricePrecision)} | Size: {position.size.toFixed(4)}
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-4">
+                                {position.mode === TradingMode.USDSM_Futures && position.liquidationPrice && (
+                                    <InfoItem label="Liq. Price" value={formatPrice(position.liquidationPrice, position.pricePrecision)} valueClassName="text-amber-500" />
+                                )}
+                                <InfoItem label="Est. Fee" value={`$${roundTripFee.toFixed(2)}`} />
+                                <button onClick={() => actions.onClosePosition(position)} className="px-3 py-1.5 text-sm bg-rose-600 text-white font-semibold rounded-md shadow-sm hover:bg-rose-700 flex items-center gap-1.5">
+                                    <CloseIcon className="w-4 h-4" />
+                                    Close
+                                </button>
                             </div>
                         </div>
-                    );
-                })
-            ) : (
-                <div className="text-center p-4 text-slate-500">No activity yet.</div>
+                        <PositionPnlProgress position={position} livePrice={bot.livePrice || position.entryPrice} />
+                    </div>
+                )}
+            </div>
+            
+            {/* Expanded Details */}
+            {isExpanded && (
+                <div className="bg-slate-50 dark:bg-slate-800/50 p-4 border-t border-slate-200 dark:border-slate-700">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {position && <StopLossDetails position={position} config={bot.config} />}
+                        <div className={position ? '' : 'lg:col-span-1'}>
+                            <div className="flex justify-between items-center mb-2">
+                                 <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base">AI Analysis</h4>
+                                <button 
+                                    onClick={handleIntervalChange} 
+                                    className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-sky-500 dark:hover:text-sky-400 bg-slate-100 dark:bg-slate-700/50 px-2 py-1 rounded-full transition-colors"
+                                    title="Change AI analysis refresh interval"
+                                >
+                                    <RefreshIcon className="w-3.5 h-3.5" />
+                                    <span>{bot.config.refreshInterval ?? 30}s</span>
+                                </button>
+                            </div>
+                             <AnalysisPreview agent={bot.config.agent} agentParams={bot.config.agentParams} analysis={bot.analysis} isLoading={false} />
+                        </div>
+                         <div className={position ? '' : 'lg:col-span-1'}>
+                           <BotConfigDetails bot={bot} onUpdate={(partial) => actions.onUpdateBotConfig(bot.id, partial)} />
+                        </div>
+                         <div className={position ? 'md:col-span-2 lg:col-span-1' : 'lg:col-span-1'}>
+                            <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Activity Log</h4>
+                            <BotLog log={bot.log} />
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );
 };
 
 
-interface BotRowProps extends Omit<RunningBotsProps, 'bots'> {
-    bot: RunningBot;
-    onToggle: () => void;
-    isOpen: boolean;
-}
+export const RunningBots: React.FC<RunningBotsProps> = ({ bots, ...actions }) => {
+    const [activeTab, setActiveTab] = useState<'open' | 'monitoring'>('open');
 
+    const { openPositionBots, monitoringBots } = useMemo(() => {
+        const openPositionBots: RunningBot[] = [];
+        const monitoringBots: RunningBot[] = [];
+        bots.forEach(bot => {
+            if (bot.status === BotStatus.PositionOpen || bot.status === BotStatus.FlipPending) {
+                openPositionBots.push(bot);
+            } else {
+                monitoringBots.push(bot);
+            }
+        });
+        return { openPositionBots, monitoringBots };
+    }, [bots]);
 
-const BotRow: React.FC<BotRowProps> = (props) => {
-    const { bot, onClosePosition, onPauseBot, onResumeBot, onStopBot, onDeleteBot, onUpdateBotConfig, onToggle, isOpen } = props;
-    const { config, status, id, livePrice, openPosition } = bot;
-    
-    // Corrected PNL calculation
-    const pnl = (openPosition && livePrice && openPosition.entryPrice) ? (livePrice - openPosition.entryPrice) * openPosition.size * (openPosition.direction === 'LONG' ? 1 : -1) : 0;
-    const pnlIsProfit = pnl >= 0;
-    const duration = useDuration(bot);
-    const statusInfo = getStatusInfo(status);
+    const botsToDisplay = activeTab === 'open' ? openPositionBots : monitoringBots;
+    const activeBotsCount = openPositionBots.length + monitoringBots.length;
 
-    const controlButtonClass = "p-2 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700";
-
-    const renderControls = () => {
-        const isStopped = status === BotStatus.Stopped || status === BotStatus.Error;
-        const isPaused = status === BotStatus.Paused;
-        const isActive = !isStopped;
-        const isCoolingDown = status === BotStatus.Cooldown;
-        const cannotBeStopped = !!openPosition;
-
-        return (
-             <div className="flex items-center gap-2">
-                {openPosition && livePrice && <button className={`${controlButtonClass} bg-rose-500/10 text-rose-600 hover:bg-rose-500/20 dark:text-rose-400`} onClick={() => onClosePosition(openPosition, "Manual Close", livePrice)} title="Close Position"><CloseIcon className="w-4 h-4" /></button>}
-                
-                {(isActive || isCoolingDown) && !isPaused && <button className={`${controlButtonClass}`} onClick={() => onPauseBot(id)} title="Pause Bot"><PauseIcon className="w-5 h-5" /></button>}
-                {isPaused && <button className={`${controlButtonClass} text-emerald-600 dark:text-emerald-400`} onClick={() => onResumeBot(id)} title="Resume Bot"><PlayIcon className="w-5 h-5" /></button>}
-                
-                {isActive && (
-                    <button className={controlButtonClass} onClick={() => onStopBot(id)} disabled={cannotBeStopped} title={cannotBeStopped ? "Close position before stopping bot" : "Stop Bot"}>
-                        <StopIcon className="w-5 h-5" />
+    return (
+        <div className="flex flex-col gap-4">
+            <div className="flex justify-between items-center flex-wrap gap-2">
+                <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                    <CpuIcon className="w-6 h-6 text-sky-500" />
+                    <span>Running Bots</span>
+                    <span className="text-sm font-normal bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 px-2 py-1 rounded-full">{activeBotsCount}</span>
+                </h2>
+                <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-lg">
+                    <button
+                        onClick={() => setActiveTab('open')}
+                        className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors flex items-center gap-2 ${activeTab === 'open' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
+                    >
+                        Position Open <span className="text-xs bg-sky-500 text-white rounded-full min-w-[20px] px-1.5 py-0.5">{openPositionBots.length}</span>
                     </button>
-                )}
-                
-                {isStopped && <button className={controlButtonClass} onClick={() => onDeleteBot(id)} title="Delete Bot"><TrashIcon className="w-5 h-5" /></button>}
-            </div>
-        );
-    };
-
-    const renderHeader = () => {
-        const primaryStatusText = status === BotStatus.Monitoring && bot.analysis
-            ? bot.analysis.reasons[0] || 'Analyzing...'
-            : statusInfo.text;
-
-        const executionModeTag = bot.config.executionMode === 'live'
-            ? { text: 'LIVE', bg: 'bg-amber-100 dark:bg-amber-900', text_color: 'text-amber-700 dark:text-amber-300' }
-            : { text: 'PAPER', bg: 'bg-sky-100 dark:bg-sky-900', text_color: 'text-sky-700 dark:text-sky-300' };
-
-        return (
-            <div className="grid grid-cols-[1fr,auto,1fr] gap-4 items-center p-3">
-                {/* Left Column: Bot Name & Config */}
-                <div className="flex items-center gap-3">
-                    <div>
-                        <h3 className="font-bold text-base text-slate-800 dark:text-slate-100">{config.pair}</h3>
-                        <p className="text-sm text-slate-500 dark:text-slate-400">{config.agent.name}</p>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                        <span className="text-xs font-semibold bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded-full text-center">{config.timeFrame}</span>
-                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full text-center ${executionModeTag.bg} ${executionModeTag.text_color}`}>{executionModeTag.text}</span>
-                    </div>
+                    <button
+                        onClick={() => setActiveTab('monitoring')}
+                        className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors flex items-center gap-2 ${activeTab === 'monitoring' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
+                    >
+                        Monitoring <span className="text-xs bg-slate-500 text-white rounded-full min-w-[20px] px-1.5 py-0.5">{monitoringBots.length}</span>
+                    </button>
                 </div>
-                
-                {/* Middle Column: Status or PNL */}
-                <div className="text-center min-h-[42px] flex flex-col justify-center">
-                    {openPosition && livePrice ? (
-                        <InfoItem label="Unrealized PNL" value={`${pnlIsProfit ? '+' : ''}$${pnl?.toFixed(2)}`} valueClassName={`text-lg ${pnlIsProfit ? 'text-emerald-500' : 'text-rose-500'}`} labelClassName="text-center" />
-                    ) : (
-                         <div className={`flex items-center justify-center gap-2 text-xs font-semibold px-3 py-1 rounded-full ${statusInfo.bg} ${statusInfo.text_color} ${statusInfo.pulse ? 'animate-pulse' : ''}`} title={primaryStatusText}>
-                            {statusInfo.icon}
-                            <span className="truncate max-w-[200px]">{primaryStatusText}</span>
-                         </div>
-                    )}
-                    {openPosition && (
-                         <div className="flex items-center justify-center gap-2 mt-1">
-                            <span className={`px-2 py-0.5 rounded-md text-xs font-bold ${openPosition.direction === 'LONG' ? 'bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300' : 'bg-rose-100 dark:bg-rose-900 text-rose-700 dark:text-rose-300'}`}>
-                                {openPosition.direction}
-                            </span>
+            </div>
+
+            {bots.length > 0 ? (
+                <div className="flex flex-col gap-4">
+                    {botsToDisplay.map(bot => <BotCard key={bot.id} bot={bot} actions={actions} />)}
+                    {botsToDisplay.length === 0 && (
+                        <div className="text-center p-8 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-lg text-slate-500 dark:text-slate-400">
+                           {activeTab === 'open' ? 'No bots currently have an open position.' : 'No bots are currently monitoring for new trades.'}
                         </div>
                     )}
                 </div>
-
-                {/* Right Column: Controls & Uptime */}
-                <div className="flex items-center justify-end gap-4">
-                    <InfoItem label="Uptime" value={duration} labelClassName="text-right"/>
-                    {renderControls()}
-                    <button onClick={onToggle} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
-                       {isOpen ? <ChevronUp className="w-5 h-5"/> : <ChevronDown className="w-5 h-5" />}
-                   </button>
+            ) : (
+                <div className="text-center p-8 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-lg text-slate-500 dark:text-slate-400">
+                    No active bots. Start one from the control panel to see it here.
                 </div>
-            </div>
-        )
-    }
-    
-    return (
-        <div className={`bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700/80`}>
-            {renderHeader()}
-            {isOpen &&
-             <div className="px-4 pb-4 border-t border-slate-200 dark:border-slate-700">
-                {status === BotStatus.Cooldown && bot.cooldownUntil && <div className="py-2 text-center"><CooldownDisplay endTime={bot.cooldownUntil}/></div>}
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4 pt-3">
-                    <div className="flex flex-col gap-4">
-                        <BotAnalysisDisplay analysis={bot.analysis} />
-                        {openPosition && livePrice && (
-                            <PositionManager 
-                                bot={bot}
-                                onConfigChange={(partialConfig) => onUpdateBotConfig(bot.id, partialConfig)}
-                            />
-                        )}
-                        <BotPerformanceSummary bot={bot} />
-                        <BotConfigDetails config={config} onUpdate={(partialConfig) => onUpdateBotConfig(bot.id, partialConfig)} />
-                        <BotHealthDisplay bot={bot} />
-                    </div>
-                     <div className="flex flex-col">
-                        <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Activity Log</h4>
-                        <StructuredActivityLog log={bot.log} />
-                    </div>
-                </div>
-            </div>}
-        </div>
-    );
-};
-
-export const RunningBots: React.FC<RunningBotsProps> = (props) => {
-    const [openBotId, setOpenBotId] = useState<string | null>(null);
-
-    // This effect now correctly handles setting the initial open bot and
-    // gracefully handles the case where the currently open bot is deleted.
-    // It depends on a stable representation of the bot list's IDs.
-    useEffect(() => {
-        const botIds = props.bots.map(b => b.id);
-        const firstBotId = botIds[0] || null;
-
-        // On initial load or if no bot is open, open the first one.
-        if (!openBotId && firstBotId) {
-            setOpenBotId(firstBotId);
-        }
-        // If the currently open bot has been deleted, select the new first bot.
-        else if (openBotId && !botIds.includes(openBotId)) {
-            setOpenBotId(firstBotId);
-        }
-    }, [props.bots.map(b => b.id).join(',')]);
-
-
-    const handleToggle = (botId: string) => {
-        setOpenBotId(prev => (prev === botId ? null : botId));
-    };
-    
-    if (props.bots.length === 0) return null;
-    return (
-        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm">
-            <div className="p-4 border-b border-slate-200 dark:border-slate-700">
-                <div className="flex items-center gap-2 text-slate-800 dark:text-slate-100 font-semibold text-lg">
-                    <ActivityIcon className="w-6 h-6 text-sky-500" />
-                    Active Bots
-                    <span className="text-sm font-normal bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 px-2.5 py-1 rounded-full">{props.bots.length}</span>
-                </div>
-            </div>
-            <div className="p-2 sm:p-4 space-y-3">
-                {props.bots.map(bot => {
-                    return <BotRow key={bot.id} {...props} bot={bot} onToggle={() => handleToggle(bot.id)} isOpen={openBotId === bot.id} />
-                })}
-            </div>
+            )}
         </div>
     );
 };

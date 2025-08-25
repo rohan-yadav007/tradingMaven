@@ -6,6 +6,7 @@ import { ChevronDown, ChevronUp } from './icons';
 interface OptimizationResultsProps {
     results: OptimizationResultItem[];
     onApplyAndSwitchView: (params: AgentParams) => void;
+    onReset: () => void;
     pricePrecision: number;
 }
 
@@ -78,7 +79,7 @@ const OptimizationResultRow: React.FC<{
                                 ))}
                             </div>
                              <button onClick={onApply} className="w-full px-4 py-2 bg-sky-600 text-white font-semibold rounded-md shadow-sm hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500">
-                                Use This Configuration
+                                Apply to Trading
                             </button>
                         </div>
                     </div>
@@ -89,7 +90,7 @@ const OptimizationResultRow: React.FC<{
 };
 
 
-export const OptimizationResults: React.FC<OptimizationResultsProps> = ({ results, onApplyAndSwitchView, pricePrecision }) => {
+export const OptimizationResults: React.FC<OptimizationResultsProps> = ({ results, onApplyAndSwitchView, onReset, pricePrecision }) => {
     const [openId, setOpenId] = useState<number | null>(0);
 
     const handleToggle = (id: number) => {
@@ -97,9 +98,14 @@ export const OptimizationResults: React.FC<OptimizationResultsProps> = ({ result
     };
 
     return (
-        <div className="flex flex-col gap-4">
-             <h3 className="font-bold text-lg">Optimization Results ({results.length} combinations)</h3>
-             <div className="space-y-2" style={{maxHeight: '80vh', overflowY: 'auto'}}>
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 animate-fade-in h-full flex flex-col">
+             <div className="flex justify-between items-center mb-4 flex-shrink-0">
+                <h3 className="font-bold text-lg">Optimization Results ({results.length} combinations)</h3>
+                <button onClick={onReset} className="text-sm font-semibold text-slate-600 dark:text-slate-300 hover:text-sky-500">
+                    Run New Test
+                </button>
+             </div>
+             <div className="space-y-2 flex-grow overflow-y-auto pr-2 -mr-2">
                 {results.map((item, index) => (
                     <OptimizationResultRow 
                         key={index}

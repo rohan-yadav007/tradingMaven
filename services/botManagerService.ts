@@ -1,49 +1,178 @@
-
-
-import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, RiskMode, TradingMode, BinanceOrderResponse } from '../types';
+import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, RiskMode, TradingMode, BinanceOrderResponse, TradeManagementSignal, AgentParams } from '../types';
 import * as binanceService from './binanceService';
-import { getTradingSignal, getTradeManagementSignal, getInitialAgentTargets } from './localAgentService';
-import { BOT_COOLDOWN_CANDLES, DEFAULT_AGENT_PARAMS, MAX_STOP_LOSS_PERCENT_OF_INVESTMENT } from '../constants';
+import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getAdaptiveTakeProfit, getProfitSpikeSignal } from './localAgentService';
+import { DEFAULT_AGENT_PARAMS, TIME_FRAMES, TAKER_FEE_RATE, CHAMELEON_TIMEFRAME_SETTINGS, MIN_PROFIT_BUFFER_MULTIPLIER } from '../constants';
+import { telegramBotService } from './telegramBotService';
 
 const MAX_LOG_ENTRIES = 100;
 const RECONNECT_DELAY = 5000; // 5 seconds
-const MANAGEMENT_INTERVAL_MS = 10000; // 10 seconds
+let nextRequestId = 1;
 
-const getTimeframeMilliseconds = (timeFrame: string): number => {
-    const unit = timeFrame.slice(-1);
-    const value = parseInt(timeFrame.slice(0, -1));
-    if (isNaN(value)) return 60 * 1000; // Default to 1m
-
+const getTimeframeDuration = (timeframe: string): number => {
+    const unit = timeframe.slice(-1);
+    const value = parseInt(timeframe.slice(-1), 10);
+    if (isNaN(value)) return 0;
     switch (unit) {
         case 'm': return value * 60 * 1000;
         case 'h': return value * 60 * 60 * 1000;
         case 'd': return value * 24 * 60 * 60 * 1000;
-        default: return 60 * 1000;
+        default: return 0;
     }
 };
 
+// --- New WebSocket Manager for Combined Streams ---
+class WebSocketManager {
+    private ws: WebSocket | null = null;
+    private subscriptions = new Map<string, Function[]>();
+    private getUrl: () => string;
+    private reconnectTimeout: number | null = null;
+    private isConnected = false;
+    private isConnecting = false;
+    private pendingSubscriptions: string[] = [];
+
+    constructor(getUrl: () => string) {
+        this.getUrl = getUrl;
+    }
+
+    private connect() {
+        if (this.isConnecting || this.isConnected) return;
+        this.isConnecting = true;
+
+        const url = `${this.getUrl()}/stream`;
+        this.ws = new WebSocket(url);
+
+        this.ws.onopen = () => {
+            console.log(`[WS Manager] Connected to ${url}`);
+            this.isConnected = true;
+            this.isConnecting = false;
+            const streamsToSubscribe = Array.from(this.subscriptions.keys());
+            if (streamsToSubscribe.length > 0) {
+                this.sendSubscriptionMessage('SUBSCRIBE', streamsToSubscribe);
+            }
+        };
+
+        this.ws.onmessage = (event) => {
+            let message;
+            try {
+                message = JSON.parse(event.data);
+            } catch (error) {
+                console.error('[WS Manager] Error parsing JSON message:', error, event.data);
+                return;
+            }
+
+            if (message.stream && message.data) {
+                const callbacks = this.subscriptions.get(message.stream);
+                if (callbacks) {
+                    callbacks.forEach(cb => {
+                        try {
+                            cb(message.data);
+                        } catch (error) {
+                            console.error(`[WS Manager] Error in callback for stream ${message.stream}:`, error);
+                        }
+                    });
+                }
+            }
+        };
+
+        this.ws.onerror = (error) => {
+            console.error(`[WS Manager] WebSocket error on connection to ${url}:`, error);
+        };
+
+        this.ws.onclose = () => {
+            console.log(`[WS Manager] Disconnected from ${url}`);
+            this.isConnected = false;
+            this.isConnecting = false;
+            if (this.subscriptions.size > 0) { // Only reconnect if there are active subscriptions
+                this.reconnectTimeout = window.setTimeout(() => this.connect(), RECONNECT_DELAY);
+            }
+        };
+    }
+
+    private sendSubscriptionMessage(method: 'SUBSCRIBE' | 'UNSUBSCRIBE', params: string[]) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            console.warn(`[WS Manager] WS not open, cannot send ${method} message.`);
+            return;
+        }
+        this.ws.send(JSON.stringify({
+            method,
+            params,
+            id: nextRequestId++,
+        }));
+    }
+
+    public subscribe(streamName: string, callback: Function) {
+        let callbacks = this.subscriptions.get(streamName);
+        if (!callbacks) {
+            callbacks = [];
+            this.subscriptions.set(streamName, callbacks);
+            if (this.isConnected) {
+                this.sendSubscriptionMessage('SUBSCRIBE', [streamName]);
+            }
+        }
+        if (!callbacks.includes(callback)) {
+            callbacks.push(callback);
+        }
+
+        if (!this.isConnected && !this.isConnecting) {
+            this.connect();
+        }
+    }
+
+    public unsubscribe(streamName: string, callback: Function) {
+        const callbacks = this.subscriptions.get(streamName);
+        if (callbacks) {
+            const index = callbacks.indexOf(callback);
+            if (index > -1) {
+                callbacks.splice(index, 1);
+            }
+
+            if (callbacks.length === 0) {
+                this.subscriptions.delete(streamName);
+                if (this.isConnected) {
+                    this.sendSubscriptionMessage('UNSUBSCRIBE', [streamName]);
+                }
+            }
+        }
+    }
+
+    public disconnect() {
+        if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+        if (this.ws) {
+            this.ws.onclose = null;
+            this.ws.close();
+        }
+        this.subscriptions.clear();
+        this.isConnected = false;
+        this.isConnecting = false;
+    }
+}
+
+
 export interface BotHandlers {
-    onExecuteTrade: (signal: TradeSignal, botId: string) => Promise<void>;
+    onExecuteTrade: (
+        signal: TradeSignal, 
+        botId: string,
+        executionDetails: {
+            agentStopLoss: number,
+            slReason: 'Agent Logic' | 'Hard Cap'
+        }
+    ) => Promise<void>;
     onClosePosition: (position: Position, exitReason: string, exitPrice: number) => void;
 }
 
 class BotInstance {
     public bot: RunningBot;
     public klines: Kline[] = []; // Main timeframe klines
-    private managementKlines: Kline[] = []; // 1-minute klines for open positions
     private onUpdate: () => void;
-    private handlersRef: React.RefObject<BotHandlers>;
-    private isTicking = false;
-    private analysisTimer: number | null = null;
-    private managementTimer: number | null = null;
-    private isAwaitingImmediateAnalysis = false;
-    private isManagingScalperPosition = false;
-    private lastTimerLogTimestamp: number | null = null;
-    
+    private handlers: BotHandlers;
+    public subscriptions: { type: 'ticker' | 'kline', pair: string, timeFrame?: string, mode: TradingMode, callback: Function }[] = [];
+    public isFlippingPosition = false;
+    private managementInterval: number | null = null;
+
     constructor(
         config: BotConfig,
         onUpdate: () => void,
-        handlersRef: React.RefObject<BotHandlers>
+        handlers: BotHandlers
     ) {
         this.bot = {
             id: `bot-${Date.now()}-${config.pair.replace('/', '')}`,
@@ -55,14 +184,20 @@ class BotInstance {
             openPosition: null,
             closedTradesCount: 0,
             totalPnl: 0,
-            cooldownUntil: null,
+            wins: 0,
+            losses: 0,
+            totalGrossProfit: 0,
+            totalGrossLoss: 0,
+            lastProfitableTradeDirection: null,
             accumulatedActiveMs: 0,
             lastResumeTimestamp: null,
             klinesLoaded: 0,
             lastAnalysisTimestamp: null,
+            lastPriceUpdateTimestamp: null,
+            cooldownUntil: undefined,
         };
         this.onUpdate = onUpdate;
-        this.handlersRef = handlersRef;
+        this.handlers = handlers;
     }
 
     public async initialize(initialKlines: Kline[]) {
@@ -70,1054 +205,890 @@ class BotInstance {
         this.klines = initialKlines;
         this.bot.klinesLoaded = this.klines.length;
         this.addLog(`Initialized with ${this.klines.length} ${this.bot.config.timeFrame} klines.`, LogType.Success);
-        
+
         this.bot.status = BotStatus.Monitoring;
         this.bot.lastResumeTimestamp = Date.now(); // Start tracking uptime
-        this.analysisTimer = window.setInterval(() => this.timedTickCheck(), 5000); // Start watchdog timer
-        this.tick(); // Perform initial analysis
+
+        this.addLog("Performing initial analysis on startup.", LogType.Info);
+        await this.runAnalysis(false, { execute: false });
+        
+        this.startManagementLoop();
+
         this.onUpdate();
     }
-    
+
     addLog(message: string, type: LogType = LogType.Info) {
         const newLog: BotLogEntry = { timestamp: new Date(), message, type };
         this.bot.log = [newLog, ...this.bot.log].slice(0, MAX_LOG_ENTRIES);
         this.onUpdate();
     }
 
-    private async runImmediateAnalysis() {
-        if (this.bot.openPosition) return;
-        
-        // Ensure there is at least one kline to analyze
-        const lastCandle = this.klines.length > 0 ? this.klines[this.klines.length - 1] : null;
-        if (!lastCandle) {
-             this.addLog('Immediate analysis skipped: no klines available.', LogType.Info);
-            return;
+    public startManagementLoop() {
+        if (this.managementInterval) {
+            window.clearTimeout(this.managementInterval);
+            this.managementInterval = null;
         }
-
-        if (this.handlersRef.current) {
-            this.addLog('Performing immediate re-analysis on current market data.', LogType.Action);
-            this.bot.lastAnalysisTimestamp = lastCandle.time; // Prevent re-analysis by regular tick
-            const signal = await getTradingSignal(this.bot.config.agent, this.klines, this.bot.config.timeFrame, this.bot.config.agentParams);
-            this.bot.analysis = signal;
-
-            if (signal.signal !== 'HOLD') {
-                this.bot.status = BotStatus.ExecutingTrade;
-                this.onUpdate();
-                await this.executeTrade(signal);
-            } else {
-                const primaryReason = signal.reasons[signal.reasons.length - 1] || "Conditions not met for a trade.";
-                this.addLog(`Immediate Analysis: HOLD. ${primaryReason}`, LogType.Info);
-                // Return to normal monitoring after the hold
-                this.bot.status = BotStatus.Monitoring;
-                this.onUpdate();
+    
+        const scheduleNextRun = () => {
+            // Guard to prevent rescheduling if the bot has been paused/stopped
+            if ([BotStatus.Paused, BotStatus.Stopping, BotStatus.Stopped, BotStatus.Error].includes(this.bot.status)) {
+                return;
             }
+    
+            const intervalSeconds = this.bot.config.refreshInterval ?? 30;
+            const now = new Date();
+            const currentSeconds = now.getSeconds();
+            const currentMilliseconds = now.getMilliseconds();
+            
+            const secondsIntoInterval = currentSeconds % intervalSeconds;
+            let msToWait = (intervalSeconds - secondsIntoInterval) * 1000 - currentMilliseconds;
+    
+            // If we missed the boundary, wait for the next one
+            if (msToWait < 0) {
+                msToWait += intervalSeconds * 1000;
+            }
+    
+            this.managementInterval = window.setTimeout(async () => {
+                try {
+                    // Don't run if status changed while waiting for timeout
+                    if (![BotStatus.Paused, BotStatus.Stopping, BotStatus.Stopped, BotStatus.Error].includes(this.bot.status)) {
+                        await this.runPeriodicManagement();
+                    }
+                } catch (e) {
+                    const errorMessage = e instanceof Error ? e.message : String(e);
+                    this.addLog(`Error in periodic management loop: ${errorMessage}`, LogType.Error);
+                } finally {
+                    // ALWAYS reschedule the next run, even if the current one had an error.
+                    scheduleNextRun();
+                }
+            }, msToWait);
+        };
+        
+        scheduleNextRun();
+        const intervalSeconds = this.bot.config.refreshInterval ?? 30;
+        this.addLog(`Aligned management loop started (${intervalSeconds}s interval).`, LogType.Info);
+    }
+    
+    public stopManagementLoop() {
+        if (this.managementInterval) {
+            window.clearTimeout(this.managementInterval);
+            this.managementInterval = null;
+            this.addLog("Management loop stopped.", LogType.Info);
         }
     }
 
-    private async proactiveManageScalperPosition(livePrice: number) {
-        if (this.isManagingScalperPosition) return;
-    
-        if (!this.bot.openPosition || !this.handlersRef.current || this.bot.status !== BotStatus.PositionOpen) {
+    public async runPeriodicManagement() {
+        if ([BotStatus.Paused, BotStatus.Stopped, BotStatus.Error, BotStatus.ExecutingTrade].includes(this.bot.status)) {
             return;
         }
     
-        const { isStopLossLocked } = this.bot.config;
+        if (this.klines.length < 50) {
+            // This log is too noisy for a periodic check.
+            return;
+        }
     
-        if (isStopLossLocked) {
+        if (!this.bot.livePrice || this.bot.livePrice <= 0) {
+            // This log is also too noisy.
             return;
         }
         
-        this.isManagingScalperPosition = true;
+        // Always refresh analysis preview for UI feedback, regardless of position status.
+        await this.refreshAnalysisPreview();
+    
+        if (this.bot.openPosition) {
+            const lastFinalKline = this.klines[this.klines.length - 1];
+            const previewKline: Kline = {
+                ...lastFinalKline,
+                high: Math.max(lastFinalKline.high, this.bot.livePrice),
+                low: Math.min(lastFinalKline.low, this.bot.livePrice),
+                close: this.bot.livePrice,
+                isFinal: false,
+            };
+            const klinesForAnalysis = [...this.klines.slice(0, -1), previewKline];
+            await this.managePositionOnPeriodicAnalysis(klinesForAnalysis);
+        }
+    }
+
+    public async runAnalysis(isFlipAttempt: boolean = false, options: { execute: boolean } = { execute: true }) {
         try {
-            const managementSignal = await getTradeManagementSignal(this.bot.openPosition, [], livePrice, this.bot.config);
-    
-            if (this.bot.openPosition && managementSignal.newStopLoss) {
-                const isLong = this.bot.openPosition.direction === 'LONG';
-                const isImprovement = (isLong && managementSignal.newStopLoss > this.bot.openPosition.stopLossPrice) ||
-                                      (!isLong && managementSignal.newStopLoss < this.bot.openPosition.stopLossPrice);
-    
-                if (isImprovement) {
-                    this.bot.openPosition.stopLossPrice = managementSignal.newStopLoss;
-                    this.addLog(`Continuous Trail: SL updated to ${managementSignal.newStopLoss.toFixed(this.bot.openPosition.pricePrecision)}. Reason: ${managementSignal.reasons[0] || ''}`, LogType.Action);
-                    this.onUpdate();
+            if (this.bot.openPosition || (!isFlipAttempt && ![BotStatus.Monitoring].includes(this.bot.status))) {
+                return;
+            }
+
+            if (this.klines.length < 50) {
+                this.addLog('Analysis skipped: insufficient kline data.', LogType.Info);
+                return;
+            }
+
+            if (this.handlers) {
+                this.addLog(isFlipAttempt ? 'Analysis for position flip...' : 'Performing entry analysis...', LogType.Action);
+
+                let htfKlines: Kline[] | undefined = undefined;
+                if (this.bot.config.isHtfConfirmationEnabled) {
+                    try {
+                        const htf = this.bot.config.htfTimeFrame === 'auto' 
+                            ? TIME_FRAMES[TIME_FRAMES.indexOf(this.bot.config.timeFrame) + 1] 
+                            : this.bot.config.htfTimeFrame;
+                        
+                        if (htf) {
+                            this.addLog(`Fetching ${htf} data for trend confirmation...`, LogType.Info);
+                            htfKlines = await binanceService.fetchKlines(this.bot.config.pair.replace('/', ''), htf, { limit: 205, mode: this.bot.config.mode }); 
+                        }
+                    } catch (e) {
+                        this.addLog(`Warning: Could not fetch HTF klines: ${e}`, LogType.Error);
+                    }
+                }
+
+                const signal = await getTradingSignal(this.bot.config.agent, this.klines, this.bot.config, htfKlines);
+                this.bot.analysis = signal;
+
+                if (signal.signal !== 'HOLD') {
+                    const { cooldownUntil } = this.bot;
+                    const currentCandleTime = this.klines[this.klines.length - 1].time;
+                    let isVetoed = false;
+
+                    if (cooldownUntil) {
+                        if (currentCandleTime < cooldownUntil.time) {
+                            const signalDirection = signal.signal === 'BUY' ? 'LONG' : 'SHORT';
+                            if (signalDirection === cooldownUntil.direction) {
+                                const cooldownEndsDate = new Date(cooldownUntil.time + getTimeframeDuration(this.bot.config.timeFrame)).toLocaleTimeString();
+                                this.addLog(`Trade VETOED: In cooldown for ${cooldownUntil.direction} trades until after candle closing at ${cooldownEndsDate}.`, LogType.Info);
+                                isVetoed = true;
+                            }
+                        } else {
+                            this.updateState({ cooldownUntil: undefined });
+                            this.addLog('Trade cooldown has expired.', LogType.Info);
+                        }
+                    }
+                    
+                    if (!isVetoed) {
+                        if (isFlipAttempt) {
+                            const flipDirection = this.bot.openPosition?.direction === 'LONG' ? 'SELL' : 'BUY';
+                            if (signal.signal !== flipDirection) {
+                                this.addLog(`Flip aborted: new signal (${signal.signal}) does not oppose current position.`, LogType.Info);
+                                this.isFlippingPosition = false;
+                                return;
+                            }
+                        }
+                        
+                        if (options.execute) {
+                            this.updateState({ status: BotStatus.ExecutingTrade });
+                            await this.executeTrade(signal, this.klines);
+                        } else {
+                            this.addLog(`Initial analysis found a ${signal.signal} signal. Waiting for the current candle to close before taking action.`, LogType.Info);
+                        }
+                    }
+                } else {
+                    const primaryReason = signal.reasons.find(r => r.startsWith('❌') || r.startsWith('ℹ️')) || "Conditions not met.";
+                    this.addLog(`Analysis: HOLD. ${primaryReason.substring(2)}`, LogType.Info);
                 }
             }
         } catch (error) {
-             console.error(`Error during scalper position management for bot ${this.bot.id}:`, error);
+            this.addLog(`Error during analysis: ${error}`, LogType.Error);
         } finally {
-            this.isManagingScalperPosition = false;
+            if (isFlipAttempt) this.isFlippingPosition = false;
+            this.onUpdate();
         }
     }
-    
-    public updateLivePrice(price: number, tickerData: LiveTicker) {
-        this.bot.livePrice = price;
-        this.bot.liveTicker = tickerData;
 
-        // --- REAL-TIME SCALPER TRAILING STOP (Continuous, no-delay check) ---
-        if (this.bot.openPosition && this.bot.status === BotStatus.PositionOpen && (this.bot.config.agent.name === 'Scalping Expert' || this.bot.config.agent.name === 'Profit Locker')) {
-            this.proactiveManageScalperPosition(price);
+    public async updateLivePrice(price: number, tickerData: LiveTicker) {
+        const expectedPair = this.bot.config.pair.replace('/', '').toLowerCase();
+        if (tickerData.pair.toLowerCase() !== expectedPair) {
+            return;
         }
 
-        // --- REAL-TIME EXIT CHECK ---
-        // This is the primary exit mechanism for live trades.
-        if (this.bot.openPosition && this.bot.status === BotStatus.PositionOpen && this.handlersRef.current?.onClosePosition) {
-            const { direction, takeProfitPrice, stopLossPrice } = this.bot.openPosition;
-            const isLong = direction === 'LONG';
-            let exitPrice: number | null = null;
-            let exitReason: string | null = null;
-
-            // Check for Take Profit
-            if ((isLong && price >= takeProfitPrice) || (!isLong && price <= takeProfitPrice)) {
-                exitPrice = takeProfitPrice;
-                exitReason = 'Take Profit Hit (Live)';
-            } 
-            // Check for Stop Loss
-            else if ((isLong && price <= stopLossPrice) || (!isLong && price >= stopLossPrice)) {
-                exitPrice = stopLossPrice;
-                exitReason = 'Stop Loss Hit (Live)';
-            }
-            
-            if (exitPrice !== null && exitReason !== null) {
-                this.addLog(`${exitReason} triggered by live price. Closing position at target ${exitPrice}.`, LogType.Action);
-                this.bot.status = BotStatus.ExecutingTrade;
-                // Use the target price for closing, not the live price which could have slipped.
-                this.handlersRef.current.onClosePosition(this.bot.openPosition, exitReason, exitPrice);
-                // Return early as the position is now being closed. The final state update will be handled
-                // by the onClosePosition -> notifyPositionClosed flow.
-                return; 
-            }
+        this.bot.livePrice = price;
+        this.bot.liveTicker = tickerData;
+        this.bot.lastPriceUpdateTimestamp = Date.now();
+        
+        if (this.bot.openPosition) {
+            this.checkPriceBoundaries(price);
+            await this.managePositionOnTick(price);
         }
 
         this.onUpdate();
     }
 
-    public onMainKlineUpdate(newKline: Kline) {
-        // Update the internal kline history
-        const lastKline = this.klines[this.klines.length - 1];
+    public async onMainKlineUpdate(newKline: Kline) {
+        const lastKline = this.klines.length > 0 ? this.klines[this.klines.length - 1] : null;
+
         if (lastKline && newKline.time === lastKline.time) {
             this.klines[this.klines.length - 1] = newKline;
-        } else {
+        } else if (!lastKline || newKline.time > lastKline.time) {
             this.klines.push(newKline);
-            if(this.klines.length > 2000) this.klines.shift(); // Prevent memory leak
+            if (this.klines.length > 500) this.klines.shift();
         }
         this.bot.klinesLoaded = this.klines.length;
-
-        // If the candle is final, it's the trigger for a new ENTRY analysis.
+        
         if (newKline.isFinal) {
-            this.addLog(`New ${this.bot.config.timeFrame} candle closed. Processing...`, LogType.Status);
-            this.tick();
-        }
-    }
-    
-    public onManagementKlineUpdate(newKline: Kline) {
-        if (!this.bot.openPosition || this.bot.status !== BotStatus.PositionOpen) return;
-
-        // Update 1m kline history, which is used by the proactive management timer
-        const lastKline = this.managementKlines[this.managementKlines.length - 1];
-         if (lastKline && newKline.time === lastKline.time) {
-            this.managementKlines[this.managementKlines.length - 1] = newKline;
-        } else {
-            this.managementKlines.push(newKline);
-            if(this.managementKlines.length > 2000) this.managementKlines.shift();
-        }
-    }
-
-    private startManagementTimer() {
-        this.stopManagementTimer(); // Ensure no duplicates
-        this.addLog(`Proactive position management activated (checking every ${MANAGEMENT_INTERVAL_MS / 1000}s).`, LogType.Status);
-        this.managementTimer = window.setInterval(() => this.proactiveManagePosition(), MANAGEMENT_INTERVAL_MS);
-    }
-
-    private stopManagementTimer() {
-        if (this.managementTimer) {
-            clearInterval(this.managementTimer);
-            this.managementTimer = null;
-            this.addLog('Proactive position management deactivated.', LogType.Status);
-        }
-    }
-    
-    private async proactiveManagePosition() {
-        // --- Position Reconciliation Check (Top Priority) ---
-        // This check prevents the bot from getting stuck if the position is closed on the exchange (e.g., by manual action or failsafe SL).
-        if (this.bot.openPosition && this.bot.config.executionMode === 'live') {
-            try {
-                if (this.bot.config.mode === TradingMode.USDSM_Futures) {
-                    const pairSymbol = this.bot.config.pair.replace('/', '');
-                    const positionRisk = await binanceService.getFuturesPositionRisk(pairSymbol);
-
-                    // If we have position info from the exchange AND the amount is effectively zero
-                    if (positionRisk && Math.abs(parseFloat(positionRisk.positionAmt)) < this.bot.config.stepSize) {
-                         this.addLog("CRITICAL: Position desync detected! Position is closed on Binance but open in the app. Re-syncing state now.", LogType.Error);
-                         // Use the existing close handler to properly manage state transition
-                         // Use live price as the best guess for the unknown external exit price.
-                         this.handlersRef.current?.onClosePosition(this.bot.openPosition, 'Position Closed Externally (Re-sync)', this.bot.livePrice || this.bot.openPosition.stopLossPrice);
-                         return; // Stop further management as position is being closed.
-                    }
-                }
-                // TODO: Add similar reconciliation logic for Spot (checking asset balance) if needed.
-            } catch (e) {
-                console.error(`Error during position reconciliation check for bot ${this.bot.id}:`, e);
-                this.addLog('Warning: Could not verify live position status on exchange.', LogType.Error);
-            }
-        }
-
-        if (!this.bot.openPosition || !this.handlersRef.current || this.bot.status !== BotStatus.PositionOpen || !this.bot.livePrice) {
-            return;
-        }
-
-        const { livePrice, config } = this.bot;
-        const { isStopLossLocked, isTakeProfitLocked } = config;
-
-        if (isStopLossLocked && isTakeProfitLocked) {
-            return; // Nothing to do if both targets are locked
-        }
-
-        const klinesForManagement = this.managementKlines.length > 0 ? this.managementKlines : this.klines;
-        if (klinesForManagement.length === 0) return;
-
-        const managementSignal = await getTradeManagementSignal(this.bot.openPosition, klinesForManagement, livePrice, this.bot.config);
-        const newPositionTargets = { ...this.bot.openPosition };
-        const isLong = newPositionTargets.direction === 'LONG';
-        let updated = false;
-
-        if (!isStopLossLocked && managementSignal.newStopLoss) {
-            const isImprovement = (isLong && managementSignal.newStopLoss > newPositionTargets.stopLossPrice) || 
-                                  (!isLong && managementSignal.newStopLoss < newPositionTargets.stopLossPrice);
-            if (isImprovement) {
-                newPositionTargets.stopLossPrice = managementSignal.newStopLoss;
-                updated = true;
-                this.addLog(`Agent updated trailing Stop Loss to ${managementSignal.newStopLoss.toFixed(newPositionTargets.pricePrecision)}.`, LogType.Action);
-            }
-        }
-
-        if (!isTakeProfitLocked && managementSignal.newTakeProfit) {
-             const isImprovement = (isLong && managementSignal.newTakeProfit > newPositionTargets.takeProfitPrice) ||
-                                  (!isLong && managementSignal.newTakeProfit < newPositionTargets.takeProfitPrice);
-            if (isImprovement) {
-                newPositionTargets.takeProfitPrice = managementSignal.newTakeProfit;
-                updated = true;
-                this.addLog(`Agent updated Take Profit to ${managementSignal.newTakeProfit.toFixed(newPositionTargets.pricePrecision)}.`, LogType.Action);
-            }
-        }
-
-        if (updated) {
-            this.bot.openPosition = newPositionTargets;
-            this.onUpdate();
-        }
-    }
-
-    private timedTickCheck() {
-        if (this.isTicking) {
-            return;
-        }
-    
-        const isEligibleForCheck = this.bot.status === BotStatus.Monitoring || this.bot.status === BotStatus.Cooldown;
-        if (!isEligibleForCheck) {
-            return;
-        }
-    
-        // Always run tick if in cooldown to check if it's over
-        if (this.bot.status === BotStatus.Cooldown) {
-            this.tick();
-            return;
-        }
-    
-        // For monitoring, check if a candle has been missed from the websocket stream.
-        if (this.klines.length > 0) {
-            const lastKline = this.klines[this.klines.length - 1];
-            const timeframeMs = getTimeframeMilliseconds(this.bot.config.timeFrame);
-            const expectedCloseTime = lastKline.time + timeframeMs;
-    
-            if (Date.now() > expectedCloseTime + 2000) {
-                // Avoid log spam by only logging this once per minute if the bot remains stuck.
-                const now = Date.now();
-                if (!this.lastTimerLogTimestamp || now - this.lastTimerLogTimestamp > 60000) {
-                     this.addLog(`Watchdog: Forcing a check due to a possibly missed candle event.`, LogType.Info);
-                     this.lastTimerLogTimestamp = now;
-                }
-                this.tick();
-            }
-        }
-    }
-    
-    private waitForBotLivePrice(timeoutMs: number = 5000): Promise<number | null> {
-        return new Promise((resolve) => {
-            const startTime = Date.now();
-            const checkPrice = () => {
-                if (this.bot.livePrice && this.bot.livePrice > 0) {
-                    resolve(this.bot.livePrice);
-                } else if (Date.now() - startTime > timeoutMs) {
-                    console.error(`Timeout waiting for live price for bot ${this.bot.id}`);
-                    resolve(null);
-                } else {
-                    setTimeout(checkPrice, 100);
-                }
-            };
-            checkPrice();
-        });
-    }
-
-    private async runMonitoringLogic() {
-        if (this.bot.openPosition) return;
-    
-        const lastCandle = this.klines.length > 0 ? this.klines[this.klines.length - 1] : null;
-    
-        if (!lastCandle || !lastCandle.isFinal || (this.bot.lastAnalysisTimestamp === lastCandle.time)) {
-            return;
-        }
-    
-        if (this.handlersRef.current) {
-            this.bot.lastAnalysisTimestamp = lastCandle.time;
-            const signal = await getTradingSignal(this.bot.config.agent, this.klines, this.bot.config.timeFrame, this.bot.config.agentParams);
-            this.bot.analysis = signal;
-    
-            if (signal.signal !== 'HOLD') {
-                this.bot.status = BotStatus.ExecutingTrade;
-                this.onUpdate();
-                await this.executeTrade(signal);
-            } else {
-                const primaryReason = signal.reasons[signal.reasons.length - 1] || "Conditions not met for a trade.";
-                this.addLog(`Analysis: HOLD. ${primaryReason}`, LogType.Info);
-            }
-        }
-    }
-    
-    private async tick() {
-        if (this.isTicking) return;
-
-        this.isTicking = true;
-        try {
-            // Handle state transitions first
-            if (this.bot.status === BotStatus.Cooldown && Date.now() >= (this.bot.cooldownUntil || 0)) {
-                if (this.isAwaitingImmediateAnalysis) {
-                    this.isAwaitingImmediateAnalysis = false; // Reset flag
-                    this.addLog('Short cooldown finished. Performing immediate re-analysis.', LogType.Status);
-                    this.updateState({
-                        status: BotStatus.Monitoring,
-                        cooldownUntil: null,
-                        analysis: null,
-                        lastAnalysisTimestamp: null,
-                    });
-                    
-                    await this.runImmediateAnalysis();
-                    // After immediate analysis, the state is either PositionOpen or Monitoring.
-                    // No further action in this tick, so we return.
-                    return; 
-                } else {
-                    this.addLog('Cooldown period finished. Resuming market monitoring.', LogType.Status);
-                    this.updateState({
-                        status: BotStatus.Monitoring,
-                        cooldownUntil: null,
-                        analysis: null,
-                        lastAnalysisTimestamp: null,
-                    });
-                    // Fall through to potentially run monitoring logic in the same tick if a new candle is ready
+            this.bot.lastAnalysisTimestamp = new Date().getTime();
+            if (this.bot.openPosition) {
+                if(this.bot.openPosition.candlesSinceEntry !== undefined) {
+                    const newPosition = { ...this.bot.openPosition, candlesSinceEntry: this.bot.openPosition.candlesSinceEntry + 1 };
+                    this.updateState({openPosition: newPosition});
                 }
             }
-
-            // Perform action based on current state
-            switch (this.bot.status) {
-                case BotStatus.Monitoring:
-                    await this.runMonitoringLogic();
-                    break;
-                case BotStatus.Cooldown:
-                    // This will only run if the cooldown is still active.
-                    const remainingTime = (this.bot.cooldownUntil || 0) - Date.now();
-                    this.bot.analysis = { signal: 'HOLD', reasons: [`In cooldown for ~${Math.round(remainingTime / 1000)}s.`] };
-                    break;
-                // No other states are handled by the tick.
+             // NEW: Trigger entry analysis on candle close
+            if (this.bot.status === BotStatus.Monitoring) {
+                this.addLog(`New ${this.bot.config.timeFrame} candle closed. Running entry analysis...`, LogType.Info);
+                await this.runAnalysis();
             }
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : "An unknown error occurred during tick processing.";
-            this.addLog(`Error during analysis/execution: ${errorMessage}`, LogType.Error);
-            this.updateState({ status: BotStatus.Error, analysis: { signal: 'HOLD', reasons: [errorMessage] } });
-        } finally {
-            this.isTicking = false;
-            this.onUpdate();
         }
+        
+        this.onUpdate();
     }
 
-    public async forceRefreshAndAnalyze() {
-        this.addLog('Connection re-established. Forcing data refresh and re-analysis...', LogType.Info);
-        try {
-            const { pair, timeFrame } = this.bot.config;
-            const formattedPair = pair.replace('/', '');
-            
-            const latestKlines = await binanceService.fetchKlines(formattedPair, timeFrame);
-            this.klines = latestKlines;
-            this.bot.klinesLoaded = latestKlines.length;
-
-            this.bot.lastAnalysisTimestamp = null;
-            
-            this.addLog(`Data re-synced with ${latestKlines.length} candles. Triggering analysis.`, LogType.Success);
-            
-            this.tick();
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : "Unknown error during data refresh.";
-            this.addLog(`Failed to refresh data after reconnect: ${errorMessage}`, LogType.Error);
-        }
+    public updateState(partialState: Partial<RunningBot>) {
+        this.bot = { ...this.bot, ...partialState };
+        this.onUpdate();
     }
-    
-    private async executeTrade(signal: TradeSignal) {
+
+    private async getInitialPriceReliably(): Promise<number | null> {
+        if (this.bot.livePrice) return this.bot.livePrice;
+
         const { config } = this.bot;
-        const { onExecuteTrade } = this.handlersRef.current!;
+        const formattedPair = config.pair.replace('/', '');
 
-        const initialEntryPrice = await this.waitForBotLivePrice(5000);
-        if (initialEntryPrice === null) {
-            throw new Error("Could not get live price for trade execution.");
+        try {
+            const price = config.mode === TradingMode.USDSM_Futures
+                ? await binanceService.fetchFuturesTickerPrice(formattedPair)
+                : await binanceService.fetchTickerPrice(formattedPair);
+            return price;
+        } catch (e) {
+            this.addLog(`Could not fetch price reliably: ${e}`, LogType.Error);
+            if (this.klines.length > 0) {
+                return this.klines[this.klines.length - 1].close;
+            }
+            return null;
+        }
+    }
+
+    private async executeTrade(signal: TradeSignal, klinesForAnalysis: Kline[]) {
+        if (!this.handlers?.onExecuteTrade) {
+            this.addLog("Execution handler not available.", LogType.Error);
+            this.updateState({ status: BotStatus.Monitoring });
+            return;
+        }
+
+        const currentPrice = await this.getInitialPriceReliably();
+        if (!currentPrice) {
+            this.notifyTradeExecutionFailed("Could not determine a valid entry price.");
+            return;
         }
         
         const isLong = signal.signal === 'BUY';
-        const positionValue = config.mode === TradingMode.USDSM_Futures 
-            ? config.investmentAmount * config.leverage 
-            : config.investmentAmount;
-        const tradeSize = positionValue / initialEntryPrice;
+        const { config } = this.bot;
 
-        // --- LAYER 1: USER-DEFINED SL ---
-        let userStopLossPrice: number;
-        if (config.stopLossMode === RiskMode.Percent) {
-            const lossAmount = config.investmentAmount * (config.stopLossValue / 100);
-            userStopLossPrice = isLong ? initialEntryPrice - (lossAmount / tradeSize) : initialEntryPrice + (lossAmount / tradeSize);
-        } else { // Amount
-            userStopLossPrice = isLong ? initialEntryPrice - (config.stopLossValue / tradeSize) : initialEntryPrice + (config.stopLossValue / tradeSize);
-        }
+        const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(klinesForAnalysis, currentPrice, isLong ? 'LONG' : 'SHORT', config);
 
-        // --- LAYER 2: AGENT'S SMART (ATR) SL ---
-        const agentTargets = getInitialAgentTargets(this.klines, initialEntryPrice, isLong ? 'LONG' : 'SHORT', config.timeFrame, { ...DEFAULT_AGENT_PARAMS, ...config.agentParams });
-        const agentStopLossPrice = agentTargets.stopLossPrice;
-
-        // --- LAYER 3: HARD CAP SAFETY NET SL ---
-        const maxLossAmount = config.investmentAmount * (MAX_STOP_LOSS_PERCENT_OF_INVESTMENT / 100);
-        const hardCapStopLossPrice = isLong ? initialEntryPrice - (maxLossAmount / tradeSize) : initialEntryPrice + (maxLossAmount / tradeSize);
-
-        this.addLog(`Risk Analysis: User SL: ${userStopLossPrice.toFixed(config.pricePrecision)}, Agent SL: ${agentStopLossPrice.toFixed(config.pricePrecision)}, Hard Cap: ${hardCapStopLossPrice.toFixed(config.pricePrecision)}`, LogType.Info);
-        
-        // Determine primary SL based on whether it's locked
-        let primaryStopLoss = config.isStopLossLocked ? userStopLossPrice : agentStopLossPrice;
-        let finalStopLossPrice: number;
-
-        // The final SL is the TIGHTEST (safest) of the primary SL and the hard cap
-        if (isLong) {
-            finalStopLossPrice = Math.max(primaryStopLoss, hardCapStopLossPrice);
-        } else { // SHORT
-            finalStopLossPrice = Math.min(primaryStopLoss, hardCapStopLossPrice);
-        }
-
-        if (finalStopLossPrice !== primaryStopLoss) {
-            this.addLog(`SAFETY OVERRIDE: Hard cap of ${MAX_STOP_LOSS_PERCENT_OF_INVESTMENT}% is tighter than configured SL. Enforcing safer stop.`, LogType.Action);
-        }
-        this.addLog(`Final Stop Loss set to: ${finalStopLossPrice.toFixed(config.pricePrecision)}`, LogType.Success);
-
-        // --- TAKE PROFIT CALCULATION ---
-        let takeProfitPrice: number;
-        // If TP is unlocked, use the Agent's R:R based target
-        if (!config.isTakeProfitLocked) {
-            // Correctly maintain the R:R based on the *final* SL
-            const riskDistance = Math.abs(initialEntryPrice - finalStopLossPrice);
-            const agentRiskDistance = Math.abs(initialEntryPrice - agentTargets.stopLossPrice);
-            const agentProfitDistance = Math.abs(agentTargets.takeProfitPrice - initialEntryPrice);
-            const riskRewardRatio = agentRiskDistance > 0 ? agentProfitDistance / agentRiskDistance : 1.5;
-            const profitDistance = riskDistance * riskRewardRatio;
-            
-            takeProfitPrice = isLong ? initialEntryPrice + profitDistance : initialEntryPrice - profitDistance;
-            this.addLog(`Using SMART (ATR-based) Take Profit target: ${takeProfitPrice.toFixed(config.pricePrecision)}`, LogType.Info);
-        } else { // TP is locked, use user's setting
-            if (config.takeProfitMode === RiskMode.Percent) {
-                const profitAmount = config.investmentAmount * (config.takeProfitValue / 100);
-                takeProfitPrice = isLong ? initialEntryPrice + (profitAmount / tradeSize) : initialEntryPrice - (profitAmount / tradeSize);
-            } else { // Amount
-                takeProfitPrice = isLong ? initialEntryPrice + (config.takeProfitValue / tradeSize) : initialEntryPrice - (config.takeProfitValue / tradeSize);
+        let finalTp = takeProfitPrice;
+        if (this.bot.config.isTakeProfitLocked && this.bot.config.agent.id !== 13) {
+            const positionValue = this.bot.config.mode === TradingMode.USDSM_Futures ? this.bot.config.investmentAmount * this.bot.config.leverage : this.bot.config.investmentAmount;
+            const tradeSize = positionValue / currentPrice;
+            if (this.bot.config.takeProfitMode === RiskMode.Percent) {
+                const profitAmount = this.bot.config.investmentAmount * (this.bot.config.takeProfitValue / 100);
+                finalTp = isLong ? currentPrice + (profitAmount / tradeSize) : currentPrice - (profitAmount / tradeSize);
+            } else {
+                finalTp = isLong ? currentPrice + (this.bot.config.takeProfitValue / tradeSize) : currentPrice - (this.bot.config.takeProfitValue / tradeSize);
             }
-            this.addLog(`Using LOCKED Take Profit target: ${takeProfitPrice.toFixed(config.pricePrecision)}`, LogType.Info);
         }
         
+        // --- Intelligent TP Adjustment (Fee Veto Fix) ---
+        const positionValue = config.investmentAmount * (config.mode === TradingMode.USDSM_Futures ? config.leverage : 1);
+        const tradeSize = positionValue / currentPrice;
+        if (tradeSize > 0) {
+            const roundTripFee = positionValue * TAKER_FEE_RATE * 2;
+            const feeInPrice = roundTripFee / tradeSize;
+            const minProfitDistance = feeInPrice * MIN_PROFIT_BUFFER_MULTIPLIER;
+            const rewardDistance = Math.abs(finalTp - currentPrice);
+
+            if (rewardDistance < minProfitDistance) {
+                const originalTp = finalTp;
+                finalTp = isLong ? currentPrice + minProfitDistance : currentPrice - minProfitDistance;
+                this.addLog(`TP target of ${originalTp.toFixed(config.pricePrecision)} was within fee zone. Adjusted to ${finalTp.toFixed(config.pricePrecision)}.`, LogType.Info);
+            }
+        }
+        
+        const validation = validateTradeProfitability(currentPrice, stopLossPrice, finalTp, signal.signal === 'BUY' ? 'LONG' : 'SHORT', this.bot.config);
+        if (!validation.isValid) {
+            this.notifyTradeExecutionFailed(validation.reason);
+            return;
+        }
+
+        this.addLog(`Executing ${signal.signal} at ~${currentPrice.toFixed(this.bot.config.pricePrecision)}. SL: ${stopLossPrice.toFixed(this.bot.config.pricePrecision)} (${slReason}), TP: ${finalTp.toFixed(this.bot.config.pricePrecision)}`, LogType.Action);
+        this.addLog(validation.reason, LogType.Success);
+
         const execSignal: TradeSignal = {
             ...signal,
-            entryPrice: initialEntryPrice,
-            stopLossPrice: finalStopLossPrice,
-            takeProfitPrice
+            entryPrice: currentPrice,
+            takeProfitPrice: finalTp,
+            stopLossPrice: stopLossPrice,
         };
-
-        await onExecuteTrade(execSignal, this.bot.id);
-    }
-    
-    onExecutionFailed(reason: string) {
-        this.addLog(`Trade execution failed: ${reason}. Entering 1-minute cooldown.`, LogType.Error);
         
-        const cooldownMs = 60 * 1000; // 1 minute as requested.
-        const cooldownUntil = Date.now() + cooldownMs;
-
-        this.updateState({
-            status: BotStatus.Cooldown,
-            cooldownUntil: cooldownUntil,
-            analysis: { signal: 'HOLD', reasons: [`Execution failed. Cooling down.`] }
-        });
+        this.handlers.onExecuteTrade(
+            execSignal, 
+            this.bot.id,
+            { agentStopLoss, slReason }
+        );
     }
 
-    onPositionClosed(pnl: number) {
-        if (this.bot.openPositionId === null) {
-            return;
-        }
-        this.stopManagementTimer();
+    private checkPriceBoundaries(livePrice: number) {
+        const { openPosition } = this.bot;
+        if (!openPosition || !this.handlers) return;
 
-        const closeTime = Date.now();
-        this.bot.openPositionId = null;
-        this.bot.openPosition = null;
-        this.managementKlines = []; // Clear 1m klines
-        this.bot.lastAnalysisTimestamp = null;
-        this.bot.closedTradesCount = (this.bot.closedTradesCount || 0) + 1;
-        this.bot.totalPnl = (this.bot.totalPnl || 0) + pnl;
-
-        if (this.bot.config.isCooldownEnabled) {
-            this.bot.status = BotStatus.Cooldown;
-            const timeframeMs = getTimeframeMilliseconds(this.bot.config.timeFrame);
-            const cooldownMs = BOT_COOLDOWN_CANDLES * timeframeMs;
-            this.bot.cooldownUntil = closeTime + cooldownMs;
-            this.isAwaitingImmediateAnalysis = false;
-            const cooldownMinutes = cooldownMs / 60000;
-            this.addLog(`Position closed with PNL: ${pnl.toFixed(2)}. Bot in cooldown for ${BOT_COOLDOWN_CANDLES} candles (~${cooldownMinutes.toFixed(1)} mins).`, LogType.Success);
-        } else {
-            // If cooldown is disabled, apply a short, fixed delay to allow for immediate re-analysis.
-            this.bot.status = BotStatus.Cooldown;
-            const delayMs = 5000; // 5 seconds
-            this.bot.cooldownUntil = closeTime + delayMs;
-            this.isAwaitingImmediateAnalysis = true;
-            this.addLog(`Position closed with PNL: ${pnl.toFixed(2)}. Cooldown disabled, starting a ${delayMs / 1000}s timer for immediate re-analysis.`, LogType.Success);
-        }
-        this.onUpdate();
-    }
-
-    pause() {
-        if ([BotStatus.Monitoring, BotStatus.PositionOpen, BotStatus.Cooldown].includes(this.bot.status)) {
-            if (this.bot.lastResumeTimestamp) {
-                this.bot.accumulatedActiveMs += Date.now() - this.bot.lastResumeTimestamp;
-            }
-            this.stopManagementTimer();
-            if (this.analysisTimer) {
-                clearInterval(this.analysisTimer);
-                this.analysisTimer = null;
-            }
-            this.bot.lastResumeTimestamp = null;
-            this.bot.status = BotStatus.Paused;
-            this.addLog('Bot paused. All analysis is halted.', LogType.Info);
-            this.onUpdate();
-        }
-    }
-
-    resume() {
-        if (this.bot.status !== BotStatus.Paused) return;
-    
-        this.addLog('Bot resumed.', LogType.Info);
-        this.bot.lastResumeTimestamp = Date.now();
-        this.analysisTimer = window.setInterval(() => this.timedTickCheck(), 5000);
-    
-        // Case 1: Resuming with a position open
-        if (this.bot.openPosition) {
-            this.bot.status = BotStatus.PositionOpen;
-            this.startManagementTimer();
-            this.onUpdate();
-            return;
-        }
-    
-        // Case 2: Resuming while in a cooldown period
-        if (this.bot.cooldownUntil && Date.now() < this.bot.cooldownUntil) {
-            this.bot.status = BotStatus.Cooldown;
-            this.onUpdate();
-            this.tick(); // Let the tick handler manage the cooldown.
-            return;
-        }
-
-        // Case 3: Resuming to a fresh monitoring state
-        this.bot.status = BotStatus.Monitoring;
-        this.bot.cooldownUntil = null;
-        this.bot.analysis = null;
-        this.bot.lastAnalysisTimestamp = null;
-        this.onUpdate(); // Update UI to show "Monitoring"
+        const { onClosePosition } = this.handlers;
+        const isLong = openPosition.direction === 'LONG';
         
-        // Then, perform the analysis. This is the fix for the "dead silent" issue.
-        this.addLog("Performing analysis immediately upon resume.", LogType.Info);
-        this.runImmediateAnalysis();
-    }
-    
-    async updateTradeParams(partialConfig: Partial<BotConfig>) {
-        if (!this.handlersRef.current) return;
-    
-        // 1. Update the bot's configuration state immediately
-        this.bot.config = { ...this.bot.config, ...partialConfig };
-    
-        // Log the change for audit
-        Object.keys(partialConfig).forEach(keyStr => {
-            const key = keyStr as keyof BotConfig;
-            this.addLog(`Config updated: ${key} = ${JSON.stringify(this.bot.config[key])}`, LogType.Action);
-        });
-    
-        // 2. If no position is open, there's nothing more to do.
-        if (!this.bot.openPosition || !this.bot.livePrice) {
-            this.onUpdate();
-            return;
-        }
-    
-        const { config: newConfig } = this.bot;
-        const position = this.bot.openPosition;
-        const livePrice = this.bot.livePrice;
-        let targetsUpdated = false;
-    
-        // A helper to calculate the initial, non-trailed targets based on a config
-        const getInitialTargets = () => {
-            const isLong = position.direction === 'LONG';
-            const { investmentAmount, stopLossMode, stopLossValue, takeProfitMode, takeProfitValue } = newConfig;
-    
-            let slPrice: number;
-            if (stopLossMode === RiskMode.Percent) {
-                const lossAmount = investmentAmount * (stopLossValue / 100);
-                const priceChange = lossAmount / position.size;
-                slPrice = isLong ? position.entryPrice - priceChange : position.entryPrice + priceChange;
-            } else { // Amount
-                const priceChange = stopLossValue / position.size;
-                slPrice = isLong ? position.entryPrice - priceChange : position.entryPrice + priceChange;
-            }
-    
-            let tpPrice: number;
-            if (takeProfitMode === RiskMode.Percent) {
-                const profitAmount = investmentAmount * (takeProfitValue / 100);
-                const priceChange = profitAmount / position.size;
-                tpPrice = isLong ? position.entryPrice + priceChange : position.entryPrice - priceChange;
-            } else { // Amount
-                const priceChange = takeProfitValue / position.size;
-                tpPrice = isLong ? position.entryPrice + priceChange : position.entryPrice - priceChange;
-            }
-            return { stopLossPrice: slPrice, takeProfitPrice: tpPrice };
-        };
-    
-        // 3. React to the new configuration state
-    
-        // --- STOP LOSS ---
-        if (newConfig.isStopLossLocked) {
-            // If it's locked, the price is determined SOLELY by the manual config.
-            const { stopLossPrice: newStaticSl } = getInitialTargets();
-            if (position.stopLossPrice !== newStaticSl) {
-                position.stopLossPrice = newStaticSl;
-                targetsUpdated = true;
-                this.addLog(`Stop Loss manually set to ${newStaticSl.toFixed(position.pricePrecision)}`, LogType.Action);
-            }
-        } else {
-            // If it's unlocked, it should be managed by the agent.
-            this.addLog("Stop Loss is unlocked. Checking for agent recommendation...", LogType.Action);
-            const managementSignal = await getTradeManagementSignal(position, this.managementKlines, livePrice, newConfig);
-            const agentSl = managementSignal.newStopLoss;
-    
-            if (agentSl && position.stopLossPrice !== agentSl) {
-                position.stopLossPrice = agentSl;
-                targetsUpdated = true;
-                this.addLog(`Agent updated trailing Stop Loss to ${agentSl.toFixed(position.pricePrecision)}`, LogType.Action);
-            } else if (!agentSl) {
-                // Agent didn't give a new SL. Reset it away from the old manual value.
-                const { stopLossPrice: initialSl } = getInitialTargets();
-                if (position.stopLossPrice !== initialSl) {
-                    position.stopLossPrice = initialSl;
-                    targetsUpdated = true;
-                    this.addLog(`Stop Loss reset to initial calculated level ${initialSl.toFixed(position.pricePrecision)}`, LogType.Action);
-                }
-            }
-        }
-    
-        // --- TAKE PROFIT ---
-        if (newConfig.isTakeProfitLocked) {
-            const { takeProfitPrice: newStaticTp } = getInitialTargets();
-            if (position.takeProfitPrice !== newStaticTp) {
-                position.takeProfitPrice = newStaticTp;
-                targetsUpdated = true;
-                this.addLog(`Take Profit manually set to ${newStaticTp.toFixed(position.pricePrecision)}`, LogType.Action);
-            }
-        } else {
-            this.addLog("Take Profit is unlocked. Checking for agent recommendation...", LogType.Action);
-            const managementSignal = await getTradeManagementSignal(position, this.managementKlines, livePrice, newConfig);
-            const agentTp = managementSignal.newTakeProfit;
-    
-            if (agentTp && position.takeProfitPrice !== agentTp) {
-                position.takeProfitPrice = agentTp;
-                targetsUpdated = true;
-                this.addLog(`Agent updated Take Profit to ${agentTp.toFixed(position.pricePrecision)}`, LogType.Action);
-            } else if (!agentTp) {
-                const { takeProfitPrice: initialTp } = getInitialTargets();
-                if (position.takeProfitPrice !== initialTp) {
-                    position.takeProfitPrice = initialTp;
-                    targetsUpdated = true;
-                    this.addLog(`Take Profit reset to initial calculated level ${initialTp.toFixed(position.pricePrecision)}`, LogType.Action);
-                }
-            }
-        }
-    
-        // 4. Final state updates and checks
-        if (targetsUpdated) {
-            this.addLog(`Targets updated. Active SL: ${position.stopLossPrice.toFixed(position.pricePrecision)}, Active TP: ${position.takeProfitPrice.toFixed(position.pricePrecision)}.`, LogType.Info);
-        }
-    
-        // Check for immediate exit conditions based on the new locked targets
-        const isLong = position.direction === 'LONG';
-        if (newConfig.isStopLossLocked) {
-            if ((isLong && livePrice <= position.stopLossPrice) || (!isLong && livePrice >= position.stopLossPrice)) {
-                this.addLog(`Immediate Manual SL triggered. Price: ${livePrice.toFixed(position.pricePrecision)}, Target: ${position.stopLossPrice.toFixed(position.pricePrecision)}.`, LogType.Action);
-                this.handlersRef.current.onClosePosition(position, 'Immediate Manual SL', livePrice);
-                return; // Exit, position is closing
-            }
-        }
-        if (newConfig.isTakeProfitLocked) {
-            if ((isLong && livePrice >= position.takeProfitPrice) || (!isLong && livePrice <= position.takeProfitPrice)) {
-                this.addLog(`Immediate Manual TP triggered. Price: ${livePrice.toFixed(position.pricePrecision)}, Target: ${position.takeProfitPrice.toFixed(position.pricePrecision)}.`, LogType.Action);
-                this.handlersRef.current.onClosePosition(position, 'Immediate Manual TP', livePrice);
-                return; // Exit, position is closing
-            }
-        }
-    
-        this.onUpdate();
-    }
-    
-    updateState(newState: Partial<RunningBot>) {
-        const wasInPosition = !!this.bot.openPosition;
-        this.bot = { ...this.bot, ...newState };
-        const isNowInPosition = !!this.bot.openPosition;
+        const slCondition = isLong ? livePrice <= openPosition.stopLossPrice : livePrice >= openPosition.stopLossPrice;
+        const tpCondition = isLong ? livePrice >= openPosition.takeProfitPrice : livePrice <= openPosition.takeProfitPrice;
 
-        if (isNowInPosition && !wasInPosition) {
-             if (this.bot.openPosition) {
-                 this.bot.livePrice = this.bot.openPosition.entryPrice;
-             }
-             this.startManagementTimer();
-        }
-        this.onUpdate();
-    }
-
-    stop() {
-        if (this.analysisTimer) clearInterval(this.analysisTimer);
-        this.stopManagementTimer();
-        this.bot.cooldownUntil = null;
-        if (this.bot.lastResumeTimestamp) {
-            this.bot.accumulatedActiveMs += Date.now() - this.bot.lastResumeTimestamp;
-        }
-        this.bot.lastResumeTimestamp = null;
-        this.bot.status = BotStatus.Stopping;
-        this.addLog('Bot stopping...', LogType.Info);
-        this.bot.status = BotStatus.Stopped;
-        this.addLog('Bot stopped manually.', LogType.Info);
-        this.onUpdate();
-    }
-}
-
-
-class BotManager {
-    private bots: Map<string, BotInstance> = new Map();
-    private onBotsUpdate: (bots: RunningBot[]) => void = () => {};
-    
-    // Single, shared WebSocket connection and state
-    private ws: WebSocket | null = null;
-    private subscriptions: Map<string, Set<Function | string>> = new Map();
-    private connectionId = 1;
-    private isConnecting = false;
-    private reconnectionTimeout: number | null = null;
-    
-    // Historical data cache
-    private klineHistory: Map<string, Kline[]> = new Map();
-    
-    init(onBotsUpdate: (bots: RunningBot[]) => void) {
-        this.onBotsUpdate = onBotsUpdate;
-        this.connect(); // Initial connection attempt
-    }
-
-    private connect() {
-        if (this.ws || this.isConnecting) return;
-        this.isConnecting = true;
-        this.bots.forEach(b => b.addLog('WebSocket: Connecting...', LogType.Info));
-        
-        this.ws = new WebSocket(`wss://stream.binance.com:9443/stream`);
-
-        this.ws.onopen = () => {
-            console.log('BotManager: WebSocket connected.');
-            this.isConnecting = false;
-            if (this.reconnectionTimeout) clearTimeout(this.reconnectionTimeout);
-            this.reconnectionTimeout = null;
-            this.bots.forEach(b => b.addLog('WebSocket: Connection successful.', LogType.Success));
-
-
-            // Re-subscribe to all existing streams
-            const allStreams = Array.from(this.subscriptions.keys());
-            if (allStreams.length > 0) {
-                this.sendWsMessage('SUBSCRIBE', allStreams);
-            }
-
-            // Force refresh all running bots to recover from potential desync
-            this.bots.forEach(botInstance => {
-                if (botInstance.bot.status !== BotStatus.Stopped && botInstance.bot.status !== BotStatus.Error) {
-                    botInstance.forceRefreshAndAnalyze();
-                }
-            });
-        };
-
-        this.ws.onmessage = this.onMessage.bind(this);
-
-        this.ws.onerror = (error) => {
-            console.error('BotManager: WebSocket error:', error);
-            this.bots.forEach(b => b.addLog('WebSocket: Connection error.', LogType.Error));
-            this.ws?.close();
-        };
-
-        this.ws.onclose = () => {
-            console.log('BotManager: WebSocket disconnected.');
-            this.bots.forEach(b => b.addLog('WebSocket: Disconnected.', LogType.Error));
-            this.ws = null;
-            this.isConnecting = false;
-            if (!this.reconnectionTimeout) {
-                this.bots.forEach(b => b.addLog(`WebSocket: Retrying in ${RECONNECT_DELAY / 1000}s...`, LogType.Info));
-                this.reconnectionTimeout = window.setTimeout(() => this.connect(), RECONNECT_DELAY);
-            }
-        };
-    }
-
-    private sendWsMessage(method: 'SUBSCRIBE' | 'UNSUBSCRIBE', params: string[]) {
-        if (this.ws?.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({
-                method,
-                params,
-                id: this.connectionId++
-            }));
+        if (slCondition) {
+            onClosePosition(openPosition, openPosition.activeStopLossReason.includes('Trail') || openPosition.activeStopLossReason.includes('Secure') || openPosition.activeStopLossReason === 'Breakeven' ? 'Trailing Stop Hit' : 'Stop Loss Hit', openPosition.stopLossPrice);
+        } else if (tpCondition) {
+            onClosePosition(openPosition, 'Take Profit Hit', openPosition.takeProfitPrice);
         }
     }
 
-    private onMessage(event: MessageEvent) {
-        const message = JSON.parse(event.data);
-    
-        if (message.result === null && message.id) {
-            // Subscription confirmation
-            return;
+    private async managePositionOnTick(currentPrice: number) {
+        if (!this.bot.openPosition || !this.handlers) return;
+
+        let updatedPosition = { ...this.bot.openPosition };
+        const isLong = updatedPosition.direction === 'LONG';
+        let hasUpdate = false;
+
+        // --- Live P&L and MFE/MAE tracking ---
+        const isInProfit = isLong ? currentPrice > updatedPosition.entryPrice : currentPrice < updatedPosition.entryPrice;
+        if (!updatedPosition.hasBeenProfitable && isInProfit) {
+            updatedPosition.hasBeenProfitable = true;
+            hasUpdate = true;
         }
-    
-        if (message.stream && message.data) {
-            const streamName = message.stream;
-            const data = message.data;
-            const subscribers = this.subscriptions.get(streamName);
-            
-            if (subscribers) {
-                subscribers.forEach(sub => {
-                    this.dispatchData(sub, streamName, data);
+        const currentPeak = updatedPosition.peakPrice ?? updatedPosition.entryPrice;
+        if ((isLong && currentPrice > currentPeak) || (!isLong && currentPrice < currentPeak)) {
+            updatedPosition.peakPrice = currentPrice;
+            hasUpdate = true;
+        }
+        const currentTrough = updatedPosition.troughPrice ?? updatedPosition.entryPrice;
+        if ((isLong && currentPrice < currentTrough) || (!isLong && currentPrice > currentTrough)) {
+            updatedPosition.troughPrice = currentPrice;
+            hasUpdate = true;
+        }
+
+        // --- IMMEDIATE, PRICE-DRIVEN SL MANAGEMENT ---
+        const potentialStops: { price: number; reason: Position['activeStopLossReason']; newState?: any }[] = [];
+        potentialStops.push({ price: updatedPosition.stopLossPrice, reason: updatedPosition.activeStopLossReason });
+
+        // NEW: Tier -1: Profit Spike Protector (Hyper-Reactive, NON-NEGOTIABLE)
+        // Controlled by the "Proactive Exit & Invalidation" toggle for simplicity
+        if (this.bot.config.isInvalidationCheckEnabled) {
+            const spikeSignal = getProfitSpikeSignal(updatedPosition, currentPrice);
+            if (spikeSignal.newStopLoss) {
+                potentialStops.push({
+                    price: spikeSignal.newStopLoss,
+                    reason: 'Profit Secure', // Use a consistent reason for UI
+                    newState: spikeSignal.newState
                 });
             }
         }
+
+        // Tier 0: Mandatory Breakeven (NON-NEGOTIABLE & IMMEDIATE)
+        const mandatoryBreakevenSignal = getMandatoryBreakevenSignal(updatedPosition, currentPrice);
+        if (mandatoryBreakevenSignal.newStopLoss) {
+            potentialStops.push({
+                price: mandatoryBreakevenSignal.newStopLoss,
+                reason: 'Breakeven',
+                newState: mandatoryBreakevenSignal.newState
+            });
+        }
+        
+        // --- EXPLICIT LOGIC: Universal Trail OR Agent Trail ---
+        if (this.bot.config.isUniversalProfitTrailEnabled) {
+            const profitSecureSignal = getMultiStageProfitSecureSignal(updatedPosition, currentPrice);
+            if (profitSecureSignal.newStopLoss) {
+                potentialStops.push({ 
+                    price: profitSecureSignal.newStopLoss, 
+                    reason: 'Profit Secure', 
+                    newState: profitSecureSignal.newState 
+                });
+            }
+        } else {
+            // Universal trail is OFF, so only the agent's logic runs for trailing.
+            const lastFinalKline = this.klines[this.klines.length - 1];
+            if (lastFinalKline) {
+                const previewKline: Kline = {
+                    ...lastFinalKline,
+                    high: Math.max(lastFinalKline.high, currentPrice),
+                    low: Math.min(lastFinalKline.low, currentPrice),
+                    close: currentPrice,
+                    isFinal: false,
+                };
+                const klinesForAnalysis = [...this.klines.slice(0, -1), previewKline];
+                const agentTrailSignal = getAgentExitSignal(updatedPosition, klinesForAnalysis, currentPrice, this.bot.config);
+                if (agentTrailSignal.newStopLoss) {
+                    potentialStops.push({ price: agentTrailSignal.newStopLoss, reason: 'Agent Trail' });
+                }
+            }
+        }
+        
+        // Determine the best (tightest) valid stop loss from all candidates.
+        let bestStop = potentialStops[0];
+        for (let i = 1; i < potentialStops.length; i++) {
+            const candidate = potentialStops[i];
+            const isTighter = isLong ? candidate.price > bestStop.price : candidate.price < bestStop.price;
+            if (isTighter) {
+                bestStop = candidate;
+            }
+        }
+
+        // Apply the best stop if it's an improvement and valid (not crossing the current price).
+        if (bestStop.price !== updatedPosition.stopLossPrice) {
+            const isValid = isLong ? bestStop.price < currentPrice : bestStop.price > currentPrice;
+            if (isValid) {
+                updatedPosition.stopLossPrice = bestStop.price;
+                updatedPosition.activeStopLossReason = bestStop.reason;
+                if (bestStop.newState) {
+                    updatedPosition = { ...updatedPosition, ...bestStop.newState };
+                }
+                hasUpdate = true;
+                this.addLog(`Trailing SL (Tick) updated to ${bestStop.price.toFixed(this.bot.config.pricePrecision)}. Reason: ${bestStop.reason}.`, LogType.Info);
+            }
+        }
+        
+        if (hasUpdate) {
+            this.updateState({ openPosition: updatedPosition });
+        }
     }
 
-    private dispatchData(subscriber: Function | string, streamName: string, data: any) {
-        if (streamName.includes('@ticker')) {
-            const tickerData: LiveTicker = { 
-                pair: data.s, 
-                closePrice: parseFloat(data.c), 
-                highPrice: parseFloat(data.h), 
-                lowPrice: parseFloat(data.l), 
-                volume: parseFloat(data.v), 
-                quoteVolume: parseFloat(data.q) 
-            };
-            if (typeof subscriber === 'function') {
-                subscriber(tickerData);
-            } else {
-                this.bots.get(subscriber)?.updateLivePrice(tickerData.closePrice, tickerData);
-            }
-        } else if (streamName.includes('@kline')) {
-            const k = data.k;
-            const newKline: Kline = { time: k.t, open: parseFloat(k.o), high: parseFloat(k.h), low: parseFloat(k.l), close: parseFloat(k.c), volume: parseFloat(k.v), isFinal: k.x };
-            
-            // Update shared history for this stream
-            const klineKey = streamName.split('@')[0] + '_' + k.i;
-            const history = this.klineHistory.get(klineKey) || [];
-            const lastKline = history[history.length - 1];
-            if (lastKline && newKline.time === lastKline.time) {
-                history[history.length - 1] = newKline;
-            } else {
-                history.push(newKline);
-                if (history.length > 2000) history.shift();
-            }
-            this.klineHistory.set(klineKey, history);
+    private async managePositionOnPeriodicAnalysis(klinesForAnalysis: Kline[]) {
+        const { openPosition, config } = this.bot;
+        if (!openPosition || !this.handlers) return;
 
-            if (typeof subscriber === 'function') {
-                subscriber(newKline);
-            } else {
-                const botInstance = this.bots.get(subscriber);
-                if (botInstance) {
-                    const botTimeframe = botInstance.bot.config.timeFrame;
-                    const streamTimeframe = k.i;
-                    if (streamTimeframe === botTimeframe) {
-                        botInstance.onMainKlineUpdate(newKline);
-                    } else if (streamTimeframe === '1m' && botInstance.bot.openPosition) {
-                        botInstance.onManagementKlineUpdate(newKline);
+        const currentPrice = this.bot.livePrice || klinesForAnalysis[klinesForAnalysis.length - 1]?.close;
+        if (!currentPrice) return;
+
+        // --- Supervisor Check (Proactive Exit & Invalidation) ---
+        if (config.isInvalidationCheckEnabled) {
+            let htfKlines: Kline[] | undefined = undefined;
+            if (config.isHtfConfirmationEnabled) {
+                try {
+                    const htf = config.htfTimeFrame === 'auto' 
+                        ? TIME_FRAMES[TIME_FRAMES.indexOf(config.timeFrame) + 1] 
+                        : config.htfTimeFrame;
+                    
+                    if (htf) {
+                        htfKlines = await binanceService.fetchKlines(config.pair.replace('/', ''), htf, { limit: 205, mode: config.mode }); 
                     }
+                } catch (e) {
+                    this.addLog(`Warning: Could not fetch HTF klines for supervisor check: ${e}`, LogType.Error);
+                }
+            }
+
+            const supervisorSignal = await getSupervisorSignal(openPosition, klinesForAnalysis, config, htfKlines); 
+            if (supervisorSignal.action === 'close') {
+                this.addLog(supervisorSignal.reason, LogType.Action);
+                this.handlers.onClosePosition(openPosition, supervisorSignal.reason, currentPrice);
+                return; // Exit, as position is being closed.
+            }
+        }
+        
+        let updatedPosition = { ...this.bot.openPosition! };
+        let hasUpdate = false;
+        
+        // --- Adaptive Take Profit ---
+        if (config.isTrailingTakeProfitEnabled) {
+            let htfKlinesForTp: Kline[] | undefined = undefined;
+            try {
+                const htf = config.htfTimeFrame === 'auto'
+                    ? TIME_FRAMES[TIME_FRAMES.indexOf(config.timeFrame) + 1]
+                    : config.htfTimeFrame;
+
+                if (htf) {
+                    htfKlinesForTp = await binanceService.fetchKlines(
+                        config.pair.replace('/', ''),
+                        htf,
+                        { limit: 205, mode: config.mode }
+                    );
+                }
+            } catch (e) {
+                this.addLog(`Warning: Could not fetch HTF klines for adaptive TP: ${e instanceof Error ? e.message : String(e)}`, LogType.Error);
+            }
+            
+            // NOTE: We're calling this with `updatedPosition` which has the latest trailed SL
+            const adaptiveTpSignal = getAdaptiveTakeProfit(updatedPosition, klinesForAnalysis, config, htfKlinesForTp);
+            
+            if (adaptiveTpSignal.newTakeProfit) {
+                // Check if the change is significant to avoid tiny, noisy adjustments and logging.
+                const changePercent = Math.abs(adaptiveTpSignal.newTakeProfit - updatedPosition.takeProfitPrice) / updatedPosition.takeProfitPrice;
+                if (changePercent > 0.0005) { // 0.05% change threshold
+                    updatedPosition.takeProfitPrice = adaptiveTpSignal.newTakeProfit;
+                    hasUpdate = true;
+                    this.addLog(adaptiveTpSignal.reason || `Adaptive TP updated to ${updatedPosition.takeProfitPrice.toFixed(config.pricePrecision)}.`, LogType.Info);
                 }
             }
         }
-    }
 
-    private subscribe(streamName: string, subscriber: Function | string) {
-        if (!this.ws) this.connect();
-
-        const subscribers = this.subscriptions.get(streamName) || new Set();
-        if (subscribers.size === 0) {
-            this.sendWsMessage('SUBSCRIBE', [streamName]);
-        }
-        subscribers.add(subscriber);
-        this.subscriptions.set(streamName, subscribers);
-    }
-    
-    private unsubscribe(streamName: string, subscriber: Function | string) {
-        const subscribers = this.subscriptions.get(streamName);
-        if (subscribers) {
-            subscribers.delete(subscriber);
-            if (subscribers.size === 0) {
-                this.sendWsMessage('UNSUBSCRIBE', [streamName]);
-                this.subscriptions.delete(streamName);
-            }
+        if (hasUpdate) {
+            this.updateState({ openPosition: updatedPosition });
         }
     }
+
+    public async refreshAnalysisPreview() {
+        if (this.klines.length < 50 || !this.bot.livePrice) {
+            // Log for skipping is now handled in the calling function.
+            return;
+        }
     
-    public subscribeToTickerUpdates(pairSymbol: string, callback: (ticker: LiveTicker) => void) {
-        this.subscribe(`${pairSymbol.toLowerCase()}@ticker`, callback);
-    }
-    
-    public unsubscribeFromTickerUpdates(pairSymbol: string, callback: (ticker: LiveTicker) => void) {
-        this.unsubscribe(`${pairSymbol.toLowerCase()}@ticker`, callback);
-    }
-
-    public subscribeToKlineUpdates(pairSymbol: string, timeFrame: string, subscriber: ((kline: Kline) => void) | string) {
-        this.subscribe(`${pairSymbol.toLowerCase()}@kline_${timeFrame}`, subscriber);
-    }
-
-    public unsubscribeFromKlineUpdates(pairSymbol: string, timeFrame: string, subscriber: ((kline: Kline) => void) | string) {
-        this.unsubscribe(`${pairSymbol.toLowerCase()}@kline_${timeFrame}`, subscriber);
-    }
-    
-    public updateKlines(pairSymbol: string, timeFrame: string, klines: Kline[]) {
-        const klineKey = `${pairSymbol.toLowerCase()}_${timeFrame}`;
-        this.klineHistory.set(klineKey, klines);
-    }
-
-    private notifyUpdate() {
-        const botArray = Array.from(this.bots.values()).map(instance => instance.bot);
-        this.onBotsUpdate(botArray);
-    }
-
-    async startBot(config: BotConfig, handlersRef: React.RefObject<BotHandlers>) {
-        const instance = new BotInstance(config, () => this.notifyUpdate(), handlersRef);
-        this.bots.set(instance.bot.id, instance);
-        
         try {
-            const formattedPair = config.pair.replace('/', '');
-            const mainKlineKey = `${formattedPair.toLowerCase()}_${config.timeFrame}`;
-            const existingHistory = this.klineHistory.get(mainKlineKey);
-            
-            const initialKlines = existingHistory && existingHistory.length > 0
-                ? existingHistory
-                : await binanceService.fetchKlines(formattedPair, config.timeFrame);
-            
-            this.klineHistory.set(mainKlineKey, initialKlines);
-
-            await instance.initialize(initialKlines);
-            
-            this.subscribeToTickerUpdates(formattedPair, instance.bot.id as any); // Use bot ID for internal routing
-            this.subscribeToKlineUpdates(formattedPair, config.timeFrame, instance.bot.id);
-            this.notifyUpdate();
-        } catch (error) {
-            instance.addLog(`Failed to start bot: ${error instanceof Error ? error.message : 'Unknown error'}`, LogType.Error);
-            instance.updateState({ status: BotStatus.Error });
-        }
-    }
-    
-    stopBot(botId: string) {
-        const instance = this.bots.get(botId);
-        if (instance) {
-            const { pair, timeFrame } = instance.bot.config;
-            const pairSymbol = pair.replace('/', '').toLowerCase();
-            instance.stop();
-            this.unsubscribe(`${pairSymbol}@ticker`, botId);
-            this.unsubscribe(`${pairSymbol}@kline_${timeFrame}`, botId);
-            this.unsubscribe(`${pairSymbol}@kline_1m`, botId);
-        }
-    }
-
-    pauseBot(botId: string) { this.bots.get(botId)?.pause(); }
-    resumeBot(botId: string) { this.bots.get(botId)?.resume(); }
-
-    deleteBot(botId: string) {
-        const instance = this.bots.get(botId);
-        if (instance) {
-            if (instance.bot.status !== BotStatus.Stopped) this.stopBot(botId);
-            this.bots.delete(botId);
-            this.notifyUpdate();
-        }
-    }
-
-    stopAllBots() {
-        this.bots.forEach(instance => this.stopBot(instance.bot.id));
-        if (this.ws) {
-            this.ws.close();
-        }
-    }
-    
-    getBot(botId: string): RunningBot | undefined { return this.bots.get(botId)?.bot; }
-    
-    async updateBotConfig(botId: string, partialConfig: Partial<BotConfig>) { 
-        await this.bots.get(botId)?.updateTradeParams(partialConfig);
-    }
-    
-    updateBotState(botId: string, newState: Partial<RunningBot>) {
-        const instance = this.bots.get(botId);
-        if (!instance) return;
-        
-        const wasInPosition = !!instance.bot.openPosition;
-        instance.updateState(newState);
-        const isNowInPosition = !!instance.bot.openPosition;
-        
-        const pairSymbol = instance.bot.config.pair.replace('/', '').toLowerCase();
-        
-        // If bot just entered a position, subscribe to 1m klines
-        if (isNowInPosition && !wasInPosition) {
-            this.subscribeToKlineUpdates(pairSymbol, '1m', botId);
-        }
-    }
-
-    addBotLog(botId: string, message: string, type: LogType = LogType.Info) { 
-        const instance = this.bots.get(botId);
-        if(instance) {
-            instance.addLog(message, type);
-        }
-    }
-
-    public notifyTradeExecutionFailed(botId: string, reason: string) {
-        const instance = this.bots.get(botId);
-        if (instance) {
-            instance.onExecutionFailed(reason);
-        }
-    }
-    
-    notifyPositionClosed(botId: string, pnl: number) {
-        const instance = this.bots.get(botId);
-        if (instance) {
-            instance.onPositionClosed(pnl);
-            const pairSymbol = instance.bot.config.pair.replace('/', '').toLowerCase();
-            this.unsubscribeFromKlineUpdates(pairSymbol, '1m', botId);
-        }
-    }
-
-    public waitForBotLivePrice(botId: string, timeoutMs: number = 5000): Promise<number | null> {
-        return new Promise((resolve) => {
-            const startTime = Date.now();
-            const checkPrice = () => {
-                const bot = this.getBot(botId);
-                if (bot?.livePrice && bot.livePrice > 0) {
-                    resolve(bot.livePrice);
-                } else if (Date.now() - startTime > timeoutMs) {
-                    console.error(`Timeout waiting for live price for bot ${botId}`);
-                    resolve(null);
-                } else {
-                    setTimeout(checkPrice, 100);
-                }
+            const lastKline = this.klines[this.klines.length - 1];
+            const previewKline: Kline = {
+                ...lastKline,
+                high: Math.max(lastKline.high, this.bot.livePrice),
+                low: Math.min(lastKline.low, this.bot.livePrice),
+                close: this.bot.livePrice,
+                isFinal: false,
             };
-            checkPrice();
-        });
+            const klinesForAnalysis = [...this.klines.slice(0, -1), previewKline];
+            
+            let htfKlines: Kline[] | undefined = undefined;
+            if (this.bot.config.isHtfConfirmationEnabled) {
+                const htf = this.bot.config.htfTimeFrame === 'auto' 
+                    ? TIME_FRAMES[TIME_FRAMES.indexOf(this.bot.config.timeFrame) + 1] 
+                    : this.bot.config.htfTimeFrame;
+                if (htf) {
+                    htfKlines = await binanceService.fetchKlines(this.bot.config.pair.replace('/', ''), htf, { limit: 205, mode: this.bot.config.mode }); 
+                }
+            }
+    
+            const signal = await getTradingSignal(this.bot.config.agent, klinesForAnalysis, this.bot.config, htfKlines);
+            this.updateState({ analysis: signal });
+    
+        } catch (error) {
+            this.addLog(`Error refreshing analysis preview: ${error}`, LogType.Error);
+        }
+    }
+
+    public notifyTradeExecutionFailed(reason: string) {
+        this.addLog(`Trade execution failed: ${reason}`, LogType.Error);
+        this.updateState({ status: BotStatus.Monitoring });
+        if (this.bot.config.executionMode === 'live') {
+            telegramBotService.sendMessage(
+`🚨 *LIVE TRADE FAILED* 🚨
+
+Bot for *${this.bot.config.pair}* failed to execute a trade.
+
+*Reason:* ${reason}
+
+The bot is now back in monitoring mode. No action is required, but please review the bot's log.`
+            );
+        }
+    }
+
+    public stop() {
+        this.stopManagementLoop();
+        if (this.bot.lastResumeTimestamp) {
+            this.bot.accumulatedActiveMs += Date.now() - this.bot.lastResumeTimestamp;
+            this.bot.lastResumeTimestamp = null;
+        }
+        this.updateState({ status: BotStatus.Stopped });
+        this.addLog('Bot stopped.', LogType.Status);
+    }
+
+    public pause() {
+        if (this.bot.status === BotStatus.Paused) return;
+        this.stopManagementLoop();
+        if (this.bot.lastResumeTimestamp) {
+            this.bot.accumulatedActiveMs += Date.now() - this.bot.lastResumeTimestamp;
+            this.bot.lastResumeTimestamp = null;
+        }
+        this.updateState({ status: BotStatus.Paused });
+        this.addLog('Bot paused.', LogType.Status);
+    }
+
+    public resume() {
+        if (this.bot.status !== BotStatus.Paused) return;
+        this.startManagementLoop();
+        this.bot.lastResumeTimestamp = Date.now();
+        this.updateState({ status: this.bot.openPosition ? BotStatus.PositionOpen : BotStatus.Monitoring });
+        this.addLog('Bot resumed.', LogType.Status);
     }
 }
 
-export const botManagerService = new BotManager();
+class BotManagerService {
+    private bots: Map<string, BotInstance> = new Map();
+    private handlers: BotHandlers | null = null;
+    private onUpdateCallback: (() => void) | null = null;
+
+    // Combined stream managers
+    private spotStreamManager: WebSocketManager;
+    private futuresStreamManager: WebSocketManager;
+
+    constructor() {
+        this.spotStreamManager = new WebSocketManager(() => this.getWebSocketUrl(TradingMode.Spot));
+        this.futuresStreamManager = new WebSocketManager(() => this.getWebSocketUrl(TradingMode.USDSM_Futures));
+    }
+
+    public setHandlers(handlers: BotHandlers, onUpdateCallback: () => void) {
+        this.handlers = handlers;
+        this.onUpdateCallback = onUpdateCallback;
+    }
+    
+    public getRunningBots(): RunningBot[] {
+        return Array.from(this.bots.values()).map(instance => instance.bot).sort((a, b) => a.id > b.id ? -1 : 1);
+    }
+
+    private updateState() {
+        if (this.onUpdateCallback) {
+            this.onUpdateCallback();
+        }
+    }
+
+    private getWebSocketUrl(mode: TradingMode): string {
+        const isProd = import.meta.env.PROD;
+        if (isProd) {
+            return mode === TradingMode.USDSM_Futures ? 'wss://fstream.binance.com' : 'wss://stream.binance.com';
+        }
+
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = window.location.host;
+        const proxyPath = mode === TradingMode.USDSM_Futures ? '/proxy-futures-ws' : '/proxy-spot-ws';
+
+        return `${protocol}//${host}${proxyPath}`;
+    }
+
+    public startBot(config: BotConfig): RunningBot {
+        if (!this.handlers) {
+            throw new Error("BotManagerService handlers not set. Cannot start bot.");
+        }
+        const instance = new BotInstance(config, () => this.updateState(), this.handlers);
+        this.bots.set(instance.bot.id, instance);
+        this.addBotLog(instance.bot.id, `Starting bot...`, LogType.Status);
+
+        const formattedPair = config.pair.replace('/', '');
+
+        // Fetch initial data and initialize
+        binanceService.fetchKlines(formattedPair, config.timeFrame, { limit: 500, mode: config.mode })
+            .then(klines => {
+                instance.initialize(klines);
+                
+                // Now subscribe to live updates
+                const streamManager = config.mode === TradingMode.USDSM_Futures ? this.futuresStreamManager : this.spotStreamManager;
+                
+                // Ticker subscription
+                const tickerStreamName = `${formattedPair.toLowerCase()}@ticker`;
+                const tickerCallback = (data: any) => {
+                    const ticker: LiveTicker = {
+                        pair: data.s,
+                        closePrice: parseFloat(data.c),
+                        highPrice: parseFloat(data.h),
+                        lowPrice: parseFloat(data.l),
+                        volume: parseFloat(data.v),
+                        quoteVolume: parseFloat(data.q)
+                    };
+                    instance.updateLivePrice(ticker.closePrice, ticker);
+                };
+                streamManager.subscribe(tickerStreamName, tickerCallback);
+                instance.subscriptions.push({ type: 'ticker', pair: formattedPair, mode: config.mode, callback: tickerCallback });
+
+                // Kline subscription for the bot's timeframe
+                const klineStreamName = `${formattedPair.toLowerCase()}@kline_${config.timeFrame}`;
+                const klineCallback = (data: any) => {
+                    const newKline: Kline = {
+                        time: data.k.t,
+                        open: parseFloat(data.k.o),
+                        high: parseFloat(data.k.h),
+                        low: parseFloat(data.k.l),
+                        close: parseFloat(data.k.c),
+                        volume: parseFloat(data.k.v),
+                        isFinal: data.k.x
+                    };
+                    instance.onMainKlineUpdate(newKline);
+                };
+                streamManager.subscribe(klineStreamName, klineCallback);
+                instance.subscriptions.push({ type: 'kline', pair: formattedPair, timeFrame: config.timeFrame, mode: config.mode, callback: klineCallback });
+            })
+            .catch(err => {
+                this.addBotLog(instance.bot.id, `Failed to initialize with kline data: ${err}`, LogType.Error);
+                instance.updateState({ status: BotStatus.Error, analysis: {signal: 'HOLD', reasons: [`Initialization Failed: ${err}`]}});
+            });
+
+        this.updateState();
+        return instance.bot;
+    }
+    
+    public getBot(botId: string): BotInstance | undefined {
+        return this.bots.get(botId);
+    }
+
+    public addBotLog(botId: string, message: string, type: LogType) {
+        this.bots.get(botId)?.addLog(message, type);
+    }
+    
+    public updateBotState(botId: string, partialState: Partial<RunningBot>) {
+        this.bots.get(botId)?.updateState(partialState);
+    }
+    
+    public updateBotConfig = (botId: string, partialConfig: Partial<BotConfig>) => {
+        const botInstance = this.bots.get(botId);
+        if (botInstance) {
+            const oldConfig = { ...botInstance.bot.config };
+            const newConfig = { ...botInstance.bot.config, ...partialConfig };
+            botInstance.updateState({ config: newConfig });
+            this.addBotLog(botId, `Configuration updated.`, LogType.Info);
+
+            // If the refresh interval was changed, restart the management loop to apply it.
+            if (partialConfig.refreshInterval !== undefined && partialConfig.refreshInterval !== oldConfig.refreshInterval) {
+                if (botInstance.bot.status !== BotStatus.Paused) {
+                    this.addBotLog(botId, `Restarting management loop with new interval: ${partialConfig.refreshInterval}s`, LogType.Info);
+                    botInstance.startManagementLoop();
+                }
+            }
+        }
+    }
+
+    public refreshBotAnalysis = (botId: string) => {
+        const botInstance = this.bots.get(botId);
+        if (botInstance) {
+            if (botInstance.bot.status === BotStatus.Monitoring) {
+                botInstance.refreshAnalysisPreview();
+            } 
+            else if (botInstance.bot.openPosition) {
+                this.addBotLog(botId, "Manual position management check triggered.", LogType.Info);
+                botInstance.runPeriodicManagement();
+            }
+        }
+    }
+
+    public notifyPositionClosed(botId: string, pnl: number) {
+        const bot = this.bots.get(botId);
+        if (bot) {
+            const isProfit = pnl >= 0;
+            const openPositionDirection = bot.bot.openPosition?.direction || null;
+            
+            const { config } = bot.bot;
+            let cooldownState: Partial<RunningBot> = {};
+            if (config.isCooldownEnabled && bot.klines.length > 0 && openPositionDirection) {
+                const params = { ...DEFAULT_AGENT_PARAMS, ...config.agentParams };
+                const cooldownCandles = params.cooldownCandles;
+                const timeframeMs = getTimeframeDuration(config.timeFrame);
+                const lastKlineTime = bot.klines[bot.klines.length - 1].time;
+                const cooldownEndTime = lastKlineTime + (cooldownCandles * timeframeMs);
+                cooldownState.cooldownUntil = { time: cooldownEndTime, direction: openPositionDirection };
+                const cooldownEndsDate = new Date(cooldownEndTime + timeframeMs).toLocaleTimeString();
+                this.addBotLog(botId, `Cooldown enabled for ${openPositionDirection} trades until after candle closing at ${cooldownEndsDate}.`, LogType.Info);
+            }
+
+            bot.updateState({
+                status: BotStatus.Monitoring,
+                openPositionId: null,
+                openPosition: null,
+                closedTradesCount: bot.bot.closedTradesCount + 1,
+                totalPnl: bot.bot.totalPnl + pnl,
+                wins: bot.bot.wins + (isProfit ? 1 : 0),
+                losses: bot.bot.losses + (isProfit ? 0 : 1),
+                totalGrossProfit: bot.bot.totalGrossProfit + (pnl > 0 ? pnl : 0),
+                totalGrossLoss: bot.bot.totalGrossLoss + (pnl < 0 ? Math.abs(pnl) : 0),
+                lastProfitableTradeDirection: isProfit ? openPositionDirection : bot.bot.lastProfitableTradeDirection,
+                ...cooldownState
+            });
+            this.addBotLog(botId, `Position closed. Net PNL: $${pnl.toFixed(2)}. Bot is now monitoring for new entries.`, isProfit ? LogType.Success : LogType.Error);
+            
+            // Handle Chameleon position flip
+            if (bot.isFlippingPosition) {
+                bot.addLog('Executing flip analysis...', LogType.Action);
+                bot.runAnalysis(true); // isFlipAttempt = true
+            }
+        }
+    }
+    
+    public notifyTradeExecutionFailed(botId: string, reason: string) {
+        this.bots.get(botId)?.notifyTradeExecutionFailed(reason);
+    }
+
+    private unsubscribeBot(botId: string) {
+        const instance = this.bots.get(botId);
+        if (instance) {
+            const streamManager = instance.bot.config.mode === TradingMode.USDSM_Futures ? this.futuresStreamManager : this.spotStreamManager;
+            instance.subscriptions.forEach(sub => {
+                let streamName = '';
+                if (sub.type === 'ticker') {
+                    streamName = `${sub.pair.toLowerCase()}@ticker`;
+                } else if (sub.type === 'kline' && sub.timeFrame) {
+                    streamName = `${sub.pair.toLowerCase()}@kline_${sub.timeFrame}`;
+                }
+                if (streamName) {
+                    streamManager.unsubscribe(streamName, sub.callback);
+                }
+            });
+            instance.subscriptions = [];
+        }
+    }
+
+    public stopBot = (botId: string) => {
+        const bot = this.bots.get(botId);
+        if (bot) {
+            if (bot.bot.openPosition && this.handlers) {
+                this.addBotLog(botId, `Stopping bot with open position. Closing position first...`, LogType.Action);
+                this.handlers.onClosePosition(bot.bot.openPosition, "Bot Stopped", bot.bot.livePrice || bot.bot.openPosition.entryPrice);
+            }
+            this.unsubscribeBot(botId);
+            bot.stop();
+        }
+    }
+
+    public pauseBot = (botId: string) => {
+        this.bots.get(botId)?.pause();
+    }
+    
+    public resumeBot = (botId: string) => {
+        this.bots.get(botId)?.resume();
+    }
+    
+    public deleteBot = (botId: string) => {
+        const bot = this.bots.get(botId);
+        if (bot && (bot.bot.status === BotStatus.Stopped || bot.bot.status === BotStatus.Error)) {
+            this.bots.delete(botId);
+            this.updateState();
+        }
+    }
+
+    public updateKlines(pair: string, timeFrame: string, klines: Kline[]) {
+        this.bots.forEach(bot => {
+            if (bot.bot.config.pair === pair && bot.bot.config.timeFrame === timeFrame) {
+                bot.klines = klines;
+                bot.bot.klinesLoaded = klines.length;
+                this.updateState();
+            }
+        });
+    }
+
+    public subscribeToTickerUpdates(pair: string, mode: TradingMode, callback: Function) {
+        const streamManager = mode === TradingMode.USDSM_Futures ? this.futuresStreamManager : this.spotStreamManager;
+        const streamName = `${pair.toLowerCase()}@ticker`;
+        streamManager.subscribe(streamName, callback);
+    }
+
+    public unsubscribeFromTickerUpdates(pair: string, mode: TradingMode, callback: Function) {
+        const streamManager = mode === TradingMode.USDSM_Futures ? this.futuresStreamManager : this.spotStreamManager;
+        const streamName = `${pair.toLowerCase()}@ticker`;
+        streamManager.unsubscribe(streamName, callback);
+    }
+
+    public subscribeToKlineUpdates(pair: string, timeFrame: string, mode: TradingMode, callback: Function) {
+        const streamManager = mode === TradingMode.USDSM_Futures ? this.futuresStreamManager : this.spotStreamManager;
+        const streamName = `${pair.toLowerCase()}@kline_${timeFrame}`;
+        streamManager.subscribe(streamName, callback);
+    }
+    
+    public unsubscribeFromKlineUpdates(pair: string, timeFrame: string, mode: TradingMode, callback: Function) {
+        const streamManager = mode === TradingMode.USDSM_Futures ? this.futuresStreamManager : this.spotStreamManager;
+        const streamName = `${pair.toLowerCase()}@kline_${timeFrame}`;
+        streamManager.unsubscribe(streamName, callback);
+    }
+
+    public stopAllBots() {
+        this.bots.forEach(bot => this.stopBot(bot.bot.id));
+        this.spotStreamManager.disconnect();
+        this.futuresStreamManager.disconnect();
+    }
+}
+
+export const botManagerService = new BotManagerService();

@@ -1,5 +1,4 @@
-
-import { Kline } from '../types';
+import type { Kline } from '../types';
 
 export interface SupportResistance {
     supports: number[];
@@ -7,7 +6,7 @@ export interface SupportResistance {
 }
 
 /**
- * Calculates support and resistance levels from k-line data.
+ * Calculates support and resistance levels from k-line data with volume-weighted scoring.
  * @param klines - The array of k-line data.
  * @param lookback - The number of candles to look back and forward to confirm a pivot.
  * @param thresholdPercent - The percentage distance to cluster nearby pivots.
@@ -18,22 +17,26 @@ export const calculateSupportResistance = (klines: Kline[], lookback: number = 1
         return { supports: [], resistances: [] };
     }
 
-    const pivots: { price: number, type: 'support' | 'resistance' }[] = [];
+    const pivots: { price: number; type: 'support' | 'resistance'; index: number }[] = [];
 
     // Find pivot points
     for (let i = lookback; i < klines.length - lookback; i++) {
-        const isPivotHigh = klines[i].high > Math.max(...klines.slice(i - lookback, i).map(k => k.high)) &&
-                          klines[i].high > Math.max(...klines.slice(i + 1, i + 1 + lookback).map(k => k.high));
+        const window = klines.slice(i - lookback, i + lookback + 1);
+        const windowHighs = window.map(k => k.high);
+        const windowLows = window.map(k => k.low);
 
-        if (isPivotHigh) {
-            pivots.push({ price: klines[i].high, type: 'resistance' });
-        }
+        const currentHigh = klines[i].high;
+        const currentLow = klines[i].low;
 
-        const isPivotLow = klines[i].low < Math.min(...klines.slice(i - lookback, i).map(k => k.low)) &&
-                         klines[i].low < Math.min(...klines.slice(i + 1, i + 1 + lookback).map(k => k.low));
-        
-        if (isPivotLow) {
-            pivots.push({ price: klines[i].low, type: 'support' });
+        // Check if the current candle's high is the highest in the window
+        if (currentHigh === Math.max(...windowHighs)) {
+            pivots.push({ price: currentHigh, type: 'resistance', index: i });
+            i += lookback; // Skip forward to avoid finding the same pivot in the next iteration
+        } 
+        // Check if the current candle's low is the lowest in the window
+        else if (currentLow === Math.min(...windowLows)) {
+            pivots.push({ price: currentLow, type: 'support', index: i });
+            i += lookback; // Skip forward
         }
     }
 
@@ -48,31 +51,33 @@ export const calculateSupportResistance = (klines: Kline[], lookback: number = 1
         let foundLevel = false;
         for (const level of levels) {
             if (level.type === pivot.type && Math.abs(level.price - pivot.price) / pivot.price < thresholdPercent) {
+                const pivotVolume = klines[pivot.index]?.volume || 0;
+                // Use log to temper the effect of extreme volume spikes
+                const volumeScore = Math.log(pivotVolume + 1);
+
                 // Average the price and increment the score for the cluster
                 level.price = (level.price * level.score + pivot.price) / (level.score + 1);
-                level.score++;
+                level.score += 1 + volumeScore;
                 foundLevel = true;
                 break;
             }
         }
         if (!foundLevel) {
-            levels.push({ price: pivot.price, score: 1, type: pivot.type });
+             const pivotVolume = klines[pivot.index]?.volume || 0;
+             const volumeScore = Math.log(pivotVolume + 1);
+            levels.push({ price: pivot.price, score: 1 + volumeScore, type: pivot.type });
         }
     });
 
-    // Filter for significant levels (e.g., score > 1) and sort by score
-    const significantLevels = levels.filter(l => l.score > 1).sort((a, b) => b.score - a.score);
-
-    // Return the top N levels for each type
-    const supports = significantLevels
+    const supports = levels
         .filter(l => l.type === 'support')
-        .map(l => l.price)
-        .slice(0, 3);
+        .sort((a, b) => b.score - a.score) // Sort by significance
+        .map(l => l.price);
 
-    const resistances = significantLevels
+    const resistances = levels
         .filter(l => l.type === 'resistance')
-        .map(l => l.price)
-        .slice(0, 3);
+        .sort((a, b) => b.score - a.score) // Sort by significance
+        .map(l => l.price);
         
     return { supports, resistances };
 };

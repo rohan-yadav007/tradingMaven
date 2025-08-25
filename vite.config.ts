@@ -18,6 +18,19 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/proxy-futures/, ''),
       },
+      // Proxy for WebSocket Streams to fix cross-origin issues in dev
+      '/proxy-spot-ws': {
+        target: 'wss://stream.binance.com',
+        ws: true,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/proxy-spot-ws/, ''),
+      },
+      '/proxy-futures-ws': {
+        target: 'wss://fstream.binance.com',
+        ws: true,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/proxy-futures-ws/, ''),
+      },
     },
   },
 })

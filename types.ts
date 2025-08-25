@@ -36,6 +36,37 @@ export interface IchimokuCloudOutput {
   spanB: number;
 }
 
+export interface MarketDataContext {
+    rsi14?: number;
+    stochRsi?: StochasticRSIOutput;
+    ema9?: number;
+    ema21?: number;
+    ema50?: number;
+    ema200?: number;
+    sma50?: number;
+    sma200?: number;
+    macd?: MACDOutput;
+    adx14?: ADXOutput;
+    atr14?: number;
+    bb20_2?: BollingerBandsOutput;
+    volumeSma20?: number;
+    obvTrend?: 'bullish' | 'bearish' | 'neutral';
+    vi14?: { pdi: number; ndi: number };
+    ichiCloud?: IchimokuCloudOutput;
+    lastCandlePattern?: { name: string; type: 'bullish' | 'bearish' } | null;
+    // Higher Timeframe Context
+    htf_rsi14?: number;
+    htf_ema9?: number;
+    htf_ema21?: number;
+    htf_ema50?: number;
+    htf_ema200?: number;
+    htf_macd?: MACDOutput;
+    htf_adx14?: ADXOutput;
+    htf_obvTrend?: 'bullish' | 'bearish' | 'neutral';
+    htf_vi14?: { pdi: number; ndi: number };
+    htf_trend?: 'bullish' | 'bearish' | 'neutral';
+}
+
 
 export enum TradingMode {
     Spot = 'Spot',
@@ -94,9 +125,10 @@ export interface Position {
     direction: 'LONG' | 'SHORT';
     entryPrice: number;
     size: number;
+    investmentAmount: number; // The initial margin used for the trade
     leverage: number;
     marginType?: 'ISOLATED' | 'CROSSED';
-    entryTime: Date;
+    entryTime: string;
     entryReason: string;
     agentName: string;
     takeProfitPrice: number;
@@ -109,23 +141,43 @@ export interface Position {
     // For R:R based trailing
     initialStopLossPrice: number;
     initialTakeProfitPrice: number;
+
     initialRiskInPrice: number;
     // For SL transparency
     activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Profit Secure' | 'Agent Trail' | 'Breakeven';
     isBreakevenSet?: boolean;
     proactiveLossCheckTriggered: boolean;
     profitLockTier: number; // 0 for none, or the fee-multiple trigger (e.g., 3, 4, 5)
-    peakPrice?: number; // Highest price for LONG, lowest for SHORT since entry
+    profitSpikeTier?: number; // Tracks the new Profit Spike Protector state
+    peakPrice?: number; // Highest price for LONG, lowest for SHORT since entry (for MFE)
+    troughPrice?: number; // Lowest price for LONG, highest for SHORT since entry (for MAE)
     candlesSinceEntry?: number; // For state-based management (Chameleon V2)
     hasBeenProfitable?: boolean; // For trade invalidation check
     takerFeeRate: number;
+    // --- Analytics Snapshots ---
+    initialRiskRewardRatio?: number;
+    agentParamsSnapshot?: AgentParams;
+    botConfigSnapshot?: {
+        isHtfConfirmationEnabled: boolean;
+        isUniversalProfitTrailEnabled: boolean;
+        isTrailingTakeProfitEnabled: boolean;
+        isMinRrEnabled: boolean;
+        isInvalidationCheckEnabled?: boolean;
+        isCooldownEnabled?: boolean;
+        isReanalysisEnabled?: boolean;
+        htfTimeFrame?: 'auto' | string;
+    };
+    entryContext?: MarketDataContext;
 }
 
 export interface Trade extends Position {
     exitPrice: number;
-    exitTime: Date;
+    exitTime: string;
     pnl: number; // Net PNL (after fees)
     exitReason: string;
+    mfe?: number; // Max Favorable Excursion in dollars
+    mae?: number; // Max Adverse Excursion in dollars
+    exitContext?: MarketDataContext;
 }
 
 export interface RawWalletBalance {
@@ -272,6 +324,7 @@ export interface BotConfig {
     isMinRrEnabled: boolean;
     isInvalidationCheckEnabled?: boolean;
     isCooldownEnabled?: boolean;
+    isReanalysisEnabled?: boolean;
     htfTimeFrame?: 'auto' | string;
     agentParams?: AgentParams;
     // Precision data for self-contained bot logic
@@ -454,6 +507,11 @@ export interface AgentParams {
     qsc_ichi_laggingSpanPeriod?: number;
     qsc_ichi_displacement?: number;
     qsc_vwapDeviationPercent?: number; // VWAP proximity check for entry filtering
+    qsc_rsiOverextendedLong?: number;
+    qsc_rsiOverextendedShort?: number;
+    qsc_entryMode?: 'breakout' | 'pullback';
+    qsc_rsiMomentumThreshold?: number;
+    qsc_rsiPullbackThreshold?: number;
 
     // Agent 11: Historic Expert
     he_trendSmaPeriod?: number;
@@ -484,7 +542,7 @@ export interface AgentParams {
 
     // Agent 15: Institutional Flow Tracer
     vwap_emaTrendPeriod?: number;
-    vwap_proximityPercent?: number;
+    vwap_proximityPercent?: number; // 0.2% proximity to VWAP
 
     // Agent 16: Ichimoku Trend Rider
     ichi_conversionPeriod?: number;

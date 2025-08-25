@@ -162,7 +162,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         marginType, futuresSettingsError, isMultiAssetMode, multiAssetModeError,
         maxLeverage, isLeverageLoading, isHtfConfirmationEnabled, htfTimeFrame,
         isUniversalProfitTrailEnabled, isTrailingTakeProfitEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
-        isCooldownEnabled,
+        isReanalysisEnabled, isCooldownEnabled,
     } = config;
 
     const {
@@ -171,7 +171,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
         setMarginType, onSetMultiAssetMode, setAgentParams,
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setIsUniversalProfitTrailEnabled,
-        setIsTrailingTakeProfitEnabled, setIsMinRrEnabled, setIsInvalidationCheckEnabled,
+        setIsTrailingTakeProfitEnabled, setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled,
         setIsCooldownEnabled,
     } = actions;
     
@@ -228,6 +228,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         isTrailingTakeProfitEnabled: config.isTrailingTakeProfitEnabled,
                         isMinRrEnabled: config.isMinRrEnabled,
                         isInvalidationCheckEnabled: config.isInvalidationCheckEnabled,
+                        isReanalysisEnabled: config.isReanalysisEnabled,
                         isCooldownEnabled: config.isCooldownEnabled,
                         htfTimeFrame: config.htfTimeFrame,
                         agentParams: agentParams,
@@ -469,16 +470,52 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     </div>
                 )}
                  {selectedAgent.id === 9 && (
-                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700">
-                         <ParamSlider 
-                            label="VWAP Deviation" 
-                            value={agentParams.qsc_vwapDeviationPercent ?? constants.DEFAULT_AGENT_PARAMS.qsc_vwapDeviationPercent}
-                            onChange={(v) => setAgentParams({ ...agentParams, qsc_vwapDeviationPercent: v })}
-                            min={0.1}
-                            max={1.0}
-                            step={0.05}
-                            valueDisplay={(v) => `${v.toFixed(2)}%`}
-                         />
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-4">
+                        <div>
+                            <label className={formLabelClass}>Entry Mode</label>
+                            <div className="flex items-center gap-1 p-1 bg-slate-200 dark:bg-slate-900/70 rounded-md mt-1">
+                                <button 
+                                    onClick={() => setAgentParams({ ...agentParams, qsc_entryMode: 'breakout' })} 
+                                    className={`flex-1 text-center text-xs font-semibold p-1.5 rounded-md transition-colors ${ (agentParams.qsc_entryMode ?? 'breakout') === 'breakout' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
+                                >
+                                    Breakout
+                                </button>
+                                <button 
+                                    onClick={() => setAgentParams({ ...agentParams, qsc_entryMode: 'pullback' })}
+                                    className={`flex-1 text-center text-xs font-semibold p-1.5 rounded-md transition-colors ${ agentParams.qsc_entryMode === 'pullback' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
+                                >
+                                    Pullback
+                                </button>
+                            </div>
+                        </div>
+                        <ParamSlider 
+                            label="ADX Trend Threshold" 
+                            value={agentParams.qsc_adxThreshold ?? constants.DEFAULT_AGENT_PARAMS.qsc_adxThreshold}
+                            onChange={(v) => setAgentParams({ ...agentParams, qsc_adxThreshold: v })}
+                            min={20} max={40} step={1}
+                        />
+                        {(agentParams.qsc_entryMode ?? 'breakout') === 'breakout' ? (
+                            <ParamSlider 
+                                label="RSI Breakout Threshold" 
+                                value={agentParams.qsc_rsiMomentumThreshold ?? constants.DEFAULT_AGENT_PARAMS.qsc_rsiMomentumThreshold}
+                                onChange={(v) => setAgentParams({ ...agentParams, qsc_rsiMomentumThreshold: v })}
+                                min={51} max={70} step={1}
+                            />
+                        ) : (
+                            <ParamSlider 
+                                label="RSI Pullback Threshold" 
+                                value={agentParams.qsc_rsiPullbackThreshold ?? constants.DEFAULT_AGENT_PARAMS.qsc_rsiPullbackThreshold}
+                                onChange={(v) => setAgentParams({ ...agentParams, qsc_rsiPullbackThreshold: v })}
+                                min={30} max={49} step={1}
+                            />
+                        )}
+                        <ParamSlider 
+                            label="Entry Score Threshold" 
+                            value={agentParams.qsc_trendScoreThreshold ?? constants.DEFAULT_AGENT_PARAMS.qsc_trendScoreThreshold}
+                            onChange={(v) => setAgentParams({ ...agentParams, qsc_trendScoreThreshold: v })}
+                            min={50} max={95} step={1}
+                            valueDisplay={(v) => `${v}%`}
+                        />
                     </div>
                 )}
                  {selectedAgent.id === 13 && (
@@ -652,6 +689,20 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 </div>
                  <p className="text-xs text-slate-500 dark:text-slate-400">
                     Enforces a minimum risk-to-reward ratio of {constants.MIN_RISK_REWARD_RATIO}:1 on all new trades.
+                </p>
+            </div>
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="reanalysis-toggle" className={formLabelClass}>
+                        Agent Re-analysis
+                    </label>
+                    <ToggleSwitch
+                        checked={isReanalysisEnabled}
+                        onChange={setIsReanalysisEnabled}
+                    />
+                </div>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                    On a set interval, the agent re-evaluates the market. If the original entry conditions are no longer met, the bot will proactively exit the trade.
                 </p>
             </div>
             <div className={formGroupClass}>

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -9,6 +10,7 @@ import * as constants from './constants';
 import * as binanceService from './services/binanceService';
 import { historyService } from './services/historyService';
 import { botManagerService, BotHandlers } from './services/botManagerService';
+import * as localAgentService from './services/localAgentService';
 import { telegramBotService } from './services/telegramBotService';
 import { BacktestingPanel } from './components/BacktestingPanel';
 import { TradingConfigProvider, useTradingConfigState, useTradingConfigActions } from './contexts/TradingConfigContext';
@@ -31,7 +33,7 @@ const AppContent: React.FC = () => {
         selectedAgent, investmentAmount, takeProfitMode, 
         takeProfitValue, isTakeProfitLocked, agentParams,
         leverage, marginType, isHtfConfirmationEnabled, htfTimeFrame, isUniversalProfitTrailEnabled,
-        isTrailingTakeProfitEnabled, isMinRrEnabled, isInvalidationCheckEnabled
+        isTrailingTakeProfitEnabled, isMinRrEnabled, isInvalidationCheckEnabled, isReanalysisEnabled
     } = configState;
 
     const {
@@ -130,6 +132,7 @@ const AppContent: React.FC = () => {
                     isTrailingTakeProfitEnabled,
                     isMinRrEnabled,
                     isInvalidationCheckEnabled,
+                    isReanalysisEnabled,
                     agentParams,
                     pricePrecision: pricePrecisionForBot,
                     quantityPrecision: quantityPrecisionForBot,
@@ -149,7 +152,7 @@ const AppContent: React.FC = () => {
         selectedAgent, chartTimeFrame, investmentAmount, takeProfitMode, takeProfitValue,
         isTakeProfitLocked, isHtfConfirmationEnabled, htfTimeFrame, agentParams,
         isUniversalProfitTrailEnabled, isTrailingTakeProfitEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
-        currentFeeRate
+        isReanalysisEnabled, currentFeeRate
     ]);
 
     // ---- Handlers ----
@@ -166,13 +169,43 @@ const AppContent: React.FC = () => {
             return;
         }
 
-        const closePositionInState = (finalExitPrice: number, fees: number = 0) => {
+        const closePositionInState = async (finalExitPrice: number, fees: number = 0) => {
             const isLong = posToClose.direction === 'LONG';
             const grossPnl = (finalExitPrice - posToClose.entryPrice) * posToClose.size * (isLong ? 1 : -1);
             
             const netPnl = grossPnl - fees;
 
-            const newTrade: Trade = { ...posToClose, exitPrice: finalExitPrice, exitTime: new Date(), pnl: netPnl, exitReason };
+            // --- MFE/MAE Calculation ---
+            const mfePrice = posToClose.peakPrice ?? posToClose.entryPrice;
+            const maePrice = posToClose.troughPrice ?? posToClose.entryPrice;
+            const mfe = Math.abs(mfePrice - posToClose.entryPrice) * posToClose.size;
+            const mae = Math.abs(maePrice - posToClose.entryPrice) * posToClose.size;
+            
+            const bot = botManagerService.getBot(posToClose.botId!);
+            const botKlines = bot ? bot.klines : klines; // Fallback to chart klines
+
+            // --- Enhanced Context Capture ---
+            let htfKlines: Kline[] | undefined;
+            if (posToClose.botConfigSnapshot?.isHtfConfirmationEnabled) {
+                const htf = posToClose.botConfigSnapshot.htfTimeFrame === 'auto'
+                    ? constants.TIME_FRAMES[constants.TIME_FRAMES.indexOf(posToClose.timeFrame) + 1]
+                    : posToClose.botConfigSnapshot.htfTimeFrame;
+                if(htf) {
+                    htfKlines = await binanceService.fetchKlines(posToClose.pair.replace('/',''), htf, { limit: 205, mode: posToClose.mode });
+                }
+            }
+            const exitContext = localAgentService.captureMarketContext(botKlines, htfKlines);
+
+            const newTrade: Trade = { 
+                ...posToClose, 
+                exitPrice: finalExitPrice, 
+                exitTime: new Date().toISOString(), 
+                pnl: netPnl, 
+                exitReason,
+                mfe,
+                mae,
+                exitContext,
+            };
             
             setTradeHistory(prevHistory => {
                 if (prevHistory.some(t => t.id === newTrade.id)) return prevHistory;
@@ -249,7 +282,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                  const feeRate = posToClose.takerFeeRate || constants.TAKER_FEE_RATE; // Fallback
                  const totalFees = (entryValue + exitValue) * feeRate;
 
-                 closePositionInState(finalExitPrice, totalFees);
+                 await closePositionInState(finalExitPrice, totalFees);
 
             } catch(e) {
                 const errorMessage = binanceService.interpretBinanceError(e);
@@ -283,10 +316,10 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             const feeRate = posToClose.takerFeeRate || constants.TAKER_FEE_RATE; // Fallback
             const simulatedFees = (entryValue + exitValue) * feeRate;
 
-            closePositionInState(exitPrice, simulatedFees);
+            await closePositionInState(exitPrice, simulatedFees);
         }
 
-    }, [closingPositionIds]);
+    }, [closingPositionIds, klines]);
 
     const handleExecuteTrade = useCallback(async (
         execSignal: TradeSignal,
@@ -417,6 +450,32 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             tradeSize = positionValue / finalEntryPrice;
         }
         
+        const risk = Math.abs(finalEntryPrice - executionDetails.agentStopLoss);
+        const reward = Math.abs(takeProfitPrice - finalEntryPrice);
+        const initialRiskRewardRatio = risk > 0 ? reward / risk : 0;
+
+        const botConfigSnapshot = {
+            isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
+            htfTimeFrame: config.htfTimeFrame,
+            isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
+            isTrailingTakeProfitEnabled: config.isTrailingTakeProfitEnabled,
+            isMinRrEnabled: config.isMinRrEnabled,
+            isReanalysisEnabled: config.isReanalysisEnabled,
+            isInvalidationCheckEnabled: config.isInvalidationCheckEnabled,
+            isCooldownEnabled: config.isCooldownEnabled
+        };
+        
+        let htfKlinesForContext: Kline[] | undefined;
+        if (config.isHtfConfirmationEnabled) {
+            const htf = config.htfTimeFrame === 'auto' 
+                ? constants.TIME_FRAMES[constants.TIME_FRAMES.indexOf(config.timeFrame) + 1] 
+                : config.htfTimeFrame;
+            if(htf) {
+                htfKlinesForContext = await binanceService.fetchKlines(config.pair.replace('/',''), htf, { limit: 205, mode: config.mode });
+            }
+        }
+        const entryContext = localAgentService.captureMarketContext(klines, htfKlinesForContext);
+
         const newPosition: Position = {
             id: Date.now(),
             pair: config.pair,
@@ -426,8 +485,9 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             direction: execSignal.signal === 'BUY' ? 'LONG' : 'SHORT',
             entryPrice: finalEntryPrice,
             size: tradeSize,
+            investmentAmount: config.investmentAmount,
             leverage: config.mode === TradingMode.USDSM_Futures ? config.leverage : 1,
-            entryTime: new Date(),
+            entryTime: new Date().toISOString(),
             entryReason: execSignal.reasons.join('\n'),
             agentName: config.agent.name,
             takeProfitPrice,
@@ -445,9 +505,14 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             proactiveLossCheckTriggered: false,
             profitLockTier: 0,
             peakPrice: finalEntryPrice,
+            troughPrice: finalEntryPrice,
             candlesSinceEntry: 0,
             hasBeenProfitable: false,
             takerFeeRate: config.takerFeeRate,
+            initialRiskRewardRatio,
+            agentParamsSnapshot: config.agentParams,
+            botConfigSnapshot,
+            entryContext,
         };
 
         if (config.executionMode === 'live') {
@@ -471,7 +536,14 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
             openPosition: newPosition,
         });
 
-    }, [accountInfo]);
+    }, [accountInfo, klines]);
+
+    const handleClearHistory = useCallback(() => {
+        if (window.confirm('Are you sure you want to permanently delete all trade history? This action cannot be undone.')) {
+            historyService.clearTrades();
+            setTradeHistory([]);
+        }
+    }, []);
     
     // ---- Effects ----
 
@@ -732,8 +804,9 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
                       onStopBot={botManagerService.stopBot}
                       onDeleteBot={botManagerService.deleteBot}
                       onUpdateBotConfig={botManagerService.updateBotConfig}
+                      onRefreshBotAnalysis={botManagerService.refreshBotAnalysis}
                     />
-                    <TradingLog tradeHistory={tradeHistory} />
+                    <TradingLog tradeHistory={tradeHistory} onClearHistory={handleClearHistory} />
                   </div>
                 </div>
               ) : (

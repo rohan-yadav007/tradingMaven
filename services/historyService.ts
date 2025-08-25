@@ -1,8 +1,7 @@
-
 import { Trade } from '../types';
 
 const HISTORY_KEY = 'tradeHistory_v2';
-const MAX_HISTORY_LENGTH = 200;
+const MAX_HISTORY_LENGTH = 500;
 
 const saveTrade = (trade: Trade): Trade[] => {
     try {
@@ -28,12 +27,8 @@ const loadTrades = (): Trade[] => {
     try {
         const storedTrades = localStorage.getItem(HISTORY_KEY);
         if (storedTrades) {
-            // Re-hydrate date objects
-            return JSON.parse(storedTrades).map((trade: any) => ({
-                ...trade,
-                entryTime: new Date(trade.entryTime),
-                exitTime: new Date(trade.exitTime),
-            }));
+            // Timestamps are already ISO strings, no conversion needed.
+            return JSON.parse(storedTrades);
         }
         return [];
     } catch (error) {
@@ -42,7 +37,16 @@ const loadTrades = (): Trade[] => {
     }
 };
 
+const clearTrades = (): void => {
+    try {
+        localStorage.removeItem(HISTORY_KEY);
+    } catch (error) {
+        console.error("Failed to clear trade history from localStorage:", error);
+    }
+};
+
 export const historyService = {
     saveTrade,
     loadTrades,
+    clearTrades,
 };

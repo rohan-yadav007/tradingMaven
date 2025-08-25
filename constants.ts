@@ -17,7 +17,7 @@ export const TAKER_FEE_RATE = 0.0005; // 0.05% fee per trade side.
 /**
  * A non-negotiable, system-wide minimum risk-to-reward ratio for a trade to be considered valid.
  */
-export const MIN_RISK_REWARD_RATIO = 1.2;
+export const MIN_RISK_REWARD_RATIO = 1.5;
 
 /**
  * A multiplier to ensure the profit target is a safe distance away from the breakeven point caused by fees.
@@ -36,7 +36,7 @@ export const AGENTS: Agent[] = [
     {
         id: 9,
         name: 'Quantum Scalper',
-        description: 'A disciplined, aggressive agent. A volatility filter avoids chop. In trends, Ichimoku Cloud acts as a gatekeeper, with entries confirmed by a Supertrend/Vortex/OBV score. All signals are filtered to avoid entries on climactic, high-volume candles.',
+        description: "A dynamic, aggressive agent using a weighted scoring system. It filters for volatility and trend regime, then scores signals based on Trend, Momentum (VI, OBV), and Confirmation (Ichimoku, Supertrend). Supports 'Breakout' and 'Pullback' entry modes.",
         indicators: ['Market Regime Filter (ADX)', 'Volatility Filter (BBW)', 'Ichimoku Cloud', 'OBV'],
     },
     {
@@ -96,7 +96,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     invalidationCandleLimit: 10,
     cooldownCandles: 3,
 
-    // Agent 1: Momentum Master - REMOVED
+    // Agent 1: Momentum Master
     adxTrendThreshold: 25,
     mom_emaFastPeriod: 20,
     mom_emaSlowPeriod: 50,
@@ -106,7 +106,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     mom_volumeMultiplier: 1.5,
     mom_atrVolatilityThreshold: 0.3,
     
-    // Agent 2: Trend Rider - REMOVED
+    // Agent 2: Trend Rider
     tr_emaFastPeriod: 20,
     tr_emaSlowPeriod: 50,
     tr_rsiMomentumBullish: 60,
@@ -115,7 +115,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     tr_volumeSmaPeriod: 20,
     tr_volumeMultiplier: 1.5,
 
-    // Agent 3: Mean Reversionist - REMOVED
+    // Agent 3: Mean Reversionist
     mr_adxPeriod: 14,
     mr_adxThreshold: 25,
     mr_bbPeriod: 20,
@@ -125,7 +125,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     mr_rsiOverbought: 70,
     mr_htfEmaPeriod: 200,
 
-    // Agent 4: Scalping Expert (NEW LOGIC) - REMOVED
+    // Agent 4: Scalping Expert (NEW LOGIC)
     se_emaFastPeriod: 10,
     se_emaSlowPeriod: 21,
     se_rsiPeriod: 14,
@@ -140,7 +140,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     se_macdSignalPeriod: 9,
     se_scoreThreshold: 3,
 
-    // Agent 5: Market Ignition - REMOVED
+    // Agent 5: Market Ignition
     mi_bbPeriod: 20,
     mi_bbStdDev: 2,
     mi_bbwSqueezeThreshold: 0.015, // Threshold for BBW to be considered a squeeze
@@ -148,10 +148,10 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     mi_volumeMultiplier: 1.75, // Breakout volume must be 1.75x the average
     mi_emaBiasPeriod: 50,
 
-    // Agent 6: Profit Locker - REMOVED
+    // Agent 6: Profit Locker (uses old scalping logic)
     scalp_scoreThreshold: 4,
     scalp_emaPeriod: 50,
-    scalp_rsiPeriod: 14,
+    scalp_rsiPeriod: 14, // Used for StochRSI
     scalp_stochRsiPeriod: 14,
     scalp_stochRsiOversold: 20,
     scalp_stochRsiOverbought: 80,
@@ -168,7 +168,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
 
     // Agent 9: Quantum Scalper
     qsc_adxPeriod: 10,
-    qsc_adxThreshold: 25,
+    qsc_adxThreshold: 30,
     qsc_adxChopBuffer: 3,
     qsc_bbPeriod: 20,
     qsc_bbStdDev: 2,
@@ -182,13 +182,18 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     qsc_psarMax: 0.2,
     qsc_atrPeriod: 14,
     qsc_atrMultiplier: 1.5,
-    qsc_trendScoreThreshold: 2,
+    qsc_trendScoreThreshold: 75,
     qsc_rangeScoreThreshold: 2,
     qsc_ichi_conversionPeriod: 9,
     qsc_ichi_basePeriod: 26,
     qsc_ichi_laggingSpanPeriod: 52,
     qsc_ichi_displacement: 26,
     qsc_vwapDeviationPercent: 0.2,
+    qsc_rsiOverextendedLong: 75,
+    qsc_rsiOverextendedShort: 25,
+    qsc_entryMode: 'breakout',
+    qsc_rsiMomentumThreshold: 55,
+    qsc_rsiPullbackThreshold: 45,
 
     // Agent 11: Historic Expert
     he_trendSmaPeriod: 30,
@@ -267,13 +272,13 @@ export const MARKET_STRUCTURE_MAVEN_TIMEFRAME_SETTINGS: Record<string, Partial<A
 };
 
 export const QUANTUM_SCALPER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '1m':  { qsc_stochRsiOversold: 20, qsc_stochRsiOverbought: 80, qsc_adxThreshold: 28, viPeriod: 10 },
-    '3m':  { qsc_stochRsiOversold: 25, qsc_stochRsiOverbought: 75, qsc_adxThreshold: 26, viPeriod: 12 },
-    '5m':  { qsc_stochRsiOversold: 25, qsc_stochRsiOverbought: 75, qsc_adxThreshold: 25, viPeriod: 14 },
-    '15m': { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 22, viPeriod: 14 },
-    '1h':  { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 20, viPeriod: 18 },
-    '4h':  { qsc_stochRsiOversold: 35, qsc_stochRsiOverbought: 65, qsc_adxThreshold: 20, viPeriod: 20 },
-    '1d':  { qsc_stochRsiOversold: 35, qsc_stochRsiOverbought: 65, qsc_adxThreshold: 20, viPeriod: 20 },
+    '1m':  { qsc_stochRsiOversold: 20, qsc_stochRsiOverbought: 80, qsc_adxThreshold: 30, viPeriod: 10, qsc_rsiOverextendedLong: 80, qsc_rsiOverextendedShort: 20 },
+    '3m':  { qsc_stochRsiOversold: 25, qsc_stochRsiOverbought: 75, qsc_adxThreshold: 28, viPeriod: 12, qsc_rsiOverextendedLong: 78, qsc_rsiOverextendedShort: 22 },
+    '5m':  { qsc_stochRsiOversold: 25, qsc_stochRsiOverbought: 75, qsc_adxThreshold: 28, viPeriod: 14, qsc_rsiOverextendedLong: 75, qsc_rsiOverextendedShort: 25 },
+    '15m': { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 25, viPeriod: 14, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30 },
+    '1h':  { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 22, viPeriod: 18, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30 },
+    '4h':  { qsc_stochRsiOversold: 35, qsc_stochRsiOverbought: 65, qsc_adxThreshold: 22, viPeriod: 20, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30 },
+    '1d':  { qsc_stochRsiOversold: 35, qsc_stochRsiOverbought: 65, qsc_adxThreshold: 22, viPeriod: 20, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30 },
 };
 
 export const HISTORIC_EXPERT_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
@@ -359,8 +364,8 @@ export const MOCK_PAPER_FUTURES_WALLET: WalletBalance[] = [
 /**
  * A non-configurable hard cap on risk to prevent catastrophic single-trade losses.
  * This is the maximum percentage of the *invested margin* that a trade is allowed to lose.
- * For example, a value of 5 with a $100 investment means the max loss (before fees/slippage)
- * is hard-capped at $5, regardless of leverage or the agent's calculated stop loss.
+ * For example, a value of 10 with a $100 investment means the max loss (before fees/slippage)
+ * is hard-capped at $10, regardless of leverage or the agent's calculated stop loss.
  */
 export const MAX_MARGIN_LOSS_PERCENT = 5;
 

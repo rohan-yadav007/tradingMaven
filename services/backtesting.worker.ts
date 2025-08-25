@@ -1,5 +1,7 @@
+
+
 import { Kline, BotConfig, BacktestResult, SimulatedTrade, AgentParams, Position, RiskMode, TradingMode, OptimizationResultItem } from '../types';
-import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getSupervisorSignal } from './localAgentService';
+import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal } from './localAgentService';
 import * as constants from '../constants';
 
 // --- Worker-local Helper Functions ---
@@ -153,13 +155,13 @@ async function runBacktest(
         const grossPnl = (exitPrice - openPosition.entryPrice) * openPosition.size * (isLong ? 1 : -1);
         const entryValue = openPosition.entryPrice * openPosition.size;
         const exitValue = exitPrice * openPosition.size;
-        const fees = (entryValue + exitValue) * constants.TAKER_FEE_RATE;
+        const fees = (entryValue + exitValue) * openPosition.takerFeeRate;
         const netPnl = grossPnl - fees;
         equity += netPnl;
         const closedDirection = openPosition.direction;
         trades.push({
             id: trades.length + 1, pair: openPosition.pair, direction: openPosition.direction,
-            entryPrice: openPosition.entryPrice, exitPrice, entryTime: openPosition.entryTime.getTime(), exitTime,
+            entryPrice: openPosition.entryPrice, exitPrice, entryTime: new Date(openPosition.entryTime).getTime(), exitTime,
             size: openPosition.size, investedAmount: config.investmentAmount, pnl: netPnl, exitReason,
             entryReason: openPosition.entryReason
         });
@@ -212,7 +214,8 @@ async function runBacktest(
 
             // Tier 3: Emergency Brake
             if (config.isInvalidationCheckEnabled) {
-                const invalidationSignal = await getSupervisorSignal(openPosition, historySlice, config);
+                const htfHistorySlice = allHtfKlines ? allHtfKlines.filter(k => k.time <= currentCandle.time) : undefined;
+                const invalidationSignal = await getSupervisorSignal(openPosition, historySlice, config, htfHistorySlice);
                 if (invalidationSignal.action === 'close') {
                     hasTradedInThisCandle = closePosition(currentPrice, invalidationSignal.reason, currentCandle.time);
                     if (hasTradedInThisCandle) { equityCurve.push(equity); continue; }
@@ -224,11 +227,20 @@ async function runBacktest(
             const potentialStops: { price: number; reason: Position['activeStopLossReason']; newState?: any }[] = [];
             potentialStops.push({ price: updatedPosition.stopLossPrice, reason: updatedPosition.activeStopLossReason });
 
+            // Tier 0: Mandatory Breakeven (NON-NEGOTIABLE)
+            const mandatoryBreakevenSignal = getMandatoryBreakevenSignal(updatedPosition, currentPrice);
+            if (mandatoryBreakevenSignal.newStopLoss) {
+                potentialStops.push({
+                    price: mandatoryBreakevenSignal.newStopLoss,
+                    reason: 'Breakeven',
+                    newState: mandatoryBreakevenSignal.newState
+                });
+            }
+
             if (config.isUniversalProfitTrailEnabled) {
                 const signal = getMultiStageProfitSecureSignal(updatedPosition, currentPrice);
                 if (signal.newStopLoss) {
-                    const reason = (signal.newState?.profitLockTier && signal.newState.profitLockTier > 3) ? 'Profit Secure' : 'Breakeven';
-                    potentialStops.push({ price: signal.newStopLoss, reason, newState: signal.newState });
+                    potentialStops.push({ price: signal.newStopLoss, reason: 'Profit Secure', newState: signal.newState });
                 }
             }
 
@@ -305,7 +317,7 @@ async function runBacktest(
                             orderId: null,
                             botId: 'backtest',
                             pair: config.pair, mode: config.mode, executionMode: config.executionMode, direction: isLong ? 'LONG' : 'SHORT',
-                            entryPrice, size, leverage: config.leverage, entryTime: new Date(currentCandle.time),
+                            entryPrice, size, investmentAmount: config.investmentAmount, leverage: config.leverage, entryTime: new Date(currentCandle.time).toISOString(),
                             entryReason: signal.reasons.join(' '), agentName: config.agent.name, takeProfitPrice: finalTp,
                             stopLossPrice, initialStopLossPrice: agentStopLoss, initialTakeProfitPrice: takeProfitPrice,
                             pricePrecision: config.pricePrecision, timeFrame: config.timeFrame, marginType: config.marginType,

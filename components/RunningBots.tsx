@@ -13,6 +13,7 @@ interface RunningBotsProps {
     onStopBot: (botId: string) => void;
     onDeleteBot: (botId: string) => void;
     onUpdateBotConfig: (botId: string, partialConfig: Partial<BotConfig>) => void;
+    onRefreshBotAnalysis: (botId: string) => void;
 }
 
 const InfoItem: React.FC<{ label: string; value: React.ReactNode; valueClassName?: string, labelClassName?: string }> = ({ label, value, valueClassName, labelClassName }) => (
@@ -157,6 +158,13 @@ const BotConfigDetails: React.FC<{ bot: RunningBot; onUpdate: (change: Partial<B
                 onChange={(checked) => onUpdate({ isMinRrEnabled: checked })}
             />
              <ConfigToggle
+                label="Agent Re-analysis"
+                description="Proactively exits on signal loss"
+                tooltip="On a set interval, the agent re-evaluates the market. If the original entry conditions are no longer met, the bot will proactively exit the trade. Affects the current open trade."
+                checked={config.isReanalysisEnabled ?? false}
+                onChange={(checked) => onUpdate({ isReanalysisEnabled: checked })}
+            />
+             <ConfigToggle
                 label="Proactive Exit & Invalidation"
                 description="Protects profit & cuts losses"
                 tooltip="Protects profits by exiting on fading momentum. Actively cuts losses on losing trades if the thesis is invalidated or strong counter-signals appear. Affects the current open trade."
@@ -233,50 +241,38 @@ interface StopLossDetailsProps {
 }
 
 const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) => {
-    const { stopLossPrice, initialStopLossPrice, activeStopLossReason, pricePrecision, profitLockTier } = position;
+    const {
+        stopLossPrice, initialStopLossPrice, activeStopLossReason, pricePrecision,
+        profitLockTier, isBreakevenSet
+    } = position;
 
-    const activeIsAgentInitial = activeStopLossReason === 'Agent Logic';
-    const activeIsHardCap = activeStopLossReason === 'Hard Cap';
-    const activeIsBreakeven = activeStopLossReason === 'Breakeven';
-    const activeIsProfitSecure = activeStopLossReason === 'Profit Secure';
-    const activeIsAgentTrail = activeStopLossReason === 'Agent Trail';
+    const isBreakevenActive = activeStopLossReason === 'Breakeven';
+    const isProfitSecureActive = activeStopLossReason === 'Profit Secure';
+    const isAgentTrailActive = activeStopLossReason === 'Agent Trail';
     
-    const isProfitSecureEnabled = config.isUniversalProfitTrailEnabled;
+    const isUniversalTrailEnabled = config.isUniversalProfitTrailEnabled;
 
-    const getProfitSecureStatus = () => {
-        if (!isProfitSecureEnabled) return { text: 'Disabled', className: 'bg-slate-200 dark:bg-slate-600' };
-        
-        if (activeIsBreakeven) {
-            return { text: 'ACTIVE: Risk-Free', className: 'bg-teal-500 text-white' };
+    const universalTrailStatus = useMemo(() => {
+        if (!isUniversalTrailEnabled) return { text: 'Disabled by user', className: 'bg-slate-200 dark:bg-slate-600' };
+        if (isProfitSecureActive) {
+            const tier = profitLockTier >= 4 ? profitLockTier - 2 : 0;
+            return { text: tier > 0 ? `Tier ${tier} Active` : 'Active', className: 'bg-teal-500 text-white' };
         }
-        if (activeIsProfitSecure) {
-            // profitLockTier is N (e.g. 4, 5...)
-            // lockFeeMultiple is N-2, which corresponds to the tier number.
-            const lockFeeMultiple = profitLockTier >= 4 ? profitLockTier - 2 : 0;
-            
-            const statusText = lockFeeMultiple > 0 
-                ? `Tier ${lockFeeMultiple}: ${lockFeeMultiple}x Fee Locked` 
-                : 'ACTIVE';
-
-            return { text: statusText, className: 'bg-teal-500 text-white' };
-        }
-        
         return { text: 'Enabled', className: 'bg-slate-500 dark:bg-slate-400 text-white dark:text-slate-900' };
-    };
-    
-    const profitSecureStatus = getProfitSecureStatus();
+    }, [isUniversalTrailEnabled, isProfitSecureActive, profitLockTier]);
 
-    const isFutures = config.mode === TradingMode.USDSM_Futures;
-    let hardCapLabel = `Hard Cap (${MAX_MARGIN_LOSS_PERCENT}%)`;
-    let hardCapDescription: string;
+    const agentTrailStatus = useMemo(() => {
+        if (isAgentTrailActive) {
+            return { text: 'ACTIVE', className: 'bg-indigo-500 text-white' };
+        }
+        // It's always enabled if a position is open, just might be overridden
+        return { text: 'Enabled', className: 'bg-slate-500 dark:bg-slate-400 text-white dark:text-slate-900' };
+    }, [isAgentTrailActive]);
 
-    if (isFutures && config.leverage > 1) {
-        const maxLossInDollars = (config.investmentAmount * MAX_MARGIN_LOSS_PERCENT / 100).toFixed(2);
-        hardCapLabel = `Hard Cap (${MAX_MARGIN_LOSS_PERCENT}% of Margin)`;
-        hardCapDescription = `Caps max loss to ${MAX_MARGIN_LOSS_PERCENT}% of your invested margin ($${maxLossInDollars}).`;
-    } else {
-        hardCapDescription = `Caps max loss to ${MAX_MARGIN_LOSS_PERCENT}% of your investment if the agent's logic is riskier.`;
-    }
+    const initialSlReasonText = position.activeStopLossReason === 'Hard Cap' &&
+        (isBreakevenActive || isProfitSecureActive || isAgentTrailActive)
+        ? 'Hard Cap'
+        : 'Agent Logic';
 
     return (
         <div>
@@ -286,70 +282,51 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
                     <span className="font-bold">Active SL Price</span>
                     <span className="font-bold font-mono bg-slate-200 dark:bg-slate-700 px-2 py-1 rounded-md">{formatPrice(stopLossPrice, pricePrecision)}</span>
                 </div>
-                
-                <div className={`p-2 rounded-md ${activeIsProfitSecure || activeIsBreakeven ? 'bg-teal-100 dark:bg-teal-900 border border-teal-300 dark:border-teal-700' : ''}`}>
-                    <div className="flex justify-between items-center">
-                         <span className={activeIsProfitSecure || activeIsBreakeven ? 'font-semibold text-teal-700 dark:text-teal-300' : 'font-medium'}>Multi-Stage Profit Secure</span>
-                         <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${profitSecureStatus.className}`}>
-                            {profitSecureStatus.text}
-                         </span>
-                    </div>
-                    {isProfitSecureEnabled && !activeIsProfitSecure && !activeIsBreakeven &&
-                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                           Will activate once profit reaches 3x the trade fee.
-                        </p>
-                    }
-                     {activeIsBreakeven &&
-                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                           Stop is at fee-adjusted breakeven.
-                        </p>
-                    }
-                    {activeIsProfitSecure &&
-                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                           Trailing profit based on fee multiples.
-                        </p>
-                    }
-                </div>
 
-                <div className={`p-2 rounded-md ${activeIsAgentTrail ? 'bg-sky-100 dark:bg-sky-900 border border-sky-300 dark:border-sky-700' : ''}`}>
+                <div className={`p-2 rounded-md ${isBreakevenActive ? 'bg-sky-100 dark:bg-sky-900 border border-sky-300 dark:border-sky-700' : ''}`}>
                     <div className="flex justify-between items-center">
-                         <span className={activeIsAgentTrail ? 'font-semibold text-sky-700 dark:text-sky-300' : ''}>Agent Trail</span>
-                         <span className={`text-xs px-1.5 py-0.5 rounded-full ${activeIsAgentTrail ? 'bg-sky-500 text-white' : 'bg-slate-200 dark:bg-slate-600'}`}>
-                            {activeIsAgentTrail ? 'ACTIVE' : 'Inactive'}
-                         </span>
+                        <span className={isBreakevenActive ? 'font-semibold text-sky-700 dark:text-sky-300' : 'font-medium'}>
+                            Mandatory Breakeven
+                        </span>
+                        <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${isBreakevenSet ? 'bg-sky-500 text-white' : 'bg-slate-200 dark:bg-slate-600'}`}>
+                            {isBreakevenSet ? 'Risk-Free' : 'Pending'}
+                        </span>
                     </div>
-                    {activeIsAgentTrail &&
-                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                           An agent-specific trailing stop (e.g., PSAR) is managing the trade.
-                        </p>
-                    }
-                </div>
-
-                <div className={`p-2 rounded-md ${activeIsHardCap ? 'bg-amber-100 dark:bg-amber-900 border border-amber-300 dark:border-amber-700' : ''}`}>
-                    <div className="flex justify-between items-center">
-                         <span className={activeIsHardCap ? 'font-semibold text-amber-700 dark:text-amber-300' : ''}>{hardCapLabel}</span>
-                         <span className={`text-xs px-1.5 py-0.5 rounded-full ${activeIsHardCap ? 'bg-amber-500 text-white' : 'bg-slate-200 dark:bg-slate-600'}`}>
-                            {activeIsHardCap ? 'ACTIVE' : 'Overridden'}
-                         </span>
-                    </div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{hardCapDescription}</p>
-                </div>
-                
-                <div className={`p-2 rounded-md ${activeIsAgentInitial ? 'bg-indigo-100 dark:bg-indigo-900 border border-indigo-300 dark:border-indigo-700' : ''}`}>
-                    <div className="flex justify-between items-center">
-                         <span className={activeIsAgentInitial ? 'font-semibold text-indigo-700 dark:text-indigo-300' : ''}>Agent Logic (Initial)</span>
-                         <span className={`text-xs px-1.5 py-0.5 rounded-full ${activeIsAgentInitial ? 'bg-indigo-500 text-white' : 'bg-slate-200 dark:bg-slate-600'}`}>
-                            {activeIsAgentInitial ? 'ACTIVE' : 'Overridden'}
-                         </span>
-                    </div>
-                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                        Initial SL calculated by the agent was {formatPrice(initialStopLossPrice, pricePrecision)}.
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                        System rule. Secures trade once profit exceeds 3x fee.
                     </p>
+                </div>
+
+                <div className={`p-2 rounded-md ${isProfitSecureActive ? 'bg-teal-100 dark:bg-teal-900 border border-teal-300 dark:border-teal-700' : ''}`}>
+                    <div className="flex justify-between items-center">
+                         <span className={isProfitSecureActive ? 'font-semibold text-teal-700 dark:text-teal-300' : 'font-medium'}>
+                            Universal Profit Trail
+                        </span>
+                         <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${universalTrailStatus.className}`}>
+                            {universalTrailStatus.text}
+                         </span>
+                    </div>
+                </div>
+
+                <div className={`p-2 rounded-md ${isAgentTrailActive ? 'bg-indigo-100 dark:bg-indigo-900 border border-indigo-300 dark:border-indigo-700' : ''}`}>
+                    <div className="flex justify-between items-center">
+                         <span className={isAgentTrailActive ? 'font-semibold text-indigo-700 dark:text-indigo-300' : 'font-medium'}>
+                            Agent Trail
+                        </span>
+                         <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${agentTrailStatus.className}`}>
+                            {agentTrailStatus.text}
+                         </span>
+                    </div>
+                </div>
+
+                <div className="text-xs text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">
+                    Initial SL: {formatPrice(initialStopLossPrice, pricePrecision)} ({initialSlReasonText}).
                 </div>
             </div>
         </div>
     );
 };
+
 
 const BotLog: React.FC<{ log: BotLogEntry[] }> = ({ log }) => {
     const getLogColor = (type: LogType) => {
@@ -414,6 +391,10 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
     
     const REFRESH_INTERVALS = [10, 20, 30, 60];
     const handleIntervalChange = () => {
+        // Trigger an immediate refresh first
+        actions.onRefreshBotAnalysis(bot.id);
+
+        // Then cycle to the next interval and update the config
         const currentInterval = bot.config.refreshInterval ?? 30;
         const currentIndex = REFRESH_INTERVALS.indexOf(currentInterval);
         const nextIndex = (currentIndex + 1) % REFRESH_INTERVALS.length;

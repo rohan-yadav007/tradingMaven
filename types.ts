@@ -54,7 +54,6 @@ export interface MarketDataContext {
     vi14?: { pdi: number; ndi: number };
     ichiCloud?: IchimokuCloudOutput;
     lastCandlePattern?: { name: string; type: 'bullish' | 'bearish' } | null;
-    trend?: 'bullish' | 'bearish' | 'neutral';
     // Higher Timeframe Context
     htf_rsi14?: number;
     htf_ema9?: number;

@@ -1,5 +1,6 @@
 
 
+
 import { Kline, BotConfig, BacktestResult, SimulatedTrade, AgentParams, Position, RiskMode, TradingMode, OptimizationResultItem } from '../types';
 import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal } from './localAgentService';
 import * as constants from '../constants';
@@ -10,6 +11,7 @@ const getLast = <T>(arr: T[] | undefined): T | undefined => arr && arr.length > 
 
 const getTimeframeDuration = (timeframe: string): number => {
     const unit = timeframe.slice(-1);
+    // FIX: Correctly parse the numeric part of the timeframe string.
     const value = parseInt(timeframe.slice(0, -1), 10);
     if (isNaN(value)) return 0;
     switch (unit) {
@@ -141,7 +143,6 @@ async function runBacktest(
     const STARTING_CAPITAL = 10000;
     let equity = STARTING_CAPITAL;
     const minCandles = 200;
-    let cooldownUntil: { time: number; direction: 'LONG' | 'SHORT'; } | null = null;
 
     const targetTimeframeKlines = aggregateKlines(klines, config.timeFrame);
 
@@ -158,7 +159,6 @@ async function runBacktest(
         const fees = (entryValue + exitValue) * openPosition.takerFeeRate;
         const netPnl = grossPnl - fees;
         equity += netPnl;
-        const closedDirection = openPosition.direction;
         trades.push({
             id: trades.length + 1, pair: openPosition.pair, direction: openPosition.direction,
             entryPrice: openPosition.entryPrice, exitPrice, entryTime: new Date(openPosition.entryTime).getTime(), exitTime,
@@ -167,14 +167,6 @@ async function runBacktest(
         });
         openPosition = null;
 
-        if (config.isCooldownEnabled) {
-            const params = { ...constants.DEFAULT_AGENT_PARAMS, ...config.agentParams };
-            const cooldownCandles = params.cooldownCandles;
-            const timeframeMs = getTimeframeDuration(config.timeFrame);
-            const cooldownEndTime = exitTime + (cooldownCandles * timeframeMs);
-            cooldownUntil = { time: cooldownEndTime, direction: closedDirection };
-        }
-
         return true;
     };
 
@@ -182,10 +174,6 @@ async function runBacktest(
         const historySlice = targetTimeframeKlines.slice(0, i + 1);
         const currentCandle = targetTimeframeKlines[i]; // This is the candle we are simulating
         let hasTradedInThisCandle = false;
-
-        if (cooldownUntil && currentCandle.time >= cooldownUntil.time) {
-            cooldownUntil = null;
-        }
 
         // --- MANAGE OPEN POSITION ---
         if (openPosition) {
@@ -222,7 +210,7 @@ async function runBacktest(
                 }
             }
             
-            let updatedPosition = { ...openPosition };
+            let updatedPosition: SimulatedPosition = { ...openPosition };
             
             const potentialStops: { price: number; reason: Position['activeStopLossReason']; newState?: any }[] = [];
             potentialStops.push({ price: updatedPosition.stopLossPrice, reason: updatedPosition.activeStopLossReason });
@@ -268,12 +256,7 @@ async function runBacktest(
                 }
             }
 
-            if (config.isTrailingTakeProfitEnabled) {
-                const targets = getInitialAgentTargets(historySlice, currentPrice, isLong ? 'LONG' : 'SHORT', config);
-                if ((isLong && targets.takeProfitPrice > updatedPosition.takeProfitPrice) || (!isLong && targets.takeProfitPrice < updatedPosition.takeProfitPrice)) {
-                    updatedPosition.takeProfitPrice = targets.takeProfitPrice;
-                }
-            }
+            // FIX: Removed deprecated isTrailingTakeProfitEnabled logic
             openPosition = updatedPosition;
         }
         
@@ -282,15 +265,7 @@ async function runBacktest(
             const htfHistorySlice = allHtfKlines ? allHtfKlines.filter(k => k.time <= currentCandle.time) : undefined;
             const signal = await getTradingSignal(config.agent, historySlice, config, htfHistorySlice);
             
-            let isVetoedByCooldown = false;
-            if (signal.signal !== 'HOLD' && cooldownUntil) {
-                const signalDirection = signal.signal === 'BUY' ? 'LONG' : 'SHORT';
-                if (signalDirection === cooldownUntil.direction) {
-                    isVetoedByCooldown = true;
-                }
-            }
-
-            if (signal.signal !== 'HOLD' && !isVetoedByCooldown) {
+            if (signal.signal !== 'HOLD') {
                 const entryPrice = currentCandle.close;
                 const isLong = signal.signal === 'BUY';
                 

@@ -1,5 +1,9 @@
 
 
+
+
+
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig } from '../types';
 import * as constants from '../constants';
@@ -161,8 +165,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         isTakeProfitLocked, agentParams,
         marginType, futuresSettingsError, isMultiAssetMode, multiAssetModeError,
         maxLeverage, isLeverageLoading, isHtfConfirmationEnabled, htfTimeFrame,
-        isUniversalProfitTrailEnabled, isTrailingTakeProfitEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
-        isReanalysisEnabled, isCooldownEnabled,
+        isUniversalProfitTrailEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
+        isReanalysisEnabled,
     } = config;
 
     const {
@@ -171,8 +175,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
         setMarginType, onSetMultiAssetMode, setAgentParams,
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setIsUniversalProfitTrailEnabled,
-        setIsTrailingTakeProfitEnabled, setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled,
-        setIsCooldownEnabled,
+        setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled,
     } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -225,11 +228,9 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         isTakeProfitLocked: config.isTakeProfitLocked,
                         isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
                         isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
-                        isTrailingTakeProfitEnabled: config.isTrailingTakeProfitEnabled,
                         isMinRrEnabled: config.isMinRrEnabled,
                         isInvalidationCheckEnabled: config.isInvalidationCheckEnabled,
                         isReanalysisEnabled: config.isReanalysisEnabled,
-                        isCooldownEnabled: config.isCooldownEnabled,
                         htfTimeFrame: config.htfTimeFrame,
                         agentParams: agentParams,
                         pricePrecision: 8,
@@ -271,7 +272,6 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 isTakeProfitLocked: isTakeProfitLocked,
                 isHtfConfirmationEnabled: false,
                 isUniversalProfitTrailEnabled: false,
-                isTrailingTakeProfitEnabled: false,
                 isMinRrEnabled: false,
                 agentParams: agentParams,
                 pricePrecision: 8,
@@ -665,20 +665,6 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             </div>
              <div className={formGroupClass}>
                 <div className="flex items-center justify-between">
-                    <label htmlFor="tp-trail-toggle" className={formLabelClass}>
-                        Trailing Take Profit
-                    </label>
-                    <ToggleSwitch
-                        checked={isTrailingTakeProfitEnabled}
-                        onChange={setIsTrailingTakeProfitEnabled}
-                    />
-                </div>
-                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Dynamically adjusts the TP target upwards on profitable trades to capture more of a trend.
-                </p>
-            </div>
-             <div className={formGroupClass}>
-                <div className="flex items-center justify-between">
                     <label htmlFor="rr-veto-toggle" className={formLabelClass}>
                         Minimum R:R Veto
                     </label>
@@ -717,20 +703,6 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 </div>
                  <p className="text-xs text-slate-500 dark:text-slate-400">
                     The ultimate safety net. Secures high profits on early signs of reversal and minimizes losses by exiting invalidated trades before the stop loss is hit. Functions as an always-on 'emergency brake' for every trade.
-                </p>
-            </div>
-             <div className={formGroupClass}>
-                <div className="flex items-center justify-between">
-                    <label htmlFor="cooldown-toggle" className={formLabelClass}>
-                        Post-Trade Cooldown
-                    </label>
-                    <ToggleSwitch
-                        checked={isCooldownEnabled}
-                        onChange={setIsCooldownEnabled}
-                    />
-                </div>
-                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Prevents immediate re-entry in the same direction for a few candles after a trade closes.
                 </p>
             </div>
 

@@ -1,5 +1,9 @@
 
 
+
+
+
+
 import React from 'react';
 import { useState, useEffect } from 'react';
 import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, Kline, RiskMode, OptimizationResultItem } from '../types';
@@ -249,14 +253,14 @@ interface BacktestingPanelProps {
 export type BacktestConfig = {
     tradingMode: TradingMode; selectedPair: string; chartTimeFrame: string; selectedAgent: Agent;
     investmentAmount: number; takeProfitMode: RiskMode; takeProfitValue: number; isTakeProfitLocked: boolean;
-    isHtfConfirmationEnabled: boolean; isUniversalProfitTrailEnabled: boolean; isTrailingTakeProfitEnabled: boolean;
+    isHtfConfirmationEnabled: boolean; isUniversalProfitTrailEnabled: boolean;
     isMinRrEnabled: boolean; htfTimeFrame: 'auto' | string; isInvalidationCheckEnabled?: boolean;
-    isCooldownEnabled?: boolean;
     agentParams: AgentParams; leverage: number;
 };
 
 const getTimeframeDuration = (timeframe: string): number => {
     const unit = timeframe.slice(-1);
+    // FIX: Correctly parse the numeric part of the timeframe string.
     const value = parseInt(timeframe.slice(0, -1), 10);
     if (isNaN(value)) return 0;
     switch (unit) {
@@ -279,9 +283,8 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         takeProfitMode: globalConfig.takeProfitMode, takeProfitValue: globalConfig.takeProfitValue,
         isTakeProfitLocked: globalConfig.isTakeProfitLocked, isHtfConfirmationEnabled: globalConfig.isHtfConfirmationEnabled,
         isUniversalProfitTrailEnabled: globalConfig.isUniversalProfitTrailEnabled, htfTimeFrame: globalConfig.htfTimeFrame,
-        agentParams: globalConfig.agentParams, leverage: globalConfig.leverage, isTrailingTakeProfitEnabled: globalConfig.isTrailingTakeProfitEnabled,
+        agentParams: globalConfig.agentParams, leverage: globalConfig.leverage,
         isMinRrEnabled: globalConfig.isMinRrEnabled, isInvalidationCheckEnabled: globalConfig.isInvalidationCheckEnabled,
-        isCooldownEnabled: globalConfig.isCooldownEnabled,
     });
 
     const [backtestDays, setBacktestDays] = useState(1);
@@ -332,8 +335,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 timeFrame: config.chartTimeFrame, investmentAmount: config.investmentAmount, takeProfitMode: config.takeProfitMode,
                 takeProfitValue: config.takeProfitValue, isTakeProfitLocked: config.isTakeProfitLocked,
                 isHtfConfirmationEnabled: config.isHtfConfirmationEnabled, isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
-                isTrailingTakeProfitEnabled: config.isTrailingTakeProfitEnabled, isMinRrEnabled: config.isMinRrEnabled,
-                isCooldownEnabled: config.isCooldownEnabled,
+                isMinRrEnabled: config.isMinRrEnabled,
                 htfTimeFrame: config.htfTimeFrame, agentParams: config.agentParams,
                 pricePrecision: binanceService.getPricePrecision(symbolInfo), quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
@@ -377,8 +379,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 timeFrame: config.chartTimeFrame, investmentAmount: config.investmentAmount, takeProfitMode: config.takeProfitMode,
                 takeProfitValue: config.takeProfitValue, isTakeProfitLocked: config.isTakeProfitLocked,
                 isHtfConfirmationEnabled: config.isHtfConfirmationEnabled, isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
-                isTrailingTakeProfitEnabled: config.isTrailingTakeProfitEnabled, isMinRrEnabled: config.isMinRrEnabled,
-                isCooldownEnabled: config.isCooldownEnabled,
+                isMinRrEnabled: config.isMinRrEnabled,
                 htfTimeFrame: config.htfTimeFrame, agentParams: config.agentParams,
                 pricePrecision: binanceService.getPricePrecision(symbolInfo), quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
@@ -403,9 +404,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         globalActions.setIsTakeProfitLocked(config.isTakeProfitLocked);
         globalActions.setIsHtfConfirmationEnabled(config.isHtfConfirmationEnabled);
         globalActions.setIsUniversalProfitTrailEnabled(config.isUniversalProfitTrailEnabled);
-        globalActions.setIsTrailingTakeProfitEnabled(config.isTrailingTakeProfitEnabled);
         globalActions.setIsMinRrEnabled(config.isMinRrEnabled);
-        globalActions.setIsCooldownEnabled(config.isCooldownEnabled ?? true);
         globalActions.setAgentParams(paramsToApply);
         setActiveView('trading');
     };
@@ -432,9 +431,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                     <div className="space-y-3 pt-2">
                         <div className="flex items-center justify-between"><label className={formLabelClass}>Higher Timeframe Confirmation</label><ToggleSwitch checked={config.isHtfConfirmationEnabled} onChange={v => updateConfig('isHtfConfirmationEnabled', v)} /></div>
                         <div className="flex items-center justify-between"><label className={formLabelClass}>Universal Profit Trail</label><ToggleSwitch checked={config.isUniversalProfitTrailEnabled} onChange={v => updateConfig('isUniversalProfitTrailEnabled', v)} /></div>
-                        <div className="flex items-center justify-between"><label className={formLabelClass}>Trailing Take Profit</label><ToggleSwitch checked={config.isTrailingTakeProfitEnabled} onChange={v => updateConfig('isTrailingTakeProfitEnabled', v)} /></div>
                         <div className="flex items-center justify-between"><label className={formLabelClass}>Minimum R:R Veto</label><ToggleSwitch checked={config.isMinRrEnabled} onChange={v => updateConfig('isMinRrEnabled', v)} /></div>
-                        <div className="flex items-center justify-between"><label className={formLabelClass}>Post-Trade Cooldown</label><ToggleSwitch checked={config.isCooldownEnabled ?? true} onChange={v => updateConfig('isCooldownEnabled', v)} /></div>
                     </div>
                     <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
                         <button onClick={() => setIsParamsOpen(!isParamsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold">

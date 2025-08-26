@@ -24,7 +24,8 @@ interface ChartComponentProps {
 
 const getTimeframeDurationMs = (timeframe: string): number => {
     const unit = timeframe.slice(-1);
-    const value = parseInt(timeframe.slice(0, -1));
+    // FIX: Added radix to parseInt for safer integer parsing.
+    const value = parseInt(timeframe.slice(0, -1), 10);
     if (isNaN(value)) return 0;
 
     switch (unit) {

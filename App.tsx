@@ -1,4 +1,9 @@
 
+
+
+
+
+
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -9,6 +14,7 @@ import { TradingMode, Agent, TradeSignal, Position, Trade, WalletBalance, Kline,
 import * as constants from './constants';
 import * as binanceService from './services/binanceService';
 import { historyService } from './services/historyService';
+// FIX: Correctly import botManagerService after fixing circular dependency
 import { botManagerService, BotHandlers } from './services/botManagerService';
 import * as localAgentService from './services/localAgentService';
 import { telegramBotService } from './services/telegramBotService';
@@ -33,7 +39,7 @@ const AppContent: React.FC = () => {
         selectedAgent, investmentAmount, takeProfitMode, 
         takeProfitValue, isTakeProfitLocked, agentParams,
         leverage, marginType, isHtfConfirmationEnabled, htfTimeFrame, isUniversalProfitTrailEnabled,
-        isTrailingTakeProfitEnabled, isMinRrEnabled, isInvalidationCheckEnabled, isReanalysisEnabled
+        isMinRrEnabled, isInvalidationCheckEnabled, isReanalysisEnabled
     } = configState;
 
     const {
@@ -129,7 +135,6 @@ const AppContent: React.FC = () => {
                     isHtfConfirmationEnabled,
                     htfTimeFrame,
                     isUniversalProfitTrailEnabled,
-                    isTrailingTakeProfitEnabled,
                     isMinRrEnabled,
                     isInvalidationCheckEnabled,
                     isReanalysisEnabled,
@@ -151,7 +156,7 @@ const AppContent: React.FC = () => {
         isBotCombinationActive, selectedPair, tradingMode, executionMode, leverage, marginType,
         selectedAgent, chartTimeFrame, investmentAmount, takeProfitMode, takeProfitValue,
         isTakeProfitLocked, isHtfConfirmationEnabled, htfTimeFrame, agentParams,
-        isUniversalProfitTrailEnabled, isTrailingTakeProfitEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
+        isUniversalProfitTrailEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
         isReanalysisEnabled, currentFeeRate
     ]);
 
@@ -458,11 +463,9 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
             htfTimeFrame: config.htfTimeFrame,
             isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
-            isTrailingTakeProfitEnabled: config.isTrailingTakeProfitEnabled,
             isMinRrEnabled: config.isMinRrEnabled,
             isReanalysisEnabled: config.isReanalysisEnabled,
             isInvalidationCheckEnabled: config.isInvalidationCheckEnabled,
-            isCooldownEnabled: config.isCooldownEnabled
         };
         
         let htfKlinesForContext: Kline[] | undefined;

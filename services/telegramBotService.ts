@@ -1,6 +1,7 @@
 
+
+
 import { BotConfig, TradingMode, RiskMode } from '../types';
-import { botManagerService } from './botManagerService';
 import { historyService } from './historyService';
 import * as constants from '../constants';
 import * as binanceService from './binanceService';
@@ -13,6 +14,10 @@ const bots = [
 
 const lastUpdateIds = new Map<string, number>();
 let isStarted = false; // Guard to prevent multiple initializations
+
+// FIX: Use a local variable to hold the botManagerService instance to break circular dependency.
+let _botManagerService: any;
+
 
 /**
  * Sends a message via Telegram. Can broadcast to all bots or send to a specific one.
@@ -44,6 +49,12 @@ async function sendMessage(text: string, specificChatId?: string) {
 
 
 async function handleCommand(command: string, args: string[], chatId: string) {
+    // FIX: Add check to ensure service is registered.
+    if (!_botManagerService) {
+        await sendMessage("Bot manager is not available. Please wait a moment and try again.", chatId);
+        return;
+    }
+
     switch (command) {
         case '/help':
         case '/start':
@@ -68,12 +79,12 @@ async function handleCommand(command: string, args: string[], chatId: string) {
             break;
 
         case '/status':
-            const runningBots = botManagerService.getRunningBots();
+            const runningBots = _botManagerService.getRunningBots();
             if (runningBots.length === 0) {
                 await sendMessage("No bots are currently running.", chatId);
                 return;
             }
-            const statusText = runningBots.map(bot => {
+            const statusText = runningBots.map((bot: any) => {
                 const winRate = bot.closedTradesCount > 0 ? (bot.wins / bot.closedTradesCount) * 100 : 0;
                 let pnlText = `Total PNL: *$${bot.totalPnl.toFixed(2)}*`;
                 if (bot.openPosition && bot.livePrice) {
@@ -157,7 +168,7 @@ ID: \`${bot.id}\``;
                     isTakeProfitLocked: false,
                     isHtfConfirmationEnabled: false,
                     isUniversalProfitTrailEnabled: true,
-                    isTrailingTakeProfitEnabled: false,
+                    // FIX: Removed isTrailingTakeProfitEnabled as it's not a valid property on BotConfig
                     isMinRrEnabled: true,
                     isInvalidationCheckEnabled: true,
                     pricePrecision: binanceService.getPricePrecision(symbolInfo),
@@ -166,7 +177,7 @@ ID: \`${bot.id}\``;
                     takerFeeRate: constants.TAKER_FEE_RATE,
                 };
                 
-                const newBot = botManagerService.startBot(config);
+                const newBot = _botManagerService.startBot(config);
                 await sendMessage(`*${executionMode.toUpperCase()} bot created successfully!*
 Pair: ${pair} (${finalTradingMode})
 Agent: ${agent.name}
@@ -186,7 +197,7 @@ ID: \`${newBot.id}\``, chatId);
                 return;
             }
             const botId = args[0];
-            const botInstance = botManagerService.getBot(botId);
+            const botInstance = _botManagerService.getBot(botId);
             if (!botInstance) {
                 await sendMessage(`Error: Bot with ID \`${botId}\` not found.`, chatId);
                 return;
@@ -194,10 +205,10 @@ ID: \`${newBot.id}\``, chatId);
             
             let actionText = '';
             switch(command) {
-                case '/pause': botManagerService.pauseBot(botId); actionText = 'paused'; break;
-                case '/resume': botManagerService.resumeBot(botId); actionText = 'resumed'; break;
-                case '/stop': botManagerService.stopBot(botId); actionText = 'stopped'; break;
-                case '/delete': botManagerService.deleteBot(botId); actionText = 'deleted'; break;
+                case '/pause': _botManagerService.pauseBot(botId); actionText = 'paused'; break;
+                case '/resume': _botManagerService.resumeBot(botId); actionText = 'resumed'; break;
+                case '/stop': _botManagerService.stopBot(botId); actionText = 'stopped'; break;
+                case '/delete': _botManagerService.deleteBot(botId); actionText = 'deleted'; break;
             }
             await sendMessage(`Bot \`${botId}\` has been ${actionText}.`, chatId);
             break;
@@ -296,4 +307,8 @@ function start() {
 export const telegramBotService = {
     start,
     sendMessage,
+    // FIX: Add a register method to accept the botManagerService instance and break the circular dependency.
+    register(instance: any) {
+        _botManagerService = instance;
+    },
 };

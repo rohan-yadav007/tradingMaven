@@ -94,7 +94,6 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     macdSlowPeriod: 26,
     macdSignalPeriod: 9,
     invalidationCandleLimit: 10,
-    cooldownCandles: 3,
 
     // Agent 1: Momentum Master
     adxTrendThreshold: 25,

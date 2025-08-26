@@ -1,4 +1,3 @@
-
 import { TradingMode, type Agent, type TradeSignal, type Kline, type AgentParams, type Position, type ADXOutput, type MACDOutput, type BollingerBandsOutput, type StochasticRSIOutput, type TradeManagementSignal, type BotConfig, VortexIndicatorOutput, SentinelAnalysis, KSTOutput, type IchimokuCloudOutput, MarketDataContext } from '../types';
 import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, VWAP, IchimokuCloud, KST, abandonedbaby, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, downsidetasukigap, dragonflydoji, gravestonedoji, bullishharami, bearishharami, bullishharamicross, bearishharamicross, hammerpattern, hangingman, morningdojistar, morningstar, eveningdojistar, eveningstar, piercingline, shootingstar, threeblackcrows, threewhitesoldiers } from 'technicalindicators';
 import * as constants from '../constants';
@@ -616,7 +615,7 @@ export function getProfitSpikeSignal(
 
 /**
  * A non-negotiable safety mechanism that moves the Stop Loss to a fee-adjusted breakeven
- * point once the trade's profit reaches 4x the estimated round-trip trading fee.
+ * point once the trade's profit reaches 3x the estimated round-trip trading fee.
  * This is a mandatory rule for all agents to secure trades early.
  * @param position - The current open position.
  * @param currentPrice - The live price tick.
@@ -646,8 +645,8 @@ export function getMandatoryBreakevenSignal(
     const positionValueDollars = entryPrice * size;
     const roundTripFeeDollars = positionValueDollars * takerFeeRate * 2;
 
-    // Check if the PNL is at least 4x the round-trip fee.
-    if (roundTripFeeDollars > 0 && currentPnlDollars >= (roundTripFeeDollars * 4)) {
+    // Check if the PNL is at least 3x the round-trip fee.
+    if (roundTripFeeDollars > 0 && currentPnlDollars >= (roundTripFeeDollars * 3)) {
         // Breakeven stop loss is the exact price needed to exit with zero PNL after fees.
         const feeRate = takerFeeRate;
         const breakevenStop = isLong
@@ -658,8 +657,8 @@ export function getMandatoryBreakevenSignal(
         if ((isLong && breakevenStop > stopLossPrice) || (!isLong && breakevenStop < stopLossPrice)) {
             return {
                 newStopLoss: breakevenStop,
-                reasons: [`Profit Secure: Breakeven set at 4x fee gain.`],
-                newState: { isBreakevenSet: true, profitLockTier: 4 }
+                reasons: [`Profit Secure: Breakeven set at 3x fee gain.`],
+                newState: { isBreakevenSet: true, profitLockTier: 3 }
             };
         }
     }
@@ -707,8 +706,8 @@ export function getMultiStageProfitSecureSignal(
 
     const currentFeeMultiple = currentPnlDollars / roundTripFeeDollars;
     
-    // Dynamic (N)x -> (N-1)x fee-multiple based profit lock (for N >= 5 after 4x breakeven)
-    const startingTier = 5;
+    // Dynamic (N)x -> (N-1)x fee-multiple based profit lock (for N >= 4 after 3x breakeven)
+    const startingTier = 4;
     if (currentFeeMultiple >= startingTier) {
         const triggerFeeMultiple = Math.floor(currentFeeMultiple); // This is our 'N'
         
@@ -724,7 +723,7 @@ export function getMultiStageProfitSecureSignal(
             const newStopLoss = entryPrice + (lockedPnlInPrice * (isLong ? 1 : -1));
 
             if ((isLong && newStopLoss > stopLossPrice) || (!isLong && newStopLoss < stopLossPrice)) {
-                const reason = `Profit Secure: Tier ${lockFeeMultiple - 3} activated at ${triggerFeeMultiple}x fee gain.`;
+                const reason = `Profit Secure: Tier ${triggerFeeMultiple - 3} activated at ${triggerFeeMultiple}x fee gain.`;
                 return {
                     newStopLoss,
                     reasons: [reason],
@@ -778,12 +777,18 @@ export function getAgentExitSignal(
     // Ensure initialRisk is not zero to avoid division by zero
     const currentRR = (initialRiskInPrice > 1e-9 && currentProfitInPrice > 0) ? currentProfitInPrice / initialRiskInPrice : 0;
     
+    // Timeframe-aware R:R thresholds for accelerating the trail
+    const isLowTimeframe = ['1m', '3m', '5m'].includes(position.timeFrame);
+    const rrThresholds = isLowTimeframe
+        ? { high: 1.5, hyper: 2.5, max: 4 } // More aggressive for scalps
+        : { high: 2, hyper: 4, max: 6 }; // Standard for longer trades
+    
     let profitVelocity = 1; // 1x Velocity: Normal speed
-    if (currentRR > 6) {
+    if (currentRR > rrThresholds.max) {
         profitVelocity = 4; // 4x Velocity: Maximum
-    } else if (currentRR > 4) {
+    } else if (currentRR > rrThresholds.hyper) {
         profitVelocity = 3; // 3x Velocity: Hyper speed
-    } else if (currentRR > 2) {
+    } else if (currentRR > rrThresholds.high) {
         profitVelocity = 2; // 2x Velocity: High speed
     }
 
@@ -1024,11 +1029,11 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
     let htfIsConfluentBearish = !config.isHtfConfirmationEnabled;
     if (config.isHtfConfirmationEnabled && htfContext) {
         const htfIsTrendBullish = htfContext.htf_trend === 'bullish';
-        const htfIsMomentumBullish = htfContext.htf_obvTrend === 'bullish' || (htfContext.htf_vi14 && htfContext.htf_vi14.pdi > htfContext.htf_vi14.ndi);
+        const htfIsMomentumBullish = htfContext.htf_obvTrend === 'bullish' || !!(htfContext.htf_vi14 && htfContext.htf_vi14.pdi > htfContext.htf_vi14.ndi);
         htfIsConfluentBullish = htfIsTrendBullish && htfIsMomentumBullish;
         
         const htfIsTrendBearish = htfContext.htf_trend === 'bearish';
-        const htfIsMomentumBearish = htfContext.htf_obvTrend === 'bearish' || (htfContext.htf_vi14 && htfContext.htf_vi14.ndi > htfContext.htf_vi14.pdi);
+        const htfIsMomentumBearish = htfContext.htf_obvTrend === 'bearish' || !!(htfContext.htf_vi14 && htfContext.htf_vi14.ndi > htfContext.htf_vi14.pdi);
         htfIsConfluentBearish = htfIsTrendBearish && htfIsMomentumBearish;
         reasons.push(htfIsConfluentBullish || htfIsConfluentBearish ? '✅ HTF Confirmation: Trend aligned.' : '❌ HTF Confirmation: Trend misaligned.');
     } else if (config.isHtfConfirmationEnabled && !htfContext) {
@@ -1146,6 +1151,7 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
         // Bullish Reversal Check
         const isPriceOversold = lastKline.low < bb.lower && lastKline.close > bb.lower;
         const isStochOversold = stochRsi.stochRSI < params.qsc_stochRsiOversold;
+        const bullishCandleConfirmation = lastKline.close > lastKline.open;
         
         let bullishReasons: string[] = [...reasons];
         let bullishScore = 0;
@@ -1155,6 +1161,8 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
         if (isStochOversold) bullishScore++;
         bullishReasons.push(isObvBullish ? `✅ OBV > SMA: Bullish Volume` : `❌ OBV: Lacks Bullish Volume`);
         if (isObvBullish) bullishScore++;
+        bullishReasons.push(bullishCandleConfirmation ? `✅ Price Action: Bullish Reversal Candle` : `❌ Price Action: No reversal confirmation`);
+        if (bullishCandleConfirmation) bullishScore++;
         
         if (bullishScore >= params.qsc_rangeScoreThreshold) {
             if (config.isHtfConfirmationEnabled && !htfIsConfluentBullish) {
@@ -1169,6 +1177,8 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
         // Bearish Reversal Check
         const isPriceOverbought = lastKline.high > bb.upper && lastKline.close < bb.upper;
         const isStochOverbought = stochRsi.stochRSI > params.qsc_stochRsiOverbought;
+        const bearishCandleConfirmation = lastKline.close < lastKline.open;
+
         let bearishReasons: string[] = [...reasons];
         let bearishScore = 0;
         bearishReasons.push(isPriceOverbought ? `✅ Price: Rejected Upper BB` : `❌ Price: No Upper BB Rejection`);
@@ -1177,6 +1187,8 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
         if (isStochOverbought) bearishScore++;
         bearishReasons.push(isObvBearish ? `✅ OBV < SMA: Bearish Volume` : `❌ OBV: Lacks Bearish Volume`);
         if (isObvBearish) bearishScore++;
+        bearishReasons.push(bearishCandleConfirmation ? `✅ Price Action: Bearish Reversal Candle` : `❌ Price Action: No reversal confirmation`);
+        if (bearishCandleConfirmation) bearishScore++;
 
         if (bearishScore >= params.qsc_rangeScoreThreshold) {
             if (config.isHtfConfirmationEnabled && !htfIsConfluentBearish) {
@@ -1722,21 +1734,33 @@ export function getAdaptiveTakeProfit(
     htfKlines?: Kline[]
 ): { newTakeProfit?: number; reason?: string } {
     const { direction, takeProfitPrice, entryPrice } = position;
+
+    // This logic only applies to HTF-confirmed trades where TP isn't locked by the user.
+    if (!config.isHtfConfirmationEnabled || config.isTakeProfitLocked) {
+        return {};
+    }
+
     const isLong = direction === 'LONG';
+    // Prioritize HTF market structure for ambitious targets
     const analysisKlines = htfKlines && htfKlines.length > 50 ? htfKlines : klines;
 
+    // Use a wider lookback for more significant levels
     const { supports, resistances } = calculateSupportResistance(analysisKlines, 20);
 
     let newTakeProfit: number | undefined;
 
     if (isLong) {
+        // Find the next resistance level *beyond* the current one.
         const potentialTps = resistances.filter(r => r > takeProfitPrice);
         if (potentialTps.length > 0) {
+            // Target the closest one.
             newTakeProfit = Math.min(...potentialTps);
         }
-    } else {
+    } else { // SHORT
+        // Find the next support level *beyond* the current one.
         const potentialTps = supports.filter(s => s < takeProfitPrice);
         if (potentialTps.length > 0) {
+            // Target the closest one.
             newTakeProfit = Math.max(...potentialTps);
         }
     }
@@ -1745,12 +1769,16 @@ export function getAdaptiveTakeProfit(
         const risk = position.initialRiskInPrice;
         const newReward = Math.abs(newTakeProfit - entryPrice);
         const newRr = risk > 0 ? newReward / risk : Infinity;
+        const currentReward = Math.abs(takeProfitPrice - entryPrice);
+        const currentRr = risk > 0 ? currentReward/risk : Infinity;
 
-        if (newRr > (position.initialRiskRewardRatio || constants.MIN_RISK_REWARD_RATIO)) {
+        // Only move the TP if the new target offers a significantly better R:R.
+        if (newRr > currentRr + 0.5) { // e.g., move from 2R to at least 2.5R
+            // Apply a small buffer to avoid front-running the level
             const bufferedTp = isLong ? newTakeProfit * 0.999 : newTakeProfit * 1.001;
             return {
                 newTakeProfit: bufferedTp,
-                reason: `Adaptive TP: Target moved to next S/R level.`,
+                reason: `Adaptive TP: HTF trend strong, aiming for next S/R level.`,
             };
         }
     }
@@ -1858,6 +1886,7 @@ export function captureMarketContext(klines: Kline[], htfKlines?: Kline[]): Mark
             const htfLows = htfKlines.map(k => k.low);
             const htfVolumes = htfKlines.map(k => k.volume || 0);
 
+            context.htf_stochRsi = getLast(StochasticRSI.calculate({ values: htfCloses, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 }));
             context.htf_rsi14 = getLast(RSI.calculate({ period: 14, values: htfCloses }));
             context.htf_ema9 = getLast(EMA.calculate({ period: 9, values: htfCloses }));
             context.htf_ema21 = getLast(EMA.calculate({ period: 21, values: htfCloses }));

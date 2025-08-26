@@ -143,13 +143,6 @@ const BotConfigDetails: React.FC<{ bot: RunningBot; onUpdate: (change: Partial<B
                 checked={config.isUniversalProfitTrailEnabled}
                 onChange={(checked) => onUpdate({ isUniversalProfitTrailEnabled: checked })}
             />
-            <ConfigToggle
-                label="Trailing Take Profit"
-                description="Dynamically raises TP target"
-                tooltip="Affects the current open trade."
-                checked={config.isTrailingTakeProfitEnabled}
-                onChange={(checked) => onUpdate({ isTrailingTakeProfitEnabled: checked })}
-            />
              <ConfigToggle
                 label="Minimum R:R Veto"
                 description="Enforces minimum risk-reward"

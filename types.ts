@@ -324,6 +324,7 @@ export interface BotConfig {
     isReanalysisEnabled?: boolean;
     htfTimeFrame?: 'auto' | string;
     agentParams?: AgentParams;
+    htfAgentParams?: AgentParams;
     pricePrecision: number;
     quantityPrecision: number;
     stepSize: number;
@@ -392,7 +393,7 @@ export type BinanceOrderResponse = {
 };
 
 export interface BacktestResult {
-    trades: SimulatedTrade[];
+    trades: Trade[];
     totalPnl: number;
     winRate: number;
     totalTrades: number;
@@ -408,21 +409,6 @@ export interface BacktestResult {
 export interface OptimizationResultItem {
     params: AgentParams;
     result: BacktestResult;
-}
-
-export interface SimulatedTrade {
-    id: number;
-    pair: string;
-    direction: 'LONG' | 'SHORT';
-    entryPrice: number;
-    exitPrice: number;
-    entryTime: number;
-    exitTime: number;
-    size: number;
-    investedAmount: number;
-    pnl: number;
-    exitReason: string;
-    entryReason: string;
 }
 
 export interface VortexIndicatorOutput {
@@ -522,6 +508,7 @@ export type AgentParams = Partial<{
     qsc_entryMode: 'breakout' | 'pullback';
     qsc_rsiMomentumThreshold: number;
     qsc_rsiPullbackThreshold: number;
+    qsc_volumeExhaustionMultiplier?: number;
     he_trendSmaPeriod: number;
     he_fastEmaPeriod: number;
     he_slowEmaPeriod: number;

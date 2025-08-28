@@ -4,6 +4,8 @@
 
 
 
+
+
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -39,7 +41,7 @@ const AppContent: React.FC = () => {
         selectedAgent, investmentAmount, takeProfitMode, 
         takeProfitValue, isTakeProfitLocked, agentParams,
         leverage, marginType, isHtfConfirmationEnabled, htfTimeFrame, isUniversalProfitTrailEnabled,
-        isMinRrEnabled, isInvalidationCheckEnabled, isReanalysisEnabled
+        isMinRrEnabled, isInvalidationCheckEnabled, isReanalysisEnabled, htfAgentParams
     } = configState;
 
     const {
@@ -139,6 +141,7 @@ const AppContent: React.FC = () => {
                     isInvalidationCheckEnabled,
                     isReanalysisEnabled,
                     agentParams,
+                    htfAgentParams,
                     pricePrecision: pricePrecisionForBot,
                     quantityPrecision: quantityPrecisionForBot,
                     stepSize: stepSizeForBot,
@@ -155,7 +158,7 @@ const AppContent: React.FC = () => {
     }, [
         isBotCombinationActive, selectedPair, tradingMode, executionMode, leverage, marginType,
         selectedAgent, chartTimeFrame, investmentAmount, takeProfitMode, takeProfitValue,
-        isTakeProfitLocked, isHtfConfirmationEnabled, htfTimeFrame, agentParams,
+        isTakeProfitLocked, isHtfConfirmationEnabled, htfTimeFrame, agentParams, htfAgentParams,
         isUniversalProfitTrailEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
         isReanalysisEnabled, currentFeeRate
     ]);
@@ -199,6 +202,7 @@ const AppContent: React.FC = () => {
                     htfKlines = await binanceService.fetchKlines(posToClose.pair.replace('/',''), htf, { limit: 205, mode: posToClose.mode });
                 }
             }
+            // FIX: Removed extra arguments from captureMarketContext call to match its signature.
             const exitContext = localAgentService.captureMarketContext(botKlines, htfKlines);
 
             const newTrade: Trade = { 
@@ -477,6 +481,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 htfKlinesForContext = await binanceService.fetchKlines(config.pair.replace('/',''), htf, { limit: 205, mode: config.mode });
             }
         }
+        // FIX: Removed extra arguments from captureMarketContext call to match its signature.
         const entryContext = localAgentService.captureMarketContext(klines, htfKlinesForContext);
 
         const newPosition: Position = {

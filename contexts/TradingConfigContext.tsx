@@ -26,6 +26,7 @@ interface TradingConfigState {
     isInvalidationCheckEnabled: boolean;
     htfTimeFrame: 'auto' | string;
     agentParams: AgentParams;
+    htfAgentParams: AgentParams;
     isApiConnected: boolean; // Managed from App.tsx but needed here
     walletViewMode: TradingMode;
     isMultiAssetMode: boolean;
@@ -58,6 +59,7 @@ interface TradingConfigActions {
     setIsInvalidationCheckEnabled: (isEnabled: boolean) => void;
     setHtfTimeFrame: (tf: 'auto' | string) => void;
     setAgentParams: (params: AgentParams) => void;
+    setHtfAgentParams: (params: AgentParams) => void;
     setIsApiConnected: (isConnected: boolean) => void;
     setWalletViewMode: (mode: TradingMode) => void;
     setIsMultiAssetMode: (isEnabled: boolean) => void;
@@ -82,6 +84,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [chartTimeFrame, setTimeFrame] = useState<string>('5m');
     const [selectedAgent, setSelectedAgent] = useState<Agent>(constants.AGENTS[0]);
     const [agentParams, setAgentParams] = useState<AgentParams>({ isCandleConfirmationEnabled: constants.DEFAULT_AGENT_PARAMS.isCandleConfirmationEnabled });
+    const [htfAgentParams, setHtfAgentParams] = useState<AgentParams>({});
     const [investmentAmount, setInvestmentAmount] = useState<number>(100);
     const [availableBalance, setAvailableBalance] = useState<number>(Infinity);
     const [takeProfitMode, setTakeProfitMode] = useState<RiskMode>(RiskMode.Percent);
@@ -275,14 +278,14 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         setLeverage, setMarginType, setTimeFrame, setSelectedAgent,
         setInvestmentAmount, setAvailableBalance,
         setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
-        setIsHtfConfirmationEnabled, setHtfTimeFrame, setAgentParams, setIsApiConnected, setWalletViewMode,
+        setIsHtfConfirmationEnabled, setHtfTimeFrame, setAgentParams, setHtfAgentParams, setIsApiConnected, setWalletViewMode,
         setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError, setIsUniversalProfitTrailEnabled,
         setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled,
     }), [onSetMultiAssetMode]);
     
     const state = {
         executionMode, tradingMode, selectedPair, allPairs, isPairsLoading, leverage, marginType, chartTimeFrame,
-        selectedAgent, agentParams, investmentAmount, availableBalance,
+        selectedAgent, agentParams, htfAgentParams, investmentAmount, availableBalance,
         takeProfitMode, takeProfitValue, isTakeProfitLocked,
         isHtfConfirmationEnabled, isUniversalProfitTrailEnabled, 
         isMinRrEnabled, isReanalysisEnabled, isInvalidationCheckEnabled, htfTimeFrame,

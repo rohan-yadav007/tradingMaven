@@ -4,6 +4,7 @@
 
 
 
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig } from '../types';
 import * as constants from '../constants';
@@ -496,7 +497,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         />
                         {(agentParams.qsc_entryMode ?? 'breakout') === 'breakout' ? (
                             <ParamSlider 
-                                label="RSI Breakout Threshold" 
+                                label="RSI Crossover Threshold" 
                                 value={agentParams.qsc_rsiMomentumThreshold ?? constants.DEFAULT_AGENT_PARAMS.qsc_rsiMomentumThreshold}
                                 onChange={(v) => setAgentParams({ ...agentParams, qsc_rsiMomentumThreshold: v })}
                                 min={51} max={70} step={1}
@@ -509,6 +510,13 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                                 min={30} max={49} step={1}
                             />
                         )}
+                        <ParamSlider 
+                            label="Volume Exhaustion Veto" 
+                            value={agentParams.qsc_volumeExhaustionMultiplier ?? constants.DEFAULT_AGENT_PARAMS.qsc_volumeExhaustionMultiplier}
+                            onChange={(v) => setAgentParams({ ...agentParams, qsc_volumeExhaustionMultiplier: v })}
+                            min={1.5} max={5.0} step={0.1}
+                            valueDisplay={(v) => `${v.toFixed(1)}x Avg`}
+                        />
                         <ParamSlider 
                             label="Entry Score Threshold" 
                             value={agentParams.qsc_trendScoreThreshold ?? constants.DEFAULT_AGENT_PARAMS.qsc_trendScoreThreshold}

@@ -36,7 +36,7 @@ export const AGENTS: Agent[] = [
     {
         id: 9,
         name: 'Quantum Scalper',
-        description: "A dynamic, aggressive agent using a weighted scoring system. It filters for volatility and trend regime, then scores signals based on Trend, Momentum (VI, OBV), and Confirmation (Ichimoku, Supertrend). Supports 'Breakout' and 'Pullback' entry modes.",
+        description: "A dynamic, aggressive agent using a weighted scoring system. It filters for volatility and trend regime, then scores signals based on Trend, Momentum (VI, OBV), and Confirmation (Ichimoku, Supertrend). Features a Dynamic Momentum Filter to improve entry timing and a Volume Exhaustion Veto to avoid chasing blow-off tops/bottoms. Supports 'Breakout' and 'Pullback' entry modes.",
         indicators: ['Market Regime Filter (ADX)', 'Volatility Filter (BBW)', 'Ichimoku Cloud', 'OBV'],
     },
     {
@@ -181,7 +181,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     qsc_psarMax: 0.2,
     qsc_atrPeriod: 14,
     qsc_atrMultiplier: 1.5,
-    qsc_trendScoreThreshold: 75,
+    qsc_trendScoreThreshold: 60,
     qsc_rangeScoreThreshold: 2,
     qsc_ichi_conversionPeriod: 9,
     qsc_ichi_basePeriod: 26,
@@ -193,6 +193,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     qsc_entryMode: 'breakout',
     qsc_rsiMomentumThreshold: 55,
     qsc_rsiPullbackThreshold: 45,
+    qsc_volumeExhaustionMultiplier: 2.5,
 
     // Agent 11: Historic Expert
     he_trendSmaPeriod: 30,
@@ -346,6 +347,28 @@ export const CANDLESTICK_PROPHET_TIMEFRAME_SETTINGS: Record<string, Partial<Agen
     '1d':  { csp_emaMomentumPeriod: 5 },
 };
 
+/**
+ * A helper function to get the correct, timeframe-specific parameters for a given agent.
+ * @param agentId The ID of the agent.
+ * @param timeFrame The timeframe string (e.g., '5m', '1h').
+ * @returns An object with the agent's parameters for that timeframe.
+ */
+export const getAgentTimeframeSettings = (agentId: number, timeFrame: string): Partial<AgentParams> => {
+    switch (agentId) {
+        case 7:  return MARKET_STRUCTURE_MAVEN_TIMEFRAME_SETTINGS[timeFrame] || {};
+        case 9:  return QUANTUM_SCALPER_TIMEFRAME_SETTINGS[timeFrame] || {};
+        case 11: return HISTORIC_EXPERT_TIMEFRAME_SETTINGS[timeFrame] || {};
+        case 13: return CHAMELEON_TIMEFRAME_SETTINGS[timeFrame] || {};
+        case 14: return SENTINEL_TIMEFRAME_SETTINGS[timeFrame] || {};
+        case 15: return INSTITUTIONAL_FLOW_TRACER_TIMEFRAME_SETTINGS[timeFrame] || {};
+        case 16: return ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS[timeFrame] || {};
+        case 17: return THE_DETONATOR_TIMEFRAME_SETTINGS[timeFrame] || {};
+        case 18: return CANDLESTICK_PROPHET_TIMEFRAME_SETTINGS[timeFrame] || {};
+        default: return {};
+    }
+};
+
+
 // --- PAPER TRADING WALLETS ---
 export const MOCK_PAPER_SPOT_WALLET: WalletBalance[] = [
     { asset: 'USDT', free: 10000.50, locked: 0, total: 10000.50, usdValue: 10000.50 },
@@ -366,7 +389,7 @@ export const MOCK_PAPER_FUTURES_WALLET: WalletBalance[] = [
  * For example, a value of 10 with a $100 investment means the max loss (before fees/slippage)
  * is hard-capped at $10, regardless of leverage or the agent's calculated stop loss.
  */
-export const MAX_MARGIN_LOSS_PERCENT = 5;
+export const MAX_MARGIN_LOSS_PERCENT = 7; // Increased slightly for more flexibility
 
 // New, wider ATR multipliers for initial stop loss placement to give trades more "breathing room"
 export const TIMEFRAME_ATR_CONFIG: Record<string, { atrMultiplier: number, riskRewardRatio: number }> = {

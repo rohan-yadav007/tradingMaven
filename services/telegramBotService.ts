@@ -1,6 +1,3 @@
-
-
-
 import { BotConfig, TradingMode, RiskMode } from '../types';
 import { historyService } from './historyService';
 import * as constants from '../constants';
@@ -34,7 +31,7 @@ async function sendMessage(text: string, specificChatId?: string) {
         return;
     }
 
-    for (const bot of targets) {
+    for (const bot of bots) {
         try {
             await fetch(`https://api.telegram.org/bot${bot.token}/sendMessage`, {
                 method: 'POST',
@@ -168,9 +165,9 @@ ID: \`${bot.id}\``;
                     isTakeProfitLocked: false,
                     isHtfConfirmationEnabled: false,
                     isUniversalProfitTrailEnabled: true,
-                    // FIX: Removed isTrailingTakeProfitEnabled as it's not a valid property on BotConfig
                     isMinRrEnabled: true,
                     isInvalidationCheckEnabled: true,
+                    isReanalysisEnabled: true, // Make sure this is present
                     pricePrecision: binanceService.getPricePrecision(symbolInfo),
                     quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                     stepSize: binanceService.getStepSize(symbolInfo),

@@ -1,11 +1,5 @@
-
-
-
-
-
-
 import React from 'react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, Kline, RiskMode, OptimizationResultItem } from '../types';
 import * as constants from '../constants';
 import * as binanceService from './../services/binanceService';
@@ -260,7 +254,6 @@ export type BacktestConfig = {
 
 const getTimeframeDuration = (timeframe: string): number => {
     const unit = timeframe.slice(-1);
-    // FIX: Correctly parse the numeric part of the timeframe string.
     const value = parseInt(timeframe.slice(0, -1), 10);
     if (isNaN(value)) return 0;
     switch (unit) {
@@ -299,6 +292,18 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     const updateConfig = <K extends keyof BacktestConfig>(key: K, value: BacktestConfig[K]) => {
         setConfig(prev => ({...prev, [key]: value}));
     };
+
+    const higherTimeFrames = useMemo(() => {
+        const currentIndex = constants.TIME_FRAMES.indexOf(config.chartTimeFrame);
+        if (currentIndex === -1) return [];
+        return constants.TIME_FRAMES.slice(currentIndex + 1);
+    }, [config.chartTimeFrame]);
+
+    useEffect(() => {
+        if (config.htfTimeFrame !== 'auto' && !higherTimeFrames.includes(config.htfTimeFrame)) {
+            updateConfig('htfTimeFrame', 'auto');
+        }
+    }, [config.chartTimeFrame, config.htfTimeFrame, higherTimeFrames]);
 
     useEffect(() => {
         if (!constants.AGENTS.some(a => a.id === config.selectedAgent.id)) {
@@ -429,7 +434,21 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                     <RiskInputWithLock label="Take Profit" mode={config.takeProfitMode} value={config.takeProfitValue} isLocked={config.isTakeProfitLocked} investmentAmount={config.investmentAmount} onModeChange={v => updateConfig('takeProfitMode', v)} onValueChange={v => updateConfig('takeProfitValue', v)} onLockToggle={() => updateConfig('isTakeProfitLocked', !config.isTakeProfitLocked)} />
                     <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
                     <div className="space-y-3 pt-2">
-                        <div className="flex items-center justify-between"><label className={formLabelClass}>Higher Timeframe Confirmation</label><ToggleSwitch checked={config.isHtfConfirmationEnabled} onChange={v => updateConfig('isHtfConfirmationEnabled', v)} /></div>
+                        <div>
+                            <div className="flex items-center justify-between">
+                                <label className={formLabelClass}>Higher Timeframe Confirmation</label>
+                                <ToggleSwitch checked={config.isHtfConfirmationEnabled} onChange={v => updateConfig('isHtfConfirmationEnabled', v)} />
+                            </div>
+                            {config.isHtfConfirmationEnabled && higherTimeFrames.length > 0 && (
+                                <div className="flex flex-col gap-1.5 mt-2">
+                                    <label className={formLabelClass}>Confirmation Timeframe</label>
+                                    <select value={config.htfTimeFrame} onChange={e => updateConfig('htfTimeFrame', e.target.value)} className={formInputClass}>
+                                        <option value="auto">Auto</option>
+                                        {higherTimeFrames.map(tf => <option key={tf} value={tf}>{tf}</option>)}
+                                    </select>
+                                </div>
+                            )}
+                        </div>
                         <div className="flex items-center justify-between"><label className={formLabelClass}>Universal Profit Trail</label><ToggleSwitch checked={config.isUniversalProfitTrailEnabled} onChange={v => updateConfig('isUniversalProfitTrailEnabled', v)} /></div>
                         <div className="flex items-center justify-between"><label className={formLabelClass}>Minimum R:R Veto</label><ToggleSwitch checked={config.isMinRrEnabled} onChange={v => updateConfig('isMinRrEnabled', v)} /></div>
                     </div>

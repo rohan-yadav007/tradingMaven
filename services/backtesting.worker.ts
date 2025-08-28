@@ -1,7 +1,4 @@
-
-
-
-import { Kline, BotConfig, BacktestResult, SimulatedTrade, AgentParams, Position, RiskMode, TradingMode, OptimizationResultItem } from '../types';
+import { Kline, BotConfig, BacktestResult, Trade, AgentParams, Position, RiskMode, TradingMode, OptimizationResultItem } from '../types';
 import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal } from './localAgentService';
 import * as constants from '../constants';
 
@@ -11,7 +8,6 @@ const getLast = <T>(arr: T[] | undefined): T | undefined => arr && arr.length > 
 
 const getTimeframeDuration = (timeframe: string): number => {
     const unit = timeframe.slice(-1);
-    // FIX: Correctly parse the numeric part of the timeframe string.
     const value = parseInt(timeframe.slice(0, -1), 10);
     if (isNaN(value)) return 0;
     switch (unit) {
@@ -99,7 +95,7 @@ function generateParamCombinations(ranges: Record<string, (number | boolean)[]>)
     return combinations;
 }
 
-function calculateResults(trades: SimulatedTrade[], equityCurve: number[], startingCapital: number): BacktestResult {
+function calculateResults(trades: Trade[], equityCurve: number[], startingCapital: number): BacktestResult {
     const totalTrades = trades.length;
     if (totalTrades === 0) {
         return { trades: [], totalPnl: 0, winRate: 0, totalTrades: 0, wins: 0, losses: 0, breakEvens: 0, maxDrawdown: 0, profitFactor: 0, sharpeRatio: 0, averageTradeDuration: 'N/A' };
@@ -119,9 +115,9 @@ function calculateResults(trades: SimulatedTrade[], equityCurve: number[], start
         const drawdown = peakEquity - equity;
         if (drawdown > maxDrawdown) maxDrawdown = drawdown;
     }
-    const totalDurationMs = trades.reduce((acc, trade) => acc + (trade.exitTime - trade.entryTime), 0);
+    const totalDurationMs = trades.reduce((acc, trade) => acc + (new Date(trade.exitTime).getTime() - new Date(trade.entryTime).getTime()), 0);
     const averageTradeDuration = formatDuration(totalTrades > 0 ? totalDurationMs / totalTrades : 0);
-    const returns = trades.map(t => t.pnl / t.investedAmount);
+    const returns = trades.map(t => t.pnl / t.investmentAmount);
     const avgReturn = returns.reduce((acc, r) => acc + r, 0) / returns.length;
     const stdDev = Math.sqrt(returns.map(r => Math.pow(r - avgReturn, 2)).reduce((acc, v) => acc + v, 0) / returns.length);
     const sharpeRatio = stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(252) : 0;
@@ -138,7 +134,7 @@ async function runBacktest(
     allHtfKlines?: Kline[]
 ): Promise<BacktestResult> {
     let openPosition: SimulatedPosition | null = null;
-    const trades: SimulatedTrade[] = [];
+    const trades: Trade[] = [];
     const equityCurve: number[] = [];
     const STARTING_CAPITAL = 10000;
     let equity = STARTING_CAPITAL;
@@ -159,12 +155,25 @@ async function runBacktest(
         const fees = (entryValue + exitValue) * openPosition.takerFeeRate;
         const netPnl = grossPnl - fees;
         equity += netPnl;
-        trades.push({
-            id: trades.length + 1, pair: openPosition.pair, direction: openPosition.direction,
-            entryPrice: openPosition.entryPrice, exitPrice, entryTime: new Date(openPosition.entryTime).getTime(), exitTime,
-            size: openPosition.size, investedAmount: config.investmentAmount, pnl: netPnl, exitReason,
-            entryReason: openPosition.entryReason
-        });
+
+        // MFE/MAE calculation
+        const mfePrice = openPosition.peakPrice ?? openPosition.entryPrice;
+        const maePrice = openPosition.troughPrice ?? openPosition.entryPrice;
+        const mfe = Math.abs(mfePrice - openPosition.entryPrice) * openPosition.size;
+        const mae = Math.abs(maePrice - openPosition.entryPrice) * openPosition.size;
+
+        const finalTrade: Trade = {
+            ...openPosition,
+            id: trades.length + 1, // Override the ID to be sequential for the backtest
+            exitPrice,
+            exitTime: new Date(exitTime).toISOString(),
+            pnl: netPnl,
+            exitReason,
+            mfe,
+            mae,
+        };
+        
+        trades.push(finalTrade);
         openPosition = null;
 
         return true;
@@ -178,6 +187,15 @@ async function runBacktest(
         // --- MANAGE OPEN POSITION ---
         if (openPosition) {
             const isLong = openPosition.direction === 'LONG';
+            // Update MFE/MAE trackers
+            if (isLong) {
+                openPosition.peakPrice = Math.max(openPosition.peakPrice!, currentCandle.high);
+                openPosition.troughPrice = Math.min(openPosition.troughPrice!, currentCandle.low);
+            } else {
+                openPosition.peakPrice = Math.min(openPosition.peakPrice!, currentCandle.low);
+                openPosition.troughPrice = Math.max(openPosition.troughPrice!, currentCandle.high);
+            }
+            
             const stopReason = openPosition.activeStopLossReason.includes('Trail') || openPosition.activeStopLossReason.includes('Secure') || openPosition.activeStopLossReason === 'Breakeven' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
             
             const pricePath = currentCandle.open < currentCandle.close 
@@ -256,7 +274,6 @@ async function runBacktest(
                 }
             }
 
-            // FIX: Removed deprecated isTrailingTakeProfitEnabled logic
             openPosition = updatedPosition;
         }
         
@@ -287,19 +304,34 @@ async function runBacktest(
                     const posVal = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
                     const size = posVal / entryPrice;
                     if (size > 0) {
+                        const risk = Math.abs(entryPrice - stopLossPrice);
+                        const reward = Math.abs(finalTp - entryPrice);
+                        const initialRiskRewardRatio = risk > 0 ? reward / risk : 0;
+                        const botConfigSnapshot = {
+                            isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
+                            htfTimeFrame: config.htfTimeFrame,
+                            isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
+                            isMinRrEnabled: config.isMinRrEnabled,
+                            isReanalysisEnabled: config.isReanalysisEnabled,
+                            isInvalidationCheckEnabled: config.isInvalidationCheckEnabled,
+                        };
+
                         openPosition = {
                             id: currentCandle.time,
                             orderId: null,
                             botId: 'backtest',
-                            pair: config.pair, mode: config.mode, executionMode: config.executionMode, direction: isLong ? 'LONG' : 'SHORT',
+                            pair: config.pair, mode: config.mode, executionMode: 'paper', direction: isLong ? 'LONG' : 'SHORT',
                             entryPrice, size, investmentAmount: config.investmentAmount, leverage: config.leverage, entryTime: new Date(currentCandle.time).toISOString(),
                             entryReason: signal.reasons.join(' '), agentName: config.agent.name, takeProfitPrice: finalTp,
                             stopLossPrice, initialStopLossPrice: agentStopLoss, initialTakeProfitPrice: takeProfitPrice,
                             pricePrecision: config.pricePrecision, timeFrame: config.timeFrame, marginType: config.marginType,
                             activeStopLossReason: slReason, isBreakevenSet: false, profitLockTier: 0,
-                            peakPrice: entryPrice, proactiveLossCheckTriggered: false, candlesSinceEntry: 0,
+                            peakPrice: entryPrice, troughPrice: entryPrice, proactiveLossCheckTriggered: false, candlesSinceEntry: 0,
                             hasBeenProfitable: false, takerFeeRate: config.takerFeeRate,
                             initialRiskInPrice: Math.abs(entryPrice - agentStopLoss),
+                            initialRiskRewardRatio,
+                            agentParamsSnapshot: config.agentParams,
+                            botConfigSnapshot,
                         };
                     }
                 }
@@ -341,6 +373,11 @@ async function runOptimization(
                 det_sl_atr_mult: [0.9, 1.2, 1.5],
                 det_rr_mult: [1.6, 2.0, 2.5],
                 det_bb_margin_pct: [0.05, 0.08, 0.12],
+            };
+            break;
+        case 18: // Candlestick Prophet
+            paramRanges = {
+                csp_emaMomentumPeriod: [10, 14, 21],
             };
             break;
         default: throw new Error(`Agent "${agent.name}" does not support optimization.`);

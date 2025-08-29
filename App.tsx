@@ -507,6 +507,8 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             isBreakevenSet: false,
             proactiveLossCheckTriggered: false,
             profitLockTier: 0,
+            profitSpikeTier: 0,
+            aggressiveTrailTier: 0,
             peakPrice: finalEntryPrice,
             troughPrice: finalEntryPrice,
             candlesSinceEntry: 0,

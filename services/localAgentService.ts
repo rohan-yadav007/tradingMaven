@@ -609,6 +609,57 @@ export function getMultiStageProfitSecureSignal(
     return { reasons: [] };
 }
 
+/**
+ * NEW: An aggressive profit-locking system that activates after the price has moved 50%
+ * of the distance from the current Stop Loss to the Take Profit target.
+ * It trails the price tightly to secure gains as it approaches the TP.
+ * @param position - The current open position.
+ * @param currentPrice - The live price tick.
+ * @returns A TradeManagementSignal with a potential new stop loss.
+ */
+export function getAggressiveRangeTrailSignal(
+    position: Position,
+    currentPrice: number
+): TradeManagementSignal {
+    const { 
+        entryPrice, 
+        stopLossPrice,
+        takeProfitPrice,
+        direction, 
+    } = position;
+
+    const isLong = direction === 'LONG';
+    
+    // Total distance from the *current* stop loss to the take profit
+    const slToTpDistance = Math.abs(takeProfitPrice - stopLossPrice);
+    if (slToTpDistance <= 1e-9) { // Avoid division by zero
+        return { reasons: [] };
+    }
+
+    // How far the price has moved from the stop loss towards the take profit
+    const progressFromSl = isLong ? (currentPrice - stopLossPrice) : (stopLossPrice - currentPrice);
+
+    // Trigger when price moves 50% of the way from SL to TP
+    const triggerDistance = slToTpDistance * 0.5;
+
+    if (progressFromSl > triggerDistance) {
+        // Once triggered, it trails aggressively.
+        // The trail distance will be 25% of the total SL-to-TP range.
+        const trailDistance = slToTpDistance * 0.25;
+        const newStopLoss = isLong ? currentPrice - trailDistance : currentPrice + trailDistance;
+        
+        // Only update if the new stop loss is an improvement.
+        if ((isLong && newStopLoss > stopLossPrice) || (!isLong && newStopLoss < stopLossPrice)) {
+            return {
+                newStopLoss,
+                reasons: [`Aggressive Trail: Price >50% to TP, trailing SL.`],
+                newState: { aggressiveTrailTier: 1, activeStopLossReason: 'Profit Secure' }
+            };
+        }
+    }
+
+    return { reasons: [] };
+}
 
 
 /**
@@ -1036,7 +1087,7 @@ const getChameleonSignal = (klines: Kline[], config: BotConfig, htfContext?: Mar
     if (isMacroBearish && isTrending) {
         reasons.push(kstBearishCross ? `✅ KST: Bearish Cross` : `❌ KST: No Bearish Cross`);
         reasons.push(isKstBearishBias ? `✅ KST < 0 (Bearish Bias)` : `❌ KST: Not in Bearish Territory`);
-        reasons.push(isObvBearish ? `✅ Volume: Bearish Flow` : `❌ Volume: Not Bullish`);
+        reasons.push(isObvBearish ? `✅ Volume: Bearish Flow` : `❌ Volume: Not Bearish`);
         if (kstBearishCross && isKstBearishBias && isObvBearish) {
             return { signal: 'SELL', reasons };
         }

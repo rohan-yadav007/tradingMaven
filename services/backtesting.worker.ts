@@ -1,5 +1,5 @@
 import { Kline, BotConfig, BacktestResult, Trade, AgentParams, Position, RiskMode, TradingMode, OptimizationResultItem } from '../types';
-import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal } from './localAgentService';
+import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal } from './localAgentService';
 import * as constants from '../constants';
 
 // --- Worker-local Helper Functions ---
@@ -214,67 +214,75 @@ async function runBacktest(
             }
             if (hasTradedInThisCandle) { equityCurve.push(equity); continue; }
 
-            // --- ON-CANDLE-CLOSE MANAGEMENT ---
+            // --- ON-CANDLE-CLOSE MANAGEMENT (using CANDIDATE MODEL) ---
             openPosition.candlesSinceEntry!++;
             const currentPrice = currentCandle.close;
+            let positionState: SimulatedPosition = { ...openPosition };
 
-            // Tier 3: Emergency Brake
+            // Supervisor Check (runs first, can exit position)
             if (config.isInvalidationCheckEnabled) {
                 const htfHistorySlice = allHtfKlines ? allHtfKlines.filter(k => k.time <= currentCandle.time) : undefined;
-                const invalidationSignal = await getSupervisorSignal(openPosition, historySlice, config, htfHistorySlice);
-                if (invalidationSignal.action === 'close') {
-                    hasTradedInThisCandle = closePosition(currentPrice, invalidationSignal.reason, currentCandle.time);
+                const supervisorSignal = await getSupervisorSignal(openPosition, historySlice, config, htfHistorySlice);
+                if (supervisorSignal.action === 'close') {
+                    hasTradedInThisCandle = closePosition(currentPrice, supervisorSignal.reason, currentCandle.time);
                     if (hasTradedInThisCandle) { equityCurve.push(equity); continue; }
                 }
             }
-            
-            let updatedPosition: SimulatedPosition = { ...openPosition };
-            
-            const potentialStops: { price: number; reason: Position['activeStopLossReason']; newState?: any }[] = [];
-            potentialStops.push({ price: updatedPosition.stopLossPrice, reason: updatedPosition.activeStopLossReason });
 
-            // Tier 0: Mandatory Breakeven (NON-NEGOTIABLE)
-            const mandatoryBreakevenSignal = getMandatoryBreakevenSignal(updatedPosition, currentPrice);
-            if (mandatoryBreakevenSignal.newStopLoss) {
-                potentialStops.push({
-                    price: mandatoryBreakevenSignal.newStopLoss,
-                    reason: 'Breakeven',
-                    newState: mandatoryBreakevenSignal.newState
-                });
+            // Candidate Stop-Loss Collection
+            const stopCandidates: { price: number; reason: Position['activeStopLossReason']; newState?: Partial<Position> }[] = [
+                { price: positionState.stopLossPrice, reason: positionState.activeStopLossReason }
+            ];
+
+            if (config.isInvalidationCheckEnabled) {
+                const spikeSignal = getProfitSpikeSignal(positionState, currentPrice);
+                if (spikeSignal.newStopLoss) {
+                    stopCandidates.push({ price: spikeSignal.newStopLoss, reason: 'Profit Secure', newState: spikeSignal.newState });
+                }
             }
-
+            
+            const breakevenSignal = getMandatoryBreakevenSignal(positionState, currentPrice);
+            if (breakevenSignal.newStopLoss) {
+                stopCandidates.push({ price: breakevenSignal.newStopLoss, reason: 'Breakeven', newState: breakevenSignal.newState });
+            }
+            
             if (config.isUniversalProfitTrailEnabled) {
-                const signal = getMultiStageProfitSecureSignal(updatedPosition, currentPrice);
-                if (signal.newStopLoss) {
-                    potentialStops.push({ price: signal.newStopLoss, reason: 'Profit Secure', newState: signal.newState });
+                const profitSecureSignal = getMultiStageProfitSecureSignal(positionState, currentPrice);
+                if (profitSecureSignal.newStopLoss) {
+                    stopCandidates.push({ price: profitSecureSignal.newStopLoss, reason: 'Profit Secure', newState: profitSecureSignal.newState });
                 }
             }
 
-            const agentTrailSignal = getAgentExitSignal(updatedPosition, historySlice, currentPrice, config);
+            const agentTrailSignal = getAgentExitSignal(positionState, historySlice, currentPrice, config);
             if (agentTrailSignal.newStopLoss) {
-                potentialStops.push({ price: agentTrailSignal.newStopLoss, reason: 'Agent Trail' });
+                stopCandidates.push({ price: agentTrailSignal.newStopLoss, reason: 'Agent Trail', newState: agentTrailSignal.newState });
             }
 
-            let bestStop = potentialStops[0];
-            for (let i = 1; i < potentialStops.length; i++) {
-                const candidate = potentialStops[i];
-                if ((isLong && candidate.price > bestStop.price) || (!isLong && candidate.price < bestStop.price)) {
-                    bestStop = candidate;
+            const aggressiveTrailSignal = getAggressiveRangeTrailSignal(positionState, currentPrice);
+            if (aggressiveTrailSignal.newStopLoss) {
+                stopCandidates.push({ price: aggressiveTrailSignal.newStopLoss, reason: 'Profit Secure', newState: aggressiveTrailSignal.newState });
+            }
+            
+            // Selection: The Tightest Stop Wins
+            let bestCandidate = stopCandidates[0];
+            for (const candidate of stopCandidates) {
+                const isValid = isLong ? candidate.price < currentPrice : candidate.price > currentPrice;
+                const isTighter = isLong ? candidate.price > bestCandidate.price : candidate.price < bestCandidate.price;
+                if (isValid && isTighter) {
+                    bestCandidate = candidate;
                 }
             }
 
-            if (bestStop.price !== updatedPosition.stopLossPrice) {
-                const isValid = isLong ? bestStop.price < currentPrice : bestStop.price > currentPrice;
-                if (isValid) {
-                    updatedPosition.stopLossPrice = bestStop.price;
-                    updatedPosition.activeStopLossReason = bestStop.reason;
-                    if (bestStop.newState) {
-                        updatedPosition = { ...updatedPosition, ...bestStop.newState };
-                    }
+            // Application
+            if (bestCandidate.price !== positionState.stopLossPrice) {
+                if (bestCandidate.newState) {
+                    positionState = { ...positionState, ...(bestCandidate.newState as Partial<Position>) };
                 }
+                positionState.stopLossPrice = bestCandidate.price;
+                positionState.activeStopLossReason = bestCandidate.reason;
             }
 
-            openPosition = updatedPosition;
+            openPosition = positionState;
         }
         
         // --- CHECK FOR NEW ENTRY ---
@@ -326,6 +334,7 @@ async function runBacktest(
                             stopLossPrice, initialStopLossPrice: agentStopLoss, initialTakeProfitPrice: takeProfitPrice,
                             pricePrecision: config.pricePrecision, timeFrame: config.timeFrame, marginType: config.marginType,
                             activeStopLossReason: slReason, isBreakevenSet: false, profitLockTier: 0,
+                            profitSpikeTier: 0, aggressiveTrailTier: 0,
                             peakPrice: entryPrice, troughPrice: entryPrice, proactiveLossCheckTriggered: false, candlesSinceEntry: 0,
                             hasBeenProfitable: false, takerFeeRate: config.takerFeeRate,
                             initialRiskInPrice: Math.abs(entryPrice - agentStopLoss),

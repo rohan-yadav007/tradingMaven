@@ -1,6 +1,6 @@
 import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, RiskMode, TradingMode, BinanceOrderResponse, TradeManagementSignal, AgentParams } from '../types';
 import * as binanceService from './binanceService';
-import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAdaptiveTakeProfit } from './localAgentService';
+import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAdaptiveTakeProfit, getAggressiveRangeTrailSignal } from './localAgentService';
 import { DEFAULT_AGENT_PARAMS, TIME_FRAMES, TAKER_FEE_RATE, CHAMELEON_TIMEFRAME_SETTINGS, MIN_PROFIT_BUFFER_MULTIPLIER } from '../constants';
 import { telegramBotService } from './telegramBotService';
 
@@ -567,40 +567,38 @@ class BotInstance {
             hasChanged = true;
         }
     
-        // --- 2. Sequential, State-Updating SL Management ---
-        const potentialStops: { price: number; reason: Position['activeStopLossReason']; newState?: any }[] = [];
-        potentialStops.push({ price: positionState.stopLossPrice, reason: positionState.activeStopLossReason });
-    
-        // Step A: Spike Protector (updates positionState immediately if triggered)
+        // --- 2. Candidate Stop-Loss Collection ---
+        // This is where all independent systems propose a stop loss.
+        
+        // The current SL is our baseline candidate.
+        const stopCandidates: { price: number; reason: Position['activeStopLossReason']; newState?: Partial<Position> }[] = [
+            { price: positionState.stopLossPrice, reason: positionState.activeStopLossReason }
+        ];
+
+        // Candidate A: Spike Protector
         if (this.bot.config.isInvalidationCheckEnabled) {
             const spikeSignal = getProfitSpikeSignal(positionState, currentPrice);
-            if (spikeSignal.newStopLoss && spikeSignal.newState) {
-                potentialStops.push({ price: spikeSignal.newStopLoss, reason: 'Profit Secure' });
-                positionState = { ...positionState, ...spikeSignal.newState };
-                hasChanged = true;
+            if (spikeSignal.newStopLoss) {
+                stopCandidates.push({ price: spikeSignal.newStopLoss, reason: 'Profit Secure', newState: spikeSignal.newState });
             }
         }
         
-        // Step B: Mandatory Breakeven (updates positionState immediately if triggered)
+        // Candidate B: Mandatory Breakeven
         const breakevenSignal = getMandatoryBreakevenSignal(positionState, currentPrice);
-        if (breakevenSignal.newStopLoss && breakevenSignal.newState) {
-            potentialStops.push({ price: breakevenSignal.newStopLoss, reason: 'Breakeven' });
-            positionState = { ...positionState, ...breakevenSignal.newState };
-            hasChanged = true;
+        if (breakevenSignal.newStopLoss) {
+            stopCandidates.push({ price: breakevenSignal.newStopLoss, reason: 'Breakeven', newState: breakevenSignal.newState });
         }
         
-        // Step C: Universal Profit Trail (competing)
+        // Candidate C: Universal Profit Trail
         if (this.bot.config.isUniversalProfitTrailEnabled) {
             const profitSecureSignal = getMultiStageProfitSecureSignal(positionState, currentPrice);
-            if (profitSecureSignal.newStopLoss && profitSecureSignal.newState) {
-                potentialStops.push({ price: profitSecureSignal.newStopLoss, reason: 'Profit Secure' });
-                positionState = { ...positionState, ...profitSecureSignal.newState };
-                hasChanged = true;
+            if (profitSecureSignal.newStopLoss) {
+                stopCandidates.push({ price: profitSecureSignal.newStopLoss, reason: 'Profit Secure', newState: profitSecureSignal.newState });
             }
         }
-        
-        // Step D: Agent Trail (competing)
-        const lastFinalKline = this.klines[this.klines.length - 1];
+
+        // Candidate D: Agent's Native Trail
+        const lastFinalKline = this.klines.length > 0 ? this.klines[this.klines.length - 1] : undefined;
         if (lastFinalKline) {
             const previewKline: Kline = {
                 ...lastFinalKline,
@@ -612,25 +610,41 @@ class BotInstance {
             const klinesForAnalysis = [...this.klines.slice(0, -1), previewKline];
             const agentTrailSignal = getAgentExitSignal(positionState, klinesForAnalysis, currentPrice, this.bot.config);
             if (agentTrailSignal.newStopLoss) {
-                potentialStops.push({ price: agentTrailSignal.newStopLoss, reason: 'Agent Trail' });
+                stopCandidates.push({ price: agentTrailSignal.newStopLoss, reason: 'Agent Trail', newState: agentTrailSignal.newState });
             }
         }
+
+        // Candidate E: NEW Aggressive Range Trail
+        const aggressiveTrailSignal = getAggressiveRangeTrailSignal(positionState, currentPrice);
+        if (aggressiveTrailSignal.newStopLoss) {
+            stopCandidates.push({ price: aggressiveTrailSignal.newStopLoss, reason: 'Profit Secure', newState: aggressiveTrailSignal.newState });
+        }
         
-        // --- 3. Final Selection and Application ---
-        let bestStop = potentialStops[0];
-        for (const candidate of potentialStops) {
-            const isTighter = isLong ? candidate.price > bestStop.price : candidate.price < bestStop.price;
+        // --- 3. Selection: The Tightest Stop Wins ---
+        let bestCandidate = stopCandidates[0];
+        for (const candidate of stopCandidates) {
+            // Check if the candidate is valid (not crossing the current price)
             const isValid = isLong ? candidate.price < currentPrice : candidate.price > currentPrice;
-            if (isTighter && isValid) {
-                bestStop = candidate;
+            // Check if it's tighter (more protective) than the current best
+            const isTighter = isLong ? candidate.price > bestCandidate.price : candidate.price < bestCandidate.price;
+
+            if (isValid && isTighter) {
+                bestCandidate = candidate;
             }
         }
     
-        if (bestStop.price !== positionState.stopLossPrice) {
-            this.addLog(`Trailing SL (Tick) updated to ${bestStop.price.toFixed(this.bot.config.pricePrecision)}. Reason: ${bestStop.reason}.`, LogType.Info);
-            positionState.stopLossPrice = bestStop.price;
-            positionState.activeStopLossReason = bestStop.reason;
+        // --- 4. Application ---
+        if (bestCandidate.price !== positionState.stopLossPrice) {
+            const previousSL = positionState.stopLossPrice;
+            // Apply the state changes from the winning candidate
+            if (bestCandidate.newState) {
+                positionState = { ...positionState, ...(bestCandidate.newState as Partial<Position>) };
+            }
+            // Set the new stop loss and reason
+            positionState.stopLossPrice = bestCandidate.price;
+            positionState.activeStopLossReason = bestCandidate.reason;
             hasChanged = true;
+            this.addLog(`SL updated from ${previousSL.toFixed(this.bot.config.pricePrecision)} to ${bestCandidate.price.toFixed(this.bot.config.pricePrecision)}. Reason: ${bestCandidate.reason}.`, LogType.Info);
         }
         
         if (hasChanged) {

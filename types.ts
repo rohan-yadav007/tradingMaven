@@ -152,6 +152,7 @@ export interface Position {
     proactiveLossCheckTriggered: boolean;
     profitLockTier: number; // 0 for none, or the fee-multiple trigger (e.g., 3, 4, 5)
     profitSpikeTier?: number; // Tracks the new Profit Spike Protector state
+    aggressiveTrailTier?: number; // Tracks the new Aggressive Range Trail state
     peakPrice?: number; // Highest price for LONG, lowest for SHORT since entry (for MFE)
     troughPrice?: number; // Lowest price for LONG, highest for SHORT since entry (for MAE)
     candlesSinceEntry?: number; // For state-based management (Chameleon V2)

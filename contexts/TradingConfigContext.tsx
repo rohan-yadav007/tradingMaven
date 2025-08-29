@@ -16,6 +16,8 @@ interface TradingConfigState {
     selectedAgent: Agent;
     investmentAmount: number;
     availableBalance: number;
+    maxMarginLossPercent: number;
+    // Legacy TP properties for type compatibility
     takeProfitMode: RiskMode;
     takeProfitValue: number;
     isTakeProfitLocked: boolean;
@@ -30,6 +32,7 @@ interface TradingConfigState {
     isApiConnected: boolean; // Managed from App.tsx but needed here
     walletViewMode: TradingMode;
     isMultiAssetMode: boolean;
+    entryTiming: 'immediate' | 'onNextCandle';
     // Context-specific state
     maxLeverage: number;
     isLeverageLoading: boolean;
@@ -49,9 +52,7 @@ interface TradingConfigActions {
     setSelectedAgent: (agent: Agent) => void;
     setInvestmentAmount: (amount: number) => void;
     setAvailableBalance: (balance: number) => void;
-    setTakeProfitMode: (mode: RiskMode) => void;
-    setTakeProfitValue: (value: number) => void;
-    setIsTakeProfitLocked: (isLocked: boolean) => void;
+    setMaxMarginLossPercent: (percent: number) => void;
     setIsHtfConfirmationEnabled: (isEnabled: boolean) => void;
     setIsUniversalProfitTrailEnabled: (isEnabled: boolean) => void;
     setIsMinRrEnabled: (isEnabled: boolean) => void;
@@ -63,6 +64,7 @@ interface TradingConfigActions {
     setIsApiConnected: (isConnected: boolean) => void;
     setWalletViewMode: (mode: TradingMode) => void;
     setIsMultiAssetMode: (isEnabled: boolean) => void;
+    setEntryTiming: (timing: 'immediate' | 'onNextCandle') => void;
     // Complex actions
     onSetMultiAssetMode: (isEnabled: boolean) => Promise<void>;
     setFuturesSettingsError: (error: string | null) => void;
@@ -87,9 +89,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [htfAgentParams, setHtfAgentParams] = useState<AgentParams>({});
     const [investmentAmount, setInvestmentAmount] = useState<number>(100);
     const [availableBalance, setAvailableBalance] = useState<number>(Infinity);
-    const [takeProfitMode, setTakeProfitMode] = useState<RiskMode>(RiskMode.Percent);
-    const [takeProfitValue, setTakeProfitValue] = useState<number>(4);
-    const [isTakeProfitLocked, setIsTakeProfitLocked] = useState<boolean>(false);
+    const [maxMarginLossPercent, setMaxMarginLossPercent] = useState<number>(constants.MAX_MARGIN_LOSS_PERCENT);
     const [isHtfConfirmationEnabled, setIsHtfConfirmationEnabled] = useState<boolean>(false);
     const [isUniversalProfitTrailEnabled, setIsUniversalProfitTrailEnabled] = useState<boolean>(true);
     const [isMinRrEnabled, setIsMinRrEnabled] = useState<boolean>(true);
@@ -99,6 +99,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [isApiConnected, setIsApiConnected] = useState(false);
     const [walletViewMode, setWalletViewMode] = useState<TradingMode>(TradingMode.Spot);
     const [isMultiAssetMode, setIsMultiAssetMode] = useState(false);
+    const [entryTiming, setEntryTiming] = useState<'immediate' | 'onNextCandle'>('onNextCandle');
 
     // Context-internal state
     const [isPairsLoading, setIsPairsLoading] = useState(true);
@@ -258,20 +259,24 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         setExecutionMode, setTradingMode, setSelectedPairs, setAllPairs,
         setLeverage, setMarginType, setTimeFrame, setSelectedAgent,
         setInvestmentAmount, setAvailableBalance,
-        setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
+        setMaxMarginLossPercent,
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setAgentParams, setHtfAgentParams, setIsApiConnected, setWalletViewMode,
         setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError, setIsUniversalProfitTrailEnabled,
-        setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled,
+        setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled, setEntryTiming,
     }), [onSetMultiAssetMode]);
     
     const state = {
         executionMode, tradingMode, selectedPairs, allPairs, isPairsLoading, leverage, marginType, chartTimeFrame,
         selectedAgent, agentParams, htfAgentParams, investmentAmount, availableBalance,
-        takeProfitMode, takeProfitValue, isTakeProfitLocked,
+        maxMarginLossPercent,
+        // Provide default values for legacy TP properties for internal type compatibility
+        takeProfitMode: RiskMode.Percent,
+        takeProfitValue: 0,
+        isTakeProfitLocked: false,
         isHtfConfirmationEnabled, isUniversalProfitTrailEnabled, 
         isMinRrEnabled, isReanalysisEnabled, isInvalidationCheckEnabled, htfTimeFrame,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
-        futuresSettingsError, multiAssetModeError
+        futuresSettingsError, multiAssetModeError, entryTiming
     };
 
     return (

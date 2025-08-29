@@ -1,3 +1,5 @@
+
+
 // Manually define indicator output types as they are not exported by 'technicalindicators'
 export interface ADXOutput {
   adx: number;
@@ -165,6 +167,7 @@ export interface Position {
         isInvalidationCheckEnabled?: boolean;
         isReanalysisEnabled?: boolean;
         htfTimeFrame?: 'auto' | string;
+        entryTiming?: 'immediate' | 'onNextCandle';
     };
     entryContext?: MarketDataContext;
 }
@@ -311,11 +314,11 @@ export interface BotConfig {
     marginType?: 'ISOLATED' | 'CROSSED';
     agent: Agent;
     timeFrame: string;
-    // Risk management model
     investmentAmount: number;
+    maxMarginLossPercent: number;
+    // Legacy TP properties - no longer set by UI but required for back-compat
     takeProfitMode: RiskMode;
     takeProfitValue: number;
-    // Proactive Management Toggles
     isTakeProfitLocked: boolean;
     isHtfConfirmationEnabled: boolean;
     isUniversalProfitTrailEnabled: boolean;
@@ -330,6 +333,7 @@ export interface BotConfig {
     stepSize: number;
     takerFeeRate: number;
     refreshInterval?: number;
+    entryTiming: 'immediate' | 'onNextCandle';
 }
 export interface RunningBot {
     id: string;
@@ -458,7 +462,6 @@ export type AgentParams = Partial<{
     qsc_rsiSellThreshold: number;
     qsc_volumeExhaustionMultiplier?: number;
 
-    // FIX: Add Ichimoku-specific agent parameters for agent 16.
     // Ichimoku Trend Rider (16)
     ichi_conversionPeriod: number;
     ichi_basePeriod: number;

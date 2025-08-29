@@ -33,42 +33,6 @@ const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) =>
     </button>
 );
 
-const RiskInputWithLock: React.FC<{
-    label: string; mode: RiskMode; value: number; isLocked: boolean; investmentAmount: number;
-    onModeChange: (mode: RiskMode) => void; onValueChange: (value: number) => void; onLockToggle: () => void;
-}> = ({ label, mode, value, isLocked, investmentAmount, onModeChange, onValueChange, onLockToggle }) => {
-    const [inputValue, setInputValue] = useState<string>(String(value));
-    useEffect(() => { setInputValue(String(value)); }, [value, mode]);
-    const handleToggleMode = () => {
-        const currentValue = parseFloat(inputValue);
-        if (isNaN(currentValue) || investmentAmount <= 0) { onModeChange(mode === RiskMode.Percent ? RiskMode.Amount : RiskMode.Percent); return; }
-        const nextMode = mode === RiskMode.Percent ? RiskMode.Amount : RiskMode.Percent;
-        const nextValue = nextMode === RiskMode.Amount ? investmentAmount * (currentValue / 100) : (currentValue / investmentAmount) * 100;
-        onModeChange(nextMode); onValueChange(parseFloat(nextValue.toFixed(2)));
-    };
-    const handleBlur = () => {
-        const numValue = parseFloat(inputValue);
-        if (!isNaN(numValue) && numValue !== value) { onValueChange(numValue); } else { setInputValue(String(value)); }
-    };
-    return (
-        <div className={formGroupClass}>
-            <label className={formLabelClass}>{label}</label>
-            <div className="flex">
-                <button onClick={onLockToggle} className={`px-3 bg-slate-100 dark:bg-slate-600 border border-r-0 border-slate-300 dark:border-slate-600 rounded-l-md hover:bg-slate-200 dark:hover:bg-slate-500 transition-colors ${!isLocked ? 'text-sky-500' : 'text-slate-400'}`}>
-                   {isLocked ? <LockIcon className="w-4 h-4" /> : <UnlockIcon className="w-4 h-4" />}
-                </button>
-                <div className="relative flex-grow">
-                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 text-sm">{mode === RiskMode.Percent ? '%' : '$'}</span>
-                    <input type="number" value={inputValue} onChange={e => setInputValue(e.target.value)} onBlur={handleBlur} className={`${formInputClass} pl-7 rounded-none`} min="0" />
-                </div>
-                <button onClick={handleToggleMode} className="px-3 bg-slate-100 dark:bg-slate-600 border border-l-0 border-slate-300 dark:border-slate-600 rounded-r-md font-bold text-sm hover:bg-slate-200 dark:hover:bg-slate-500 transition-colors">
-                   {mode === RiskMode.Percent ? '$' : '%'}
-                </button>
-            </div>
-        </div>
-    );
-};
-
 const ParamSlider: React.FC<{label: string, value: number, onChange: (val: number) => void, min: number, max: number, step: number, valueDisplay?: (v: number) => string}> = 
 ({ label, value, onChange, min, max, step, valueDisplay }) => (
     <div className="flex flex-col gap-1.5">
@@ -162,10 +126,15 @@ interface BacktestingPanelProps {
 
 export type BacktestConfig = {
     tradingMode: TradingMode; selectedPair: string; chartTimeFrame: string; selectedAgent: Agent;
-    investmentAmount: number; takeProfitMode: RiskMode; takeProfitValue: number; isTakeProfitLocked: boolean;
+    investmentAmount: number; maxMarginLossPercent: number;
     isHtfConfirmationEnabled: boolean; isUniversalProfitTrailEnabled: boolean;
     isMinRrEnabled: boolean; htfTimeFrame: 'auto' | string; isInvalidationCheckEnabled?: boolean;
     agentParams: AgentParams; leverage: number;
+    entryTiming: 'immediate' | 'onNextCandle';
+    // Legacy properties for BotConfig compatibility
+    takeProfitMode: RiskMode;
+    takeProfitValue: number;
+    isTakeProfitLocked: boolean;
 };
 
 const getTimeframeDuration = (timeframe: string): number => {
@@ -188,14 +157,18 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     
     const [config, setConfig] = useState<BacktestConfig>({
         tradingMode: globalConfig.tradingMode,
-// FIX: Property 'selectedPair' does not exist on type 'TradingConfigState'. Using selectedPairs[0] as backtesting is for a single pair.
         selectedPair: globalConfig.selectedPairs[0] || constants.TRADING_PAIRS[0], chartTimeFrame: '5m',
         selectedAgent: globalConfig.selectedAgent, investmentAmount: globalConfig.investmentAmount,
-        takeProfitMode: globalConfig.takeProfitMode, takeProfitValue: globalConfig.takeProfitValue,
-        isTakeProfitLocked: globalConfig.isTakeProfitLocked, isHtfConfirmationEnabled: globalConfig.isHtfConfirmationEnabled,
+        maxMarginLossPercent: globalConfig.maxMarginLossPercent,
+        isHtfConfirmationEnabled: globalConfig.isHtfConfirmationEnabled,
         isUniversalProfitTrailEnabled: globalConfig.isUniversalProfitTrailEnabled, htfTimeFrame: globalConfig.htfTimeFrame,
         agentParams: globalConfig.agentParams, leverage: globalConfig.leverage,
         isMinRrEnabled: globalConfig.isMinRrEnabled, isInvalidationCheckEnabled: globalConfig.isInvalidationCheckEnabled,
+        entryTiming: globalConfig.entryTiming,
+        // Use default values from context for legacy properties to satisfy BotConfig type
+        takeProfitMode: globalConfig.takeProfitMode,
+        takeProfitValue: globalConfig.takeProfitValue,
+        isTakeProfitLocked: globalConfig.isTakeProfitLocked,
     });
 
     const [backtestDays, setBacktestDays] = useState(1);
@@ -255,8 +228,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
             const fullBotConfig: BotConfig = {
                 ...config,
                 pair: config.selectedPair, mode: config.tradingMode, executionMode: 'paper', leverage: config.leverage, agent: config.selectedAgent,
-                timeFrame: config.chartTimeFrame, investmentAmount: config.investmentAmount, takeProfitMode: config.takeProfitMode,
-                takeProfitValue: config.takeProfitValue, isTakeProfitLocked: config.isTakeProfitLocked,
+                timeFrame: config.chartTimeFrame, investmentAmount: config.investmentAmount,
                 isHtfConfirmationEnabled: config.isHtfConfirmationEnabled, isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
                 isMinRrEnabled: config.isMinRrEnabled,
                 htfTimeFrame: config.htfTimeFrame, agentParams: config.agentParams,
@@ -299,8 +271,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
             const baseBotConfig: BotConfig = {
                 ...config,
                 pair: config.selectedPair, mode: config.tradingMode, executionMode: 'paper', leverage: config.leverage, agent: config.selectedAgent,
-                timeFrame: config.chartTimeFrame, investmentAmount: config.investmentAmount, takeProfitMode: config.takeProfitMode,
-                takeProfitValue: config.takeProfitValue, isTakeProfitLocked: config.isTakeProfitLocked,
+                timeFrame: config.chartTimeFrame, investmentAmount: config.investmentAmount,
                 isHtfConfirmationEnabled: config.isHtfConfirmationEnabled, isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
                 isMinRrEnabled: config.isMinRrEnabled,
                 htfTimeFrame: config.htfTimeFrame, agentParams: config.agentParams,
@@ -317,19 +288,17 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     
     const handleApplyAndSwitchView = (paramsToApply: AgentParams) => {
         globalActions.setTradingMode(config.tradingMode);
-// FIX: Property 'setSelectedPair' does not exist on type 'TradingConfigActions'. Using 'setSelectedPairs' and wrapping the value in an array.
         globalActions.setSelectedPairs([config.selectedPair]);
         globalActions.setTimeFrame(config.chartTimeFrame);
         globalActions.setSelectedAgent(config.selectedAgent);
         globalActions.setInvestmentAmount(config.investmentAmount);
         globalActions.setLeverage(config.leverage);
-        globalActions.setTakeProfitMode(config.takeProfitMode);
-        globalActions.setTakeProfitValue(config.takeProfitValue);
-        globalActions.setIsTakeProfitLocked(config.isTakeProfitLocked);
+        globalActions.setMaxMarginLossPercent(config.maxMarginLossPercent);
         globalActions.setIsHtfConfirmationEnabled(config.isHtfConfirmationEnabled);
         globalActions.setIsUniversalProfitTrailEnabled(config.isUniversalProfitTrailEnabled);
         globalActions.setIsMinRrEnabled(config.isMinRrEnabled);
         globalActions.setAgentParams(paramsToApply);
+        globalActions.setEntryTiming(config.entryTiming);
         setActiveView('trading');
     };
 
@@ -342,7 +311,6 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                     <div className={formGroupClass}><label className={formLabelClass}>Backtest Period (Days)</label><input type="number" value={backtestDays} onChange={e => setBacktestDays(Number(e.target.value))} className={formInputClass} min="1" max="90" /></div>
                     <div className={formGroupClass}><label className={formLabelClass}>Trading Platform</label><select value={config.tradingMode} onChange={e => updateConfig('tradingMode', e.target.value as TradingMode)} className={formInputClass}>{Object.values(TradingMode).map(mode => <option key={mode} value={mode}>{mode}</option>)}</select></div>
                     <div className={formGroupClass}><label className={formLabelClass}>Market</label>
-{/* FIX: Argument of type 'string | string[]' is not assignable to parameter of type 'string'. Casting the value to string as this dropdown is not multi-select. */}
 <SearchableDropdown options={globalConfig.allPairs} value={config.selectedPair} onChange={(v) => updateConfig('selectedPair', v as string)} theme={theme} disabled={globalConfig.isPairsLoading} /></div>
                     <div className={formGroupClass}><label className={formLabelClass}>Entry Timeframe</label><select value={config.chartTimeFrame} onChange={e => updateConfig('chartTimeFrame', e.target.value)} className={formInputClass}>{constants.TIME_FRAMES.map(tf => <option key={tf} value={tf}>{tf}</option>)}</select></div>
                     <div className={formGroupClass}><label className={formLabelClass}>Trading Agent</label><select value={config.selectedAgent.id} onChange={e => {
@@ -352,7 +320,15 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                     <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
                     <div className={formGroupClass}><label className={formLabelClass}>Investment Amount</label><div className="relative"><span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500">$</span><input type="number" value={config.investmentAmount} onChange={e => updateConfig('investmentAmount', Number(e.target.value))} className={`${formInputClass} pl-7`} min="1"/></div></div>
                     {config.tradingMode === TradingMode.USDSM_Futures && (<div className={formGroupClass}><label className="flex justify-between items-baseline"><span className={formLabelClass}>Leverage</span><span className="font-bold text-sky-500">{config.leverage}x</span></label><input type="range" min="1" max={globalConfig.maxLeverage} value={config.leverage} onChange={e => updateConfig('leverage', Number(e.target.value))} className="w-full h-2 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer" /></div>)}
-                    <RiskInputWithLock label="Take Profit" mode={config.takeProfitMode} value={config.takeProfitValue} isLocked={config.isTakeProfitLocked} investmentAmount={config.investmentAmount} onModeChange={v => updateConfig('takeProfitMode', v)} onValueChange={v => updateConfig('takeProfitValue', v)} onLockToggle={() => updateConfig('isTakeProfitLocked', !config.isTakeProfitLocked)} />
+                    <ParamSlider 
+                        label="Max Margin Loss %" 
+                        value={config.maxMarginLossPercent} 
+                        onChange={v => updateConfig('maxMarginLossPercent', v)} 
+                        min={1} 
+                        max={25} 
+                        step={0.5}
+                        valueDisplay={v => `${v.toFixed(1)}%`}
+                    />
                     <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
                     <div className="space-y-3 pt-2">
                         <div>
@@ -372,6 +348,10 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                         </div>
                         <div className="flex items-center justify-between"><label className={formLabelClass}>Universal Profit Trail</label><ToggleSwitch checked={config.isUniversalProfitTrailEnabled} onChange={v => updateConfig('isUniversalProfitTrailEnabled', v)} /></div>
                         <div className="flex items-center justify-between"><label className={formLabelClass}>Minimum R:R Veto</label><ToggleSwitch checked={config.isMinRrEnabled} onChange={v => updateConfig('isMinRrEnabled', v)} /></div>
+                         <div className="flex items-center justify-between">
+                            <label className={formLabelClass}>Immediate Entry</label>
+                            <ToggleSwitch checked={config.entryTiming === 'immediate'} onChange={v => updateConfig('entryTiming', v ? 'immediate' : 'onNextCandle')} />
+                        </div>
                     </div>
                     <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
                         <button onClick={() => setIsParamsOpen(!isParamsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold">
@@ -423,7 +403,6 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                         results={optimizationResults} 
                         onApplyAndSwitchView={handleApplyAndSwitchView}
                         onReset={() => { setOptimizationResults(null); setBacktestResult(null); }}
-// FIX: Property 'selectedPair' does not exist on type 'TradingConfigState'. Using component's local config state which holds the selected pair for the backtest.
                         pricePrecision={(config.selectedPair || '').includes('USDT') ? 4 : 8}
                     />
                 ) : backtestResult ? (

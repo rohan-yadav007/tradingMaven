@@ -209,7 +209,8 @@ class BotInstance {
         this.bot.lastResumeTimestamp = Date.now(); // Start tracking uptime
 
         this.addLog("Performing initial analysis on startup.", LogType.Info);
-        await this.runAnalysis(false, { execute: false });
+        const executeOnStart = this.bot.config.entryTiming === 'immediate';
+        await this.runAnalysis(false, { execute: executeOnStart });
         
         this.startManagementLoop();
 
@@ -229,7 +230,6 @@ class BotInstance {
         }
     
         const scheduleNextRun = () => {
-            // Guard to prevent rescheduling if the bot has been paused/stopped
             if ([BotStatus.Paused, BotStatus.Stopping, BotStatus.Stopped, BotStatus.Error].includes(this.bot.status)) {
                 return;
             }
@@ -242,14 +242,12 @@ class BotInstance {
             const secondsIntoInterval = currentSeconds % intervalSeconds;
             let msToWait = (intervalSeconds - secondsIntoInterval) * 1000 - currentMilliseconds;
     
-            // If we missed the boundary, wait for the next one
             if (msToWait < 0) {
                 msToWait += intervalSeconds * 1000;
             }
     
             this.managementInterval = window.setTimeout(async () => {
                 try {
-                    // Don't run if status changed while waiting for timeout
                     if (![BotStatus.Paused, BotStatus.Stopping, BotStatus.Stopped, BotStatus.Error].includes(this.bot.status)) {
                         await this.runPeriodicManagement();
                     }
@@ -257,7 +255,6 @@ class BotInstance {
                     const errorMessage = e instanceof Error ? e.message : String(e);
                     this.addLog(`Error in periodic management loop: ${errorMessage}`, LogType.Error);
                 } finally {
-                    // ALWAYS reschedule the next run, even if the current one had an error.
                     scheduleNextRun();
                 }
             }, msToWait);
@@ -280,36 +277,34 @@ class BotInstance {
         if ([BotStatus.Paused, BotStatus.Stopped, BotStatus.Error, BotStatus.ExecutingTrade].includes(this.bot.status)) {
             return;
         }
-    
-        if (this.klines.length < 50) {
-            // This log is too noisy for a periodic check.
-            return;
-        }
-    
-        if (!this.bot.livePrice || this.bot.livePrice <= 0) {
-            // This log is also too noisy.
+        if (this.klines.length < 50 || !this.bot.livePrice || this.bot.livePrice <= 0) {
             return;
         }
         
-        // Always refresh analysis preview for UI feedback, regardless of position status.
-        await this.refreshAnalysisPreview();
+        const lastFinalKline = this.klines[this.klines.length - 1];
+        const previewKline: Kline = {
+            ...lastFinalKline,
+            high: Math.max(lastFinalKline.high, this.bot.livePrice),
+            low: Math.min(lastFinalKline.low, this.bot.livePrice),
+            close: this.bot.livePrice,
+            isFinal: false,
+        };
+        const klinesForAnalysis = [...this.klines.slice(0, -1), previewKline];
+
+        if (this.bot.config.entryTiming === 'immediate' && this.bot.status === BotStatus.Monitoring) {
+            await this.runAnalysis(false, { execute: true }, klinesForAnalysis);
+        } else {
+            await this.refreshAnalysisPreview(klinesForAnalysis);
+        }
     
         if (this.bot.openPosition) {
-            const lastFinalKline = this.klines[this.klines.length - 1];
-            const previewKline: Kline = {
-                ...lastFinalKline,
-                high: Math.max(lastFinalKline.high, this.bot.livePrice),
-                low: Math.min(lastFinalKline.low, this.bot.livePrice),
-                close: this.bot.livePrice,
-                isFinal: false,
-            };
-            const klinesForAnalysis = [...this.klines.slice(0, -1), previewKline];
             await this.managePositionOnPeriodicAnalysis(klinesForAnalysis);
         }
     }
 
-    public async refreshAnalysisPreview() {
-        if (this.klines.length < 50) {
+    public async refreshAnalysisPreview(klinesOverride?: Kline[]) {
+        const klinesToUse = klinesOverride || this.klines;
+        if (klinesToUse.length < 50) {
             return;
         }
         this.addLog('Refreshing analysis preview...', LogType.Info);
@@ -329,18 +324,19 @@ class BotInstance {
             this.addLog(`Warning: Could not fetch HTF klines for preview: ${e}`, LogType.Error);
         }
 
-        const signal = await getTradingSignal(this.bot.config.agent, this.klines, this.bot.config, htfKlines);
+        const signal = await getTradingSignal(this.bot.config.agent, klinesToUse, this.bot.config, htfKlines);
         this.updateState({ analysis: signal });
         this.onUpdate();
     }
 
-    public async runAnalysis(isFlipAttempt: boolean = false, options: { execute: boolean } = { execute: true }) {
+    public async runAnalysis(isFlipAttempt: boolean = false, options: { execute: boolean } = { execute: true }, klinesOverride?: Kline[]) {
+        const klinesToUse = klinesOverride || this.klines;
         try {
             if (this.bot.openPosition || (!isFlipAttempt && ![BotStatus.Monitoring].includes(this.bot.status))) {
                 return;
             }
 
-            if (this.klines.length < 50) {
+            if (klinesToUse.length < 50) {
                 this.addLog('Analysis skipped: insufficient kline data.', LogType.Info);
                 return;
             }
@@ -364,7 +360,7 @@ class BotInstance {
                     }
                 }
 
-                const signal = await getTradingSignal(this.bot.config.agent, this.klines, this.bot.config, htfKlines);
+                const signal = await getTradingSignal(this.bot.config.agent, klinesToUse, this.bot.config, htfKlines);
                 this.bot.analysis = signal;
 
                 if (signal.signal !== 'HOLD') {
@@ -379,7 +375,7 @@ class BotInstance {
                     
                     if (options.execute) {
                         this.updateState({ status: BotStatus.ExecutingTrade });
-                        await this.executeTrade(signal, this.klines);
+                        await this.executeTrade(signal, klinesToUse);
                     } else {
                         this.addLog(`Initial analysis found a ${signal.signal} signal. Waiting for the current candle to close before taking action.`, LogType.Info);
                     }
@@ -433,8 +429,7 @@ class BotInstance {
                     this.updateState({openPosition: newPosition});
                 }
             }
-             // NEW: Trigger entry analysis on candle close
-            if (this.bot.status === BotStatus.Monitoring) {
+            if (this.bot.config.entryTiming === 'onNextCandle' && this.bot.status === BotStatus.Monitoring) {
                 this.addLog(`New ${this.bot.config.timeFrame} candle closed. Running entry analysis...`, LogType.Info);
                 await this.runAnalysis();
             }
@@ -490,20 +485,9 @@ class BotInstance {
         const { config } = this.bot;
 
         const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(klinesForAnalysis, currentPrice, isLong ? 'LONG' : 'SHORT', config);
-
-        let finalTp = takeProfitPrice;
-        if (this.bot.config.isTakeProfitLocked && this.bot.config.agent.id !== 13) {
-            const positionValue = this.bot.config.mode === TradingMode.USDSM_Futures ? this.bot.config.investmentAmount * this.bot.config.leverage : this.bot.config.investmentAmount;
-            const tradeSize = positionValue / currentPrice;
-            if (this.bot.config.takeProfitMode === RiskMode.Percent) {
-                const profitAmount = this.bot.config.investmentAmount * (this.bot.config.takeProfitValue / 100);
-                finalTp = isLong ? currentPrice + (profitAmount / tradeSize) : currentPrice - (profitAmount / tradeSize);
-            } else {
-                finalTp = isLong ? currentPrice + (this.bot.config.takeProfitValue / tradeSize) : currentPrice - (this.bot.config.takeProfitValue / tradeSize);
-            }
-        }
         
-        // --- Intelligent TP Adjustment (Fee Veto Fix) ---
+        let finalTp = takeProfitPrice;
+        
         const positionValue = config.investmentAmount * (config.mode === TradingMode.USDSM_Futures ? config.leverage : 1);
         const tradeSize = positionValue / currentPrice;
         if (tradeSize > 0) {
@@ -687,7 +671,7 @@ class BotInstance {
         }
 
         // --- Adaptive Take Profit (Proactive Target Adjustment) ---
-        if (openPosition && !config.isTakeProfitLocked) { // Use the live bot config
+        if (openPosition) {
             const adaptiveTpSignal = getAdaptiveTakeProfit(openPosition, klinesForAnalysis, config, htfKlines);
             if (adaptiveTpSignal.newTakeProfit && adaptiveTpSignal.newTakeProfit !== openPosition.takeProfitPrice) {
                 const updatedPosition: Position = {

@@ -1,13 +1,3 @@
-
-
-
-
-
-
-
-
-
-
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -40,10 +30,11 @@ const AppContent: React.FC = () => {
     const configActions = useTradingConfigActions();
     const { 
         executionMode, tradingMode, selectedPairs, chartTimeFrame, 
-        selectedAgent, investmentAmount, takeProfitMode, 
-        takeProfitValue, isTakeProfitLocked, agentParams,
+        selectedAgent, investmentAmount, 
+        agentParams, maxMarginLossPercent,
         leverage, marginType, isHtfConfirmationEnabled, htfTimeFrame, isUniversalProfitTrailEnabled,
-        isMinRrEnabled, isInvalidationCheckEnabled, isReanalysisEnabled, htfAgentParams
+        isMinRrEnabled, isInvalidationCheckEnabled, isReanalysisEnabled, htfAgentParams,
+        entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked
     } = configState;
 
     const {
@@ -134,9 +125,7 @@ const AppContent: React.FC = () => {
                     agent: selectedAgent,
                     timeFrame: chartTimeFrame,
                     investmentAmount,
-                    takeProfitMode,
-                    takeProfitValue,
-                    isTakeProfitLocked,
+                    maxMarginLossPercent,
                     isHtfConfirmationEnabled,
                     htfTimeFrame,
                     isUniversalProfitTrailEnabled,
@@ -149,6 +138,11 @@ const AppContent: React.FC = () => {
                     quantityPrecision: quantityPrecisionForBot,
                     stepSize: stepSizeForBot,
                     takerFeeRate: currentFeeRate,
+                    entryTiming,
+                    // Use default values for legacy TP properties to satisfy type, as they are no longer user-configurable.
+                    takeProfitMode,
+                    takeProfitValue,
+                    isTakeProfitLocked,
                 };
 
                 botManagerService.startBot(botConfig);
@@ -159,10 +153,10 @@ const AppContent: React.FC = () => {
 
     }, [
         botsToCreate, tradingMode, executionMode, leverage, marginType,
-        selectedAgent, chartTimeFrame, investmentAmount, takeProfitMode, takeProfitValue,
-        isTakeProfitLocked, isHtfConfirmationEnabled, htfTimeFrame, agentParams, htfAgentParams,
+        selectedAgent, chartTimeFrame, investmentAmount, maxMarginLossPercent,
+        isHtfConfirmationEnabled, htfTimeFrame, agentParams, htfAgentParams,
         isUniversalProfitTrailEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
-        isReanalysisEnabled, currentFeeRate
+        isReanalysisEnabled, currentFeeRate, entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked
     ]);
 
     // ---- Handlers ----
@@ -204,7 +198,6 @@ const AppContent: React.FC = () => {
                     htfKlines = await binanceService.fetchKlines(posToClose.pair.replace('/',''), htf, { limit: 205, mode: posToClose.mode });
                 }
             }
-            // FIX: Removed extra arguments from captureMarketContext call to match its signature.
             const exitContext = localAgentService.captureMarketContext(botKlines, htfKlines);
 
             const newTrade: Trade = { 
@@ -472,6 +465,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             isMinRrEnabled: config.isMinRrEnabled,
             isReanalysisEnabled: config.isReanalysisEnabled,
             isInvalidationCheckEnabled: config.isInvalidationCheckEnabled,
+            entryTiming: config.entryTiming,
         };
         
         let htfKlinesForContext: Kline[] | undefined;
@@ -483,7 +477,6 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 htfKlinesForContext = await binanceService.fetchKlines(config.pair.replace('/',''), htf, { limit: 205, mode: config.mode });
             }
         }
-        // FIX: Removed extra arguments from captureMarketContext call to match its signature.
         const entryContext = localAgentService.captureMarketContext(klines, htfKlinesForContext);
 
         const newPosition: Position = {

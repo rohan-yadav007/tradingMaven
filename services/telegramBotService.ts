@@ -12,7 +12,6 @@ const bots = [
 const lastUpdateIds = new Map<string, number>();
 let isStarted = false; // Guard to prevent multiple initializations
 
-// FIX: Use a local variable to hold the botManagerService instance to break circular dependency.
 let _botManagerService: any;
 
 
@@ -46,7 +45,6 @@ async function sendMessage(text: string, specificChatId?: string) {
 
 
 async function handleCommand(command: string, args: string[], chatId: string) {
-    // FIX: Add check to ensure service is registered.
     if (!_botManagerService) {
         await sendMessage("Bot manager is not available. Please wait a moment and try again.", chatId);
         return;
@@ -160,18 +158,21 @@ ID: \`${bot.id}\``;
                     mode: finalTradingMode,
                     executionMode: executionMode as 'paper' | 'live',
                     timeFrame: '5m', // Default
-                    takeProfitMode: RiskMode.Percent,
-                    takeProfitValue: 5,
-                    isTakeProfitLocked: false,
+                    maxMarginLossPercent: constants.MAX_MARGIN_LOSS_PERCENT,
                     isHtfConfirmationEnabled: false,
                     isUniversalProfitTrailEnabled: true,
                     isMinRrEnabled: true,
                     isInvalidationCheckEnabled: true,
-                    isReanalysisEnabled: true, // Make sure this is present
+                    isReanalysisEnabled: true,
                     pricePrecision: binanceService.getPricePrecision(symbolInfo),
                     quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                     stepSize: binanceService.getStepSize(symbolInfo),
                     takerFeeRate: constants.TAKER_FEE_RATE,
+                    entryTiming: 'onNextCandle',
+                    // Default legacy TP properties
+                    takeProfitMode: RiskMode.Percent,
+                    takeProfitValue: 0,
+                    isTakeProfitLocked: false,
                 };
                 
                 const newBot = _botManagerService.startBot(config);
@@ -271,6 +272,11 @@ async function longPoll(bot: { token: string; chatId: string; }) {
                 }
             }
             lastUpdateIds.set(bot.token, maxUpdateId);
+        } else if (!data.ok && data.error_code === 409) {
+            // This is the conflict error. Stop polling from this instance.
+            console.warn(`[Telegram Bot ${bot.token.substring(0,10)}...] 409 Conflict: Terminated by another getUpdates request. This instance will stop polling.`);
+            isStarted = false; // Stop this instance's loop
+            return;
         }
     } catch (error) {
         console.error(`Telegram: Long poll error for bot ${bot.token.substring(0,10)}...:`, error);
@@ -304,7 +310,6 @@ function start() {
 export const telegramBotService = {
     start,
     sendMessage,
-    // FIX: Add a register method to accept the botManagerService instance and break the circular dependency.
     register(instance: any) {
         _botManagerService = instance;
     },

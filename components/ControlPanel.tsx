@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-// FIX: Import 'Agent' type.
 import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig, Agent } from '../types';
 import * as constants from '../constants';
 import { PlayIcon, LockIcon, UnlockIcon, CpuIcon, ChevronDown, ChevronUp } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
-import { getTradingSignal, getInitialAgentTargets } from '../services/localAgentService';
+import { getTradingSignal } from '../services/localAgentService';
 import { SearchableDropdown } from './SearchableDropdown';
 import { useTradingConfigState, useTradingConfigActions } from '../contexts/TradingConfigContext';
 
@@ -57,94 +56,6 @@ const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) =>
         />
     </button>
 );
-
-const RiskInputWithLock: React.FC<{
-    label: string;
-    mode: RiskMode;
-    value: number;
-    isLocked: boolean;
-    investmentAmount: number;
-    onModeChange: (mode: RiskMode) => void;
-    onValueChange: (value: number) => void;
-    onLockToggle: () => void;
-}> = ({ label, mode, value, isLocked, investmentAmount, onModeChange, onValueChange, onLockToggle }) => {
-    
-    const [inputValue, setInputValue] = useState<string>(String(value));
-
-    useEffect(() => {
-        setInputValue(String(value));
-    }, [value, mode]); // Reset input when props change from outside
-
-    const handleToggleMode = () => {
-        const currentValue = parseFloat(inputValue);
-        if (isNaN(currentValue) || investmentAmount <= 0) {
-            const nextMode = mode === RiskMode.Percent ? RiskMode.Amount : RiskMode.Percent;
-            onModeChange(nextMode);
-            return;
-        }
-
-        let nextValue: number;
-        const nextMode = mode === RiskMode.Percent ? RiskMode.Amount : RiskMode.Percent;
-
-        if (nextMode === RiskMode.Amount) { // from % to $
-            nextValue = investmentAmount * (currentValue / 100);
-        } else { // from $ to %
-            nextValue = (currentValue / investmentAmount) * 100;
-        }
-
-        const formattedNextValue = parseFloat(nextValue.toFixed(2));
-        
-        onModeChange(nextMode);
-        onValueChange(formattedNextValue);
-    };
-
-    const handleBlur = () => {
-         const numValue = parseFloat(inputValue);
-         if (!isNaN(numValue) && numValue !== value) {
-            onValueChange(numValue);
-         } else {
-            // Revert to original value if input is invalid
-            setInputValue(String(value));
-         }
-    };
-    
-    return (
-        <div className={formGroupClass}>
-            <label className={formLabelClass}>{label}</label>
-            <div className="flex">
-                 <button
-                    onClick={onLockToggle}
-                    className={`px-3 bg-slate-100 dark:bg-slate-600 border border-r-0 border-slate-300 dark:border-slate-600 rounded-l-md hover:bg-slate-200 dark:hover:bg-slate-500 transition-colors ${!isLocked ? 'text-sky-500' : 'text-slate-400'}`}
-                    aria-label={isLocked ? "Unlock to enable proactive management" : "Lock to set a hard target"}
-                    title={isLocked ? "Target is Locked (Manual)" : "Target is Unlocked (Auto-Managed)"}
-                >
-                   {isLocked ? <LockIcon className="w-4 h-4" /> : <UnlockIcon className="w-4 h-4" />}
-                </button>
-                <div className="relative flex-grow">
-                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500 text-sm">
-                        {mode === RiskMode.Percent ? '%' : '$'}
-                    </span>
-                    <input
-                        type="number"
-                        value={inputValue}
-                        onChange={e => setInputValue(e.target.value)}
-                        onBlur={handleBlur}
-                        className={`${formInputClass} pl-7 rounded-none`}
-                        min="0"
-                    />
-                </div>
-                <button
-                    onClick={handleToggleMode}
-                    className="px-3 bg-slate-100 dark:bg-slate-600 border border-l-0 border-slate-300 dark:border-slate-600 rounded-r-md font-bold text-sm hover:bg-slate-200 dark:hover:bg-slate-500 transition-colors"
-                    aria-label={`Switch to ${mode === RiskMode.Percent ? 'PNL Amount ($)' : 'Percentage (%)'}`}
-                    title={`Switch to ${mode === RiskMode.Percent ? 'PNL Amount ($)' : 'Percentage (%)'}`}
-                >
-                   {mode === RiskMode.Percent ? '$' : '%'}
-                </button>
-            </div>
-        </div>
-    );
-};
 
 const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParamsChange: (p: AgentParams) => void}> = ({ agent, params, onParamsChange }) => {
     const allParams: Required<AgentParams> = {...constants.DEFAULT_AGENT_PARAMS, ...params};
@@ -241,21 +152,20 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
     const {
         executionMode, availableBalance, tradingMode, allPairs, selectedPairs,
         isPairsLoading, leverage, chartTimeFrame: timeFrame, selectedAgent, investmentAmount,
-        takeProfitMode, takeProfitValue,
-        isTakeProfitLocked, agentParams,
+        agentParams, maxMarginLossPercent,
         marginType, futuresSettingsError, isMultiAssetMode, multiAssetModeError,
         maxLeverage, isLeverageLoading, isHtfConfirmationEnabled, htfTimeFrame,
         isUniversalProfitTrailEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
-        isReanalysisEnabled,
+        isReanalysisEnabled, entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked
     } = config;
 
     const {
         setExecutionMode, setTradingMode, setSelectedPairs, setLeverage, setTimeFrame,
         setSelectedAgent, setInvestmentAmount,
-        setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
-        setMarginType, onSetMultiAssetMode, setAgentParams,
+        setMarginType, onSetMultiAssetMode, setAgentParams, setMaxMarginLossPercent,
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setIsUniversalProfitTrailEnabled,
         setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled,
+        setEntryTiming,
     } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -304,9 +214,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         agent: selectedAgent,
                         timeFrame: timeFrame,
                         investmentAmount: config.investmentAmount,
-                        takeProfitMode: config.takeProfitMode,
-                        takeProfitValue: config.takeProfitValue,
-                        isTakeProfitLocked: config.isTakeProfitLocked,
+                        maxMarginLossPercent: config.maxMarginLossPercent,
                         isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
                         isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
                         isMinRrEnabled: config.isMinRrEnabled,
@@ -318,6 +226,10 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         quantityPrecision: 8,
                         stepSize: 0.00000001,
                         takerFeeRate: constants.TAKER_FEE_RATE,
+                        entryTiming: config.entryTiming,
+                        takeProfitMode: takeProfitMode,
+                        takeProfitValue: takeProfitValue,
+                        isTakeProfitLocked: isTakeProfitLocked,
                     };
 
                     const signal = await getTradingSignal(selectedAgent, previewKlines, previewConfig);
@@ -333,54 +245,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             }
         };
         fetchAnalysis();
-    }, [selectedAgent, klines, timeFrame, agentParams, config, livePrice, selectedPairs]);
-
-    useEffect(() => {
-        const updateSmartTargets = () => {
-            const analysisPair = selectedPairs[0];
-            if (!analysisPair || klines.length < 50 || isTakeProfitLocked) return;
-
-            const currentPrice = klines[klines.length - 1].close;
-            if (currentPrice <= 0) return;
-            
-            const { stopLossPrice, takeProfitPrice } = getInitialAgentTargets(klines, currentPrice, 'LONG', {
-                pair: analysisPair,
-                mode: tradingMode,
-                executionMode: executionMode,
-                leverage: leverage,
-                agent: selectedAgent,
-                timeFrame: timeFrame,
-                investmentAmount: investmentAmount,
-                takeProfitMode: takeProfitMode,
-                takeProfitValue: takeProfitValue,
-                isTakeProfitLocked: isTakeProfitLocked,
-                isHtfConfirmationEnabled: false,
-                isUniversalProfitTrailEnabled: false,
-                isMinRrEnabled: false,
-                agentParams: agentParams,
-                pricePrecision: 8,
-                quantityPrecision: 8,
-                stepSize: 0.00000001,
-                takerFeeRate: constants.TAKER_FEE_RATE,
-            });
-            
-            const profitDistance = takeProfitPrice - currentPrice;
-            
-            let newTpValue: number;
-            if (takeProfitMode === RiskMode.Percent) {
-                newTpValue = (profitDistance / currentPrice) * 100;
-            } else { // Amount
-                const positionValue = tradingMode === TradingMode.USDSM_Futures ? investmentAmount * leverage : investmentAmount;
-                newTpValue = positionValue * (profitDistance / currentPrice);
-            }
-            setTakeProfitValue(parseFloat(newTpValue.toFixed(2)));
-        };
-
-        updateSmartTargets();
-    }, [
-        klines, isTakeProfitLocked, selectedAgent, timeFrame, agentParams, 
-        investmentAmount, takeProfitMode, setTakeProfitValue, tradingMode, leverage, selectedPairs, executionMode
-    ]);
+    }, [selectedAgent, klines, timeFrame, agentParams, config, livePrice, selectedPairs, takeProfitMode, takeProfitValue, isTakeProfitLocked]);
     
     const getButtonText = () => {
         if (selectedPairsCount === 0) return 'Select One or More Markets';
@@ -453,22 +318,19 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     <p className="text-xs text-rose-600 dark:text-rose-400">Investment amount cannot exceed available balance.</p>
                 )}
             </div>
-
-            <div className="grid grid-cols-1 gap-4">
-                <RiskInputWithLock
-                    label="Take Profit"
-                    mode={takeProfitMode}
-                    value={takeProfitValue}
-                    isLocked={isTakeProfitLocked}
-                    investmentAmount={investmentAmount}
-                    onModeChange={setTakeProfitMode}
-                    onValueChange={setTakeProfitValue}
-                    onLockToggle={() => setIsTakeProfitLocked(!isTakeProfitLocked)}
-                />
-            </div>
             
+            <ParamSlider 
+                label="Max Margin Loss %" 
+                value={maxMarginLossPercent} 
+                onChange={v => setMaxMarginLossPercent(v)} 
+                min={1} 
+                max={25} 
+                step={0.5}
+                valueDisplay={v => `${v.toFixed(1)}%`}
+            />
+
              <p className="text-xs text-slate-500 dark:text-slate-400 -mt-2">
-                Stop Loss is fully automated by the agent's logic and the universal profit-locking system.
+                Stop Loss & Take Profit are fully automated by the agent's logic and the universal profit-locking system.
             </p>
             
             {tradingMode === TradingMode.USDSM_Futures && (
@@ -674,6 +536,20 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 </div>
                  <p className="text-xs text-slate-500 dark:text-slate-400">
                     The ultimate safety net. Secures high profits on early signs of reversal and minimizes losses by exiting invalidated trades before the stop loss is hit. Functions as an always-on 'emergency brake' for every trade.
+                </p>
+            </div>
+             <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="entry-timing-toggle" className={formLabelClass}>
+                        Immediate Entry
+                    </label>
+                    <ToggleSwitch
+                        checked={entryTiming === 'immediate'}
+                        onChange={(checked) => setEntryTiming(checked ? 'immediate' : 'onNextCandle')}
+                    />
+                </div>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Enter on signal tick. If disabled, the bot will wait for the next candle to open.
                 </p>
             </div>
 

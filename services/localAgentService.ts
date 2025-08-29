@@ -735,6 +735,24 @@ export function getAgentExitSignal(
         default:
             break;
     }
+    
+    // FIX: Ensure the agent trail respects the breakeven point as a minimum floor.
+    if (position.isBreakevenSet && newStopLoss !== undefined) {
+        // Recalculate the breakeven price to ensure accuracy.
+        const feeRate = position.takerFeeRate;
+        const breakevenPrice = isLong
+            ? position.entryPrice * (1 + feeRate) / (1 - feeRate)
+            : position.entryPrice * (1 - feeRate) / (1 + feeRate);
+
+        // The agent's trail cannot suggest a stop that is worse than the established breakeven point.
+        if (isLong) {
+            newStopLoss = Math.max(newStopLoss, breakevenPrice);
+        } else {
+            newStopLoss = Math.min(newStopLoss, breakevenPrice);
+        }
+        reasons.push('Agent Trail active post-breakeven.');
+    }
+
 
     return { newStopLoss, action, reasons };
 }

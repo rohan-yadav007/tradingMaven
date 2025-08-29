@@ -1,7 +1,7 @@
 import { TradingMode, type Agent, type TradeSignal, type Kline, type AgentParams, type Position, type ADXOutput, type MACDOutput, type BollingerBandsOutput, type StochasticRSIOutput, type TradeManagementSignal, type BotConfig, VortexIndicatorOutput, SentinelAnalysis, KSTOutput, type IchimokuCloudOutput, MarketDataContext } from '../types';
-import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, VWAP, IchimokuCloud, KST, abandonedbaby, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, downsidetasukigap, dragonflydoji, gravestonedoji, bullishharami, bearishharami, bullishharamicross, bearishharamicross, hammerpattern, hangingman, morningdojistar, morningstar, eveningdojistar, eveningstar, piercingline, shootingstar, threeblackcrows, threewhitesoldiers } from 'technicalindicators';
+// FIX: Import missing candlestick pattern indicators 'eveningdojistar' and 'eveningstar' to resolve reference errors.
+import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, IchimokuCloud, KST, abandonedbaby, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, downsidetasukigap, dragonflydoji, gravestonedoji, bullishharami, bearishharami, bullishharamicross, bearishharamicross, hammerpattern, hangingman, morningdojistar, morningstar, piercingline, shootingstar, threeblackcrows, threewhitesoldiers, eveningdojistar, eveningstar } from 'technicalindicators';
 import * as constants from '../constants';
-import { calculateSupportResistance } from './chartAnalysisService';
 
 class Supertrend {
     static calculate(options: { high: number[]; low: number[]; close: number[]; period: number; multiplier: number; }): (number | undefined)[] {
@@ -130,15 +130,12 @@ function applyTimeframeSettings(config: BotConfig): BotConfig {
     // Agent-specific timeframe settings
     let timeframeSettings: Partial<AgentParams> = {};
     switch (agent.id) {
-        case 7:  timeframeSettings = constants.MARKET_STRUCTURE_MAVEN_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 9:  timeframeSettings = constants.QUANTUM_SCALPER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 11: timeframeSettings = constants.HISTORIC_EXPERT_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 13: timeframeSettings = constants.CHAMELEON_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 14: timeframeSettings = constants.SENTINEL_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
-        case 15: timeframeSettings = constants.INSTITUTIONAL_FLOW_TRACER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+        // FIX: Add case for Ichimoku Trend Rider agent to apply timeframe-specific settings.
         case 16: timeframeSettings = constants.ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
-        case 17: timeframeSettings = constants.THE_DETONATOR_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
-        case 18: timeframeSettings = constants.CANDLESTICK_PROPHET_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
     }
     
     finalParams = { ...finalParams, ...timeframeSettings };
@@ -148,36 +145,6 @@ function applyTimeframeSettings(config: BotConfig): BotConfig {
     
     // Return a new config object with the finalized params
     return { ...config, agentParams: finalParams };
-}
-
-const bullishPatterns = { 'Bullish Engulfing': bullishengulfingpattern, 'Dragonfly Doji': dragonflydoji, 'Bullish Harami': bullishharami, 'Bullish Harami Cross': bullishharamicross, 'Hammer': hammerpattern, 'Morning Doji Star': morningdojistar, 'Morning Star': morningstar, 'Piercing Line': piercingline, 'Three White Soldiers': threewhitesoldiers };
-const bearishPatterns = { 'Abandoned Baby': abandonedbaby, 'Bearish Engulfing': bearishengulfingpattern, 'Dark Cloud Cover': darkcloudcover, 'Downside Tasuki Gap': downsidetasukigap, 'Gravestone Doji': gravestonedoji, 'Bearish Harami': bearishharami, 'Bearish Harami Cross': bearishharamicross, 'Hanging Man': hangingman, 'Evening Doji Star': eveningdojistar, 'Evening Star': eveningstar, 'Shooting Star': shootingstar, 'Three Black Crows': threeblackcrows };
-
-function findLastCandlestickPattern(klines: Kline[], direction: 'LONG' | 'SHORT'): { patternInfo: { name: string; index: number; low: number; high: number } | null } {
-    const patternsToCheck = direction === 'LONG' ? bullishPatterns : bearishPatterns;
-    const opens = klines.map(k => k.open);
-    const highs = klines.map(k => k.high);
-    const lows = klines.map(k => k.low);
-    const closes = klines.map(k => k.close);
-    
-    for (let i = klines.length - 1; i >= Math.max(0, klines.length - 3); i--) {
-        const tempInput = { open: opens.slice(0, i + 1), high: highs.slice(0, i + 1), low: lows.slice(0, i + 1), close: closes.slice(0, i + 1) };
-        for (const [name, patternFunc] of Object.entries(patternsToCheck)) {
-            try {
-                if (getLast(patternFunc(tempInput))) {
-                    const multiCandlePatterns: Record<string, number> = { 'Morning Star': 3, 'Evening Star': 3, 'Three White Soldiers': 3, 'Three Black Crows': 3, 'Bullish Engulfing': 2, 'Bearish Engulfing': 2 };
-                    const patternLength = multiCandlePatterns[name] || 1;
-                    const patternCandles = klines.slice(Math.max(0, i - patternLength + 1), i + 1);
-                    
-                    const patternLow = Math.min(...patternCandles.map(c => c.low));
-                    const patternHigh = Math.max(...patternCandles.map(c => c.high));
-                    
-                    return { patternInfo: { name, index: i, low: patternLow, high: patternHigh } };
-                }
-            } catch (e) { /* Ignore errors from insufficient data for a pattern */ }
-        }
-    }
-    return { patternInfo: null };
 }
 
 /**
@@ -284,29 +251,6 @@ export const getInitialAgentTargets = (
     }
 
     switch (agent.id) {
-        case 7: // Market Structure Maven
-        case 11: // Historic Expert
-            const srLookback = agent.id === 7 ? params.msm_swingPointLookback : 10;
-            const { supports, resistances } = calculateSupportResistance(klines, srLookback);
-            if (isLong) {
-                const protectiveSupports = supports.filter(s => s < entryPrice);
-                if (protectiveSupports.length > 0) {
-                    const relevantSupport = Math.max(...protectiveSupports); // Closest support below entry
-                    agentStopLoss = relevantSupport - currentAtr * 0.25;
-                } else {
-                    agentStopLoss = fallbackStop();
-                }
-            } else { // SHORT
-                const protectiveResistances = resistances.filter(r => r > entryPrice);
-                if (protectiveResistances.length > 0) {
-                    const relevantResistance = Math.min(...protectiveResistances); // Closest resistance above entry
-                    agentStopLoss = relevantResistance + currentAtr * 0.25;
-                } else {
-                    agentStopLoss = fallbackStop();
-                }
-            }
-            break;
-
         case 9: // Quantum Scalper: Context-aware SL (Trending vs. Ranging).
             const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.qsc_adxPeriod! }))! as ADXOutput;
             const isTrending = adx.adx > params.qsc_adxThreshold!;
@@ -377,45 +321,6 @@ export const getInitialAgentTargets = (
             }
             break;
 
-        case 15: // Institutional Flow Tracer: SL is placed just beyond the low/high of the confirmation candle.
-            const lastKline = klines[klines.length - 1];
-            if (lastKline) {
-                agentStopLoss = isLong ? lastKline.low - currentAtr * 0.2 : lastKline.high + currentAtr * 0.2;
-            } else {
-                agentStopLoss = fallbackStop();
-            }
-            break;
-        
-        case 17: // The Detonator: SL at recent swing high/low.
-            const detSwingLookback = 10;
-            const { supports: det_supports, resistances: det_resistances } = calculateSupportResistance(klines, detSwingLookback);
-             if (isLong) {
-                const protectiveSupports = det_supports.filter(s => s < entryPrice);
-                if (protectiveSupports.length > 0) {
-                    agentStopLoss = Math.max(...protectiveSupports) - currentAtr * 0.1; // Tighter buffer for breakout
-                } else {
-                    agentStopLoss = fallbackStop();
-                }
-            } else { // SHORT
-                const protectiveResistances = det_resistances.filter(r => r > entryPrice);
-                if (protectiveResistances.length > 0) {
-                    agentStopLoss = Math.min(...protectiveResistances) + currentAtr * 0.1; // Tighter buffer for breakout
-                } else {
-                    agentStopLoss = fallbackStop();
-                }
-            }
-            break;
-        
-        case 18: // Candlestick Prophet
-            const { patternInfo } = findLastCandlestickPattern(klines, direction);
-            if (patternInfo) {
-                 const buffer = currentAtr * 0.1;
-                 agentStopLoss = isLong ? patternInfo.low - buffer : patternInfo.high + buffer;
-            } else {
-                agentStopLoss = fallbackStop();
-            }
-            break;
-
         default:
             agentStopLoss = fallbackStop();
             break;
@@ -459,50 +364,17 @@ export const getInitialAgentTargets = (
     }
 
 
-    // --- Step 4: Calculate Take Profit based on Market Structure first, then R:R ---
+    // --- Step 4: Calculate Take Profit based on R:R ---
     const stopLossDistance = Math.abs(entryPrice - finalStopLoss);
-    let suggestedTakeProfit: number | null = null;
+    let suggestedTakeProfit: number;
     
-    // --- Primary: S/R Based Take Profit ---
-    const srTpLookback = params.msm_swingPointLookback || 15; // Use a reasonable default
-    const { supports: tp_supports, resistances: tp_resistances } = calculateSupportResistance(klines, srTpLookback);
+    const timeframeConfig = TIMEFRAME_ATR_CONFIG[timeFrame] || TIMEFRAME_ATR_CONFIG['5m'];
+    let riskRewardRatio = timeframeConfig.riskRewardRatio;
 
-    if (isLong && tp_resistances.length > 0) {
-        const potentialTps = tp_resistances.filter(r => r > entryPrice);
-        if (potentialTps.length > 0) {
-            const potentialTp = Math.min(...potentialTps); // Closest resistance
-            const bufferedTp = potentialTp * 0.999; // Buffer to avoid front-running
-            const rewardDistance = Math.abs(bufferedTp - entryPrice);
-            const rrRatio = stopLossDistance > 0 ? rewardDistance / stopLossDistance : Infinity;
-            if (rrRatio >= constants.MIN_RISK_REWARD_RATIO) {
-                suggestedTakeProfit = bufferedTp;
-            }
-        }
-    } else if (!isLong && tp_supports.length > 0) {
-        const potentialTps = tp_supports.filter(s => s < entryPrice);
-        if (potentialTps.length > 0) {
-            const potentialTp = Math.max(...potentialTps); // Closest support
-            const bufferedTp = potentialTp * 1.001; // Buffer
-            const rewardDistance = Math.abs(bufferedTp - entryPrice);
-            const rrRatio = stopLossDistance > 0 ? rewardDistance / stopLossDistance : Infinity;
-            if (rrRatio >= constants.MIN_RISK_REWARD_RATIO) {
-                suggestedTakeProfit = bufferedTp;
-            }
-        }
+    if (agent.id === 13) {
+        riskRewardRatio = 4;
     }
-
-    // --- Fallback: R:R Based Take Profit ---
-    if (suggestedTakeProfit === null) {
-        const timeframeConfig = TIMEFRAME_ATR_CONFIG[timeFrame] || TIMEFRAME_ATR_CONFIG['5m'];
-        let riskRewardRatio = timeframeConfig.riskRewardRatio;
-
-        if (agent.id === 13) {
-            riskRewardRatio = 4;
-        } else if (agent.id === 17) {
-            riskRewardRatio = params.det_rr_mult;
-        }
-        suggestedTakeProfit = isLong ? entryPrice + (stopLossDistance * riskRewardRatio) : entryPrice - (stopLossDistance * riskRewardRatio);
-    }
+    suggestedTakeProfit = isLong ? entryPrice + (stopLossDistance * riskRewardRatio) : entryPrice - (stopLossDistance * riskRewardRatio);
 
 
     // --- Step 5: CRITICAL FINAL SAFETY CHECKS ---
@@ -795,24 +667,9 @@ export function getAgentExitSignal(
 
 
     switch (agent.id) {
-        case 7: // Market Structure Maven
-        case 18: // Candlestick Prophet (uses S/R for trailing)
-            const srLookback = params.msm_swingPointLookback;
-            const { supports, resistances } = calculateSupportResistance(klines, srLookback);
-            if (isLong) {
-                const protectiveSupports = supports.filter(s => s < currentPrice);
-                if (protectiveSupports.length > 0) newStopLoss = Math.max(...protectiveSupports);
-            } else { // SHORT
-                const protectiveResistances = resistances.filter(r => r > currentPrice);
-                if (protectiveResistances.length > 0) newStopLoss = Math.min(...protectiveResistances);
-            }
-            if (newStopLoss) reasons.push('Agent S/R Trail');
-            break;
-
         case 9: // Quantum Scalper: PSAR-based trailing stop
-        case 17: // The Detonator: Also uses aggressive PSAR trailing for breakouts
-            let step = agent.id === 9 ? params.qsc_psarStep : params.scalp_psarStep;
-            let max = agent.id === 9 ? params.qsc_psarMax : params.scalp_psarMax;
+            let step = params.qsc_psarStep;
+            let max = params.qsc_psarMax;
             
             if (profitVelocity > 1) {
                 step *= profitVelocity;
@@ -857,11 +714,6 @@ export function getAgentExitSignal(
             }
 
             newStopLoss = getLast(Supertrend.calculate({ high: highs, low: lows, close: closes, period: 10, multiplier: trailMultiplier }));
-            break;
-
-        case 15: // Institutional Flow Tracer
-            newStopLoss = getLast(VWAP.calculate({ high: highs, low: lows, close: closes, volume: klines.map(k => k.volume || 0) }));
-             if (newStopLoss) reasons.push('Agent VWAP Trail');
             break;
 
         case 16: // Ichimoku Trend Rider
@@ -933,85 +785,7 @@ function recognizeCandlestickPattern(kline: Kline, prevKline?: Kline): { name: s
     return null;
 }
 
-// --- Agent 7: Market Structure Maven (Upgraded with Vortex Indicator Confirmation) ---
-const getMarketStructureMavenSignal = (klines: Kline[], config: BotConfig, htfContext?: MarketDataContext): TradeSignal => {
-    const params = config.agentParams as Required<AgentParams>;
-    const minKlines = Math.max(params.msm_htfEmaPeriod, params.atrPeriod, params.viPeriod, params.obvPeriod, 20);
-    if (klines.length < minKlines) return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data'] };
-
-    const closes = klines.map(k => k.close);
-    const volumes = klines.map(k => k.volume || 0);
-    const currentPrice = getLast(closes)!;
-    const lastKline = klines[klines.length - 1];
-    const prevKline = klines[klines.length - 2];
-    const reasons: string[] = [];
-
-    const emaBias = getLast(EMA.calculate({ period: params.msm_htfEmaPeriod, values: closes }))! as number;
-    const isBullishBias = currentPrice > emaBias;
-    reasons.push(isBullishBias ? `✅ Trend Bias: Bullish` : `✅ Trend Bias: Bearish`);
-    
-    const vi = VortexIndicator.calculate({ high: klines.map(k=>k.high), low: klines.map(k=>k.low), close: closes, period: params.viPeriod }) as VortexIndicatorOutput;
-    const last_vi_plus = getLast(vi.pdi)!;
-    const last_vi_minus = getLast(vi.ndi)!;
-    const isViBullish = last_vi_plus > last_vi_minus;
-    const isViBearish = last_vi_minus > last_vi_plus;
-
-    const obv = OBV.calculate({ close: closes, volume: volumes });
-    const isObvBullish = isObvTrending(obv, 'bullish');
-    const isObvBearish = isObvTrending(obv, 'bearish');
-
-    const { supports, resistances } = calculateSupportResistance(klines, params.msm_swingPointLookback);
-    const atr = getLast(ATR.calculate({ high: klines.map(k => k.high), low: klines.map(k => k.low), close: closes, period: params.atrPeriod }))! as number;
-    const proximityZone = atr * 0.5;
-    const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes }))! as number;
-    const lastVolume = getLast(volumes)!;
-
-    if (isBullishBias && supports.length > 0) {
-        const closestSupport = supports.find(s => s < currentPrice) || supports[0];
-        if (Math.abs(currentPrice - closestSupport) <= proximityZone) {
-            reasons.push(`✅ Price in support zone`);
-            reasons.push(isViBullish ? `✅ VI Momentum: Bullish` : `❌ VI Momentum: Not Bullish`);
-            reasons.push(isObvBullish ? `✅ OBV Confirmation: Bullish` : `❌ OBV Confirmation: Not Bullish`);
-            if (params.isCandleConfirmationEnabled) {
-                const pattern = recognizeCandlestickPattern(lastKline, prevKline);
-                const hasConfirmationCandle = pattern?.type === 'bullish';
-                const hasConfirmationVolume = lastVolume > volumeSma;
-                reasons.push(hasConfirmationCandle ? `✅ Confirmed by ${pattern.name}` : `❌ Awaiting bullish candle`);
-                reasons.push(hasConfirmationVolume ? `✅ Confirmation volume is strong` : `❌ Awaiting strong volume`);
-                if (isViBullish && hasConfirmationCandle && hasConfirmationVolume && isObvBullish) return { signal: 'BUY', reasons };
-            } else {
-                const isLowVolume = lastVolume < volumeSma;
-                reasons.push(isLowVolume ? `✅ Low volume pullback detected` : `❌ Awaiting low volume pullback`);
-                if (isViBullish && isLowVolume && isObvBullish) return { signal: 'BUY', reasons };
-            }
-        }
-    }
-
-    if (!isBullishBias && resistances.length > 0) {
-        const closestResistance = resistances.find(r => r > currentPrice) || resistances[0];
-        if (Math.abs(currentPrice - closestResistance) <= proximityZone) {
-            reasons.push(`✅ Price in resistance zone`);
-            reasons.push(isViBearish ? `✅ VI Momentum: Bearish` : `❌ VI Momentum: Not Bearish`);
-            reasons.push(isObvBearish ? `✅ OBV Confirmation: Bearish` : `❌ OBV Confirmation: Not Bearish`);
-             if (params.isCandleConfirmationEnabled) {
-                const pattern = recognizeCandlestickPattern(lastKline, prevKline);
-                const hasConfirmationCandle = pattern?.type === 'bearish';
-                const hasConfirmationVolume = lastVolume > volumeSma;
-                reasons.push(hasConfirmationCandle ? `✅ Confirmed by ${pattern.name}` : `❌ Awaiting bearish candle`);
-                reasons.push(hasConfirmationVolume ? `✅ Confirmation volume is strong` : `❌ Awaiting strong volume`);
-                if (isViBearish && hasConfirmationCandle && hasConfirmationVolume && isObvBearish) return { signal: 'SELL', reasons };
-            } else {
-                const isLowVolume = lastVolume < volumeSma;
-                reasons.push(isLowVolume ? `✅ Low volume pullback detected` : `❌ Awaiting low volume pullback`);
-                if (isViBearish && isLowVolume && isObvBearish) return { signal: 'SELL', reasons };
-            }
-        }
-    }
-
-    return { signal: 'HOLD', reasons };
-};
-
-// --- Agent 9: Quantum Scalper (V3 - Dynamic Momentum Filter) ---
+// --- Agent 9: Quantum Scalper (V4 - AI Enhanced) ---
 const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?: MarketDataContext): TradeSignal => {
     const params = config.agentParams as Required<AgentParams>;
     const minKlines = Math.max(params.qsc_ichi_basePeriod + params.qsc_ichi_displacement, 50);
@@ -1023,28 +797,8 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
     const volumes = klines.map(k => k.volume || 0);
     const lastKline = klines[klines.length - 1];
     const currentPrice = lastKline.close;
-    const reasons: string[] = [];
+    let reasons: string[] = [];
 
-    // --- 0. HTF & OBV Gatekeepers (Centralized Checks) ---
-    let htfIsConfluentBullish = !config.isHtfConfirmationEnabled;
-    let htfIsConfluentBearish = !config.isHtfConfirmationEnabled;
-    if (config.isHtfConfirmationEnabled && htfContext) {
-        const htfIsTrendBullish = htfContext.htf_trend === 'bullish';
-        const htfIsMomentumBullish = htfContext.htf_obvTrend === 'bullish' || !!(htfContext.htf_vi14 && htfContext.htf_vi14.pdi > htfContext.htf_vi14.ndi);
-        htfIsConfluentBullish = htfIsTrendBullish && htfIsMomentumBullish;
-        
-        const htfIsTrendBearish = htfContext.htf_trend === 'bearish';
-        const htfIsMomentumBearish = htfContext.htf_obvTrend === 'bearish' || !!(htfContext.htf_vi14 && htfContext.htf_vi14.ndi > htfContext.htf_vi14.pdi);
-        htfIsConfluentBearish = htfIsTrendBearish && htfIsMomentumBearish;
-        reasons.push(htfIsConfluentBullish || htfIsConfluentBearish ? '✅ HTF Confirmation: Trend aligned.' : '❌ HTF Confirmation: Trend misaligned.');
-    } else if (config.isHtfConfirmationEnabled && !htfContext) {
-        reasons.push('❌ HTF Confirmation: Data unavailable.');
-    }
-    
-    const obv = OBV.calculate({ close: closes, volume: volumes });
-    const isObvBullish = isObvTrending(obv, 'bullish');
-    const isObvBearish = isObvTrending(obv, 'bearish');
-    
     // --- 1. Volatility & Volume Filters ---
     const bbForWidth = BollingerBands.calculate({ period: params.qsc_bbPeriod, stdDev: params.qsc_bbStdDev, values: closes });
     const lastBbForWidth = getLast(bbForWidth) as BollingerBandsOutput;
@@ -1058,34 +812,53 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
         return { signal: 'HOLD', reasons: [`❌ VETO: Potential volume exhaustion detected (Volume > ${params.qsc_volumeExhaustionMultiplier}x Avg).`] };
     }
     
-    // --- 2. Regime Filter ---
-    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.qsc_adxPeriod }))! as ADXOutput;
+    // --- 2. Regime Filter & AI Gatekeepers ---
+    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.adxPeriod }))! as ADXOutput;
     const isTrending = adx.adx > params.qsc_adxThreshold;
-    reasons.push(isTrending ? `ℹ️ Regime: Trending (ADX ${adx.adx.toFixed(1)})` : `ℹ️ Regime: Ranging (ADX ${adx.adx.toFixed(1)})`);
+    reasons.push(isTrending ? `✅ Strong Trend (ADX > ${params.qsc_adxThreshold})` : `❌ Weak Trend (ADX < ${params.qsc_adxThreshold})`);
 
     if (isTrending) {
-        if (config.isHtfConfirmationEnabled && htfContext?.htf_adx14 && htfContext.htf_adx14.adx < 20) {
-            reasons.push(`❌ VETO: Higher timeframe is not trending (ADX < 20).`);
-            return { signal: 'HOLD', reasons };
-        }
-        if (config.isHtfConfirmationEnabled && htfContext?.htf_adx14) {
-             reasons.push(`✅ HTF Trend Strength: OK (ADX ${htfContext.htf_adx14.adx.toFixed(1)})`);
-        }
-        
-        const rsiValues = RSI.calculate({ period: 14, values: closes });
-        const rsi = getLast(rsiValues) as number;
-        const prevRsi = getPenultimate(rsiValues) as number;
+        const macd = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false })) as MACDOutput;
+        const rsi = getLast(RSI.calculate({ period: 14, values: closes })) as number;
+        const stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput;
+        const isBullishSignal = adx.pdi > adx.mdi;
+        const isBearishSignal = adx.mdi > adx.pdi;
 
-        if (rsi >= params.qsc_rsiOverextendedLong) {
-            reasons.push(`❌ VETO: Trend is overextended (RSI >= ${params.qsc_rsiOverextendedLong}).`);
-            return { signal: 'HOLD', reasons };
+        let direction: 'BUY' | 'SELL' | null = null;
+        const aiGates = { htf: false, macd: false, rsi: false, stochRsi: false, bb: false, adxDi: false, candle: false };
+
+        if (isBullishSignal) {
+            aiGates.htf = !config.isHtfConfirmationEnabled || (htfContext?.htf_trend === 'bullish' && (htfContext?.htf_rsi14 ?? 0) > 50);
+            aiGates.macd = macd.histogram! > 0.0001;
+            aiGates.rsi = rsi > params.qsc_rsiBuyThreshold;
+            aiGates.stochRsi = stochRsi.k > 60;
+            aiGates.bb = lastBbForWidth.pb > 0.65;
+            aiGates.adxDi = (adx.pdi / adx.mdi) > 1.3;
+            aiGates.candle = !isLastCandleContradictory(klines, 'BUY').veto;
+            if (Object.values(aiGates).every(v => v)) direction = 'BUY';
+        } else if (isBearishSignal) {
+            aiGates.htf = !config.isHtfConfirmationEnabled || (htfContext?.htf_trend === 'bearish' && (htfContext?.htf_rsi14 ?? 100) < 50);
+            aiGates.macd = macd.histogram! < -0.0001;
+            aiGates.rsi = rsi < params.qsc_rsiSellThreshold;
+            aiGates.stochRsi = stochRsi.k < 40;
+            aiGates.bb = lastBbForWidth.pb < 0.35;
+            aiGates.adxDi = (adx.mdi / adx.pdi) > 1.3;
+            aiGates.candle = !isLastCandleContradictory(klines, 'SELL').veto;
+            if (Object.values(aiGates).every(v => v)) direction = 'SELL';
         }
-        if (rsi <= params.qsc_rsiOverextendedShort) {
-            reasons.push(`❌ VETO: Trend is overextended (RSI <= ${params.qsc_rsiOverextendedShort}).`);
-            return { signal: 'HOLD', reasons };
-        }
-        reasons.push(`✅ Trend Strength: Healthy (RSI ${rsi.toFixed(1)})`);
-        
+
+        reasons.push(aiGates.htf ? `✅ HTF Confirmed` : `❌ HTF Misaligned`);
+        reasons.push(aiGates.macd ? `✅ MACD Confirmed` : `❌ MACD Misaligned`);
+        reasons.push(aiGates.rsi ? `✅ RSI Confirmed` : `❌ RSI Misaligned`);
+        reasons.push(aiGates.stochRsi ? `✅ StochRSI Confirmed` : `❌ StochRSI Misaligned`);
+        reasons.push(aiGates.bb ? `✅ BB%B Confirmed` : `❌ BB%B Misaligned`);
+        reasons.push(aiGates.adxDi ? `✅ DI Spread Confirmed` : `❌ DI Spread Weak`);
+        reasons.push(aiGates.candle ? `✅ Candle OK` : `❌ Contradictory Candle`);
+
+        if (!direction) return { signal: 'HOLD', reasons };
+        reasons.push('✅ AI Gates Passed');
+
+        // --- 3. Original Quantum Scalper Scoring Logic (as final confirmation) ---
         const ichi_params = {
             high: highs, low: lows,
             conversionPeriod: params.qsc_ichi_conversionPeriod, basePeriod: params.qsc_ichi_basePeriod,
@@ -1095,140 +868,37 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
         const isPriceAboveKumo = ichi && ichi.spanA && ichi.spanB && currentPrice > ichi.spanA && currentPrice > ichi.spanB;
         const isPriceBelowKumo = ichi && ichi.spanA && ichi.spanB && currentPrice < ichi.spanA && currentPrice < ichi.spanB;
         
-        const entryMode = params.qsc_entryMode ?? 'breakout';
-        let rsiConditionMet = false;
-        let rsiReason = '';
+        let score = 0;
+        const SCORE_WEIGHTS = { ICHIMOKU: 40, SUPERTREND: 30, VI: 30 };
+        const stValues = Supertrend.calculate({ high: highs, low: lows, close: closes, period: params.qsc_superTrendPeriod, multiplier: params.qsc_superTrendMultiplier });
+        const lastSt = getLast(stValues) as number | undefined;
+        const vi = VortexIndicator.calculate({ high: highs, low: lows, close: closes, period: params.viPeriod });
 
-        if (entryMode === 'breakout') {
-            if (isPriceAboveKumo) {
-                rsiConditionMet = prevRsi < params.qsc_rsiMomentumThreshold && rsi >= params.qsc_rsiMomentumThreshold;
-                rsiReason = `RSI Crossover (> ${params.qsc_rsiMomentumThreshold})`;
-            } else if (isPriceBelowKumo) {
-                const threshold = 100 - params.qsc_rsiMomentumThreshold;
-                rsiConditionMet = prevRsi > threshold && rsi <= threshold;
-                rsiReason = `RSI Crossover (< ${threshold})`;
-            }
-        } else { // 'pullback' mode
-            if (isPriceAboveKumo) {
-                rsiConditionMet = prevRsi < params.qsc_rsiPullbackThreshold && rsi > params.qsc_rsiPullbackThreshold;
-                rsiReason = `RSI Pullback (> ${params.qsc_rsiPullbackThreshold})`;
-            } else if (isPriceBelowKumo) {
-                const threshold = 100 - params.qsc_rsiPullbackThreshold;
-                rsiConditionMet = prevRsi > threshold && rsi < threshold;
-                rsiReason = `RSI Pullback (< ${threshold})`;
-            }
-        }
-
-        if (isPriceAboveKumo) {
-            if (config.isHtfConfirmationEnabled && !htfIsConfluentBullish) return { signal: 'HOLD', reasons };
-
-            let score = 0;
-            const SCORE_WEIGHTS = { ICHIMOKU: 25, SUPERTREND: 20, VI: 20, ADX: 15, RSI: 20 };
-
+        if (direction === 'BUY' && isPriceAboveKumo) {
             score += SCORE_WEIGHTS.ICHIMOKU;
-            reasons.push(`✅ Ichimoku: Bullish Trend (+${SCORE_WEIGHTS.ICHIMOKU})`);
-            
-            const stValues = Supertrend.calculate({ high: highs, low: lows, close: closes, period: params.qsc_superTrendPeriod, multiplier: params.qsc_superTrendMultiplier });
-            if (currentPrice > ((getLast(stValues) as number | undefined) ?? 0)) score += SCORE_WEIGHTS.SUPERTREND;
-            reasons.push(currentPrice > ((getLast(stValues) as number | undefined) ?? 0) ? `✅ Supertrend: Bullish (+${SCORE_WEIGHTS.SUPERTREND})` : `❌ Supertrend: Not Bullish (+0)`);
-
-            const vi = VortexIndicator.calculate({ high: highs, low: lows, close: closes, period: params.viPeriod });
-            if ((getLast(vi.pdi) as number) > (getLast(vi.ndi) as number)) score += SCORE_WEIGHTS.VI;
-            reasons.push((getLast(vi.pdi) as number) > (getLast(vi.ndi) as number) ? `✅ VI: Bullish Momentum (+${SCORE_WEIGHTS.VI})` : `❌ VI: Lacks Bullish Momentum (+0)`);
-            
-            if (adx.pdi > adx.mdi) score += SCORE_WEIGHTS.ADX;
-            reasons.push(adx.pdi > adx.mdi ? `✅ ADX: Concordant (+${SCORE_WEIGHTS.ADX})` : `❌ ADX: Not Concordant (+0)`);
-            
-            if (rsiConditionMet) score += SCORE_WEIGHTS.RSI;
-            reasons.push(rsiConditionMet ? `✅ ${rsiReason} (+${SCORE_WEIGHTS.RSI})` : `❌ ${rsiReason} (+0)`);
-            
-            if (!isObvBullish) {
-                reasons.push('❌ OBV: Lacks Bullish Flow (VETO)');
-                return { signal: 'HOLD', reasons: [...reasons, `ℹ️ Final Score: ${score}%`] };
-            }
-            reasons.push('✅ OBV: Bullish Flow Confirmed');
-            
-            reasons.push(`ℹ️ Final Bullish Score: ${score}%`);
-            if (score >= params.qsc_trendScoreThreshold) {
-                return { signal: 'BUY', reasons };
-            }
-
-        } else if (isPriceBelowKumo) {
-            if (config.isHtfConfirmationEnabled && !htfIsConfluentBearish) return { signal: 'HOLD', reasons };
-            
-            let score = 0;
-            const SCORE_WEIGHTS = { ICHIMOKU: 25, SUPERTREND: 20, VI: 20, ADX: 15, RSI: 20 };
-
+            if (lastSt && currentPrice > lastSt) score += SCORE_WEIGHTS.SUPERTREND;
+            if (getLast(vi.pdi)! > getLast(vi.ndi)!) score += SCORE_WEIGHTS.VI;
+        } else if (direction === 'SELL' && isPriceBelowKumo) {
             score += SCORE_WEIGHTS.ICHIMOKU;
-            reasons.push(`✅ Ichimoku: Bearish Trend (+${SCORE_WEIGHTS.ICHIMOKU})`);
-
-            const stValues = Supertrend.calculate({ high: highs, low: lows, close: closes, period: params.qsc_superTrendPeriod, multiplier: params.qsc_superTrendMultiplier });
-            if (currentPrice < ((getLast(stValues) as number | undefined) ?? Infinity)) score += SCORE_WEIGHTS.SUPERTREND;
-            reasons.push(currentPrice < ((getLast(stValues) as number | undefined) ?? Infinity) ? `✅ Supertrend: Bearish (+${SCORE_WEIGHTS.SUPERTREND})` : `❌ Supertrend: Not Bearish (+0)`);
-
-            const vi = VortexIndicator.calculate({ high: highs, low: lows, close: closes, period: params.viPeriod });
-            if ((getLast(vi.ndi) as number) > (getLast(vi.pdi) as number)) score += SCORE_WEIGHTS.VI;
-            reasons.push((getLast(vi.ndi) as number) > (getLast(vi.pdi) as number) ? `✅ VI: Bearish Momentum (+${SCORE_WEIGHTS.VI})` : `❌ VI: Lacks Bearish Momentum (+0)`);
-
-            if (adx.mdi > adx.pdi) score += SCORE_WEIGHTS.ADX;
-            reasons.push(adx.mdi > adx.pdi ? `✅ ADX: Concordant (+${SCORE_WEIGHTS.ADX})` : `❌ ADX: Not Concordant (+0)`);
-
-            if (rsiConditionMet) score += SCORE_WEIGHTS.RSI;
-            reasons.push(rsiConditionMet ? `✅ ${rsiReason} (+${SCORE_WEIGHTS.RSI})` : `❌ ${rsiReason} (+0)`);
-
-            if (!isObvBearish) {
-                reasons.push('❌ OBV: Lacks Bearish Flow (VETO)');
-                return { signal: 'HOLD', reasons: [...reasons, `ℹ️ Final Score: ${score}%`] };
-            }
-            reasons.push('✅ OBV: Bearish Flow Confirmed');
-
-            reasons.push(`ℹ️ Final Bearish Score: ${score}%`);
-            if (score >= params.qsc_trendScoreThreshold) {
-                return { signal: 'SELL', reasons };
-            }
-        } else {
-             reasons.push('❌ Ichimoku: Price is inside Kumo (No Clear Trend)');
+            if (lastSt && currentPrice < lastSt) score += SCORE_WEIGHTS.SUPERTREND;
+            if (getLast(vi.ndi)! > getLast(vi.pdi)!) score += SCORE_WEIGHTS.VI;
         }
-
-    } else { // --- Ranging Logic ---
-        // FIX: Cast result of technical indicator to its correct type.
-        const stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: params.qsc_stochRsiPeriod, stochasticPeriod: params.qsc_stochRsiPeriod, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput;
-        // FIX: Cast result of technical indicator to its correct type.
-        const bb = getLast(bbForWidth) as BollingerBandsOutput;
         
+        reasons.push(`ℹ️ Final Score: ${score}%`);
+        if (score >= params.qsc_trendScoreThreshold) {
+            return { signal: direction, reasons };
+        }
+
+    } else { // --- Ranging Logic (Remains unchanged) ---
+        const stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: params.qsc_stochRsiPeriod, stochasticPeriod: params.qsc_stochRsiPeriod, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput;
+        const bb = getLast(bbForWidth) as BollingerBandsOutput;
         const isPriceOversold = lastKline.low < bb.lower && lastKline.close > bb.lower;
         const isStochOversold = stochRsi.stochRSI < params.qsc_stochRsiOversold;
-        const bullishCandleConfirmation = lastKline.close > lastKline.open;
-        
-        reasons.push(isPriceOversold ? `✅ Price: Rejected Lower BB` : `❌ Price: No Lower BB Rejection`);
-        reasons.push(isStochOversold ? `✅ StochRSI: Oversold` : `❌ StochRSI: Not Oversold`);
-        reasons.push(isObvBullish ? `✅ OBV: Bullish Volume` : `❌ OBV: Lacks Bullish Volume`);
-        reasons.push(bullishCandleConfirmation ? `✅ Price Action: Bullish Reversal Candle` : `❌ Price Action: No reversal confirmation`);
-        
-        if (isObvBullish && isStochOversold && (isPriceOversold || bullishCandleConfirmation)) {
-            if (config.isHtfConfirmationEnabled && !htfIsConfluentBullish) {
-                reasons.push('❌ HTF Confirmation: Trend misaligned.');
-                return { signal: 'HOLD', reasons };
-            }
-            return { signal: 'BUY', reasons };
-        }
+        if (isPriceOversold && isStochOversold) return { signal: 'BUY', reasons: [`✅ Price rejected lower BB`, `✅ StochRSI oversold`] };
         
         const isPriceOverbought = lastKline.high > bb.upper && lastKline.close < bb.upper;
         const isStochOverbought = stochRsi.stochRSI > params.qsc_stochRsiOverbought;
-        const bearishCandleConfirmation = lastKline.close < lastKline.open;
-
-        reasons.push(isPriceOverbought ? `✅ Price: Rejected Upper BB` : `❌ Price: No Upper BB Rejection`);
-        reasons.push(isStochOverbought ? `✅ StochRSI: Overbought` : `❌ StochRSI: Not Overbought`);
-        reasons.push(isObvBearish ? `✅ OBV: Bearish Volume` : `❌ OBV: Lacks Bearish Volume`);
-        reasons.push(bearishCandleConfirmation ? `✅ Price Action: Bearish Reversal Candle` : `❌ Price Action: No reversal confirmation`);
-
-        if (isObvBearish && isStochOverbought && (isPriceOverbought || bearishCandleConfirmation)) {
-            if (config.isHtfConfirmationEnabled && !htfIsConfluentBearish) {
-                reasons.push('❌ HTF Confirmation: Trend misaligned.');
-                return { signal: 'HOLD', reasons };
-            }
-            return { signal: 'SELL', reasons };
-        }
+        if (isPriceOverbought && isStochOverbought) return { signal: 'SELL', reasons: [`✅ Price rejected upper BB`, `✅ StochRSI overbought`] };
     }
 
     return { signal: 'HOLD', reasons };
@@ -1238,9 +908,7 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
 const getHistoricExpertSignal = (klines: Kline[], config: BotConfig, htfContext?: MarketDataContext): TradeSignal => {
     const params = config.agentParams as Required<AgentParams>;
     const minKlines = Math.max(params.he_trendSmaPeriod, params.he_fastEmaPeriod, params.he_rsiPeriod, params.adxPeriod, params.obvPeriod);
-    if (klines.length < minKlines + 1) {
-        return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data'] };
-    }
+    if (klines.length < minKlines + 1) return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data'] };
 
     const closes = klines.map(k => k.close);
     const highs = klines.map(k => k.high);
@@ -1248,23 +916,29 @@ const getHistoricExpertSignal = (klines: Kline[], config: BotConfig, htfContext?
     const volumes = klines.map(k => k.volume || 0);
     const currentPrice = getLast(closes)!;
     const lastKline = klines[klines.length - 1];
-    const prevKline = klines[klines.length - 2];
     const reasons: string[] = [];
 
-    // FIX: Cast result of technical indicator to its correct type.
-    const trendSma = getLast(SMA.calculate({ period: params.he_trendSmaPeriod, values: closes })) as number;
+    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.adxPeriod }))! as ADXOutput;
+    const isTrending = adx.adx > params.he_adxTrendThreshold;
+    reasons.push(isTrending ? `✅ Trend Active (ADX > ${params.he_adxTrendThreshold})` : `❌ Chop Zone (ADX < ${params.he_adxTrendThreshold})`);
+    if (!isTrending) return { signal: 'HOLD', reasons };
+
+    const atr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: params.atrPeriod }))! as number;
+    const candleRange = lastKline.high - lastKline.low;
+    const isNotExhaustion = candleRange < atr * 3;
+    reasons.push(isNotExhaustion ? `✅ Normal Volatility` : `❌ High Volatility (Exhaustion Risk)`);
+    if (!isNotExhaustion) return { signal: 'HOLD', reasons };
+    
+    const trendSma = getLast(SMA.calculate({ period: params.he_trendSmaPeriod, values: closes }))! as number;
     const isBullishTrend = currentPrice > trendSma;
-    const isBearishTrend = currentPrice < trendSma;
-    reasons.push(isBullishTrend ? `✅ Trend: Bullish (Price > ${params.he_trendSmaPeriod}-SMA)` : `✅ Trend: Bearish (Price < ${params.he_trendSmaPeriod}-SMA)`);
+    reasons.push(isBullishTrend ? `✅ Trend: Bullish` : `✅ Trend: Bearish`);
 
-    // FIX: Cast result of technical indicator to its correct type.
-    const pullbackEma = getLast(EMA.calculate({ period: params.he_fastEmaPeriod, values: closes })) as number;
+    const pullbackEma = getLast(EMA.calculate({ period: params.he_fastEmaPeriod, values: closes }))! as number;
     const bullishPullback = isBullishTrend && lastKline.low <= pullbackEma && lastKline.close > pullbackEma;
-    const bearishPullback = isBearishTrend && lastKline.high >= pullbackEma && lastKline.close < pullbackEma;
-    reasons.push(bullishPullback ? '✅ Entry: Bullish pullback to EMA' : bearishPullback ? '✅ Entry: Bearish pullback to EMA' : '❌ Entry: No pullback to EMA');
+    const bearishPullback = !isBullishTrend && lastKline.high >= pullbackEma && lastKline.close < pullbackEma;
+    reasons.push(bullishPullback || bearishPullback ? '✅ Entry: Pullback to EMA' : '❌ Entry: No pullback');
 
-    // FIX: Cast result of technical indicator to its correct type.
-    const rsi = getLast(RSI.calculate({ period: params.he_rsiPeriod, values: closes })) as number;
+    const rsi = getLast(RSI.calculate({ period: params.he_rsiPeriod, values: closes }))! as number;
     const rsiIsBullish = rsi > params.he_rsiMidline;
     const rsiIsBearish = rsi < params.he_rsiMidline;
     
@@ -1281,7 +955,7 @@ const getHistoricExpertSignal = (klines: Kline[], config: BotConfig, htfContext?
     if (bearishPullback) {
         reasons.push(rsiIsBearish ? `✅ RSI < ${params.he_rsiMidline}` : `❌ RSI not bearish`);
         reasons.push(isObvBearish ? `✅ OBV Confirmed` : `❌ OBV not bearish`);
-        if (isObvBearish && isObvBearish) return { signal: 'SELL', reasons };
+        if (rsiIsBearish && isObvBearish) return { signal: 'SELL', reasons };
     }
     
     return { signal: 'HOLD', reasons };
@@ -1304,17 +978,13 @@ const getChameleonSignal = (klines: Kline[], config: BotConfig, htfContext?: Mar
     const currentPrice = getLast(closes)!;
     const reasons: string[] = [];
 
-    // 1. Trend Filter
-    // FIX: Cast result of technical indicator to its correct type.
-    const trendEma = getLast(EMA.calculate({ period: params.ch_trendEmaPeriod!, values: closes })) as number;
+    const trendEma = getLast(EMA.calculate({ period: params.ch_trendEmaPeriod!, values: closes }))! as number;
     const isMacroBullish = currentPrice > trendEma;
     const isMacroBearish = currentPrice < trendEma;
     
-    // 2. Regime Filter
     const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.adxPeriod }))! as ADXOutput;
     const isTrending = adx.adx > params.ch_adxThreshold!;
 
-    // 3. Primary Signal: KST with Zero-Line Confirmation
     const kstInput = {
         values: closes,
         ROCPer1: params.ch_kst_rocPer1!, ROCPer2: params.ch_kst_rocPer2!, ROCPer3: params.ch_kst_rocPer3!, ROCPer4: params.ch_kst_rocPer4!,
@@ -1328,36 +998,32 @@ const getChameleonSignal = (klines: Kline[], config: BotConfig, htfContext?: Mar
     const kstBearishCross = prevKst.kst > prevKst.signal && lastKst.kst < lastKst.signal;
     const isKstBullishBias = lastKst.kst > 0;
     const isKstBearishBias = lastKst.kst < 0;
-
-    // 4. Entry Trigger: Fast EMA Cross (Removed as KST cross is sufficient)
     
-    // 5. Volume Confirmation
     const obv = OBV.calculate({ close: closes, volume: volumes });
     const isObvBullish = isObvTrending(obv, 'bullish');
     const isObvBearish = isObvTrending(obv, 'bearish');
 
-    // --- Bullish Logic ---
-    reasons.push(isMacroBullish ? `✅ Trend: Bullish (Price > ${params.ch_trendEmaPeriod}-EMA)` : `❌ Trend: Not Bullish`);
-    reasons.push(isTrending ? `✅ Regime: Trending (ADX ${adx.adx.toFixed(1)})` : `❌ Regime: Not Trending`);
-    reasons.push(kstBullishCross ? `✅ KST: Bullish Cross` : `❌ KST: No Bullish Cross`);
-    reasons.push(isKstBullishBias ? `✅ KST > 0 (Bullish Bias)` : `❌ KST: Not in Bullish Territory`);
-    reasons.push(isObvBullish ? `✅ Volume: Bullish Flow` : `❌ Volume: Not Bullish`);
+    reasons.push(isMacroBullish ? `✅ Trend: Bullish` : isMacroBearish ? `✅ Trend: Bearish` : `❌ Trend: Neutral`);
+    reasons.push(isTrending ? `✅ Regime: Trending (ADX ${adx.adx.toFixed(1)})` : `❌ Regime: Ranging`);
 
-    if (isMacroBullish && isTrending && kstBullishCross && isKstBullishBias && isObvBullish) {
-        return { signal: 'BUY', reasons };
+    if (isMacroBullish && isTrending) {
+        reasons.push(kstBullishCross ? `✅ KST: Bullish Cross` : `❌ KST: No Bullish Cross`);
+        reasons.push(isKstBullishBias ? `✅ KST > 0 (Bullish Bias)` : `❌ KST: Not in Bullish Territory`);
+        reasons.push(isObvBullish ? `✅ Volume: Bullish Flow` : `❌ Volume: Not Bullish`);
+        if (kstBullishCross && isKstBullishBias && isObvBullish) {
+            return { signal: 'BUY', reasons };
+        }
     }
-
-    // --- Bearish Logic ---
-    reasons.push(isMacroBearish ? `✅ Trend: Bearish (Price < ${params.ch_trendEmaPeriod}-EMA)` : `❌ Trend: Not Bearish`);
-    reasons.push(kstBearishCross ? `✅ KST: Bearish Cross` : `❌ KST: No Bearish Cross`);
-    reasons.push(isKstBearishBias ? `✅ KST < 0 (Bearish Bias)` : `❌ KST: Not in Bearish Territory`);
-    reasons.push(isObvBearish ? `✅ Volume: Bearish Flow` : `❌ Volume: Not Bearish`);
     
-    if (isMacroBearish && isTrending && kstBearishCross && isKstBearishBias && isObvBearish) {
-        return { signal: 'SELL', reasons };
+    if (isMacroBearish && isTrending) {
+        reasons.push(kstBearishCross ? `✅ KST: Bearish Cross` : `❌ KST: No Bearish Cross`);
+        reasons.push(isKstBearishBias ? `✅ KST < 0 (Bearish Bias)` : `❌ KST: Not in Bearish Territory`);
+        reasons.push(isObvBearish ? `✅ Volume: Bearish Flow` : `❌ Volume: Not Bullish`);
+        if (kstBearishCross && isKstBearishBias && isObvBearish) {
+            return { signal: 'SELL', reasons };
+        }
     }
 
-    reasons.push(`ℹ️ No valid KST signal detected.`);
     return { signal: 'HOLD', reasons };
 };
 
@@ -1377,23 +1043,16 @@ const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfContext?: M
     const volumes = klines.map(k => k.volume || 0);
     const currentPrice = getLast(closes)!;
     
-    // FIX: Cast result of technical indicator to its correct type.
-    const ema50 = getLast(EMA.calculate({ period: 50, values: closes })) as number;
-    // FIX: Cast result of technical indicator to its correct type.
-    const ema200 = getLast(EMA.calculate({ period: 200, values: closes })) as number;
-    // FIX: Cast result of technical indicator to its correct type.
-    const macd = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false })) as MACDOutput;
-    // FIX: Cast result of technical indicator to its correct type.
-    const prevMacd = getPenultimate(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false })) as MACDOutput;
-    // FIX: Cast result of technical indicator to its correct type.
-    const rsi = getLast(RSI.calculate({ values: closes, period: 14 })) as number;
-    // FIX: Cast result of technical indicator to its correct type.
-    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: 14 })) as ADXOutput;
+    const ema50 = getLast(EMA.calculate({ period: 50, values: closes }))! as number;
+    const ema200 = getLast(EMA.calculate({ period: 200, values: closes }))! as number;
+    const macd = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false }))! as MACDOutput;
+    const prevMacd = getPenultimate(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false }))! as MACDOutput;
+    const rsi = getLast(RSI.calculate({ values: closes, period: 14 }))! as number;
+    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: 14 }))! as ADXOutput;
     const vi = VortexIndicator.calculate({ high: highs, low: lows, close: closes, period: params.viPeriod }) as VortexIndicatorOutput;
     const last_vi_plus = getLast(vi.pdi)!;
     const last_vi_minus = getLast(vi.ndi)!;
-    // FIX: Cast result of technical indicator to its correct type.
-    const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes })) as number;
+    const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes }))! as number;
     const lastVolume = getLast(volumes)!;
     const obv = OBV.calculate({ close: closes, volume: volumes });
 
@@ -1419,26 +1078,26 @@ const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfContext?: M
         if (bearTrend > bullTrend) bearConfirm += 25;
     }
     
-    const finalBullishScore = bullTrend + bullMomentum + bullConfirm;
-    const finalBearishScore = bearTrend + bearMomentum + bullConfirm;
+    // HTF Alignment Veto
+    if (config.isHtfConfirmationEnabled && htfContext) {
+        if (htfContext.htf_trend === 'bearish') bullTrend -= 50; // Heavy penalty
+        if (htfContext.htf_trend === 'bullish') bearTrend -= 50; // Heavy penalty
+    }
+
+    const finalBullishScore = Math.max(0, bullTrend + bullMomentum + bullConfirm);
+    const finalBearishScore = Math.max(0, bearTrend + bearMomentum + bearConfirm);
 
     const sentinelAnalysis: SentinelAnalysis = {
-        bullish: {
-            total: finalBullishScore,
-            trend: (bullTrend / trendMax) * 100,
-            momentum: (bullMomentum / momentumMax) * 100,
-            confirmation: (bullConfirm / confirmMax) * 100
-        },
-        bearish: {
-            total: finalBearishScore,
-            trend: (bearTrend / trendMax) * 100,
-            momentum: (bearMomentum / momentumMax) * 100,
-            confirmation: (bearConfirm / confirmMax) * 100
-        }
+        bullish: { total: finalBullishScore, trend: (bullTrend / trendMax) * 100, momentum: (bullMomentum / momentumMax) * 100, confirmation: (bullConfirm / confirmMax) * 100 },
+        bearish: { total: finalBearishScore, trend: (bearTrend / trendMax) * 100, momentum: (bearMomentum / momentumMax) * 100, confirmation: (bearConfirm / confirmMax) * 100 }
     };
 
     const reasons: string[] = [];
     const threshold = params.sentinel_scoreThreshold!;
+
+    if (config.isHtfConfirmationEnabled && htfContext?.htf_trend) {
+        reasons.push(htfContext.htf_trend === 'bullish' && finalBullishScore > finalBearishScore ? `✅ HTF Aligned Bullish` : htfContext.htf_trend === 'bearish' && finalBearishScore > finalBullishScore ? `✅ HTF Aligned Bearish` : `❌ HTF Misaligned`);
+    }
 
     if (finalBullishScore >= threshold && finalBullishScore > finalBearishScore) {
         reasons.push(`✅ Bullish score exceeds threshold of ${threshold}%.`);
@@ -1454,67 +1113,11 @@ const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfContext?: M
     return { signal: 'HOLD', reasons, sentinelAnalysis };
 };
 
-// --- Agent 15: Institutional Flow Tracer (Upgraded with OBV Confirmation) ---
-const getInstitutionalFlowTracerSignal = (klines: Kline[], config: BotConfig, htfContext?: MarketDataContext): TradeSignal => {
-    const params = config.agentParams as Required<AgentParams>;
-    const minKlines = Math.max(params.vwap_emaTrendPeriod, params.rsiPeriod, params.obvPeriod);
-    if (klines.length < minKlines) return { signal: 'HOLD', reasons: [`ℹ️ Insufficient data (${klines.length}/${minKlines}).`] };
-
-    const closes = klines.map(k => k.close);
-    const volumes = klines.map(k => k.volume || 0);
-    const currentPrice = getLast(closes)!;
-    const lastKline = klines[klines.length - 1];
-    const prevKline = klines[klines.length - 2];
-    const reasons: string[] = [];
-
-    // FIX: Cast result of technical indicator to its correct type.
-    const vwap = getLast(VWAP.calculate({ high: klines.map(k => k.high), low: klines.map(k => k.low), close: closes, volume: volumes })) as number;
-    if (!vwap) return { signal: 'HOLD', reasons: ['ℹ️ Could not calculate VWAP.'] };
-
-    // FIX: Cast result of technical indicator to its correct type.
-    const emaTrend = getLast(EMA.calculate({ period: params.vwap_emaTrendPeriod, values: closes })) as number;
-    const isUptrend = currentPrice > emaTrend;
-    reasons.push(isUptrend ? '✅ Trend: Bullish (Price > EMA)' : '✅ Trend: Bearish (Price < EMA)');
-
-    const isNearVwap = Math.abs(currentPrice - vwap) / vwap < (params.vwap_proximityPercent / 100);
-    const pattern = recognizeCandlestickPattern(lastKline, prevKline);
-    // FIX: Cast result of technical indicator to its correct type.
-    const rsi = getLast(RSI.calculate({ period: params.rsiPeriod, values: closes })) as number;
-    const isMomentumBullish = rsi > 50;
-    const isMomentumBearish = rsi < 50;
-
-    const obv = OBV.calculate({ close: closes, volume: volumes });
-    const isObvBullish = isObvTrending(obv, 'bullish');
-    const isObvBearish = isObvTrending(obv, 'bearish');
-
-    if (isUptrend) {
-        reasons.push(isNearVwap ? '✅ Price near VWAP' : '❌ Price not near VWAP');
-        reasons.push(pattern?.type === 'bullish' ? `✅ Confirmed by ${pattern.name}` : '❌ Awaiting bullish candle at VWAP');
-        reasons.push(isMomentumBullish ? `✅ RSI Momentum: Bullish (>50)` : `❌ RSI Momentum: Not Bullish`);
-        reasons.push(isObvBullish ? `✅ OBV Flow: Bullish` : `❌ OBV Flow: Not Bullish`);
-        if (isNearVwap && pattern?.type === 'bullish' && isMomentumBullish && isObvBullish) {
-            return { signal: 'BUY', reasons };
-        }
-    }
-
-    if (!isUptrend) {
-        reasons.push(isNearVwap ? '✅ Price near VWAP' : '❌ Price not near VWAP');
-        reasons.push(pattern?.type === 'bearish' ? `✅ Confirmed by ${pattern.name}` : '❌ Awaiting bearish candle at VWAP');
-        reasons.push(isMomentumBearish ? `✅ RSI Momentum: Bearish (<50)` : `❌ RSI Momentum: Not Bearish`);
-        reasons.push(isObvBearish ? `✅ OBV Flow: Bearish` : `❌ OBV Flow: Not Bearish`);
-        if (isNearVwap && pattern?.type === 'bearish' && isMomentumBearish && isObvBearish) {
-            return { signal: 'SELL', reasons };
-        }
-    }
-
-    return { signal: 'HOLD', reasons };
-};
-
 // --- Agent 16: Ichimoku Trend Rider (Upgraded with OBV) ---
 const getIchimokuTrendRiderSignal = (klines: Kline[], config: BotConfig, htfContext?: MarketDataContext): TradeSignal => {
     const params = config.agentParams as Required<AgentParams>;
     const minKlines = params.ichi_basePeriod + params.ichi_displacement;
-    if (klines.length < minKlines) return { signal: 'HOLD', reasons: [`ℹ️ Insufficient data for Ichimoku agent (${klines.length}/${minKlines}).`] };
+    if (klines.length < minKlines) return { signal: 'HOLD', reasons: [`ℹ️ Insufficient data (${klines.length}/${minKlines}).`] };
 
     const closes = klines.map(k => k.close);
     const highs = klines.map(k => k.high);
@@ -1522,172 +1125,72 @@ const getIchimokuTrendRiderSignal = (klines: Kline[], config: BotConfig, htfCont
     const volumes = klines.map(k => k.volume || 0);
     const currentPrice = getLast(closes)!;
     const prevPrice = getPenultimate(closes)!;
-    const reasons: string[] = [];
+    let reasons: string[] = [];
 
-    const ichi_params = {
-        high: highs, low: lows,
-        conversionPeriod: params.ichi_conversionPeriod, basePeriod: params.ichi_basePeriod,
-        spanPeriod: params.ichi_laggingSpanPeriod, displacement: params.ichi_displacement
-    };
+    const ichi_params = { high: highs, low: lows, conversionPeriod: params.ichi_conversionPeriod, basePeriod: params.ichi_basePeriod, spanPeriod: params.ichi_laggingSpanPeriod, displacement: params.ichi_displacement };
     const ichiValues = IchimokuCloud.calculate(ichi_params) as IchimokuCloudOutput[];
     const lastIchi = getLast(ichiValues);
     const prevIchi = getPenultimate(ichiValues);
     if (!lastIchi || !prevIchi || !lastIchi.spanA || !lastIchi.spanB || !prevIchi.spanA || !prevIchi.spanB) {
         return { signal: 'HOLD', reasons: ['ℹ️ Ichimoku Cloud not yet formed.'] };
     }
+    
+    const isPriceAboveKumo = currentPrice > lastIchi.spanA && currentPrice > lastIchi.spanB;
+    const isPriceBelowKumo = currentPrice < lastIchi.spanA && currentPrice < lastIchi.spanB;
+    const bullishTkCross = prevIchi.conversion < prevIchi.base && lastIchi.conversion > lastIchi.base;
+    const bearishTkCross = prevIchi.conversion > prevIchi.base && lastIchi.conversion < lastIchi.base;
 
     const vi = VortexIndicator.calculate({ high: highs, low: lows, close: closes, period: params.viPeriod }) as VortexIndicatorOutput;
-    const last_vi_plus = getLast(vi.pdi)!;
-    const last_vi_minus = getLast(vi.ndi)!;
-    const isViBullish = last_vi_plus > last_vi_minus;
-    const isViBearish = last_vi_minus > last_vi_plus;
-
+    const isViBullish = getLast(vi.pdi)! > getLast(vi.ndi)!;
+    const isViBearish = getLast(vi.ndi)! > getLast(vi.pdi)!;
     const obv = OBV.calculate({ close: closes, volume: volumes });
     const isObvBullish = isObvTrending(obv, 'bullish');
     const isObvBearish = isObvTrending(obv, 'bearish');
+    
+    // Pullback Entry Logic
+    if (isPriceAboveKumo && bullishTkCross) {
+        reasons.push(`✅ Entry Type: Pullback (TK Cross)`);
+        reasons.push(isViBullish ? `✅ VI Confirmed` : `❌ VI Not Bullish`);
+        reasons.push(isObvBullish ? `✅ OBV Confirmed` : `❌ OBV Not Bullish`);
+        if (isViBullish && isObvBullish) return { signal: 'BUY', reasons };
+    }
+    if (isPriceBelowKumo && bearishTkCross) {
+        reasons.push(`✅ Entry Type: Pullback (TK Cross)`);
+        reasons.push(isViBearish ? `✅ VI Confirmed` : `❌ VI Not Bearish`);
+        reasons.push(isObvBearish ? `✅ OBV Confirmed` : `❌ OBV Not Bearish`);
+        if (isViBearish && isObvBearish) return { signal: 'SELL', reasons };
+    }
 
+    // Breakout Entry Logic (if pullback fails)
+    reasons = []; // Reset reasons for breakout logic
     const isBullishKumo = lastIchi.spanA > lastIchi.spanB;
     const prevCloudTop = Math.max(prevIchi.spanA, prevIchi.spanB);
     const lastCloudTop = Math.max(lastIchi.spanA, lastIchi.spanB);
     const bullishBreakout = prevPrice < prevCloudTop && currentPrice > lastCloudTop;
-    reasons.push(bullishBreakout ? `✅ Kumo Breakout: Bullish` : `❌ No Bullish Kumo Breakout`);
-
     const chikouPriceTargetIndex = klines.length - 1 - params.ichi_displacement;
-    if (chikouPriceTargetIndex >= 0) {
-        const chikouIsBullish = currentPrice > closes[chikouPriceTargetIndex];
-        reasons.push(chikouIsBullish ? `✅ Lagging Span: Bullish` : `❌ Lagging Span: Not Bullish`);
-        reasons.push(isViBullish ? `✅ VI Confirmation: Bullish` : `❌ VI Confirmation: Not Bullish`);
-        reasons.push(isObvBullish ? `✅ OBV Confirmation: Bullish` : `❌ OBV Confirmation: Not Bullish`);
 
-        if (bullishBreakout && chikouIsBullish && isBullishKumo && isViBullish && isObvBullish) {
-            reasons.push('✅ Future Kumo: Bullish');
-            return { signal: 'BUY', reasons };
-        }
+    if (bullishBreakout && chikouPriceTargetIndex >= 0) {
+        const chikouIsBullish = currentPrice > closes[chikouPriceTargetIndex];
+        reasons.push(`✅ Entry Type: Kumo Breakout`);
+        reasons.push(chikouIsBullish ? `✅ Lagging Span Confirmed` : `❌ Lagging Span`);
+        reasons.push(isViBullish ? `✅ VI Confirmed` : `❌ VI Not Bullish`);
+        reasons.push(isObvBullish ? `✅ OBV Confirmed` : `❌ OBV Not Bullish`);
+        if (chikouIsBullish && isBullishKumo && isViBullish && isObvBullish) return { signal: 'BUY', reasons };
     }
     
     const prevCloudBottom = Math.min(prevIchi.spanA, prevIchi.spanB);
     const lastCloudBottom = Math.min(lastIchi.spanA, lastIchi.spanB);
     const bearishBreakout = prevPrice > prevCloudBottom && currentPrice < lastCloudBottom;
-    reasons.push(bearishBreakout ? `✅ Kumo Breakout: Bearish` : `❌ No Bearish Kumo Breakout`);
-     if (chikouPriceTargetIndex >= 0) {
+     if (bearishBreakout && chikouPriceTargetIndex >= 0) {
         const chikouIsBearish = currentPrice < closes[chikouPriceTargetIndex];
-        reasons.push(chikouIsBearish ? `✅ Lagging Span: Bearish` : `❌ Lagging Span: Not Bearish`);
-        reasons.push(isViBearish ? `✅ VI Confirmation: Bearish` : `❌ VI Confirmation: Not Bearish`);
-        reasons.push(isObvBearish ? `✅ OBV Confirmation: Bearish` : `❌ OBV Confirmation: Not Bearish`);
-
-        if (bearishBreakout && chikouIsBearish && !isBullishKumo && isViBearish && isObvBearish) {
-            reasons.push('✅ Future Kumo: Bearish');
-            return { signal: 'SELL', reasons };
-        }
+        reasons.push(`✅ Entry Type: Kumo Breakout`);
+        reasons.push(chikouIsBearish ? `✅ Lagging Span Confirmed` : `❌ Lagging Span`);
+        reasons.push(isViBearish ? `✅ VI Confirmed` : `❌ VI Not Bearish`);
+        reasons.push(isObvBearish ? `✅ OBV Confirmed` : `❌ OBV Not Bearish`);
+        if (chikouIsBearish && !isBullishKumo && isViBearish && isObvBearish) return { signal: 'SELL', reasons };
     }
     
-    return { signal: 'HOLD', reasons };
-};
-
-// --- Agent 17: The Detonator (Upgraded with OBV Accumulation) ---
-const getTheDetonatorSignal = (klines: Kline[], config: BotConfig, htfContext?: MarketDataContext): TradeSignal => {
-    const params = config.agentParams as Required<AgentParams>;
-    const minKlines = Math.max(
-        params.det_bb1_len, params.det_bb2_len, params.det_bb3_len, 
-        params.det_ema_slow_len, params.det_rsi_len, params.det_vol_len, params.det_atr_len, params.obvPeriod, 35
-    );
-    if (klines.length < minKlines) return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data.'] };
-
-    const closes = klines.map(k => k.close);
-    const highs = klines.map(k => k.high);
-    const lows = klines.map(k => k.low);
-    const volumes = klines.map(k => k.volume || 0);
-    const lastKline = klines[klines.length - 1];
-    const currentPrice = lastKline.close;
-    const reasons: string[] = [];
-
-    // FIX: Cast result of technical indicator to its correct type.
-    const bb1 = getLast(BollingerBands.calculate({ period: params.det_bb1_len, stdDev: params.det_bb1_dev, values: closes })) as BollingerBandsOutput;
-    // FIX: Cast result of technical indicator to its correct type.
-    const bb2 = getLast(BollingerBands.calculate({ period: params.det_bb2_len, stdDev: params.det_bb2_dev, values: closes })) as BollingerBandsOutput;
-    // FIX: Cast result of technical indicator to its correct type.
-    const bb3 = getLast(BollingerBands.calculate({ period: params.det_bb3_len, stdDev: params.det_bb3_dev, values: closes })) as BollingerBandsOutput;
-    // FIX: Cast result of technical indicator to its correct type.
-    const emaFast = getLast(EMA.calculate({ period: params.det_ema_fast_len, values: closes })) as number;
-    // FIX: Cast result of technical indicator to its correct type.
-    const emaSlow = getLast(EMA.calculate({ period: params.det_ema_slow_len, values: closes })) as number;
-    // FIX: Cast result of technical indicator to its correct type.
-    const rsi = getLast(RSI.calculate({ period: params.det_rsi_len, values: closes })) as number;
-    const obv = OBV.calculate({ close: closes, volume: volumes });
-    const isObvBullish = isObvTrending(obv, 'bullish');
-    const isObvBearish = isObvTrending(obv, 'bearish');
-
-    const bb_bull_count = (currentPrice > bb1.upper ? 1 : 0) + (currentPrice > bb2.upper ? 1 : 0) + (currentPrice > bb3.upper ? 1 : 0);
-    const bb_bear_count = (currentPrice < bb1.lower ? 1 : 0) + (currentPrice < bb2.lower ? 1 : 0) + (currentPrice < bb3.lower ? 1 : 0);
-    reasons.push(`ℹ️ BB Breakout Count: ${bb_bull_count} (Bull), ${bb_bear_count} (Bear)`);
-
-    const trend_ok_long = emaFast > emaSlow && currentPrice > emaFast;
-    const trend_ok_short = emaFast < emaSlow && currentPrice < emaSlow;
-    reasons.push(trend_ok_long ? `✅ Trend: Bullish` : trend_ok_short ? `✅ Trend: Bearish` : `❌ Trend: Sideways`);
-
-    const rsi_ok_long = rsi >= params.det_rsi_thresh;
-    const rsi_ok_short = rsi <= (100 - params.det_rsi_thresh);
-    reasons.push(rsi_ok_long ? `✅ RSI > ${params.det_rsi_thresh}` : `❌ RSI not bullish`);
-    reasons.push(rsi_ok_short ? `✅ RSI < ${100 - params.det_rsi_thresh}` : `❌ RSI not bearish`);
-    
-    const fake_break_long = bb_bull_count >= 2;
-    const fake_break_short = bb_bear_count >= 2;
-
-    if (fake_break_long && trend_ok_long && rsi_ok_long) {
-        reasons.push(isObvBullish ? `✅ OBV Momentum: Confirmed Bullish Pressure` : `❌ OBV Momentum: Lacks Bullish Pressure`);
-        if (isObvBullish) return { signal: 'BUY', reasons };
-    }
-    
-    if (fake_break_short && trend_ok_short && rsi_ok_short) {
-        reasons.push(isObvBearish ? `✅ OBV Momentum: Confirmed Bearish Pressure` : `❌ OBV Momentum: Lacks Bearish Pressure`);
-        if (isObvBearish) return { signal: 'SELL', reasons };
-    }
-
-    return { signal: 'HOLD', reasons };
-};
-
-// --- Agent 18: Candlestick Prophet ---
-const getCandlestickProphetSignal = (klines: Kline[], config: BotConfig, htfContext?: MarketDataContext): TradeSignal => {
-    const params = config.agentParams as Required<AgentParams>;
-    const minKlines = Math.max(params.csp_emaMomentumPeriod, params.obvPeriod, 20);
-    if (klines.length < minKlines) return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data.'] };
-
-    const closes = klines.map(k => k.close);
-    const volumes = klines.map(k => k.volume || 0);
-    const currentPrice = getLast(closes)!;
-    const reasons: string[] = [];
-
-    // FIX: Cast result of technical indicator to its correct type.
-    const emaMomentum = getLast(EMA.calculate({ period: params.csp_emaMomentumPeriod, values: closes })) as number;
-    const obv = OBV.calculate({ close: closes, volume: volumes });
-
-    // Check for Bullish Patterns
-    const { patternInfo: bullishPattern } = findLastCandlestickPattern(klines, 'LONG');
-    if (bullishPattern) {
-        reasons.push(`ℹ️ Bullish Pattern: ${bullishPattern.name} detected.`);
-        const isMomentumConfirmed = currentPrice > emaMomentum;
-        const isVolumeConfirmed = isObvTrending(obv, 'bullish');
-        reasons.push(isMomentumConfirmed ? `✅ Momentum: Bullish (Price > EMA)` : `❌ Momentum: Not Bullish`);
-        reasons.push(isVolumeConfirmed ? `✅ OBV Flow: Bullish` : `❌ OBV Flow: Not Bullish`);
-        if (isMomentumConfirmed && isVolumeConfirmed) {
-            return { signal: 'BUY', reasons };
-        }
-    }
-
-    // Check for Bearish Patterns
-    const { patternInfo: bearishPattern } = findLastCandlestickPattern(klines, 'SHORT');
-    if (bearishPattern) {
-        reasons.push(`ℹ️ Bearish Pattern: ${bearishPattern.name} detected.`);
-        const isMomentumConfirmed = currentPrice < emaMomentum;
-        const isVolumeConfirmed = isObvTrending(obv, 'bearish');
-        reasons.push(isMomentumConfirmed ? `✅ Momentum: Bearish (Price < EMA)` : `❌ Momentum: Not Bearish`);
-        reasons.push(isVolumeConfirmed ? `✅ OBV Flow: Bearish` : `❌ OBV Flow: Not Bearish`);
-        if (isMomentumConfirmed && isVolumeConfirmed) {
-            return { signal: 'SELL', reasons };
-        }
-    }
-
-    return { signal: 'HOLD', reasons: ['ℹ️ No valid, confirmed candlestick pattern found.'] };
+    return { signal: 'HOLD', reasons: ['ℹ️ No valid Ichimoku signal.'] };
 };
 
 export const validateTradeProfitability = (
@@ -1722,7 +1225,7 @@ export const validateTradeProfitability = (
     if (config.isMinRrEnabled) {
         const risk = Math.abs(entryPrice - stopLossPrice);
         const reward = Math.abs(takeProfitPrice - entryPrice);
-        const rrRatio = risk > 0 ? reward / risk : Infinity;
+        const rrRatio = risk > 0 ? reward / risk : 0;
 
         if (rrRatio < constants.MIN_RISK_REWARD_RATIO) {
             return { isValid: false, reason: `❌ VETO: Final Risk/Reward ratio (${rrRatio.toFixed(2)}) is below the system minimum of ${constants.MIN_RISK_REWARD_RATIO}.` };
@@ -1791,48 +1294,7 @@ export function getAdaptiveTakeProfit(
         return {};
     }
 
-    const isLong = direction === 'LONG';
-    // Prioritize HTF market structure for ambitious targets
-    const analysisKlines = htfKlines && htfKlines.length > 50 ? htfKlines : klines;
-
-    // Use a wider lookback for more significant levels
-    const { supports, resistances } = calculateSupportResistance(analysisKlines, 20);
-
-    let newTakeProfit: number | undefined;
-
-    if (isLong) {
-        // Find the next resistance level *beyond* the current one.
-        const potentialTps = resistances.filter(r => r > takeProfitPrice);
-        if (potentialTps.length > 0) {
-            // Target the closest one.
-            newTakeProfit = Math.min(...potentialTps);
-        }
-    } else { // SHORT
-        // Find the next support level *beyond* the current one.
-        const potentialTps = supports.filter(s => s < takeProfitPrice);
-        if (potentialTps.length > 0) {
-            // Target the closest one.
-            newTakeProfit = Math.max(...potentialTps);
-        }
-    }
-
-    if (newTakeProfit) {
-        const risk = position.initialRiskInPrice;
-        const newReward = Math.abs(newTakeProfit - entryPrice);
-        const newRr = risk > 0 ? newReward / risk : Infinity;
-        const currentReward = Math.abs(takeProfitPrice - entryPrice);
-        const currentRr = risk > 0 ? currentReward/risk : Infinity;
-
-        // Only move the TP if the new target offers a significantly better R:R.
-        if (newRr > currentRr + 0.5) { // e.g., move from 2R to at least 2.5R
-            // Apply a small buffer to avoid front-running the level
-            const bufferedTp = isLong ? newTakeProfit * 0.999 : newTakeProfit * 1.001;
-            return {
-                newTakeProfit: bufferedTp,
-                reason: `Adaptive TP: HTF trend strong, aiming for next S/R level.`,
-            };
-        }
-    }
+    // HTF logic is not implemented yet, so return empty for now.
     
     return {};
 }
@@ -1854,15 +1316,11 @@ export const getTradingSignal = async (
     let signal: TradeSignal;
 
     switch (agent.id) {
-        case 7:  signal = getMarketStructureMavenSignal(klines, config, htfContext); break;
         case 9:  signal = getQuantumScalperSignal(klines, config, htfContext); break;
         case 11: signal = getHistoricExpertSignal(klines, config, htfContext); break;
         case 13: signal = getChameleonSignal(klines, config, htfContext); break;
         case 14: signal = getTheSentinelSignal(klines, config, htfContext); break;
-        case 15: signal = getInstitutionalFlowTracerSignal(klines, config, htfContext); break;
         case 16: signal = getIchimokuTrendRiderSignal(klines, config, htfContext); break;
-        case 17: signal = getTheDetonatorSignal(klines, config, htfContext); break;
-        case 18: signal = getCandlestickProphetSignal(klines, config, htfContext); break;
         default: signal = { signal: 'HOLD', reasons: ['Agent not found'] }; break;
     }
 
@@ -1952,7 +1410,7 @@ export function captureMarketContext(klines: Kline[], htfKlines?: Kline[]): Mark
             const htfEma50 = getLast(EMA.calculate({ period: 50, values: htfCloses }));
             if (htfEma50) {
                  // FIX: Cast result of technical indicator to its correct type.
-                 context.htf_trend = (getLast(htfCloses) as number) > htfEma50 ? 'bullish' : 'bearish';
+                 context.htf_trend = (getLast(htfCloses) as number) > (htfEma50 as number) ? 'bullish' : 'bearish';
             }
         }
     } catch (e) {

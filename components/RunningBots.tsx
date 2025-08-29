@@ -164,15 +164,6 @@ const BotConfigDetails: React.FC<{ bot: RunningBot; onUpdate: (change: Partial<B
                 checked={config.isInvalidationCheckEnabled ?? false}
                 onChange={(checked) => onUpdate({ isInvalidationCheckEnabled: checked })}
             />
-            {config.agent.id === 7 && (
-                 <ConfigToggle
-                    label="Candlestick Confirmation"
-                    description="Requires candle pattern for entry"
-                    tooltip="Affects the NEXT trade only."
-                    checked={config.agentParams?.isCandleConfirmationEnabled ?? false}
-                    onChange={(checked) => onUpdate({ agentParams: { ...config.agentParams, isCandleConfirmationEnabled: checked } })}
-                />
-            )}
         </div>
     </div>
 )};
@@ -236,7 +227,7 @@ interface StopLossDetailsProps {
 const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) => {
     const {
         stopLossPrice, initialStopLossPrice, activeStopLossReason, pricePrecision,
-        profitLockTier, isBreakevenSet
+        profitLockTier, isBreakevenSet, profitSpikeTier
     } = position;
 
     const isBreakevenActive = activeStopLossReason === 'Breakeven';
@@ -244,15 +235,26 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
     const isAgentTrailActive = activeStopLossReason === 'Agent Trail';
     
     const isUniversalTrailEnabled = config.isUniversalProfitTrailEnabled;
+    const isSpikeProtectorEnabled = config.isInvalidationCheckEnabled;
 
     const universalTrailStatus = useMemo(() => {
         if (!isUniversalTrailEnabled) return { text: 'Disabled by user', className: 'bg-slate-200 dark:bg-slate-600' };
-        if (isProfitSecureActive) {
-            const tier = profitLockTier >= 4 ? profitLockTier - 2 : 0;
+        if (isProfitSecureActive && profitLockTier > 3) {
+            const tier = profitLockTier - 3;
             return { text: tier > 0 ? `Tier ${tier} Active` : 'Active', className: 'bg-teal-500 text-white' };
         }
+        if (isBreakevenSet) return { text: 'Breakeven', className: 'bg-sky-500 text-white' };
         return { text: 'Enabled', className: 'bg-slate-500 dark:bg-slate-400 text-white dark:text-slate-900' };
-    }, [isUniversalTrailEnabled, isProfitSecureActive, profitLockTier]);
+    }, [isUniversalTrailEnabled, isProfitSecureActive, isBreakevenSet, profitLockTier]);
+    
+    const spikeProtectorStatus = useMemo(() => {
+        if (!isSpikeProtectorEnabled) return { text: 'Disabled by user', className: 'bg-slate-200 dark:bg-slate-600' };
+        if (profitSpikeTier && profitSpikeTier > 0) {
+             return { text: `Tier ${profitSpikeTier} Active`, className: 'bg-purple-500 text-white' };
+        }
+        return { text: 'Enabled', className: 'bg-slate-500 dark:bg-slate-400 text-white dark:text-slate-900' };
+    }, [isSpikeProtectorEnabled, profitSpikeTier]);
+
 
     const agentTrailStatus = useMemo(() => {
         if (isAgentTrailActive) {
@@ -276,21 +278,21 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
                     <span className="font-bold font-mono bg-slate-200 dark:bg-slate-700 px-2 py-1 rounded-md">{formatPrice(stopLossPrice, pricePrecision)}</span>
                 </div>
 
-                <div className={`p-2 rounded-md ${isBreakevenActive ? 'bg-sky-100 dark:bg-sky-900 border border-sky-300 dark:border-sky-700' : ''}`}>
+                <div className={`p-2 rounded-md ${isProfitSecureActive && profitSpikeTier && profitSpikeTier > 0 ? 'bg-purple-100 dark:bg-purple-900 border border-purple-300 dark:border-purple-700' : ''}`}>
                     <div className="flex justify-between items-center">
-                        <span className={isBreakevenActive ? 'font-semibold text-sky-700 dark:text-sky-300' : 'font-medium'}>
-                            Mandatory Breakeven
-                        </span>
-                        <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${isBreakevenSet ? 'bg-sky-500 text-white' : 'bg-slate-200 dark:bg-slate-600'}`}>
-                            {isBreakevenSet ? 'Risk-Free' : 'Pending'}
-                        </span>
+                         <div className="flex items-center gap-1">
+                            <ZapIcon className="w-4 h-4 text-purple-600 dark:text-purple-400"/>
+                            <span className={profitSpikeTier && profitSpikeTier > 0 ? 'font-semibold text-purple-700 dark:text-purple-300' : 'font-medium'}>
+                                Spike Protector
+                            </span>
+                         </div>
+                         <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${spikeProtectorStatus.className}`}>
+                            {spikeProtectorStatus.text}
+                         </span>
                     </div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                        System rule. Secures trade once profit exceeds 3x fee.
-                    </p>
                 </div>
 
-                <div className={`p-2 rounded-md ${isProfitSecureActive ? 'bg-teal-100 dark:bg-teal-900 border border-teal-300 dark:border-teal-700' : ''}`}>
+                <div className={`p-2 rounded-md ${isProfitSecureActive && !(profitSpikeTier && profitSpikeTier > 0) ? 'bg-teal-100 dark:bg-teal-900 border border-teal-300 dark:border-teal-700' : ''}`}>
                     <div className="flex justify-between items-center">
                          <span className={isProfitSecureActive ? 'font-semibold text-teal-700 dark:text-teal-300' : 'font-medium'}>
                             Universal Profit Trail

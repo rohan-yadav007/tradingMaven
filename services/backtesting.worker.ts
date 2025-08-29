@@ -359,27 +359,15 @@ async function runOptimization(
     const { agent } = baseConfig;
     let paramRanges: Record<string, (number | boolean)[]> = {};
     switch (agent.id) {
-        case 7: paramRanges = { msm_htfEmaPeriod: [50, 80, 120], msm_swingPointLookback: [5, 10, 15], isCandleConfirmationEnabled: [false, true] }; break;
-        case 9: paramRanges = { qsc_adxThreshold: [22, 25, 28], viPeriod: [10, 14, 20], qsc_vwapDeviationPercent: [0.1, 0.2, 0.35] }; break;
+        case 9: paramRanges = { qsc_adxThreshold: [22, 25, 28], viPeriod: [10, 14, 20] }; break;
         case 11: paramRanges = { he_trendSmaPeriod: [20, 30, 40], he_fastEmaPeriod: [7, 9, 12], he_slowEmaPeriod: [20, 25], he_rsiPeriod: [10, 14], he_rsiMidline: [48, 50, 52] }; break;
-        case 13: paramRanges = { ichi_conversionPeriod: [7, 9, 12], ichi_basePeriod: [22, 26, 30], viPeriod: [10, 14, 20] }; break;
-        case 16: paramRanges = { ichi_conversionPeriod: [7, 9, 12], ichi_basePeriod: [22, 26, 30] }; break;
+        case 13: 
+            paramRanges = {
+                ch_adxThreshold: [20, 22, 25],
+                ch_kst_signalPeriod: [7, 9, 12]
+            };
+            break;
         case 14: paramRanges = { sentinel_scoreThreshold: [65, 70, 75], viPeriod: [10, 14, 20] }; break;
-        case 15: paramRanges = { vwap_emaTrendPeriod: [100, 150, 200], vwap_proximityPercent: [0.1, 0.2, 0.3] }; break;
-        case 17: // The Detonator
-            paramRanges = {
-                det_rsi_thresh: [52, 55, 60],
-                det_vol_mult: [1.5, 2.0, 2.5],
-                det_sl_atr_mult: [0.9, 1.2, 1.5],
-                det_rr_mult: [1.6, 2.0, 2.5],
-                det_bb_margin_pct: [0.05, 0.08, 0.12],
-            };
-            break;
-        case 18: // Candlestick Prophet
-            paramRanges = {
-                csp_emaMomentumPeriod: [10, 14, 21],
-            };
-            break;
         default: throw new Error(`Agent "${agent.name}" does not support optimization.`);
     }
     const paramCombinations = generateParamCombinations(paramRanges);

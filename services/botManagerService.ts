@@ -561,57 +561,61 @@ class BotInstance {
 
     private async managePositionOnTick(currentPrice: number) {
         if (!this.bot.openPosition || !this.handlers) return;
-
-        let updatedPosition: Position = { ...this.bot.openPosition };
-        const isLong = updatedPosition.direction === 'LONG';
-        let hasUpdate = false;
-
-        // --- Live P&L and MFE/MAE tracking ---
-        const isInProfit = isLong ? currentPrice > updatedPosition.entryPrice : currentPrice < updatedPosition.entryPrice;
-        if (!updatedPosition.hasBeenProfitable && isInProfit) {
-            updatedPosition.hasBeenProfitable = true;
-            hasUpdate = true;
+    
+        let positionState: Position = { ...this.bot.openPosition };
+        const isLong = positionState.direction === 'LONG';
+        let hasChanged = false;
+    
+        // --- 1. Live P&L and MFE/MAE tracking ---
+        const isInProfit = isLong ? currentPrice > positionState.entryPrice : currentPrice < positionState.entryPrice;
+        if (!positionState.hasBeenProfitable && isInProfit) {
+            positionState.hasBeenProfitable = true;
+            hasChanged = true;
         }
-        const currentPeak = updatedPosition.peakPrice ?? updatedPosition.entryPrice;
+        const currentPeak = positionState.peakPrice ?? positionState.entryPrice;
         if ((isLong && currentPrice > currentPeak) || (!isLong && currentPrice < currentPeak)) {
-            updatedPosition.peakPrice = currentPrice;
-            hasUpdate = true;
+            positionState.peakPrice = currentPrice;
+            hasChanged = true;
         }
-        const currentTrough = updatedPosition.troughPrice ?? updatedPosition.entryPrice;
+        const currentTrough = positionState.troughPrice ?? positionState.entryPrice;
         if ((isLong && currentPrice < currentTrough) || (!isLong && currentPrice > currentTrough)) {
-            updatedPosition.troughPrice = currentPrice;
-            hasUpdate = true;
+            positionState.troughPrice = currentPrice;
+            hasChanged = true;
         }
-
-        // --- IMMEDIATE, PRICE-DRIVEN SL MANAGEMENT ---
+    
+        // --- 2. Sequential, State-Updating SL Management ---
         const potentialStops: { price: number; reason: Position['activeStopLossReason']; newState?: any }[] = [];
-        potentialStops.push({ price: updatedPosition.stopLossPrice, reason: updatedPosition.activeStopLossReason });
-
-        // NEW: Tier -1: Profit Spike Protector (Hyper-Reactive, NON-NEGOTIABLE)
-        // Controlled by the "Proactive Exit & Invalidation" toggle for simplicity
+        potentialStops.push({ price: positionState.stopLossPrice, reason: positionState.activeStopLossReason });
+    
+        // Step A: Spike Protector (updates positionState immediately if triggered)
         if (this.bot.config.isInvalidationCheckEnabled) {
-            const spikeSignal = getProfitSpikeSignal(updatedPosition, currentPrice);
-            if (spikeSignal.newStopLoss) {
-                potentialStops.push({
-                    price: spikeSignal.newStopLoss,
-                    reason: 'Profit Secure', // Use a consistent reason for UI
-                    newState: spikeSignal.newState
-                });
+            const spikeSignal = getProfitSpikeSignal(positionState, currentPrice);
+            if (spikeSignal.newStopLoss && spikeSignal.newState) {
+                potentialStops.push({ price: spikeSignal.newStopLoss, reason: 'Profit Secure' });
+                positionState = { ...positionState, ...spikeSignal.newState };
+                hasChanged = true;
             }
         }
-
-        // Tier 0: Mandatory Breakeven (NON-NEGOTIABLE & IMMEDIATE)
-        const mandatoryBreakevenSignal = getMandatoryBreakevenSignal(updatedPosition, currentPrice);
-        if (mandatoryBreakevenSignal.newStopLoss) {
-            potentialStops.push({
-                price: mandatoryBreakevenSignal.newStopLoss,
-                reason: 'Breakeven',
-                newState: mandatoryBreakevenSignal.newState
-            });
+        
+        // Step B: Mandatory Breakeven (updates positionState immediately if triggered)
+        const breakevenSignal = getMandatoryBreakevenSignal(positionState, currentPrice);
+        if (breakevenSignal.newStopLoss && breakevenSignal.newState) {
+            potentialStops.push({ price: breakevenSignal.newStopLoss, reason: 'Breakeven' });
+            positionState = { ...positionState, ...breakevenSignal.newState };
+            hasChanged = true;
         }
         
-        // --- COMPETING TRAILING STOPS ---
-        // The Agent Trail provides the baseline trailing stop.
+        // Step C: Universal Profit Trail (competing)
+        if (this.bot.config.isUniversalProfitTrailEnabled) {
+            const profitSecureSignal = getMultiStageProfitSecureSignal(positionState, currentPrice);
+            if (profitSecureSignal.newStopLoss && profitSecureSignal.newState) {
+                potentialStops.push({ price: profitSecureSignal.newStopLoss, reason: 'Profit Secure' });
+                positionState = { ...positionState, ...profitSecureSignal.newState };
+                hasChanged = true;
+            }
+        }
+        
+        // Step D: Agent Trail (competing)
         const lastFinalKline = this.klines[this.klines.length - 1];
         if (lastFinalKline) {
             const previewKline: Kline = {
@@ -622,50 +626,31 @@ class BotInstance {
                 isFinal: false,
             };
             const klinesForAnalysis = [...this.klines.slice(0, -1), previewKline];
-            const agentTrailSignal = getAgentExitSignal(updatedPosition, klinesForAnalysis, currentPrice, this.bot.config);
+            const agentTrailSignal = getAgentExitSignal(positionState, klinesForAnalysis, currentPrice, this.bot.config);
             if (agentTrailSignal.newStopLoss) {
                 potentialStops.push({ price: agentTrailSignal.newStopLoss, reason: 'Agent Trail' });
             }
         }
-
-        // The Universal Profit Trail can override the agent's trail if it's tighter and enabled.
-        if (this.bot.config.isUniversalProfitTrailEnabled) {
-            const profitSecureSignal = getMultiStageProfitSecureSignal(updatedPosition, currentPrice);
-            if (profitSecureSignal.newStopLoss) {
-                potentialStops.push({
-                    price: profitSecureSignal.newStopLoss,
-                    reason: 'Profit Secure',
-                    newState: profitSecureSignal.newState
-                });
-            }
-        }
         
-        // Determine the best (tightest) valid stop loss from all candidates.
+        // --- 3. Final Selection and Application ---
         let bestStop = potentialStops[0];
-        for (let i = 1; i < potentialStops.length; i++) {
-            const candidate = potentialStops[i];
+        for (const candidate of potentialStops) {
             const isTighter = isLong ? candidate.price > bestStop.price : candidate.price < bestStop.price;
-            if (isTighter) {
+            const isValid = isLong ? candidate.price < currentPrice : candidate.price > currentPrice;
+            if (isTighter && isValid) {
                 bestStop = candidate;
             }
         }
-
-        // Apply the best stop if it's an improvement and valid (not crossing the current price).
-        if (bestStop.price !== updatedPosition.stopLossPrice) {
-            const isValid = isLong ? bestStop.price < currentPrice : bestStop.price > currentPrice;
-            if (isValid) {
-                updatedPosition.stopLossPrice = bestStop.price;
-                updatedPosition.activeStopLossReason = bestStop.reason;
-                if (bestStop.newState) {
-                    updatedPosition = { ...updatedPosition, ...bestStop.newState };
-                }
-                hasUpdate = true;
-                this.addLog(`Trailing SL (Tick) updated to ${bestStop.price.toFixed(this.bot.config.pricePrecision)}. Reason: ${bestStop.reason}.`, LogType.Info);
-            }
+    
+        if (bestStop.price !== positionState.stopLossPrice) {
+            this.addLog(`Trailing SL (Tick) updated to ${bestStop.price.toFixed(this.bot.config.pricePrecision)}. Reason: ${bestStop.reason}.`, LogType.Info);
+            positionState.stopLossPrice = bestStop.price;
+            positionState.activeStopLossReason = bestStop.reason;
+            hasChanged = true;
         }
         
-        if (hasUpdate) {
-            this.updateState({ openPosition: updatedPosition });
+        if (hasChanged) {
+            this.updateState({ openPosition: positionState });
         }
     }
 

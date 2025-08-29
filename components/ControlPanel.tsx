@@ -1,12 +1,6 @@
-
-
-
-
-
-
-
 import React, { useState, useEffect, useMemo } from 'react';
-import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig } from '../types';
+// FIX: Import 'Agent' type.
+import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig, Agent } from '../types';
 import * as constants from '../constants';
 import { PlayIcon, LockIcon, UnlockIcon, CpuIcon, ChevronDown, ChevronUp } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
@@ -16,7 +10,8 @@ import { useTradingConfigState, useTradingConfigActions } from '../contexts/Trad
 
 interface ControlPanelProps {
     onStartBot: () => void;
-    isBotCombinationActive: boolean;
+    botsToCreateCount: number;
+    selectedPairsCount: number;
     theme: 'light' | 'dark';
     klines: Kline[];
     livePrice: number;
@@ -151,16 +146,100 @@ const RiskInputWithLock: React.FC<{
     );
 };
 
+const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParamsChange: (p: AgentParams) => void}> = ({ agent, params, onParamsChange }) => {
+    const allParams: Required<AgentParams> = {...constants.DEFAULT_AGENT_PARAMS, ...params};
+    const updateParam = (key: keyof AgentParams, value: number | boolean | string) => { onParamsChange({ ...params, [key]: value }); };
+    switch (agent.id) {
+        case 9: return (<div className="space-y-4">
+            <div className="flex flex-col gap-1.5">
+                <label className={formLabelClass}>Entry Mode</label>
+                <div className="flex items-center gap-1 p-1 bg-slate-200 dark:bg-slate-900/70 rounded-md mt-1">
+                    <button 
+                        onClick={() => updateParam('qsc_entryMode', 'breakout')} 
+                        className={`flex-1 text-center text-xs font-semibold p-1.5 rounded-md transition-colors ${ (allParams.qsc_entryMode ?? 'breakout') === 'breakout' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
+                    >
+                        Breakout
+                    </button>
+                    <button 
+                        onClick={() => updateParam('qsc_entryMode', 'pullback')}
+                        className={`flex-1 text-center text-xs font-semibold p-1.5 rounded-md transition-colors ${ allParams.qsc_entryMode === 'pullback' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
+                    >
+                        Pullback
+                    </button>
+                </div>
+            </div>
+            <ParamSlider label="ADX Trend Threshold" value={allParams.qsc_adxThreshold} onChange={v => updateParam('qsc_adxThreshold', v)} min={20} max={40} step={1} />
+            {(allParams.qsc_entryMode ?? 'breakout') === 'breakout' ? (
+                <ParamSlider label="RSI Crossover Threshold" value={allParams.qsc_rsiMomentumThreshold} onChange={v => updateParam('qsc_rsiMomentumThreshold', v)} min={51} max={70} step={1} />
+            ) : (
+                <ParamSlider label="RSI Pullback Threshold" value={allParams.qsc_rsiPullbackThreshold} onChange={v => updateParam('qsc_rsiPullbackThreshold', v)} min={30} max={49} step={1} />
+            )}
+            <ParamSlider label="Volume Exhaustion Veto" value={allParams.qsc_volumeExhaustionMultiplier!} onChange={v => updateParam('qsc_volumeExhaustionMultiplier', v)} min={1.5} max={5.0} step={0.1} valueDisplay={v => `${v.toFixed(1)}x Avg`} />
+            <ParamSlider label="Entry Score Threshold" value={allParams.qsc_trendScoreThreshold} onChange={v => updateParam('qsc_trendScoreThreshold', v)} min={50} max={95} step={1} valueDisplay={v => `${v}%`} />
+            </div>);
+        case 11: return (<div className="space-y-4">
+            <ParamSlider label="Trend SMA Period" value={allParams.he_trendSmaPeriod} onChange={v => updateParam('he_trendSmaPeriod', v)} min={20} max={50} step={1} />
+            <ParamSlider label="Fast EMA Period" value={allParams.he_fastEmaPeriod} onChange={v => updateParam('he_fastEmaPeriod', v)} min={5} max={20} step={1} />
+            <ParamSlider label="Slow EMA Period" value={allParams.he_slowEmaPeriod} onChange={v => updateParam('he_slowEmaPeriod', v)} min={20} max={50} step={1} />
+            <ParamSlider label="RSI Midline" value={allParams.he_rsiMidline} onChange={v => updateParam('he_rsiMidline', v)} min={40} max={60} step={1} />
+            </div>);
+        case 13: 
+             return (<div className="space-y-4">
+                 <ParamSlider 
+                    label="Trend EMA Period"
+                    value={allParams.ch_trendEmaPeriod}
+                    onChange={(v) => updateParam('ch_trendEmaPeriod', v)}
+                    min={50} max={200} step={10}
+                />
+                <ParamSlider 
+                    label="ADX Threshold"
+                    value={allParams.ch_adxThreshold}
+                    onChange={(v) => updateParam('ch_adxThreshold', v)}
+                    min={18} max={30} step={1}
+                />
+                 <ParamSlider 
+                    label="Fast EMA Period"
+                    value={allParams.ch_fastEmaPeriod}
+                    onChange={(v) => updateParam('ch_fastEmaPeriod', v)}
+                    min={5} max={20} step={1}
+                />
+                <ParamSlider 
+                    label="Slow EMA Period"
+                    value={allParams.ch_slowEmaPeriod}
+                    onChange={(v) => updateParam('ch_slowEmaPeriod', v)}
+                    min={20} max={50} step={1}
+                />
+                <ParamSlider 
+                    label="KST Signal Period"
+                    value={allParams.ch_kst_signalPeriod}
+                    onChange={(v) => updateParam('ch_kst_signalPeriod', v)}
+                    min={3} max={20} step={1}
+                />
+            </div>);
+        case 14: 
+            return (<div className="space-y-4">
+                 <ParamSlider 
+                    label="Entry Score Threshold" 
+                    value={allParams.sentinel_scoreThreshold}
+                    onChange={(v) => updateParam('sentinel_scoreThreshold', v)}
+                    min={50} max={95} step={1}
+                    valueDisplay={(v) => `${v}%`}
+                 />
+            </div>);
+        default: return <p className="text-sm text-slate-500">This agent does not have any customizable parameters.</p>;
+    }
+};
+
 export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
     const {
-        onStartBot, isBotCombinationActive, theme, klines, livePrice
+        onStartBot, botsToCreateCount, selectedPairsCount, theme, klines, livePrice
     } = props;
     
     const config = useTradingConfigState();
     const actions = useTradingConfigActions();
     
     const {
-        executionMode, availableBalance, tradingMode, allPairs, selectedPair,
+        executionMode, availableBalance, tradingMode, allPairs, selectedPairs,
         isPairsLoading, leverage, chartTimeFrame: timeFrame, selectedAgent, investmentAmount,
         takeProfitMode, takeProfitValue,
         isTakeProfitLocked, agentParams,
@@ -171,7 +250,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
     } = config;
 
     const {
-        setExecutionMode, setTradingMode, setSelectedPair, setLeverage, setTimeFrame,
+        setExecutionMode, setTradingMode, setSelectedPairs, setLeverage, setTimeFrame,
         setSelectedAgent, setInvestmentAmount,
         setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
         setMarginType, onSetMultiAssetMode, setAgentParams,
@@ -199,8 +278,9 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
     }, [timeFrame, htfTimeFrame, higherTimeFrames, setHtfTimeFrame]);
 
     useEffect(() => {
+        const analysisPair = selectedPairs[0];
         const fetchAnalysis = async () => {
-            if (klines.length > 0 && livePrice > 0) {
+            if (analysisPair && klines.length > 0 && livePrice > 0) {
                 setIsAnalysisLoading(true);
 
                 // Construct a preview kline array with the latest live price to ensure real-time analysis
@@ -216,7 +296,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
 
                 try {
                     const previewConfig: BotConfig = {
-                        pair: config.selectedPair,
+                        pair: analysisPair,
                         mode: config.tradingMode,
                         executionMode: config.executionMode,
                         leverage: config.leverage,
@@ -248,20 +328,23 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 } finally {
                     setIsAnalysisLoading(false);
                 }
+            } else {
+                setAnalysisSignal(null);
             }
         };
         fetchAnalysis();
-    }, [selectedAgent, klines, timeFrame, agentParams, config, livePrice]);
+    }, [selectedAgent, klines, timeFrame, agentParams, config, livePrice, selectedPairs]);
 
     useEffect(() => {
         const updateSmartTargets = () => {
-            if (klines.length < 50 || isTakeProfitLocked) return;
+            const analysisPair = selectedPairs[0];
+            if (!analysisPair || klines.length < 50 || isTakeProfitLocked) return;
 
             const currentPrice = klines[klines.length - 1].close;
             if (currentPrice <= 0) return;
             
             const { stopLossPrice, takeProfitPrice } = getInitialAgentTargets(klines, currentPrice, 'LONG', {
-                pair: selectedPair,
+                pair: analysisPair,
                 mode: tradingMode,
                 executionMode: executionMode,
                 leverage: leverage,
@@ -296,9 +379,16 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         updateSmartTargets();
     }, [
         klines, isTakeProfitLocked, selectedAgent, timeFrame, agentParams, 
-        investmentAmount, takeProfitMode, setTakeProfitValue, tradingMode, leverage, selectedPair, executionMode
+        investmentAmount, takeProfitMode, setTakeProfitValue, tradingMode, leverage, selectedPairs, executionMode
     ]);
     
+    const getButtonText = () => {
+        if (selectedPairsCount === 0) return 'Select One or More Markets';
+        if (botsToCreateCount === 0 && selectedPairsCount > 0) return 'Bot(s) Already Running';
+        const plural = botsToCreateCount > 1 ? 's' : '';
+        return `Start ${botsToCreateCount} Trading Bot${plural}`;
+    };
+
     return (
         <div className="flex flex-col gap-4">
              <div className="flex flex-col gap-2 p-3 bg-slate-100 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg">
@@ -317,11 +407,12 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             </div>
             
             <div className={formGroupClass}>
-                <label htmlFor="market-pair" className={formLabelClass}>Market</label>
+                <label htmlFor="market-pair" className={formLabelClass}>Market(s)</label>
                 <SearchableDropdown
+                    isMulti
                     options={allPairs}
-                    value={selectedPair}
-                    onChange={setSelectedPair}
+                    value={selectedPairs}
+                    onChange={(newPairs) => setSelectedPairs(newPairs as string[])}
                     theme={theme}
                     disabled={isPairsLoading}
                 />
@@ -339,7 +430,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
              <div className={formGroupClass}>
                 <div className="flex justify-between items-baseline">
                     <label htmlFor="investment-amount" className={formLabelClass}>
-                        Investment Amount
+                        Investment Amount (per bot)
                     </label>
                     {executionMode === 'live' && (
                         <span className="text-xs text-slate-500 dark:text-slate-400">
@@ -459,152 +550,24 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     {constants.AGENTS.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
                 </select>
                 <p className="text-xs text-slate-500 dark:text-slate-400">{selectedAgent.description}</p>
-                 {selectedAgent.id === 7 && (
-                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-200 dark:border-slate-700">
-                        <label htmlFor="candle-confirm-toggle" className={formLabelClass}>
-                            Candlestick Confirmation
-                        </label>
-                        <ToggleSwitch
-                            checked={agentParams.isCandleConfirmationEnabled || false}
-                            onChange={(isChecked) => setAgentParams({ ...agentParams, isCandleConfirmationEnabled: isChecked })}
-                        />
-                    </div>
-                )}
                  {selectedAgent.id === 9 && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-4">
-                        <div>
-                            <label className={formLabelClass}>Entry Mode</label>
-                            <div className="flex items-center gap-1 p-1 bg-slate-200 dark:bg-slate-900/70 rounded-md mt-1">
-                                <button 
-                                    onClick={() => setAgentParams({ ...agentParams, qsc_entryMode: 'breakout' })} 
-                                    className={`flex-1 text-center text-xs font-semibold p-1.5 rounded-md transition-colors ${ (agentParams.qsc_entryMode ?? 'breakout') === 'breakout' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
-                                >
-                                    Breakout
-                                </button>
-                                <button 
-                                    onClick={() => setAgentParams({ ...agentParams, qsc_entryMode: 'pullback' })}
-                                    className={`flex-1 text-center text-xs font-semibold p-1.5 rounded-md transition-colors ${ agentParams.qsc_entryMode === 'pullback' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
-                                >
-                                    Pullback
-                                </button>
-                            </div>
-                        </div>
-                        <ParamSlider 
-                            label="ADX Trend Threshold" 
-                            value={agentParams.qsc_adxThreshold ?? constants.DEFAULT_AGENT_PARAMS.qsc_adxThreshold}
-                            onChange={(v) => setAgentParams({ ...agentParams, qsc_adxThreshold: v })}
-                            min={20} max={40} step={1}
-                        />
-                        {(agentParams.qsc_entryMode ?? 'breakout') === 'breakout' ? (
-                            <ParamSlider 
-                                label="RSI Crossover Threshold" 
-                                value={agentParams.qsc_rsiMomentumThreshold ?? constants.DEFAULT_AGENT_PARAMS.qsc_rsiMomentumThreshold}
-                                onChange={(v) => setAgentParams({ ...agentParams, qsc_rsiMomentumThreshold: v })}
-                                min={51} max={70} step={1}
-                            />
-                        ) : (
-                            <ParamSlider 
-                                label="RSI Pullback Threshold" 
-                                value={agentParams.qsc_rsiPullbackThreshold ?? constants.DEFAULT_AGENT_PARAMS.qsc_rsiPullbackThreshold}
-                                onChange={(v) => setAgentParams({ ...agentParams, qsc_rsiPullbackThreshold: v })}
-                                min={30} max={49} step={1}
-                            />
-                        )}
-                        <ParamSlider 
-                            label="Volume Exhaustion Veto" 
-                            value={agentParams.qsc_volumeExhaustionMultiplier ?? constants.DEFAULT_AGENT_PARAMS.qsc_volumeExhaustionMultiplier}
-                            onChange={(v) => setAgentParams({ ...agentParams, qsc_volumeExhaustionMultiplier: v })}
-                            min={1.5} max={5.0} step={0.1}
-                            valueDisplay={(v) => `${v.toFixed(1)}x Avg`}
-                        />
-                        <ParamSlider 
-                            label="Entry Score Threshold" 
-                            value={agentParams.qsc_trendScoreThreshold ?? constants.DEFAULT_AGENT_PARAMS.qsc_trendScoreThreshold}
-                            onChange={(v) => setAgentParams({ ...agentParams, qsc_trendScoreThreshold: v })}
-                            min={50} max={95} step={1}
-                            valueDisplay={(v) => `${v}%`}
-                        />
+                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} />
                     </div>
                 )}
                  {selectedAgent.id === 13 && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
-                         <ParamSlider 
-                            label="Trend EMA Period"
-                            value={agentParams.ch_trendEmaPeriod ?? constants.DEFAULT_AGENT_PARAMS.ch_trendEmaPeriod}
-                            onChange={(v) => setAgentParams({ ...agentParams, ch_trendEmaPeriod: v })}
-                            min={50} max={200} step={10}
-                        />
-                        <ParamSlider 
-                            label="ADX Threshold"
-                            value={agentParams.ch_adxThreshold ?? constants.DEFAULT_AGENT_PARAMS.ch_adxThreshold}
-                            onChange={(v) => setAgentParams({ ...agentParams, ch_adxThreshold: v })}
-                            min={18} max={30} step={1}
-                        />
-                         <ParamSlider 
-                            label="Fast EMA Period"
-                            value={agentParams.ch_fastEmaPeriod ?? constants.DEFAULT_AGENT_PARAMS.ch_fastEmaPeriod}
-                            onChange={(v) => setAgentParams({ ...agentParams, ch_fastEmaPeriod: v })}
-                            min={5} max={20} step={1}
-                        />
-                        <ParamSlider 
-                            label="Slow EMA Period"
-                            value={agentParams.ch_slowEmaPeriod ?? constants.DEFAULT_AGENT_PARAMS.ch_slowEmaPeriod}
-                            onChange={(v) => setAgentParams({ ...agentParams, ch_slowEmaPeriod: v })}
-                            min={20} max={50} step={1}
-                        />
-                        <ParamSlider 
-                            label="KST Signal Period"
-                            value={agentParams.ch_kst_signalPeriod ?? constants.DEFAULT_AGENT_PARAMS.ch_kst_signalPeriod}
-                            onChange={(v) => setAgentParams({ ...agentParams, ch_kst_signalPeriod: v })}
-                            min={3} max={20} step={1}
-                        />
+                         <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} />
                     </div>
                 )}
                  {selectedAgent.id === 14 && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700">
-                         <ParamSlider 
-                            label="Entry Score Threshold" 
-                            value={agentParams.sentinel_scoreThreshold ?? constants.DEFAULT_AGENT_PARAMS.sentinel_scoreThreshold}
-                            onChange={(v) => setAgentParams({ ...agentParams, sentinel_scoreThreshold: v })}
-                            min={50}
-                            max={95}
-                            step={1}
-                            valueDisplay={(v) => `${v}%`}
-                         />
+                         <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} />
                     </div>
                 )}
-                {selectedAgent.id === 15 && (
+                {selectedAgent.id === 11 && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
-                        <ParamSlider 
-                            label="Trend EMA Period"
-                            value={agentParams.vwap_emaTrendPeriod ?? constants.DEFAULT_AGENT_PARAMS.vwap_emaTrendPeriod}
-                            onChange={(v) => setAgentParams({ ...agentParams, vwap_emaTrendPeriod: v })}
-                            min={50} max={200} step={10}
-                        />
-                        <ParamSlider 
-                            label="VWAP Proximity"
-                            value={agentParams.vwap_proximityPercent ?? constants.DEFAULT_AGENT_PARAMS.vwap_proximityPercent}
-                            onChange={(v) => setAgentParams({ ...agentParams, vwap_proximityPercent: v })}
-                            min={0.1} max={1} step={0.05}
-                            valueDisplay={(v) => `${v.toFixed(2)}%`}
-                        />
-                    </div>
-                )}
-                 {selectedAgent.id === 16 && (
-                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
-                         <p className="text-xs text-slate-500 dark:text-slate-400">Standard Ichimoku parameters (9, 26, 52, 26) are recommended. Adjust with caution.</p>
-                         <ParamSlider 
-                            label="Conversion Line Period"
-                            value={agentParams.ichi_conversionPeriod ?? constants.DEFAULT_AGENT_PARAMS.ichi_conversionPeriod}
-                            onChange={(v) => setAgentParams({ ...agentParams, ichi_conversionPeriod: v })}
-                            min={5} max={20} step={1}
-                        />
-                        <ParamSlider 
-                            label="Base Line Period"
-                            value={agentParams.ichi_basePeriod ?? constants.DEFAULT_AGENT_PARAMS.ichi_basePeriod}
-                            onChange={(v) => setAgentParams({ ...agentParams, ichi_basePeriod: v })}
-                            min={20} max={60} step={1}
-                        />
+                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} />
                     </div>
                 )}
             </div>
@@ -616,7 +579,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 >
                     <div className="flex items-center gap-2">
                         <CpuIcon className="w-5 h-5 text-sky-500" />
-                        <span>AI Analysis Preview</span>
+                        <span>AI Analysis Preview (for {selectedPairs[0]})</span>
                     </div>
                     {isAnalysisOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                 </button>
@@ -714,9 +677,9 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 </p>
             </div>
 
-            <button onClick={onStartBot} disabled={isBotCombinationActive || isInvestmentInvalid} className={primaryButtonClass}>
+            <button onClick={onStartBot} disabled={botsToCreateCount === 0 || isInvestmentInvalid} className={primaryButtonClass}>
                 <PlayIcon className="w-5 h-5"/>
-                {isBotCombinationActive ? 'Bot Is Already Running' : 'Start Trading Bot'}
+                {getButtonText()}
             </button>
         </div>
     );

@@ -416,6 +416,7 @@ export interface VortexIndicatorOutput {
     ndi: number[];
 }
 export type AgentParams = Partial<{
+    // General
     rsiPeriod: number;
     atrPeriod: number;
     adxPeriod: number;
@@ -425,62 +426,8 @@ export type AgentParams = Partial<{
     macdSlowPeriod: number;
     macdSignalPeriod: number;
     invalidationCandleLimit: number;
-    adxTrendThreshold: number;
-    mom_emaFastPeriod: number;
-    mom_emaSlowPeriod: number;
-    mom_rsiThresholdBullish: number;
-    mom_rsiThresholdBearish: number;
-    mom_volumeSmaPeriod: number;
-    mom_volumeMultiplier: number;
-    mom_atrVolatilityThreshold: number;
-    tr_emaFastPeriod: number;
-    tr_emaSlowPeriod: number;
-    tr_rsiMomentumBullish: number;
-    tr_rsiMomentumBearish: number;
-    tr_breakoutPeriod: number;
-    tr_volumeSmaPeriod: number;
-    tr_volumeMultiplier: number;
-    mr_adxPeriod: number;
-    mr_adxThreshold: number;
-    mr_bbPeriod: number;
-    mr_bbStdDev: number;
-    mr_rsiPeriod: number;
-    mr_rsiOversold: number;
-    mr_rsiOverbought: number;
-    mr_htfEmaPeriod: number;
-    se_emaFastPeriod: number;
-    se_emaSlowPeriod: number;
-    se_rsiPeriod: number;
-    se_rsiOversold: number;
-    se_rsiOverbought: number;
-    se_bbPeriod: number;
-    se_bbStdDev: number;
-    se_atrPeriod: number;
-    se_atrVolatilityThreshold: number;
-    se_macdFastPeriod: number;
-    se_macdSlowPeriod: number;
-    se_macdSignalPeriod: number;
-    se_scoreThreshold: number;
-    mi_bbPeriod: number;
-    mi_bbStdDev: number;
-    mi_bbwSqueezeThreshold: number;
-    mi_volumeLookback: number;
-    mi_volumeMultiplier: number;
-    mi_emaBiasPeriod: number;
-    scalp_scoreThreshold: number;
-    scalp_emaPeriod: number;
-    scalp_rsiPeriod: number;
-    scalp_stochRsiPeriod: number;
-    scalp_stochRsiOversold: number;
-    scalp_stochRsiOverbought: number;
-    scalp_superTrendPeriod: number;
-    scalp_superTrendMultiplier: number;
-    scalp_psarStep: number;
-    scalp_psarMax: number;
-    msm_htfEmaPeriod: number;
-    msm_swingPointLookback: number;
-    msm_minPivotScore: number;
-    isCandleConfirmationEnabled: boolean;
+    
+    // Quantum Scalper (9)
     qsc_adxPeriod: number;
     qsc_adxThreshold: number;
     qsc_adxChopBuffer: number;
@@ -502,19 +449,31 @@ export type AgentParams = Partial<{
     qsc_ichi_basePeriod: number;
     qsc_ichi_laggingSpanPeriod: number;
     qsc_ichi_displacement: number;
-    qsc_vwapDeviationPercent: number;
     qsc_rsiOverextendedLong: number;
     qsc_rsiOverextendedShort: number;
     qsc_entryMode: 'breakout' | 'pullback';
     qsc_rsiMomentumThreshold: number;
     qsc_rsiPullbackThreshold: number;
+    qsc_rsiBuyThreshold: number;
+    qsc_rsiSellThreshold: number;
     qsc_volumeExhaustionMultiplier?: number;
+
+    // FIX: Add Ichimoku-specific agent parameters for agent 16.
+    // Ichimoku Trend Rider (16)
+    ichi_conversionPeriod: number;
+    ichi_basePeriod: number;
+    ichi_laggingSpanPeriod: number;
+    ichi_displacement: number;
+
+    // Historic Expert (11)
     he_trendSmaPeriod: number;
     he_fastEmaPeriod: number;
     he_slowEmaPeriod: number;
     he_rsiPeriod: number;
     he_rsiMidline: number;
     he_adxTrendThreshold: number;
+    
+    // The Chameleon (13)
     ch_fastEmaPeriod: number;
     ch_slowEmaPeriod: number;
     ch_trendEmaPeriod: number;
@@ -528,32 +487,7 @@ export type AgentParams = Partial<{
     ch_kst_smaRocPer3: number;
     ch_kst_smaRocPer4: number;
     ch_kst_signalPeriod: number;
+    
+    // The Sentinel (14)
     sentinel_scoreThreshold: number;
-    vwap_emaTrendPeriod: number;
-    vwap_proximityPercent: number;
-    ichi_conversionPeriod: number;
-    ichi_basePeriod: number;
-    ichi_laggingSpanPeriod: number;
-    ichi_displacement: number;
-    det_bb1_len: number;
-    det_bb1_dev: number;
-    det_bb2_len: number;
-    det_bb2_dev: number;
-    det_bb3_len: number;
-    det_bb3_dev: number;
-    det_bb4_len: number;
-    det_bb4_dev: number;
-    det_ema_fast_len: number;
-    det_ema_slow_len: number;
-    det_rsi_len: number;
-    det_rsi_thresh: number;
-    det_vol_len: number;
-    det_vol_mult: number;
-    det_atr_len: number;
-    det_sl_atr_mult: number;
-    det_rr_mult: number;
-    det_max_bar_move_pct: number;
-    det_bb_margin_pct: number;
-    det_maxSlAtrMult: number;
-    csp_emaMomentumPeriod: number;
 }>;

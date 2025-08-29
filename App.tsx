@@ -6,6 +6,8 @@
 
 
 
+
+
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -37,7 +39,7 @@ const AppContent: React.FC = () => {
     const configState = useTradingConfigState();
     const configActions = useTradingConfigActions();
     const { 
-        executionMode, tradingMode, selectedPair, chartTimeFrame, 
+        executionMode, tradingMode, selectedPairs, chartTimeFrame, 
         selectedAgent, investmentAmount, takeProfitMode, 
         takeProfitValue, isTakeProfitLocked, agentParams,
         leverage, marginType, isHtfConfirmationEnabled, htfTimeFrame, isUniversalProfitTrailEnabled,
@@ -45,8 +47,10 @@ const AppContent: React.FC = () => {
     } = configState;
 
     const {
-        setSelectedPair,
+        setSelectedPairs,
     } = configActions;
+
+    const displayPair = useMemo(() => selectedPairs[0] || constants.TRADING_PAIRS[0], [selectedPairs]);
     
     // Backtesting State
     const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
@@ -83,37 +87,36 @@ const AppContent: React.FC = () => {
     const openPositionsCountRef = useRef(openPositions.length);
     const audioContextRef = useRef<AudioContext | null>(null);
 
-    const isBotCombinationActive = useMemo(() => {
-        // If the user wants to start a paper bot, never block them.
-        // They can run multiple paper bots with the same settings for comparison.
-        if (executionMode === 'paper') {
-            return false;
-        }
-        
-        // For live bots, prevent starting a duplicate.
-        return runningBots.some(bot => 
-            bot.config.executionMode === 'live' && // Important: Only check against other LIVE bots
-            bot.config.pair === selectedPair &&
-            bot.config.agent.id === selectedAgent.id &&
-            bot.config.timeFrame === chartTimeFrame &&
-            bot.status !== BotStatus.Stopped &&
-            bot.status !== BotStatus.Error
+    const botsToCreate = useMemo(() => {
+        if (selectedPairs.length === 0) return [];
+        // Paper bots can have duplicates, so don't filter them
+        if (executionMode === 'paper') return selectedPairs;
+
+        return selectedPairs.filter(pair =>
+            !runningBots.some(bot =>
+                bot.config.executionMode === 'live' && // Only prevent live duplicates
+                bot.config.pair === pair &&
+                bot.config.agent.id === selectedAgent.id &&
+                bot.config.timeFrame === chartTimeFrame &&
+                bot.status !== BotStatus.Stopped &&
+                bot.status !== BotStatus.Error
+            )
         );
-    }, [runningBots, selectedPair, selectedAgent, chartTimeFrame, executionMode]);
+    }, [selectedPairs, runningBots, executionMode, selectedAgent, chartTimeFrame]);
 
     const handleStartBot = useCallback(() => {
-        if (isBotCombinationActive) return;
+        if (botsToCreate.length === 0) return;
 
-        const start = async () => {
+        botsToCreate.forEach(async pair => {
             try {
-                const formattedPair = selectedPair.replace('/', '');
+                const formattedPair = pair.replace('/', '');
                 
                 const symbolInfoForBot = tradingMode === TradingMode.USDSM_Futures
                     ? await binanceService.getFuturesSymbolInfo(formattedPair)
                     : await binanceService.getSymbolInfo(formattedPair);
 
                 if (!symbolInfoForBot) {
-                    console.error(`Could not fetch symbol info for ${selectedPair}. Cannot start bot.`);
+                    console.error(`Could not fetch symbol info for ${pair}. Cannot start bot.`);
                     // TODO: Show this error in UI
                     return;
                 }
@@ -123,7 +126,7 @@ const AppContent: React.FC = () => {
                 const stepSizeForBot = binanceService.getStepSize(symbolInfoForBot);
 
                 const botConfig: BotConfig = {
-                    pair: selectedPair,
+                    pair: pair,
                     mode: tradingMode,
                     executionMode,
                     leverage,
@@ -150,13 +153,12 @@ const AppContent: React.FC = () => {
 
                 botManagerService.startBot(botConfig);
             } catch (error) {
-                console.error("Failed to start bot:", error);
+                console.error(`Failed to start bot for ${pair}:`, error);
             }
-        };
+        });
 
-        start();
     }, [
-        isBotCombinationActive, selectedPair, tradingMode, executionMode, leverage, marginType,
+        botsToCreate, tradingMode, executionMode, leverage, marginType,
         selectedAgent, chartTimeFrame, investmentAmount, takeProfitMode, takeProfitValue,
         isTakeProfitLocked, isHtfConfirmationEnabled, htfTimeFrame, agentParams, htfAgentParams,
         isUniversalProfitTrailEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
@@ -574,7 +576,7 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
                 }
             } else if (tradingMode === TradingMode.USDSM_Futures) {
                 try {
-                    const commissionInfo = await binanceService.fetchFuturesCommissionRate(selectedPair);
+                    const commissionInfo = await binanceService.fetchFuturesCommissionRate(displayPair);
                     if (commissionInfo) {
                         setCurrentFeeRate(commissionInfo.takerCommissionRate);
                     } else {
@@ -587,7 +589,7 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
             }
         };
         updateFeeRate();
-    }, [tradingMode, selectedPair, isApiConnected, accountInfo]);
+    }, [tradingMode, displayPair, isApiConnected, accountInfo]);
 
     // Keep the refs updated with the latest versions of the handlers
     useEffect(() => {
@@ -648,7 +650,7 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
              // Fetch chart klines
             setIsChartLoading(true);
             try {
-                const formattedPair = selectedPair.replace('/', '');
+                const formattedPair = displayPair.replace('/', '');
                 const data = await binanceService.fetchKlines(formattedPair, chartTimeFrame, { limit: 500, mode: tradingMode });
                 if (!isCancelled) {
                     setKlines(data);
@@ -663,7 +665,7 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
 
             // Fetch symbol info and funding rate
             try {
-                const formattedPair = selectedPair.replace('/', '');
+                const formattedPair = displayPair.replace('/', '');
                 const info = tradingMode === TradingMode.USDSM_Futures
                     ? await binanceService.getFuturesSymbolInfo(formattedPair)
                     : await binanceService.getSymbolInfo(formattedPair);
@@ -688,7 +690,7 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
         fetchAllData();
 
          // WebSocket subscriptions
-        const formattedPair = selectedPair.replace('/', '');
+        const formattedPair = displayPair.replace('/', '');
         const tickerCallback = (data: any) => {
             const ticker: LiveTicker = { pair: data.s, closePrice: parseFloat(data.c), highPrice: parseFloat(data.h), lowPrice: parseFloat(data.l), volume: parseFloat(data.v), quoteVolume: parseFloat(data.q) };
              if (ticker.pair.toLowerCase() === formattedPair.toLowerCase()) {
@@ -727,7 +729,7 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
             botManagerService.unsubscribeFromTickerUpdates(formattedPair, tradingMode, tickerCallback);
             botManagerService.unsubscribeFromKlineUpdates(formattedPair, chartTimeFrame, tradingMode, klineCallback);
         };
-    }, [selectedPair, chartTimeFrame, tradingMode]);
+    }, [displayPair, chartTimeFrame, tradingMode]);
 
 
     const handleLoadMoreData = useCallback(async () => {
@@ -736,7 +738,7 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
         setIsFetchingMoreChartData(true);
         try {
             const firstKlineTime = klines[0].time;
-            const formattedPair = selectedPair.replace('/', '');
+            const formattedPair = displayPair.replace('/', '');
             const moreData = await binanceService.fetchKlines(
                 formattedPair, 
                 chartTimeFrame, 
@@ -750,7 +752,7 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
         } finally {
             setIsFetchingMoreChartData(false);
         }
-    }, [isFetchingMoreChartData, klines, selectedPair, chartTimeFrame, tradingMode]);
+    }, [isFetchingMoreChartData, klines, displayPair, chartTimeFrame, tradingMode]);
 
     if (!isInitialized) {
         return (
@@ -778,7 +780,8 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
                         onStartBot={handleStartBot}
                         klines={klines}
                         livePrice={livePrice}
-                        isBotCombinationActive={isBotCombinationActive}
+                        botsToCreateCount={botsToCreate.length}
+                        selectedPairsCount={selectedPairs.length}
                         theme={theme}
                         isApiConnected={isApiConnected}
                         pricePrecision={pricePrecision}
@@ -790,9 +793,9 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
                   <div className="col-span-12 lg:col-span-9 flex flex-col gap-4">
                     <ChartComponent
                         data={klines}
-                        pair={selectedPair}
+                        pair={displayPair}
                         allPairs={configState.allPairs}
-                        onPairChange={setSelectedPair}
+                        onPairChange={(newPair) => setSelectedPairs([newPair])}
                         isLoading={isChartLoading}
                         pricePrecision={pricePrecision}
                         livePrice={livePrice}

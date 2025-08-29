@@ -7,7 +7,7 @@ import * as binanceService from '../services/binanceService';
 interface TradingConfigState {
     executionMode: 'live' | 'paper';
     tradingMode: TradingMode;
-    selectedPair: string;
+    selectedPairs: string[];
     allPairs: string[];
     isPairsLoading: boolean;
     leverage: number;
@@ -41,7 +41,7 @@ interface TradingConfigState {
 interface TradingConfigActions {
     setExecutionMode: (mode: 'live' | 'paper') => void;
     setTradingMode: (mode: TradingMode) => void;
-    setSelectedPair: (pair: string) => void;
+    setSelectedPairs: (pairs: string[]) => void;
     setAllPairs: (pairs: string[]) => void;
     setLeverage: (leverage: number) => void;
     setMarginType: (type: 'ISOLATED' | 'CROSSED') => void;
@@ -78,12 +78,12 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [executionMode, setExecutionMode] = useState<'live' | 'paper'>('paper');
     const [tradingMode, setTradingMode] = useState<TradingMode>(TradingMode.Spot);
     const [allPairs, setAllPairs] = useState<string[]>(constants.TRADING_PAIRS);
-    const [selectedPair, setSelectedPair] = useState<string>('BTC/USDT');
+    const [selectedPairs, setSelectedPairs] = useState<string[]>(['BTC/USDT']);
     const [leverage, setLeverage] = useState<number>(20);
     const [marginType, setMarginType] = useState<'ISOLATED' | 'CROSSED'>('ISOLATED');
     const [chartTimeFrame, setTimeFrame] = useState<string>('5m');
     const [selectedAgent, setSelectedAgent] = useState<Agent>(constants.AGENTS[0]);
-    const [agentParams, setAgentParams] = useState<AgentParams>({ isCandleConfirmationEnabled: constants.DEFAULT_AGENT_PARAMS.isCandleConfirmationEnabled });
+    const [agentParams, setAgentParams] = useState<AgentParams>({});
     const [htfAgentParams, setHtfAgentParams] = useState<AgentParams>({});
     const [investmentAmount, setInvestmentAmount] = useState<number>(100);
     const [availableBalance, setAvailableBalance] = useState<number>(Infinity);
@@ -124,8 +124,12 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
                 if (!isCancelled) {
                     if (pairs.length > 0) {
                         setAllPairs(pairs);
-                        if (!pairs.includes(selectedPair)) {
-                            setSelectedPair(pairs[0] || 'BTC/USDT');
+                        // Ensure at least one valid pair is selected
+                        const currentValidPairs = selectedPairs.filter(p => pairs.includes(p));
+                        if (currentValidPairs.length === 0) {
+                            setSelectedPairs([pairs[0] || 'BTC/USDT']);
+                        } else {
+                            setSelectedPairs(currentValidPairs);
                         }
                     } else {
                         setAllPairs(constants.TRADING_PAIRS);
@@ -158,23 +162,25 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
 
     // Set futures leverage
     useEffect(() => {
-        if (tradingMode === TradingMode.USDSM_Futures && executionMode === 'live' && isApiConnected) {
+        const primaryPair = selectedPairs[0];
+        if (tradingMode === TradingMode.USDSM_Futures && executionMode === 'live' && isApiConnected && primaryPair) {
             setFuturesSettingsError(null);
-            binanceService.setFuturesLeverage(selectedPair.replace('/', ''), leverage)
+            binanceService.setFuturesLeverage(primaryPair.replace('/', ''), leverage)
                 .catch(e => {
                     const errorMessage = binanceService.interpretBinanceError(e);
                     console.error("Failed to update leverage:", errorMessage);
                     setFuturesSettingsError(errorMessage);
                 });
         }
-    }, [leverage, selectedPair, tradingMode, executionMode, isApiConnected]);
+    }, [leverage, selectedPairs, tradingMode, executionMode, isApiConnected]);
 
     // Set futures margin type
     useEffect(() => {
+        const primaryPair = selectedPairs[0];
         const updateMarginType = async () => {
-            if (tradingMode === TradingMode.USDSM_Futures && executionMode === 'live' && isApiConnected && !isMultiAssetMode) {
+            if (tradingMode === TradingMode.USDSM_Futures && executionMode === 'live' && isApiConnected && !isMultiAssetMode && primaryPair) {
                 setFuturesSettingsError(null);
-                const pairSymbol = selectedPair.replace('/', '');
+                const pairSymbol = primaryPair.replace('/', '');
                 try {
                     const positionRisk = await binanceService.getFuturesPositionRisk(pairSymbol);
                     if (positionRisk && positionRisk.marginType.toUpperCase() !== marginType) {
@@ -190,7 +196,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
             }
         };
         updateMarginType();
-    }, [marginType, selectedPair, tradingMode, executionMode, isApiConnected, isMultiAssetMode]);
+    }, [marginType, selectedPairs, tradingMode, executionMode, isApiConnected, isMultiAssetMode]);
 
     // Get multi-asset margin mode
     useEffect(() => {
@@ -203,9 +209,10 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     
      // Fetch leverage brackets
     useEffect(() => {
-        if (tradingMode === TradingMode.USDSM_Futures) {
+        const primaryPair = selectedPairs[0];
+        if (tradingMode === TradingMode.USDSM_Futures && primaryPair) {
             setIsLeverageLoading(true);
-            binanceService.fetchFuturesLeverageBrackets(selectedPair)
+            binanceService.fetchFuturesLeverageBrackets(primaryPair)
                 .then(bracketInfo => {
                     if (bracketInfo && bracketInfo.brackets && bracketInfo.brackets.length > 0) {
                         const max = bracketInfo.brackets.find(b => b.initialLeverage > 1)?.initialLeverage || 125;
@@ -222,39 +229,13 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
                 })
                 .finally(() => setIsLeverageLoading(false));
         }
-    }, [selectedPair, tradingMode]);
+    }, [selectedPairs, tradingMode]);
 
     // Reset agent-specific parameters when the agent or timeframe changes
     useEffect(() => {
-        const agent = selectedAgent;
-        const timeFrame = chartTimeFrame;
-        
-        let finalParams: Partial<AgentParams> = {};
-        
-        let timeframeSettings: Partial<AgentParams> = {};
-        switch (agent.id) {
-            case 7:  timeframeSettings = constants.MARKET_STRUCTURE_MAVEN_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
-            case 9:  timeframeSettings = constants.QUANTUM_SCALPER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
-            case 11: timeframeSettings = constants.HISTORIC_EXPERT_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
-            case 13: timeframeSettings = constants.CHAMELEON_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
-            case 14: timeframeSettings = constants.SENTINEL_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
-            case 15: timeframeSettings = constants.INSTITUTIONAL_FLOW_TRACER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
-            case 16: timeframeSettings = constants.ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
-            case 17: timeframeSettings = constants.THE_DETONATOR_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
-        }
-
-        finalParams = { ...timeframeSettings };
-
-        // Special handling for params that might not be in timeframe settings but have a default
-        if (agent.id === 7) {
-            if (finalParams.isCandleConfirmationEnabled === undefined) {
-                 finalParams.isCandleConfirmationEnabled = constants.DEFAULT_AGENT_PARAMS.isCandleConfirmationEnabled;
-            }
-        }
-        
+        const timeframeSettings = constants.getAgentTimeframeSettings(selectedAgent.id, chartTimeFrame);
         // This resets any user customizations, which is the desired behavior.
-        setAgentParams(finalParams);
-
+        setAgentParams(timeframeSettings);
     }, [selectedAgent, chartTimeFrame]);
 
     // --- Action Definitions ---
@@ -274,7 +255,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     
     // Memoize actions to prevent re-renders in consumers
     const actions = useMemo(() => ({
-        setExecutionMode, setTradingMode, setSelectedPair, setAllPairs,
+        setExecutionMode, setTradingMode, setSelectedPairs, setAllPairs,
         setLeverage, setMarginType, setTimeFrame, setSelectedAgent,
         setInvestmentAmount, setAvailableBalance,
         setTakeProfitMode, setTakeProfitValue, setIsTakeProfitLocked,
@@ -284,7 +265,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     }), [onSetMultiAssetMode]);
     
     const state = {
-        executionMode, tradingMode, selectedPair, allPairs, isPairsLoading, leverage, marginType, chartTimeFrame,
+        executionMode, tradingMode, selectedPairs, allPairs, isPairsLoading, leverage, marginType, chartTimeFrame,
         selectedAgent, agentParams, htfAgentParams, investmentAmount, availableBalance,
         takeProfitMode, takeProfitValue, isTakeProfitLocked,
         isHtfConfirmationEnabled, isUniversalProfitTrailEnabled, 

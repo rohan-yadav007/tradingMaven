@@ -1,6 +1,5 @@
-
-
-import { Agent, WalletBalance, AgentParams } from './types';
+// FIX: Import 'WalletBalance' type.
+import { Agent, AgentParams, WalletBalance } from './types';
 
 export const TRADING_PAIRS: string[] = [
     'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT'
@@ -28,58 +27,28 @@ export const MIN_PROFIT_BUFFER_MULTIPLIER = 1.5;
 
 export const AGENTS: Agent[] = [
     {
-        id: 7,
-        name: 'Market Structure Maven',
-        description: 'Identifies trend with a dynamic EMA. Enters on pullbacks to S/R zones, confirmed by Vortex and OBV momentum. All signals are filtered to avoid entries on climactic, high-volume candles.',
-        indicators: ['Price Action (S/R Levels)', 'Volume', 'EMA (Bias)', 'Vortex Indicator', 'OBV'],
-    },
-    {
         id: 9,
         name: 'Quantum Scalper',
-        description: "A dynamic, aggressive agent using a weighted scoring system. It filters for volatility and trend regime, then scores signals based on Trend, Momentum (VI, OBV), and Confirmation (Ichimoku, Supertrend). Features a Dynamic Momentum Filter to improve entry timing and a Volume Exhaustion Veto to avoid chasing blow-off tops/bottoms. Supports 'Breakout' and 'Pullback' entry modes.",
+        description: "A dynamic, aggressive agent using a weighted scoring system. It filters for volatility and trend regime, then scores signals based on Trend, Momentum (VI, OBV), and Confirmation (Ichimoku, Supertrend). Features a Dynamic Momentum Filter to improve entry timing and a Volume Exhaustion Veto to avoid chasing blow-off tops/bottoms. Supports 'Breakout' and 'Pullback' entry modes. Now enhanced with AI-driven filters for MACD, RSI, StochRSI, Bollinger Bands, and ADX strength for higher-conviction entries.",
         indicators: ['Market Regime Filter (ADX)', 'Volatility Filter (BBW)', 'Ichimoku Cloud', 'OBV'],
     },
     {
         id: 11,
         name: 'Historic Expert',
-        description: 'A robust trend-follower using an SMA for trend bias. Enters on pullbacks, with entries confirmed by strong momentum from both RSI and On-Balance Volume (OBV). All signals are filtered to avoid entries on climactic, high-volume candles.',
+        description: 'A robust trend-follower using an SMA for trend bias. Enters on pullbacks, with entries confirmed by strong momentum from both RSI and On-Balance Volume (OBV). Now includes ADX and volatility filters to improve entry quality.',
         indicators: ['SMA (Trend)', 'EMA (Pullback)', 'RSI (Momentum)', 'OBV (Confirmation)'],
     },
     {
         id: 13,
         name: 'The Chameleon',
-        description: 'A dynamic momentum agent centered on the KST indicator. It uses a long-period EMA for trend direction and ADX to filter for trending conditions. Entries require both a KST/signal line crossover and confirmation that KST is in bullish/bearish territory (above/below the zero line), ensuring it trades with strong, confirmed momentum. Best suited for lower timeframes (1m-15m).',
+        description: 'A dynamic momentum agent centered on the KST indicator. It uses a long-period EMA for trend direction and ADX to filter for trending conditions. Entries require a KST/signal line crossover confirmed by OBV, ensuring trades align with strong, volume-backed momentum.',
         indicators: ['KST', 'EMA Cross', 'ADX', 'OBV'],
     },
     {
         id: 14,
         name: 'The Sentinel',
-        description: 'A comprehensive scoring engine. Analyzes Trend (35%), Momentum (40%), and Confirmation (25%) factors, using On-Balance Volume to weigh momentum and confirm entries. All signals are filtered to avoid entries on climactic, high-volume candles.',
+        description: 'A comprehensive scoring engine. Analyzes Trend, Momentum, and Confirmation factors, using On-Balance Volume and HTF alignment to weigh momentum and confirm entries. Signals are filtered to avoid high-risk, low-conviction setups.',
         indicators: ['Weighted Scoring', 'Vortex Indicator', 'OBV', 'Multi-Indicator Analysis'],
-    },
-    {
-        id: 15,
-        name: 'Institutional Flow Tracer',
-        description: 'Tracks institutional activity using VWAP. Aligns with the long-term trend (200-EMA) and enters on confirmed bounces with RSI and OBV flow to confirm momentum. All signals are filtered to avoid entries on climactic, high-volume candles.',
-        indicators: ['VWAP', 'EMA (Trend)', 'Price Action', 'RSI', 'OBV'],
-    },
-    {
-        id: 16,
-        name: 'Ichimoku Trend Rider',
-        description: 'A pure trend system using Ichimoku. Enters on Kumo breakouts confirmed with the Vortex Indicator and On-Balance Volume to validate breakout momentum. All signals are filtered to avoid entries on climactic, high-volume candles.',
-        indicators: ['Ichimoku Cloud', 'Vortex Indicator', 'OBV'],
-    },
-    {
-        id: 17,
-        name: 'The Detonator',
-        description: 'A high-momentum scalper using multi-layer Bollinger Bands to detect explosive volatility. Breakouts are confirmed by trend, momentum, and On-Balance Volume accumulation. All signals are filtered to avoid entries on climactic, high-volume candles.',
-        indicators: ['Bollinger Bands (x4)', 'EMA', 'RSI', 'Volume', 'OBV'],
-    },
-    {
-        id: 18,
-        name: 'Candlestick Prophet',
-        description: 'A pure price action agent that trades based on classic single and multi-candlestick reversal patterns. It filters entries with a short-term EMA to confirm momentum and OBV for volume validation.',
-        indicators: ['Candlestick Patterns', 'EMA (Momentum)', 'OBV'],
     },
 ];
 
@@ -94,76 +63,6 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     macdSlowPeriod: 26,
     macdSignalPeriod: 9,
     invalidationCandleLimit: 10,
-
-    // Agent 1: Momentum Master
-    adxTrendThreshold: 25,
-    mom_emaFastPeriod: 20,
-    mom_emaSlowPeriod: 50,
-    mom_rsiThresholdBullish: 55,
-    mom_rsiThresholdBearish: 45,
-    mom_volumeSmaPeriod: 20,
-    mom_volumeMultiplier: 1.5,
-    mom_atrVolatilityThreshold: 0.3,
-    
-    // Agent 2: Trend Rider
-    tr_emaFastPeriod: 20,
-    tr_emaSlowPeriod: 50,
-    tr_rsiMomentumBullish: 60,
-    tr_rsiMomentumBearish: 40,
-    tr_breakoutPeriod: 5,
-    tr_volumeSmaPeriod: 20,
-    tr_volumeMultiplier: 1.5,
-
-    // Agent 3: Mean Reversionist
-    mr_adxPeriod: 14,
-    mr_adxThreshold: 25,
-    mr_bbPeriod: 20,
-    mr_bbStdDev: 2,
-    mr_rsiPeriod: 14,
-    mr_rsiOversold: 30,
-    mr_rsiOverbought: 70,
-    mr_htfEmaPeriod: 200,
-
-    // Agent 4: Scalping Expert (NEW LOGIC)
-    se_emaFastPeriod: 10,
-    se_emaSlowPeriod: 21,
-    se_rsiPeriod: 14,
-    se_rsiOversold: 35,
-    se_rsiOverbought: 65,
-    se_bbPeriod: 20,
-    se_bbStdDev: 2,
-    se_atrPeriod: 14,
-    se_atrVolatilityThreshold: 0.4, // Min 0.4% volatility in a candle
-    se_macdFastPeriod: 12,
-    se_macdSlowPeriod: 26,
-    se_macdSignalPeriod: 9,
-    se_scoreThreshold: 3,
-
-    // Agent 5: Market Ignition
-    mi_bbPeriod: 20,
-    mi_bbStdDev: 2,
-    mi_bbwSqueezeThreshold: 0.015, // Threshold for BBW to be considered a squeeze
-    mi_volumeLookback: 20,
-    mi_volumeMultiplier: 1.75, // Breakout volume must be 1.75x the average
-    mi_emaBiasPeriod: 50,
-
-    // Agent 6: Profit Locker (uses old scalping logic)
-    scalp_scoreThreshold: 4,
-    scalp_emaPeriod: 50,
-    scalp_rsiPeriod: 14, // Used for StochRSI
-    scalp_stochRsiPeriod: 14,
-    scalp_stochRsiOversold: 20,
-    scalp_stochRsiOverbought: 80,
-    scalp_superTrendPeriod: 10,
-    scalp_superTrendMultiplier: 2,
-    scalp_psarStep: 0.02,
-    scalp_psarMax: 0.2,
-
-    // Agent 7: Market Structure Maven
-    msm_htfEmaPeriod: 50,
-    msm_swingPointLookback: 5,
-    msm_minPivotScore: 2,
-    isCandleConfirmationEnabled: false,
 
     // Agent 9: Quantum Scalper
     qsc_adxPeriod: 10,
@@ -187,13 +86,21 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     qsc_ichi_basePeriod: 26,
     qsc_ichi_laggingSpanPeriod: 52,
     qsc_ichi_displacement: 26,
-    qsc_vwapDeviationPercent: 0.2,
     qsc_rsiOverextendedLong: 75,
     qsc_rsiOverextendedShort: 25,
     qsc_entryMode: 'breakout',
     qsc_rsiMomentumThreshold: 55,
     qsc_rsiPullbackThreshold: 45,
+    qsc_rsiBuyThreshold: 58,
+    qsc_rsiSellThreshold: 42,
     qsc_volumeExhaustionMultiplier: 2.5,
+
+    // FIX: Add default parameters for Ichimoku Trend Rider agent (ID 16).
+    // Agent 16: Ichimoku Trend Rider
+    ichi_conversionPeriod: 9,
+    ichi_basePeriod: 26,
+    ichi_laggingSpanPeriod: 52,
+    ichi_displacement: 26,
 
     // Agent 11: Historic Expert
     he_trendSmaPeriod: 30,
@@ -221,60 +128,15 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     
     // Agent 14: The Sentinel
     sentinel_scoreThreshold: 70,
-
-    // Agent 15: Institutional Flow Tracer
-    vwap_emaTrendPeriod: 200,
-    vwap_proximityPercent: 0.2, // 0.2% proximity to VWAP
-
-    // Agent 16: Ichimoku Trend Rider
-    ichi_conversionPeriod: 9,
-    ichi_basePeriod: 26,
-    ichi_laggingSpanPeriod: 52,
-    ichi_displacement: 26,
-
-    // Agent 17: The Detonator
-    det_bb1_len: 20,
-    det_bb1_dev: 2.4,
-    det_bb2_len: 50,
-    det_bb2_dev: 2.8,
-    det_bb3_len: 100,
-    det_bb3_dev: 3.2,
-    det_bb4_len: 10,
-    det_bb4_dev: 1.8,
-    det_ema_fast_len: 21,
-    det_ema_slow_len: 55,
-    det_rsi_len: 14,
-    det_rsi_thresh: 52,
-    det_vol_len: 20,
-    det_vol_mult: 1.6,
-    det_atr_len: 14,
-    det_sl_atr_mult: 0.9,
-    det_rr_mult: 1.6,
-    det_max_bar_move_pct: 18.0,
-    det_bb_margin_pct: 0.08,
-    det_maxSlAtrMult: 2.5,
-
-    // Agent 18: Candlestick Prophet
-    csp_emaMomentumPeriod: 10,
 };
 
 
 // --- TIMEFRAME-SPECIFIC PARAMETER OVERRIDES ---
 
-export const MARKET_STRUCTURE_MAVEN_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '1m':  { msm_htfEmaPeriod: 21, msm_swingPointLookback: 5, viPeriod: 10 },
-    '3m':  { msm_htfEmaPeriod: 34, msm_swingPointLookback: 5, viPeriod: 12 },
-    '5m':  { msm_htfEmaPeriod: 50, msm_swingPointLookback: 8, viPeriod: 14 },
-    '15m': { msm_htfEmaPeriod: 50, msm_swingPointLookback: 10, viPeriod: 14 },
-    '1h':  { msm_htfEmaPeriod: 89, msm_swingPointLookback: 12, viPeriod: 18 },
-    '4h':  { msm_htfEmaPeriod: 100, msm_swingPointLookback: 15, viPeriod: 20 },
-    '1d':  { msm_htfEmaPeriod: 100, msm_swingPointLookback: 20, viPeriod: 20 },
-};
-
 export const QUANTUM_SCALPER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
     '1m':  { qsc_stochRsiOversold: 20, qsc_stochRsiOverbought: 80, qsc_adxThreshold: 30, viPeriod: 10, qsc_rsiOverextendedLong: 80, qsc_rsiOverextendedShort: 20 },
     '3m':  { qsc_stochRsiOversold: 25, qsc_stochRsiOverbought: 75, qsc_adxThreshold: 28, viPeriod: 12, qsc_rsiOverextendedLong: 78, qsc_rsiOverextendedShort: 22 },
-    '5m':  { qsc_stochRsiOversold: 25, qsc_stochRsiOverbought: 75, qsc_adxThreshold: 28, viPeriod: 14, qsc_rsiOverextendedLong: 75, qsc_rsiOverextendedShort: 25 },
+    '5m':  { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 25, viPeriod: 14, qsc_rsiOverextendedLong: 75, qsc_rsiOverextendedShort: 25, qsc_rsiBuyThreshold: 60, qsc_rsiSellThreshold: 40 },
     '15m': { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 25, viPeriod: 14, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30 },
     '1h':  { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 22, viPeriod: 18, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30 },
     '4h':  { qsc_stochRsiOversold: 35, qsc_stochRsiOverbought: 65, qsc_adxThreshold: 22, viPeriod: 20, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30 },
@@ -307,44 +169,15 @@ export const SENTINEL_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> =
     '1d':  { sentinel_scoreThreshold: 60, viPeriod: 20 },
 };
 
-export const INSTITUTIONAL_FLOW_TRACER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '1m':  { vwap_emaTrendPeriod: 100, vwap_proximityPercent: 0.1, rsiPeriod: 10 },
-    '3m':  { vwap_emaTrendPeriod: 150, vwap_proximityPercent: 0.15, rsiPeriod: 12 },
-    '5m':  { vwap_emaTrendPeriod: 200, vwap_proximityPercent: 0.2, rsiPeriod: 14 },
-    '15m': { vwap_emaTrendPeriod: 200, vwap_proximityPercent: 0.25, rsiPeriod: 14 },
-    '1h':  { vwap_emaTrendPeriod: 200, vwap_proximityPercent: 0.3, rsiPeriod: 14 },
-    '4h':  { vwap_emaTrendPeriod: 200, vwap_proximityPercent: 0.4, rsiPeriod: 14 },
-    '1d':  { vwap_emaTrendPeriod: 200, vwap_proximityPercent: 0.5, rsiPeriod: 14 },
-};
-
+// FIX: Add timeframe settings constant for Ichimoku Trend Rider agent.
 export const ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '1m':  { ichi_conversionPeriod: 7,  ichi_basePeriod: 22, viPeriod: 10 },
-    '3m':  { ichi_conversionPeriod: 7,  ichi_basePeriod: 22, viPeriod: 12 },
-    '5m':  { ichi_conversionPeriod: 9,  ichi_basePeriod: 26, viPeriod: 14 },
-    '15m': { ichi_conversionPeriod: 9,  ichi_basePeriod: 26, viPeriod: 14 },
-    '1h':  { ichi_conversionPeriod: 12, ichi_basePeriod: 30, viPeriod: 18 },
-    '4h':  { ichi_conversionPeriod: 12, ichi_basePeriod: 30, viPeriod: 20 },
-    '1d':  { ichi_conversionPeriod: 20, ichi_basePeriod: 60, viPeriod: 20 },
-};
-
-export const THE_DETONATOR_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '1m':  { det_rsi_thresh: 52, det_rr_mult: 1.6, det_sl_atr_mult: 0.9 },
-    '3m':  { det_rsi_thresh: 53, det_rr_mult: 1.8, det_sl_atr_mult: 1.0 },
-    '5m':  { det_rsi_thresh: 55, det_rr_mult: 2.0, det_sl_atr_mult: 1.1 },
-    '15m': { det_rsi_thresh: 58, det_rr_mult: 2.2, det_sl_atr_mult: 1.2 },
-    '1h':  { det_rsi_thresh: 60, det_rr_mult: 2.5, det_sl_atr_mult: 1.5 },
-    '4h':  { det_rsi_thresh: 62, det_rr_mult: 3.0, det_sl_atr_mult: 1.8 },
-    '1d':  { det_rsi_thresh: 65, det_rr_mult: 3.5, det_sl_atr_mult: 2.0 },
-};
-
-export const CANDLESTICK_PROPHET_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '1m':  { csp_emaMomentumPeriod: 21 },
-    '3m':  { csp_emaMomentumPeriod: 13 },
-    '5m':  { csp_emaMomentumPeriod: 10 },
-    '15m': { csp_emaMomentumPeriod: 8 },
-    '1h':  { csp_emaMomentumPeriod: 8 },
-    '4h':  { csp_emaMomentumPeriod: 5 },
-    '1d':  { csp_emaMomentumPeriod: 5 },
+    '1m':  {},
+    '3m':  {},
+    '5m':  {},
+    '15m': {},
+    '1h':  {},
+    '4h':  {},
+    '1d':  {},
 };
 
 /**
@@ -355,15 +188,12 @@ export const CANDLESTICK_PROPHET_TIMEFRAME_SETTINGS: Record<string, Partial<Agen
  */
 export const getAgentTimeframeSettings = (agentId: number, timeFrame: string): Partial<AgentParams> => {
     switch (agentId) {
-        case 7:  return MARKET_STRUCTURE_MAVEN_TIMEFRAME_SETTINGS[timeFrame] || {};
         case 9:  return QUANTUM_SCALPER_TIMEFRAME_SETTINGS[timeFrame] || {};
         case 11: return HISTORIC_EXPERT_TIMEFRAME_SETTINGS[timeFrame] || {};
         case 13: return CHAMELEON_TIMEFRAME_SETTINGS[timeFrame] || {};
         case 14: return SENTINEL_TIMEFRAME_SETTINGS[timeFrame] || {};
-        case 15: return INSTITUTIONAL_FLOW_TRACER_TIMEFRAME_SETTINGS[timeFrame] || {};
+        // FIX: Add case for Ichimoku Trend Rider agent.
         case 16: return ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS[timeFrame] || {};
-        case 17: return THE_DETONATOR_TIMEFRAME_SETTINGS[timeFrame] || {};
-        case 18: return CANDLESTICK_PROPHET_TIMEFRAME_SETTINGS[timeFrame] || {};
         default: return {};
     }
 };

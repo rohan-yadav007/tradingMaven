@@ -84,14 +84,6 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
     const allParams: Required<AgentParams> = {...constants.DEFAULT_AGENT_PARAMS, ...params};
     const updateParam = (key: keyof AgentParams, value: number | boolean) => { onParamsChange({ ...params, [key]: value }); };
     switch (agent.id) {
-        case 7: return (<div className="space-y-4">
-            <ParamSlider label="Trend EMA Period" value={allParams.msm_htfEmaPeriod} onChange={v => updateParam('msm_htfEmaPeriod', v)} min={20} max={200} step={1} />
-            <ParamSlider label="S/R Lookback" value={allParams.msm_swingPointLookback} onChange={v => updateParam('msm_swingPointLookback', v)} min={3} max={20} step={1} />
-            <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-700">
-                <label className={formLabelClass}>Candlestick Confirmation</label>
-                <ToggleSwitch checked={allParams.isCandleConfirmationEnabled} onChange={v => updateParam('isCandleConfirmationEnabled', v)} />
-            </div>
-            </div>);
         case 9: return (<div className="space-y-4">
             <ParamSlider label="ADX Trend Threshold" value={allParams.qsc_adxThreshold} onChange={v => updateParam('qsc_adxThreshold', v)} min={15} max={35} step={1} />
             <ParamSlider 
@@ -103,13 +95,6 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
             />
             <ParamSlider label="StochRSI Oversold" value={allParams.qsc_stochRsiOversold} onChange={v => updateParam('qsc_stochRsiOversold', v)} min={10} max={40} step={1} />
             <ParamSlider label="StochRSI Overbought" value={allParams.qsc_stochRsiOverbought} onChange={v => updateParam('qsc_stochRsiOverbought', v)} min={60} max={90} step={1} />
-            <ParamSlider 
-                label="VWAP Deviation" 
-                value={allParams.qsc_vwapDeviationPercent}
-                onChange={(v) => updateParam('qsc_vwapDeviationPercent', v)}
-                min={0.1} max={1.0} step={0.05}
-                valueDisplay={(v) => `${v.toFixed(2)}%`}
-            />
             </div>);
         case 11: return (<div className="space-y-4">
             <ParamSlider label="Trend SMA Period" value={allParams.he_trendSmaPeriod} onChange={v => updateParam('he_trendSmaPeriod', v)} min={20} max={50} step={1} />
@@ -117,45 +102,40 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
             <ParamSlider label="Slow EMA Period" value={allParams.he_slowEmaPeriod} onChange={v => updateParam('he_slowEmaPeriod', v)} min={20} max={50} step={1} />
             <ParamSlider label="RSI Midline" value={allParams.he_rsiMidline} onChange={v => updateParam('he_rsiMidline', v)} min={40} max={60} step={1} />
             </div>);
-        case 13: // The Chameleon
+        case 13: 
              return (<div className="space-y-4">
-                <p className="text-xs text-slate-500 dark:text-slate-400">Standard Ichimoku parameters (9, 26, 52, 26) are recommended. Adjust with caution.</p>
+                 <ParamSlider 
+                    label="Trend EMA Period"
+                    value={allParams.ch_trendEmaPeriod}
+                    onChange={(v) => updateParam('ch_trendEmaPeriod', v)}
+                    min={50} max={200} step={10}
+                />
                 <ParamSlider 
-                    label="Conversion Line Period"
-                    value={allParams.ichi_conversionPeriod}
-                    onChange={(v) => updateParam('ichi_conversionPeriod', v)}
+                    label="ADX Threshold"
+                    value={allParams.ch_adxThreshold}
+                    onChange={(v) => updateParam('ch_adxThreshold', v)}
+                    min={18} max={30} step={1}
+                />
+                 <ParamSlider 
+                    label="Fast EMA Period"
+                    value={allParams.ch_fastEmaPeriod}
+                    onChange={(v) => updateParam('ch_fastEmaPeriod', v)}
                     min={5} max={20} step={1}
                 />
                 <ParamSlider 
-                    label="Base Line Period"
-                    value={allParams.ichi_basePeriod}
-                    onChange={(v) => updateParam('ichi_basePeriod', v)}
-                    min={20} max={60} step={1}
+                    label="Slow EMA Period"
+                    value={allParams.ch_slowEmaPeriod}
+                    onChange={(v) => updateParam('ch_slowEmaPeriod', v)}
+                    min={20} max={50} step={1}
                 />
-                 <ParamSlider 
+                <ParamSlider 
                     label="KST Signal Period"
                     value={allParams.ch_kst_signalPeriod}
                     onChange={(v) => updateParam('ch_kst_signalPeriod', v)}
                     min={3} max={20} step={1}
                 />
             </div>);
-        case 16: // Ichimoku Trend Rider
-            return (<div className="space-y-4">
-                <p className="text-xs text-slate-500 dark:text-slate-400">Standard Ichimoku parameters (9, 26, 52, 26) are recommended. Adjust with caution.</p>
-                <ParamSlider 
-                    label="Conversion Line Period"
-                    value={allParams.ichi_conversionPeriod}
-                    onChange={(v) => updateParam('ichi_conversionPeriod', v)}
-                    min={5} max={20} step={1}
-                />
-                <ParamSlider 
-                    label="Base Line Period"
-                    value={allParams.ichi_basePeriod}
-                    onChange={(v) => updateParam('ichi_basePeriod', v)}
-                    min={20} max={60} step={1}
-                />
-            </div>);
-        case 14: // The Sentinel
+        case 14: 
             return (<div className="space-y-4">
                  <ParamSlider 
                     label="Entry Score Threshold" 
@@ -163,71 +143,7 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                     onChange={(v) => updateParam('sentinel_scoreThreshold', v)}
                     min={50} max={95} step={1}
                     valueDisplay={(v) => `${v}%`}
-                />
-                <ParamSlider label="Vortex Indicator Period" value={allParams.viPeriod} onChange={v => updateParam('viPeriod', v)} min={7} max={25} step={1} />
-            </div>);
-        case 15: // Institutional Flow Tracer
-            return (<div className="space-y-4">
-                <ParamSlider 
-                    label="Trend EMA Period"
-                    value={allParams.vwap_emaTrendPeriod}
-                    onChange={(v) => updateParam('vwap_emaTrendPeriod', v)}
-                    min={50} max={200} step={10}
-                />
-                <ParamSlider 
-                    label="VWAP Proximity"
-                    value={allParams.vwap_proximityPercent}
-                    onChange={(v) => updateParam('vwap_proximityPercent', v)}
-                    min={0.1} max={1} step={0.05}
-                    valueDisplay={(v) => `${v.toFixed(2)}%`}
-                />
-            </div>);
-        case 17: // The Detonator
-            return (<div className="space-y-4">
-                <p className="text-xs text-slate-500 dark:text-slate-400">Key parameters for the multi-layer breakout strategy.</p>
-                <ParamSlider 
-                    label="RSI Threshold"
-                    value={allParams.det_rsi_thresh}
-                    onChange={(v) => updateParam('det_rsi_thresh', v)}
-                    min={51} max={70} step={1}
-                />
-                <ParamSlider 
-                    label="Volume Multiplier"
-                    value={allParams.det_vol_mult}
-                    onChange={(v) => updateParam('det_vol_mult', v)}
-                    min={1.2} max={3.0} step={0.1}
-                    valueDisplay={(v) => `${v.toFixed(1)}x`}
-                />
-                <ParamSlider 
-                    label="SL ATR Multiplier"
-                    value={allParams.det_sl_atr_mult}
-                    onChange={(v) => updateParam('det_sl_atr_mult', v)}
-                    min={0.5} max={3.0} step={0.1}
-                    valueDisplay={(v) => `${v.toFixed(1)}x`}
-                />
-                <ParamSlider 
-                    label="Risk/Reward Ratio"
-                    value={allParams.det_rr_mult}
-                    onChange={(v) => updateParam('det_rr_mult', v)}
-                    min={1.2} max={5.0} step={0.1}
-                    valueDisplay={(v) => `1:${v.toFixed(1)}`}
-                />
-                 <ParamSlider 
-                    label="BB Breakout Margin"
-                    value={allParams.det_bb_margin_pct}
-                    onChange={(v) => updateParam('det_bb_margin_pct', v)}
-                    min={0} max={0.2} step={0.01}
-                    valueDisplay={(v) => `${(v * 100).toFixed(0)}%`}
-                />
-            </div>);
-        case 18: // Candlestick Prophet
-            return (<div className="space-y-4">
-                <ParamSlider
-                    label="Momentum EMA Period"
-                    value={allParams.csp_emaMomentumPeriod}
-                    onChange={v => updateParam('csp_emaMomentumPeriod', v)}
-                    min={5} max={30} step={1}
-                />
+                 />
             </div>);
         default: return <p className="text-sm text-slate-500">This agent does not have any customizable parameters.</p>;
     }
@@ -271,7 +187,9 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     const globalActions = useTradingConfigActions();
     
     const [config, setConfig] = useState<BacktestConfig>({
-        tradingMode: globalConfig.tradingMode, selectedPair: globalConfig.selectedPair, chartTimeFrame: '5m',
+        tradingMode: globalConfig.tradingMode,
+// FIX: Property 'selectedPair' does not exist on type 'TradingConfigState'. Using selectedPairs[0] as backtesting is for a single pair.
+        selectedPair: globalConfig.selectedPairs[0] || constants.TRADING_PAIRS[0], chartTimeFrame: '5m',
         selectedAgent: globalConfig.selectedAgent, investmentAmount: globalConfig.investmentAmount,
         takeProfitMode: globalConfig.takeProfitMode, takeProfitValue: globalConfig.takeProfitValue,
         isTakeProfitLocked: globalConfig.isTakeProfitLocked, isHtfConfirmationEnabled: globalConfig.isHtfConfirmationEnabled,
@@ -287,7 +205,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     const [loadingMessage, setLoadingMessage] = useState('Running Simulation...');
     const [isParamsOpen, setIsParamsOpen] = useState(false);
 
-    const canOptimize = [7, 9, 11, 13, 14, 15, 16, 17, 18].includes(config.selectedAgent.id);
+    const canOptimize = [9, 11, 13, 14].includes(config.selectedAgent.id);
     
     const updateConfig = <K extends keyof BacktestConfig>(key: K, value: BacktestConfig[K]) => {
         setConfig(prev => ({...prev, [key]: value}));
@@ -399,7 +317,8 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     
     const handleApplyAndSwitchView = (paramsToApply: AgentParams) => {
         globalActions.setTradingMode(config.tradingMode);
-        globalActions.setSelectedPair(config.selectedPair);
+// FIX: Property 'setSelectedPair' does not exist on type 'TradingConfigActions'. Using 'setSelectedPairs' and wrapping the value in an array.
+        globalActions.setSelectedPairs([config.selectedPair]);
         globalActions.setTimeFrame(config.chartTimeFrame);
         globalActions.setSelectedAgent(config.selectedAgent);
         globalActions.setInvestmentAmount(config.investmentAmount);
@@ -422,7 +341,9 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                     <h2 className="text-lg font-bold">Backtest Configuration</h2>
                     <div className={formGroupClass}><label className={formLabelClass}>Backtest Period (Days)</label><input type="number" value={backtestDays} onChange={e => setBacktestDays(Number(e.target.value))} className={formInputClass} min="1" max="90" /></div>
                     <div className={formGroupClass}><label className={formLabelClass}>Trading Platform</label><select value={config.tradingMode} onChange={e => updateConfig('tradingMode', e.target.value as TradingMode)} className={formInputClass}>{Object.values(TradingMode).map(mode => <option key={mode} value={mode}>{mode}</option>)}</select></div>
-                    <div className={formGroupClass}><label className={formLabelClass}>Market</label><SearchableDropdown options={globalConfig.allPairs} value={config.selectedPair} onChange={(v) => updateConfig('selectedPair', v)} theme={theme} disabled={globalConfig.isPairsLoading} /></div>
+                    <div className={formGroupClass}><label className={formLabelClass}>Market</label>
+{/* FIX: Argument of type 'string | string[]' is not assignable to parameter of type 'string'. Casting the value to string as this dropdown is not multi-select. */}
+<SearchableDropdown options={globalConfig.allPairs} value={config.selectedPair} onChange={(v) => updateConfig('selectedPair', v as string)} theme={theme} disabled={globalConfig.isPairsLoading} /></div>
                     <div className={formGroupClass}><label className={formLabelClass}>Entry Timeframe</label><select value={config.chartTimeFrame} onChange={e => updateConfig('chartTimeFrame', e.target.value)} className={formInputClass}>{constants.TIME_FRAMES.map(tf => <option key={tf} value={tf}>{tf}</option>)}</select></div>
                     <div className={formGroupClass}><label className={formLabelClass}>Trading Agent</label><select value={config.selectedAgent.id} onChange={e => {
                         const agent = constants.AGENTS.find(a => a.id === Number(e.target.value));
@@ -502,7 +423,8 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                         results={optimizationResults} 
                         onApplyAndSwitchView={handleApplyAndSwitchView}
                         onReset={() => { setOptimizationResults(null); setBacktestResult(null); }}
-                        pricePrecision={globalConfig.selectedPair.includes('USDT') ? 4 : 8}
+// FIX: Property 'selectedPair' does not exist on type 'TradingConfigState'. Using component's local config state which holds the selected pair for the backtest.
+                        pricePrecision={(config.selectedPair || '').includes('USDT') ? 4 : 8}
                     />
                 ) : backtestResult ? (
                     <BacktestResultDisplay 

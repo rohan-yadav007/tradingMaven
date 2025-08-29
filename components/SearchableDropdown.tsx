@@ -3,10 +3,11 @@ import Select, { StylesConfig, GroupBase, OnChangeValue } from 'react-select';
 
 interface SearchableDropdownProps {
     options: string[];
-    value: string;
-    onChange: (value: string) => void;
+    value: string | string[];
+    onChange: (value: string | string[]) => void;
     disabled?: boolean;
     theme: 'light' | 'dark';
+    isMulti?: boolean;
 }
 
 type SelectOptionType = {
@@ -14,7 +15,7 @@ type SelectOptionType = {
     label: string;
 };
 
-const getCustomStyles = (isDark: boolean): StylesConfig<SelectOptionType, false, GroupBase<SelectOptionType>> => ({
+const getCustomStyles = (isDark: boolean): StylesConfig<SelectOptionType, boolean, GroupBase<SelectOptionType>> => ({
     control: (provided, state) => ({
         ...provided,
         backgroundColor: isDark ? '#334155' : '#ffffff', // slate-700/50 -> slate-700, white
@@ -24,13 +25,11 @@ const getCustomStyles = (isDark: boolean): StylesConfig<SelectOptionType, false,
             borderColor: state.isFocused ? '#0ea5e9' : (isDark ? '#64748b' : '#94a3b8') // sky-500, slate-500, slate-400
         },
         minHeight: '42px',
-        height: '42px',
         borderRadius: '0.375rem',
         transition: 'border-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out',
     }),
     valueContainer: (provided) => ({
         ...provided,
-        height: '42px',
         padding: '0 8px'
     }),
     input: (provided) => ({
@@ -40,10 +39,6 @@ const getCustomStyles = (isDark: boolean): StylesConfig<SelectOptionType, false,
     }),
     indicatorSeparator: () => ({
         display: 'none',
-    }),
-    indicatorsContainer: (provided) => ({
-        ...provided,
-        height: '42px',
     }),
     menu: (provided) => ({
         ...provided,
@@ -67,6 +62,14 @@ const getCustomStyles = (isDark: boolean): StylesConfig<SelectOptionType, false,
         color: isDark ? '#f1f5f9' : '#1e293b', // slate-100, slate-800
         fontWeight: 500,
     }),
+    multiValue: (provided) => ({
+        ...provided,
+        backgroundColor: isDark ? '#475569' : '#e2e8f0'
+    }),
+    multiValueLabel: (provided) => ({
+        ...provided,
+        color: isDark ? '#f1f5f9' : '#1e293b'
+    }),
     placeholder: (provided) => ({
         ...provided,
         color: isDark ? '#94a3b8' : '#64748b' // slate-400, slate-500
@@ -74,25 +77,37 @@ const getCustomStyles = (isDark: boolean): StylesConfig<SelectOptionType, false,
 });
 
 
-export const SearchableDropdown: React.FC<SearchableDropdownProps> = ({ options, value, onChange, disabled, theme }) => {
+export const SearchableDropdown: React.FC<SearchableDropdownProps> = ({ options, value, onChange, disabled, theme, isMulti = false }) => {
     
     const selectOptions = useMemo(() => options.map(opt => ({ value: opt, label: opt })), [options]);
 
-    const handleChange = (selectedOption: OnChangeValue<SelectOptionType, false>) => {
-        if (selectedOption) {
-            onChange(selectedOption.value);
+    const handleChange = (selectedOption: OnChangeValue<SelectOptionType, boolean>) => {
+        if (isMulti) {
+            const values = (selectedOption as SelectOptionType[]).map(o => o.value);
+            onChange(values);
+        } else {
+            const value = (selectedOption as SelectOptionType)?.value || '';
+            onChange(value);
         }
     };
     
     const customStyles = useMemo(() => getCustomStyles(theme === 'dark'), [theme]);
 
+    const selectValue = useMemo(() => {
+        if (isMulti) {
+            return selectOptions.filter(o => (value as string[]).includes(o.value));
+        }
+        return selectOptions.find(o => o.value === value) || null;
+    }, [value, selectOptions, isMulti]);
+
     return (
-        <Select<SelectOptionType, false, GroupBase<SelectOptionType>>
-            value={selectOptions.find(o => o.value === value) || null}
+        <Select<SelectOptionType, boolean, GroupBase<SelectOptionType>>
+            value={selectValue}
             onChange={handleChange}
             options={selectOptions}
             styles={customStyles}
             isDisabled={disabled}
+            isMulti={isMulti}
             aria-label="Searchable dropdown for trading pairs"
         />
     );

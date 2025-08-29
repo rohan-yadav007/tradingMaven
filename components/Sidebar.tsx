@@ -1,4 +1,5 @@
 
+
 import React, { useState } from 'react';
 import { Kline, AccountInfo } from '../types';
 import { SettingsIcon, WalletIcon } from './icons';
@@ -10,7 +11,8 @@ interface SidebarProps {
     onStartBot: () => void;
     klines: Kline[];
     livePrice: number;
-    isBotCombinationActive: boolean;
+    botsToCreateCount: number;
+    selectedPairsCount: number;
     theme: 'light' | 'dark';
 
     // Wallet Dashboard Props
@@ -54,7 +56,8 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                     <ControlPanel
                         klines={props.klines}
                         livePrice={props.livePrice}
-                        isBotCombinationActive={props.isBotCombinationActive}
+                        botsToCreateCount={props.botsToCreateCount}
+                        selectedPairsCount={props.selectedPairsCount}
                         onStartBot={props.onStartBot}
                         theme={props.theme}
                     />

@@ -94,6 +94,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     qsc_rsiBuyThreshold: 58,
     qsc_rsiSellThreshold: 42,
     qsc_volumeExhaustionMultiplier: 2.5,
+    qsc_marketCohesionCandles: 2,
 
     // FIX: Add default parameters for Ichimoku Trend Rider agent (ID 16).
     // Agent 16: Ichimoku Trend Rider

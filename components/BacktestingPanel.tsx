@@ -131,6 +131,7 @@ export type BacktestConfig = {
     isMinRrEnabled: boolean; htfTimeFrame: 'auto' | string; isInvalidationCheckEnabled?: boolean;
     isAgentTrailEnabled: boolean;
     isBreakevenTrailEnabled: boolean;
+    isMarketCohesionEnabled?: boolean;
     agentParams: AgentParams; leverage: number;
     entryTiming: 'immediate' | 'onNextCandle';
     // Legacy properties for BotConfig compatibility
@@ -168,6 +169,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         isMinRrEnabled: globalConfig.isMinRrEnabled, isInvalidationCheckEnabled: globalConfig.isInvalidationCheckEnabled,
         isAgentTrailEnabled: globalConfig.isAgentTrailEnabled,
         isBreakevenTrailEnabled: globalConfig.isBreakevenTrailEnabled,
+        isMarketCohesionEnabled: globalConfig.isMarketCohesionEnabled,
         entryTiming: globalConfig.entryTiming,
         // Use default values from context for legacy properties to satisfy BotConfig type
         takeProfitMode: globalConfig.takeProfitMode,
@@ -237,6 +239,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 isMinRrEnabled: config.isMinRrEnabled,
                 isAgentTrailEnabled: config.isAgentTrailEnabled,
                 isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
+                isMarketCohesionEnabled: config.isMarketCohesionEnabled,
                 htfTimeFrame: config.htfTimeFrame, agentParams: config.agentParams,
                 pricePrecision: binanceService.getPricePrecision(symbolInfo), quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
@@ -282,6 +285,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 isMinRrEnabled: config.isMinRrEnabled,
                 isAgentTrailEnabled: config.isAgentTrailEnabled,
                 isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
+                isMarketCohesionEnabled: config.isMarketCohesionEnabled,
                 htfTimeFrame: config.htfTimeFrame, agentParams: config.agentParams,
                 pricePrecision: binanceService.getPricePrecision(symbolInfo), quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
@@ -354,7 +358,8 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                                 </div>
                             )}
                         </div>
-                         <div className="flex items-center justify-between"><label className={formLabelClass}>Agent Indicator Trail</label><ToggleSwitch checked={config.isAgentTrailEnabled} onChange={v => updateConfig('isAgentTrailEnabled', v)} /></div>
+                        <div className="flex items-center justify-between"><label className={formLabelClass}>Market Cohesion Filter</label><ToggleSwitch checked={config.isMarketCohesionEnabled ?? true} onChange={v => updateConfig('isMarketCohesionEnabled', v)} /></div>
+                        <div className="flex items-center justify-between"><label className={formLabelClass}>Agent Indicator Trail</label><ToggleSwitch checked={config.isAgentTrailEnabled} onChange={v => updateConfig('isAgentTrailEnabled', v)} /></div>
                         <div className="flex items-center justify-between"><label className={formLabelClass}>Mandatory Breakeven Trail</label><ToggleSwitch checked={config.isBreakevenTrailEnabled} onChange={v => updateConfig('isBreakevenTrailEnabled', v)} /></div>
                         <div className="flex items-center justify-between"><label className={formLabelClass}>Universal Profit Trail</label><ToggleSwitch checked={config.isUniversalProfitTrailEnabled} onChange={v => updateConfig('isUniversalProfitTrailEnabled', v)} /></div>
                         <div className="flex items-center justify-between"><label className={formLabelClass}>Minimum R:R Veto</label><ToggleSwitch checked={config.isMinRrEnabled} onChange={v => updateConfig('isMinRrEnabled', v)} /></div>

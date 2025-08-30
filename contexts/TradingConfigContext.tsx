@@ -28,6 +28,7 @@ interface TradingConfigState {
     isInvalidationCheckEnabled: boolean;
     isAgentTrailEnabled: boolean;
     isBreakevenTrailEnabled: boolean;
+    isMarketCohesionEnabled: boolean;
     htfTimeFrame: 'auto' | string;
     agentParams: AgentParams;
     htfAgentParams: AgentParams;
@@ -62,6 +63,7 @@ interface TradingConfigActions {
     setIsInvalidationCheckEnabled: (isEnabled: boolean) => void;
     setIsAgentTrailEnabled: (isEnabled: boolean) => void;
     setIsBreakevenTrailEnabled: (isEnabled: boolean) => void;
+    setIsMarketCohesionEnabled: (isEnabled: boolean) => void;
     setHtfTimeFrame: (tf: 'auto' | string) => void;
     setAgentParams: (params: AgentParams) => void;
     setHtfAgentParams: (params: AgentParams) => void;
@@ -101,6 +103,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [isInvalidationCheckEnabled, setIsInvalidationCheckEnabled] = useState<boolean>(true);
     const [isAgentTrailEnabled, setIsAgentTrailEnabled] = useState<boolean>(true);
     const [isBreakevenTrailEnabled, setIsBreakevenTrailEnabled] = useState<boolean>(true);
+    const [isMarketCohesionEnabled, setIsMarketCohesionEnabled] = useState<boolean>(true);
     const [htfTimeFrame, setHtfTimeFrame] = useState<'auto' | string>('auto');
     const [isApiConnected, setIsApiConnected] = useState(false);
     const [walletViewMode, setWalletViewMode] = useState<TradingMode>(TradingMode.Spot);
@@ -269,6 +272,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setAgentParams, setHtfAgentParams, setIsApiConnected, setWalletViewMode,
         setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError, setIsUniversalProfitTrailEnabled,
         setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setEntryTiming,
+        setIsMarketCohesionEnabled,
     }), [onSetMultiAssetMode]);
     
     const state = {
@@ -280,7 +284,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         takeProfitValue: 0,
         isTakeProfitLocked: false,
         isHtfConfirmationEnabled, isUniversalProfitTrailEnabled, 
-        isMinRrEnabled, isReanalysisEnabled, isInvalidationCheckEnabled, isAgentTrailEnabled, isBreakevenTrailEnabled, htfTimeFrame,
+        isMinRrEnabled, isReanalysisEnabled, isInvalidationCheckEnabled, isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, htfTimeFrame,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
         futuresSettingsError, multiAssetModeError, entryTiming
     };

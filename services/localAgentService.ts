@@ -217,6 +217,78 @@ function isLastCandleContradictory(
     return { veto: false, reason: '' };
 }
 
+function calculateHeikinAshi(klines: Kline[]): Kline[] {
+    if (klines.length === 0) return [];
+
+    const haKlines: Kline[] = [];
+
+    const firstKline = klines[0];
+    haKlines.push({
+        time: firstKline.time,
+        open: (firstKline.open + firstKline.close) / 2,
+        high: firstKline.high,
+        low: firstKline.low,
+        close: (firstKline.open + firstKline.high + firstKline.low + firstKline.close) / 4,
+        volume: firstKline.volume,
+        isFinal: firstKline.isFinal,
+    });
+
+    for (let i = 1; i < klines.length; i++) {
+        const kline = klines[i];
+        const prevHaKline = haKlines[i-1];
+
+        const haClose = (kline.open + kline.high + kline.low + kline.close) / 4;
+        const haOpen = (prevHaKline.open + prevHaKline.close) / 2;
+        const haHigh = Math.max(kline.high, haOpen, haClose);
+        const haLow = Math.min(kline.low, haOpen, haClose);
+        
+        haKlines.push({
+            time: kline.time,
+            open: haOpen,
+            high: haHigh,
+            low: haLow,
+            close: haClose,
+            volume: kline.volume,
+            isFinal: kline.isFinal,
+        });
+    }
+
+    return haKlines;
+}
+
+function isMarketCohesive(
+    heikinAshiKlines: Kline[],
+    direction: 'BUY' | 'SELL',
+    candleLookback: number
+): { cohesive: boolean; reason: string } {
+    if (heikinAshiKlines.length < candleLookback) {
+        return { cohesive: true, reason: 'Insufficient HA klines for cohesion check.' };
+    }
+
+    const relevantKlines = heikinAshiKlines.slice(-candleLookback);
+    const wickTolerance = 0.10;
+
+    if (direction === 'BUY') {
+        for (const ha of relevantKlines) {
+            const bodySize = Math.abs(ha.close - ha.open);
+            const lowerWick = ha.open - ha.low;
+            if (ha.close <= ha.open || lowerWick > bodySize * wickTolerance) {
+                return { cohesive: false, reason: `❌ VETO: Market lacks bullish cohesion (HA check).` };
+            }
+        }
+        return { cohesive: true, reason: '✅ HA Cohesion: Bullish' };
+    } else { // SELL
+        for (const ha of relevantKlines) {
+            const bodySize = Math.abs(ha.open - ha.close);
+            const upperWick = ha.high - ha.open;
+            if (ha.close >= ha.open || upperWick > bodySize * wickTolerance) {
+                return { cohesive: false, reason: `❌ VETO: Market lacks bearish cohesion (HA check).` };
+            }
+        }
+        return { cohesive: true, reason: '✅ HA Cohesion: Bearish' };
+    }
+}
+
 
 // ----------------------------------------------------------------------------------
 // --- #1: INITIAL TARGET CALCULATION (SL/TP) - THE CORE RISK FIX ---
@@ -1401,6 +1473,17 @@ export const getTradingSignal = async (
     const entryPrice = lastKline.close;
     const isLong = signal.signal === 'BUY';
 
+    if (config.isMarketCohesionEnabled) {
+        const heikinAshiKlines = calculateHeikinAshi(klines);
+        const lookback = (config.agentParams as Required<AgentParams>).qsc_marketCohesionCandles || 2;
+        const cohesionCheck = isMarketCohesive(heikinAshiKlines, signal.signal, lookback);
+        if (!cohesionCheck.cohesive) {
+            signal.reasons.push(cohesionCheck.reason);
+            return { ...signal, signal: 'HOLD' };
+        }
+        signal.reasons.push(cohesionCheck.reason);
+    }
+
     if (config.isMinRrEnabled) {
         const { stopLossPrice, takeProfitPrice } = getInitialAgentTargets(klines, entryPrice, isLong ? 'LONG' : 'SHORT', config);
         const risk = Math.abs(entryPrice - stopLossPrice);
@@ -1450,22 +1533,23 @@ export function captureMarketContext(klines: Kline[], htfKlines?: Kline[]): Mark
             context.bb20_2 = getLast(BollingerBands.calculate({ period: 20, stdDev: 2, values: closes }));
             context.volumeSma20 = getLast(SMA.calculate({ period: 20, values: volumes }));
             const obv = OBV.calculate({ close: closes, volume: volumes });
-            context.obvTrend = isObvTrending(obv, 'bullish') ? 'bullish' : isObvTrending(obv, 'bearish') ? 'bearish' : 'neutral';
+            if (isObvTrending(obv, 'bullish')) context.obvTrend = 'bullish';
+            else if (isObvTrending(obv, 'bearish')) context.obvTrend = 'bearish';
+            else context.obvTrend = 'neutral';
             const vi = VortexIndicator.calculate({ high: highs, low: lows, close: closes, period: 14 });
-            if(getLast(vi.pdi) !== undefined) context.vi14 = { pdi: getLast(vi.pdi)!, ndi: getLast(vi.ndi)! };
+            context.vi14 = { pdi: getLast(vi.pdi)!, ndi: getLast(vi.ndi)! };
             context.ichiCloud = getLast(IchimokuCloud.calculate({ high: highs, low: lows, conversionPeriod: 9, basePeriod: 26, spanPeriod: 52, displacement: 26 }));
             context.lastCandlePattern = recognizeCandlestickPattern(klines[klines.length - 1], klines[klines.length - 2]);
         }
-
-        // Higher Timeframe Context
-        if (htfKlines && htfKlines.length > 50) {
+        
+        if (htfKlines && htfKlines.length >= 50) {
             const htfCloses = htfKlines.map(k => k.close);
             const htfHighs = htfKlines.map(k => k.high);
             const htfLows = htfKlines.map(k => k.low);
             const htfVolumes = htfKlines.map(k => k.volume || 0);
 
-            context.htf_stochRsi = getLast(StochasticRSI.calculate({ values: htfCloses, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 }));
             context.htf_rsi14 = getLast(RSI.calculate({ period: 14, values: htfCloses }));
+            context.htf_stochRsi = getLast(StochasticRSI.calculate({ values: htfCloses, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 }));
             context.htf_ema9 = getLast(EMA.calculate({ period: 9, values: htfCloses }));
             context.htf_ema21 = getLast(EMA.calculate({ period: 21, values: htfCloses }));
             context.htf_ema50 = getLast(EMA.calculate({ period: 50, values: htfCloses }));
@@ -1473,17 +1557,24 @@ export function captureMarketContext(klines: Kline[], htfKlines?: Kline[]): Mark
             context.htf_macd = getLast(MACD.calculate({ values: htfCloses, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false }));
             context.htf_adx14 = getLast(ADX.calculate({ high: htfHighs, low: htfLows, close: htfCloses, period: 14 }));
             const htfObv = OBV.calculate({ close: htfCloses, volume: htfVolumes });
-            context.htf_obvTrend = isObvTrending(htfObv, 'bullish') ? 'bullish' : isObvTrending(htfObv, 'bearish') ? 'bearish' : 'neutral';
+            if (isObvTrending(htfObv, 'bullish')) context.htf_obvTrend = 'bullish';
+            else if (isObvTrending(htfObv, 'bearish')) context.htf_obvTrend = 'bearish';
+            else context.htf_obvTrend = 'neutral';
             const htfVi = VortexIndicator.calculate({ high: htfHighs, low: htfLows, close: htfCloses, period: 14 });
-            if(getLast(htfVi.pdi) !== undefined) context.htf_vi14 = { pdi: getLast(htfVi.pdi)!, ndi: getLast(htfVi.ndi)! };
-            const htfEma50 = getLast(EMA.calculate({ period: 50, values: htfCloses }));
-            if (htfEma50) {
-                 // FIX: Cast result of technical indicator to its correct type.
-                 context.htf_trend = (getLast(htfCloses) as number) > (htfEma50 as number) ? 'bullish' : 'bearish';
+            context.htf_vi14 = { pdi: getLast(htfVi.pdi)!, ndi: getLast(htfVi.ndi)! };
+
+            const htfEma50 = context.htf_ema50;
+            const htfEma200 = context.htf_ema200;
+            const htfLastClose = getLast(htfCloses);
+            if(htfEma50 && htfEma200 && htfLastClose) {
+                if (htfLastClose > htfEma50 && htfEma50 > htfEma200) context.htf_trend = 'bullish';
+                else if (htfLastClose < htfEma50 && htfEma50 < htfEma200) context.htf_trend = 'bearish';
+                else context.htf_trend = 'neutral';
             }
         }
     } catch (e) {
-        console.error("Error capturing market context:", e);
+        // In a backtest or live environment, we don't want to crash, just return what we have.
+        console.warn("Could not calculate full market context:", e);
     }
     
     return context;

@@ -169,6 +169,7 @@ export interface Position {
         isReanalysisEnabled?: boolean;
         isAgentTrailEnabled: boolean;
         isBreakevenTrailEnabled: boolean;
+        isMarketCohesionEnabled?: boolean;
         htfTimeFrame?: 'auto' | string;
         entryTiming?: 'immediate' | 'onNextCandle';
     };
@@ -330,6 +331,7 @@ export interface BotConfig {
     isReanalysisEnabled?: boolean;
     isAgentTrailEnabled: boolean;
     isBreakevenTrailEnabled: boolean;
+    isMarketCohesionEnabled?: boolean;
     htfTimeFrame?: 'auto' | string;
     agentParams?: AgentParams;
     htfAgentParams?: AgentParams;
@@ -466,6 +468,7 @@ export type AgentParams = Partial<{
     qsc_rsiBuyThreshold: number;
     qsc_rsiSellThreshold: number;
     qsc_volumeExhaustionMultiplier?: number;
+    qsc_marketCohesionCandles?: number;
 
     // Ichimoku Trend Rider (16)
     ichi_conversionPeriod: number;

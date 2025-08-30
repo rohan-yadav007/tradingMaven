@@ -241,9 +241,11 @@ async function runBacktest(
                 }
             }
             
-            const breakevenSignal = getMandatoryBreakevenSignal(positionState, currentPrice);
-            if (breakevenSignal.newStopLoss) {
-                stopCandidates.push({ price: breakevenSignal.newStopLoss, reason: 'Breakeven', newState: breakevenSignal.newState });
+            if (config.isBreakevenTrailEnabled) {
+                const breakevenSignal = getMandatoryBreakevenSignal(positionState, currentPrice);
+                if (breakevenSignal.newStopLoss) {
+                    stopCandidates.push({ price: breakevenSignal.newStopLoss, reason: 'Breakeven', newState: breakevenSignal.newState });
+                }
             }
             
             if (config.isUniversalProfitTrailEnabled) {
@@ -252,10 +254,12 @@ async function runBacktest(
                     stopCandidates.push({ price: profitSecureSignal.newStopLoss, reason: 'Profit Secure', newState: profitSecureSignal.newState });
                 }
             }
-
-            const agentTrailSignal = getAgentExitSignal(positionState, historySlice, currentPrice, config);
-            if (agentTrailSignal.newStopLoss) {
-                stopCandidates.push({ price: agentTrailSignal.newStopLoss, reason: 'Agent Trail', newState: agentTrailSignal.newState });
+            
+            if (config.isAgentTrailEnabled) {
+                const agentTrailSignal = getAgentExitSignal(positionState, historySlice, currentPrice, config);
+                if (agentTrailSignal.newStopLoss) {
+                    stopCandidates.push({ price: agentTrailSignal.newStopLoss, reason: 'Agent Trail', newState: agentTrailSignal.newState });
+                }
             }
 
             const aggressiveTrailSignal = getAggressiveRangeTrailSignal(positionState, currentPrice);
@@ -322,6 +326,8 @@ async function runBacktest(
                             isMinRrEnabled: config.isMinRrEnabled,
                             isReanalysisEnabled: config.isReanalysisEnabled,
                             isInvalidationCheckEnabled: config.isInvalidationCheckEnabled,
+                            isAgentTrailEnabled: config.isAgentTrailEnabled,
+                            isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
                         };
 
                         openPosition = {

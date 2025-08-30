@@ -26,6 +26,8 @@ interface TradingConfigState {
     isMinRrEnabled: boolean;
     isReanalysisEnabled: boolean;
     isInvalidationCheckEnabled: boolean;
+    isAgentTrailEnabled: boolean;
+    isBreakevenTrailEnabled: boolean;
     htfTimeFrame: 'auto' | string;
     agentParams: AgentParams;
     htfAgentParams: AgentParams;
@@ -58,6 +60,8 @@ interface TradingConfigActions {
     setIsMinRrEnabled: (isEnabled: boolean) => void;
     setIsReanalysisEnabled: (isEnabled: boolean) => void;
     setIsInvalidationCheckEnabled: (isEnabled: boolean) => void;
+    setIsAgentTrailEnabled: (isEnabled: boolean) => void;
+    setIsBreakevenTrailEnabled: (isEnabled: boolean) => void;
     setHtfTimeFrame: (tf: 'auto' | string) => void;
     setAgentParams: (params: AgentParams) => void;
     setHtfAgentParams: (params: AgentParams) => void;
@@ -95,6 +99,8 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [isMinRrEnabled, setIsMinRrEnabled] = useState<boolean>(true);
     const [isReanalysisEnabled, setIsReanalysisEnabled] = useState<boolean>(true);
     const [isInvalidationCheckEnabled, setIsInvalidationCheckEnabled] = useState<boolean>(true);
+    const [isAgentTrailEnabled, setIsAgentTrailEnabled] = useState<boolean>(true);
+    const [isBreakevenTrailEnabled, setIsBreakevenTrailEnabled] = useState<boolean>(true);
     const [htfTimeFrame, setHtfTimeFrame] = useState<'auto' | string>('auto');
     const [isApiConnected, setIsApiConnected] = useState(false);
     const [walletViewMode, setWalletViewMode] = useState<TradingMode>(TradingMode.Spot);
@@ -262,7 +268,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         setMaxMarginLossPercent,
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setAgentParams, setHtfAgentParams, setIsApiConnected, setWalletViewMode,
         setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError, setIsUniversalProfitTrailEnabled,
-        setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled, setEntryTiming,
+        setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setEntryTiming,
     }), [onSetMultiAssetMode]);
     
     const state = {
@@ -274,7 +280,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         takeProfitValue: 0,
         isTakeProfitLocked: false,
         isHtfConfirmationEnabled, isUniversalProfitTrailEnabled, 
-        isMinRrEnabled, isReanalysisEnabled, isInvalidationCheckEnabled, htfTimeFrame,
+        isMinRrEnabled, isReanalysisEnabled, isInvalidationCheckEnabled, isAgentTrailEnabled, isBreakevenTrailEnabled, htfTimeFrame,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
         futuresSettingsError, multiAssetModeError, entryTiming
     };

@@ -164,6 +164,9 @@ ID: \`${bot.id}\``;
                     isMinRrEnabled: true,
                     isInvalidationCheckEnabled: true,
                     isReanalysisEnabled: true,
+                    // FIX: Add missing properties to satisfy BotConfig type.
+                    isAgentTrailEnabled: true,
+                    isBreakevenTrailEnabled: true,
                     pricePrecision: binanceService.getPricePrecision(symbolInfo),
                     quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                     stepSize: binanceService.getStepSize(symbolInfo),

@@ -129,6 +129,8 @@ export type BacktestConfig = {
     investmentAmount: number; maxMarginLossPercent: number;
     isHtfConfirmationEnabled: boolean; isUniversalProfitTrailEnabled: boolean;
     isMinRrEnabled: boolean; htfTimeFrame: 'auto' | string; isInvalidationCheckEnabled?: boolean;
+    isAgentTrailEnabled: boolean;
+    isBreakevenTrailEnabled: boolean;
     agentParams: AgentParams; leverage: number;
     entryTiming: 'immediate' | 'onNextCandle';
     // Legacy properties for BotConfig compatibility
@@ -164,6 +166,8 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         isUniversalProfitTrailEnabled: globalConfig.isUniversalProfitTrailEnabled, htfTimeFrame: globalConfig.htfTimeFrame,
         agentParams: globalConfig.agentParams, leverage: globalConfig.leverage,
         isMinRrEnabled: globalConfig.isMinRrEnabled, isInvalidationCheckEnabled: globalConfig.isInvalidationCheckEnabled,
+        isAgentTrailEnabled: globalConfig.isAgentTrailEnabled,
+        isBreakevenTrailEnabled: globalConfig.isBreakevenTrailEnabled,
         entryTiming: globalConfig.entryTiming,
         // Use default values from context for legacy properties to satisfy BotConfig type
         takeProfitMode: globalConfig.takeProfitMode,
@@ -231,6 +235,8 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 timeFrame: config.chartTimeFrame, investmentAmount: config.investmentAmount,
                 isHtfConfirmationEnabled: config.isHtfConfirmationEnabled, isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
                 isMinRrEnabled: config.isMinRrEnabled,
+                isAgentTrailEnabled: config.isAgentTrailEnabled,
+                isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
                 htfTimeFrame: config.htfTimeFrame, agentParams: config.agentParams,
                 pricePrecision: binanceService.getPricePrecision(symbolInfo), quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
@@ -274,6 +280,8 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 timeFrame: config.chartTimeFrame, investmentAmount: config.investmentAmount,
                 isHtfConfirmationEnabled: config.isHtfConfirmationEnabled, isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
                 isMinRrEnabled: config.isMinRrEnabled,
+                isAgentTrailEnabled: config.isAgentTrailEnabled,
+                isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
                 htfTimeFrame: config.htfTimeFrame, agentParams: config.agentParams,
                 pricePrecision: binanceService.getPricePrecision(symbolInfo), quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
@@ -346,6 +354,8 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                                 </div>
                             )}
                         </div>
+                         <div className="flex items-center justify-between"><label className={formLabelClass}>Agent Indicator Trail</label><ToggleSwitch checked={config.isAgentTrailEnabled} onChange={v => updateConfig('isAgentTrailEnabled', v)} /></div>
+                        <div className="flex items-center justify-between"><label className={formLabelClass}>Mandatory Breakeven Trail</label><ToggleSwitch checked={config.isBreakevenTrailEnabled} onChange={v => updateConfig('isBreakevenTrailEnabled', v)} /></div>
                         <div className="flex items-center justify-between"><label className={formLabelClass}>Universal Profit Trail</label><ToggleSwitch checked={config.isUniversalProfitTrailEnabled} onChange={v => updateConfig('isUniversalProfitTrailEnabled', v)} /></div>
                         <div className="flex items-center justify-between"><label className={formLabelClass}>Minimum R:R Veto</label><ToggleSwitch checked={config.isMinRrEnabled} onChange={v => updateConfig('isMinRrEnabled', v)} /></div>
                          <div className="flex items-center justify-between">

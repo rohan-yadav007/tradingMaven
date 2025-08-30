@@ -137,6 +137,20 @@ const BotConfigDetails: React.FC<{ bot: RunningBot; onUpdate: (change: Partial<B
                 <InfoItem label="Investment" value={`$${config.investmentAmount}`} />
             </div>
             <ConfigToggle
+                label="Agent Indicator Trail"
+                description="Agent's native trailing logic"
+                tooltip="Enable/disable the agent's indicator-based (e.g., PSAR) trailing stop. Affects the current open trade."
+                checked={config.isAgentTrailEnabled}
+                onChange={(checked) => onUpdate({ isAgentTrailEnabled: checked })}
+            />
+             <ConfigToggle
+                label="Mandatory Breakeven"
+                description="Moves SL to BE at 3x fees"
+                tooltip="Enable/disable the mandatory breakeven system. If disabled, the agent trail may still set a breakeven stop loss. Affects the current open trade."
+                checked={config.isBreakevenTrailEnabled}
+                onChange={(checked) => onUpdate({ isBreakevenTrailEnabled: checked })}
+            />
+            <ConfigToggle
                 label="Universal Profit Trail"
                 description="Fee-based profit locking"
                 tooltip="Affects the current open trade."

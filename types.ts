@@ -167,6 +167,8 @@ export interface Position {
         isMinRrEnabled: boolean;
         isInvalidationCheckEnabled?: boolean;
         isReanalysisEnabled?: boolean;
+        isAgentTrailEnabled: boolean;
+        isBreakevenTrailEnabled: boolean;
         htfTimeFrame?: 'auto' | string;
         entryTiming?: 'immediate' | 'onNextCandle';
     };
@@ -326,6 +328,8 @@ export interface BotConfig {
     isMinRrEnabled: boolean;
     isInvalidationCheckEnabled?: boolean;
     isReanalysisEnabled?: boolean;
+    isAgentTrailEnabled: boolean;
+    isBreakevenTrailEnabled: boolean;
     htfTimeFrame?: 'auto' | string;
     agentParams?: AgentParams;
     htfAgentParams?: AgentParams;

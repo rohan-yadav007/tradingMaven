@@ -34,7 +34,8 @@ const AppContent: React.FC = () => {
         agentParams, maxMarginLossPercent,
         leverage, marginType, isHtfConfirmationEnabled, htfTimeFrame, isUniversalProfitTrailEnabled,
         isMinRrEnabled, isInvalidationCheckEnabled, isReanalysisEnabled, htfAgentParams,
-        entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked
+        entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
+        isAgentTrailEnabled, isBreakevenTrailEnabled
     } = configState;
 
     const {
@@ -132,6 +133,8 @@ const AppContent: React.FC = () => {
                     isMinRrEnabled,
                     isInvalidationCheckEnabled,
                     isReanalysisEnabled,
+                    isAgentTrailEnabled,
+                    isBreakevenTrailEnabled,
                     agentParams,
                     htfAgentParams,
                     pricePrecision: pricePrecisionForBot,
@@ -156,7 +159,8 @@ const AppContent: React.FC = () => {
         selectedAgent, chartTimeFrame, investmentAmount, maxMarginLossPercent,
         isHtfConfirmationEnabled, htfTimeFrame, agentParams, htfAgentParams,
         isUniversalProfitTrailEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
-        isReanalysisEnabled, currentFeeRate, entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked
+        isReanalysisEnabled, currentFeeRate, entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
+        isAgentTrailEnabled, isBreakevenTrailEnabled
     ]);
 
     // ---- Handlers ----
@@ -465,6 +469,8 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             isMinRrEnabled: config.isMinRrEnabled,
             isReanalysisEnabled: config.isReanalysisEnabled,
             isInvalidationCheckEnabled: config.isInvalidationCheckEnabled,
+            isAgentTrailEnabled: config.isAgentTrailEnabled,
+            isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
             entryTiming: config.entryTiming,
         };
         

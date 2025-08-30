@@ -156,7 +156,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         marginType, futuresSettingsError, isMultiAssetMode, multiAssetModeError,
         maxLeverage, isLeverageLoading, isHtfConfirmationEnabled, htfTimeFrame,
         isUniversalProfitTrailEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
-        isReanalysisEnabled, entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked
+        isReanalysisEnabled, entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
+        isAgentTrailEnabled, isBreakevenTrailEnabled
     } = config;
 
     const {
@@ -165,7 +166,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setMarginType, onSetMultiAssetMode, setAgentParams, setMaxMarginLossPercent,
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setIsUniversalProfitTrailEnabled,
         setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled,
-        setEntryTiming,
+        setEntryTiming, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled
     } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -220,6 +221,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         isMinRrEnabled: config.isMinRrEnabled,
                         isInvalidationCheckEnabled: config.isInvalidationCheckEnabled,
                         isReanalysisEnabled: config.isReanalysisEnabled,
+                        isAgentTrailEnabled: config.isAgentTrailEnabled,
+                        isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
                         htfTimeFrame: config.htfTimeFrame,
                         agentParams: agentParams,
                         pricePrecision: 8,
@@ -481,6 +484,34 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         </select>
                     </div>
                 )}
+            </div>
+             <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="agent-trail-toggle" className={formLabelClass}>
+                        Agent Indicator Trail
+                    </label>
+                    <ToggleSwitch
+                        checked={isAgentTrailEnabled}
+                        onChange={setIsAgentTrailEnabled}
+                    />
+                </div>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Allows the agent's core logic (e.g., PSAR, Supertrend) to actively trail the stop loss.
+                </p>
+            </div>
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="breakeven-trail-toggle" className={formLabelClass}>
+                        Mandatory Breakeven Trail
+                    </label>
+                    <ToggleSwitch
+                        checked={isBreakevenTrailEnabled}
+                        onChange={setIsBreakevenTrailEnabled}
+                    />
+                </div>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Once profitable by 3x fees, the stop loss is moved to a fee-adjusted breakeven point.
+                </p>
             </div>
              <div className={formGroupClass}>
                 <div className="flex items-center justify-between">

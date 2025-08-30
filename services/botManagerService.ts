@@ -584,9 +584,11 @@ class BotInstance {
         }
         
         // Candidate B: Mandatory Breakeven
-        const breakevenSignal = getMandatoryBreakevenSignal(positionState, currentPrice);
-        if (breakevenSignal.newStopLoss) {
-            stopCandidates.push({ price: breakevenSignal.newStopLoss, reason: 'Breakeven', newState: breakevenSignal.newState });
+        if (this.bot.config.isBreakevenTrailEnabled) {
+            const breakevenSignal = getMandatoryBreakevenSignal(positionState, currentPrice);
+            if (breakevenSignal.newStopLoss) {
+                stopCandidates.push({ price: breakevenSignal.newStopLoss, reason: 'Breakeven', newState: breakevenSignal.newState });
+            }
         }
         
         // Candidate C: Universal Profit Trail
@@ -598,19 +600,21 @@ class BotInstance {
         }
 
         // Candidate D: Agent's Native Trail
-        const lastFinalKline = this.klines.length > 0 ? this.klines[this.klines.length - 1] : undefined;
-        if (lastFinalKline) {
-            const previewKline: Kline = {
-                ...lastFinalKline,
-                high: Math.max(lastFinalKline.high, currentPrice),
-                low: Math.min(lastFinalKline.low, currentPrice),
-                close: currentPrice,
-                isFinal: false,
-            };
-            const klinesForAnalysis = [...this.klines.slice(0, -1), previewKline];
-            const agentTrailSignal = getAgentExitSignal(positionState, klinesForAnalysis, currentPrice, this.bot.config);
-            if (agentTrailSignal.newStopLoss) {
-                stopCandidates.push({ price: agentTrailSignal.newStopLoss, reason: 'Agent Trail', newState: agentTrailSignal.newState });
+        if (this.bot.config.isAgentTrailEnabled) {
+            const lastFinalKline = this.klines.length > 0 ? this.klines[this.klines.length - 1] : undefined;
+            if (lastFinalKline) {
+                const previewKline: Kline = {
+                    ...lastFinalKline,
+                    high: Math.max(lastFinalKline.high, currentPrice),
+                    low: Math.min(lastFinalKline.low, currentPrice),
+                    close: currentPrice,
+                    isFinal: false,
+                };
+                const klinesForAnalysis = [...this.klines.slice(0, -1), previewKline];
+                const agentTrailSignal = getAgentExitSignal(positionState, klinesForAnalysis, currentPrice, this.bot.config);
+                if (agentTrailSignal.newStopLoss) {
+                    stopCandidates.push({ price: agentTrailSignal.newStopLoss, reason: 'Agent Trail', newState: agentTrailSignal.newState });
+                }
             }
         }
 

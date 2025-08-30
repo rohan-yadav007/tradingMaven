@@ -259,6 +259,7 @@ function calculateHeikinAshi(klines: Kline[]): Kline[] {
 function isMarketCohesive(
     heikinAshiKlines: Kline[],
     direction: 'BUY' | 'SELL',
+    timeframe: string,
     candleLookback: number
 ): { cohesive: boolean; reason: string } {
     if (heikinAshiKlines.length < candleLookback) {
@@ -268,24 +269,40 @@ function isMarketCohesive(
     const relevantKlines = heikinAshiKlines.slice(-candleLookback);
     const wickTolerance = 0.10;
 
-    if (direction === 'BUY') {
-        for (const ha of relevantKlines) {
-            const bodySize = Math.abs(ha.close - ha.open);
+    const isKlinePerfectlyCohesive = (ha: Kline, dir: 'BUY' | 'SELL'): boolean => {
+        const bodySize = Math.abs(ha.close - ha.open);
+        if (bodySize === 0) return false; // A doji is not cohesive
+
+        if (dir === 'BUY') {
             const lowerWick = ha.open - ha.low;
-            if (ha.close <= ha.open || lowerWick > bodySize * wickTolerance) {
-                return { cohesive: false, reason: `❌ VETO: Market lacks bullish cohesion (HA check).` };
-            }
-        }
-        return { cohesive: true, reason: '✅ HA Cohesion: Bullish' };
-    } else { // SELL
-        for (const ha of relevantKlines) {
-            const bodySize = Math.abs(ha.open - ha.close);
+            // Must be a green candle with virtually no lower wick
+            return ha.close > ha.open && lowerWick <= bodySize * wickTolerance;
+        } else { // SELL
             const upperWick = ha.high - ha.open;
-            if (ha.close >= ha.open || upperWick > bodySize * wickTolerance) {
-                return { cohesive: false, reason: `❌ VETO: Market lacks bearish cohesion (HA check).` };
-            }
+            // Must be a red candle with virtually no upper wick
+            return ha.close < ha.open && upperWick <= bodySize * wickTolerance;
         }
-        return { cohesive: true, reason: '✅ HA Cohesion: Bearish' };
+    };
+
+    const lowerTimeframes = ['1m', '3m', '5m'];
+    const isLowerTimeframe = lowerTimeframes.includes(timeframe);
+
+    if (isLowerTimeframe) {
+        // Relaxed Rule: At least ONE of the last N candles is perfectly cohesive.
+        const hasCohesiveCandle = relevantKlines.some(k => isKlinePerfectlyCohesive(k, direction));
+        if (hasCohesiveCandle) {
+            return { cohesive: true, reason: `✅ HA Cohesion: Passed (Relaxed TF Rule)` };
+        } else {
+            return { cohesive: false, reason: `❌ VETO: Market lacks cohesion on low timeframe.` };
+        }
+    } else {
+        // Strict Rule: ALL of the last N candles must be perfectly cohesive.
+        const allCandlesCohesive = relevantKlines.every(k => isKlinePerfectlyCohesive(k, direction));
+        if (allCandlesCohesive) {
+            return { cohesive: true, reason: `✅ HA Cohesion: Passed (Strict TF Rule)` };
+        } else {
+            return { cohesive: false, reason: `❌ VETO: Market lacks cohesion on high timeframe.` };
+        }
     }
 }
 
@@ -1476,7 +1493,7 @@ export const getTradingSignal = async (
     if (config.isMarketCohesionEnabled) {
         const heikinAshiKlines = calculateHeikinAshi(klines);
         const lookback = (config.agentParams as Required<AgentParams>).qsc_marketCohesionCandles || 2;
-        const cohesionCheck = isMarketCohesive(heikinAshiKlines, signal.signal, lookback);
+        const cohesionCheck = isMarketCohesive(heikinAshiKlines, signal.signal, config.timeFrame, lookback);
         if (!cohesionCheck.cohesive) {
             signal.reasons.push(cohesionCheck.reason);
             return { ...signal, signal: 'HOLD' };

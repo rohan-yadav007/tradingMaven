@@ -5,7 +5,7 @@ export const TRADING_PAIRS: string[] = [
     'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT'
 ];
 
-export const TIME_FRAMES: string[] = ['1m', '3m', '5m', '15m', '1h', '4h', '1d'];
+export const TIME_FRAMES: string[] = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d'];
 
 /**
  * The standard taker fee rate for Binance Spot and Futures.
@@ -139,6 +139,7 @@ export const QUANTUM_SCALPER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentPar
     '3m':  { qsc_stochRsiOversold: 25, qsc_stochRsiOverbought: 75, qsc_adxThreshold: 28, viPeriod: 12, qsc_rsiOverextendedLong: 78, qsc_rsiOverextendedShort: 22 },
     '5m':  { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 25, viPeriod: 14, qsc_rsiOverextendedLong: 75, qsc_rsiOverextendedShort: 25, qsc_rsiBuyThreshold: 60, qsc_rsiSellThreshold: 40 },
     '15m': { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 25, viPeriod: 14, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30 },
+    '30m': { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 23, viPeriod: 16, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30 },
     '1h':  { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 22, viPeriod: 18, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30 },
     '4h':  { qsc_stochRsiOversold: 35, qsc_stochRsiOverbought: 65, qsc_adxThreshold: 22, viPeriod: 20, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30 },
     '1d':  { qsc_stochRsiOversold: 35, qsc_stochRsiOverbought: 65, qsc_adxThreshold: 22, viPeriod: 20, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30 },
@@ -149,6 +150,7 @@ export const HISTORIC_EXPERT_TIMEFRAME_SETTINGS: Record<string, Partial<AgentPar
     '3m':  { he_trendSmaPeriod: 50, he_fastEmaPeriod: 7, he_slowEmaPeriod: 14, he_adxTrendThreshold: 25 },
     '5m':  { he_trendSmaPeriod: 40, he_fastEmaPeriod: 8, he_slowEmaPeriod: 18, he_adxTrendThreshold: 22 },
     '15m': { he_trendSmaPeriod: 30, he_fastEmaPeriod: 9, he_slowEmaPeriod: 21, he_adxTrendThreshold: 20 },
+    '30m': { he_trendSmaPeriod: 25, he_fastEmaPeriod: 10, he_slowEmaPeriod: 24, he_adxTrendThreshold: 20 },
     '1h':  { he_trendSmaPeriod: 20, he_fastEmaPeriod: 12, he_slowEmaPeriod: 26, he_adxTrendThreshold: 20 },
     '4h':  { he_trendSmaPeriod: 20, he_fastEmaPeriod: 12, he_slowEmaPeriod: 26, he_adxTrendThreshold: 20 },
     '1d':  { he_trendSmaPeriod: 20, he_fastEmaPeriod: 12, he_slowEmaPeriod: 26, he_adxTrendThreshold: 20 },
@@ -158,6 +160,7 @@ export const CHAMELEON_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> 
     '1m':  { ch_trendEmaPeriod: 100, ch_adxThreshold: 25, ch_kst_rocPer1: 8, ch_kst_rocPer2: 12, ch_kst_rocPer3: 16, ch_kst_rocPer4: 24, ch_kst_smaRocPer1: 8, ch_kst_smaRocPer2: 8, ch_kst_smaRocPer3: 8, ch_kst_smaRocPer4: 12 },
     '3m':  { ch_trendEmaPeriod: 150, ch_adxThreshold: 23, ch_kst_rocPer1: 9, ch_kst_rocPer2: 13, ch_kst_rocPer3: 17, ch_kst_rocPer4: 26, ch_kst_smaRocPer1: 9, ch_kst_smaRocPer2: 9, ch_kst_smaRocPer3: 9, ch_kst_smaRocPer4: 13 },
     '5m':  { ch_trendEmaPeriod: 200, ch_adxThreshold: 22 }, // Uses default KST params
+    '30m': {},
 };
 
 export const SENTINEL_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
@@ -165,6 +168,7 @@ export const SENTINEL_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> =
     '3m':  { sentinel_scoreThreshold: 75, viPeriod: 12 },
     '5m':  { sentinel_scoreThreshold: 70, viPeriod: 14 },
     '15m': { sentinel_scoreThreshold: 70, viPeriod: 14 },
+    '30m': { sentinel_scoreThreshold: 68, viPeriod: 16 },
     '1h':  { sentinel_scoreThreshold: 65, viPeriod: 18 },
     '4h':  { sentinel_scoreThreshold: 65, viPeriod: 20 },
     '1d':  { sentinel_scoreThreshold: 60, viPeriod: 20 },
@@ -176,6 +180,7 @@ export const ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS: Record<string, Partial<Age
     '3m':  {},
     '5m':  {},
     '15m': {},
+    '30m': {},
     '1h':  {},
     '4h':  {},
     '1d':  {},
@@ -228,6 +233,7 @@ export const TIMEFRAME_ATR_CONFIG: Record<string, { atrMultiplier: number, riskR
     '3m':  { atrMultiplier: 2.2, riskRewardRatio: 1.5 },
     '5m':  { atrMultiplier: 2.5, riskRewardRatio: 1.8 },
     '15m': { atrMultiplier: 2.5, riskRewardRatio: 2.0 },
+    '30m': { atrMultiplier: 2.7, riskRewardRatio: 2.1 },
     '1h':  { atrMultiplier: 2.8, riskRewardRatio: 2.2 },
     '4h':  { atrMultiplier: 3.2, riskRewardRatio: 2.5 },
     '1d':  { atrMultiplier: 3.8, riskRewardRatio: 3.0 },

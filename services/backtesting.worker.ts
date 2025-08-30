@@ -187,20 +187,58 @@ async function runBacktest(
         // --- MANAGE OPEN POSITION ---
         if (openPosition) {
             const isLong = openPosition.direction === 'LONG';
-            // Update MFE/MAE trackers
-            if (isLong) {
-                openPosition.peakPrice = Math.max(openPosition.peakPrice!, currentCandle.high);
-                openPosition.troughPrice = Math.min(openPosition.troughPrice!, currentCandle.low);
-            } else {
-                openPosition.peakPrice = Math.min(openPosition.peakPrice!, currentCandle.low);
-                openPosition.troughPrice = Math.max(openPosition.troughPrice!, currentCandle.high);
+
+            // --- CRITICAL RE-ARCH: Update SL based on candle open first, just like a live tick ---
+            // This ensures the SL for the duration of this candle is set correctly before checking high/low wicks.
+            const candleOpenPrice = currentCandle.open;
+            let positionState: SimulatedPosition = { ...openPosition };
+
+            // Run all stop-loss candidate collectors with the open price
+            const stopCandidates: { price: number; reason: Position['activeStopLossReason']; newState?: Partial<Position> }[] = [
+                { price: positionState.stopLossPrice, reason: positionState.activeStopLossReason }
+            ];
+             if (config.isInvalidationCheckEnabled) {
+                const spikeSignal = getProfitSpikeSignal(positionState, candleOpenPrice);
+                if (spikeSignal.newStopLoss) stopCandidates.push({ price: spikeSignal.newStopLoss, reason: 'Profit Secure', newState: spikeSignal.newState });
             }
-            
+            if (config.isBreakevenTrailEnabled) {
+                const breakevenSignal = getMandatoryBreakevenSignal(positionState, candleOpenPrice);
+                if (breakevenSignal.newStopLoss) stopCandidates.push({ price: breakevenSignal.newStopLoss, reason: 'Breakeven', newState: breakevenSignal.newState });
+            }
+            if (config.isUniversalProfitTrailEnabled) {
+                const profitSecureSignal = getMultiStageProfitSecureSignal(positionState, candleOpenPrice);
+                if (profitSecureSignal.newStopLoss) stopCandidates.push({ price: profitSecureSignal.newStopLoss, reason: 'Profit Secure', newState: profitSecureSignal.newState });
+            }
+            if (config.isAgentTrailEnabled) {
+                const agentTrailSignal = getAgentExitSignal(positionState, historySlice.slice(0, -1), candleOpenPrice, config); // Use history before current candle
+                if (agentTrailSignal.newStopLoss) {
+                    stopCandidates.push({ price: agentTrailSignal.newStopLoss, reason: 'Agent Trail', newState: agentTrailSignal.newState });
+                }
+            }
+            const aggressiveTrailSignal = getAggressiveRangeTrailSignal(positionState, candleOpenPrice);
+            if (aggressiveTrailSignal.newStopLoss) stopCandidates.push({ price: aggressiveTrailSignal.newStopLoss, reason: 'Profit Secure', newState: aggressiveTrailSignal.newState });
+
+            // Select and apply the best candidate
+            let bestCandidate = stopCandidates[0];
+            for (const candidate of stopCandidates) {
+                const isValid = isLong ? candidate.price < candleOpenPrice : candidate.price > candleOpenPrice;
+                const isTighter = isLong ? candidate.price > bestCandidate.price : candidate.price < bestCandidate.price;
+                if (isValid && isTighter) bestCandidate = candidate;
+            }
+            if (bestCandidate.price !== positionState.stopLossPrice) {
+                if (bestCandidate.newState) positionState = { ...positionState, ...(bestCandidate.newState as Partial<Position>) };
+                positionState.stopLossPrice = bestCandidate.price;
+                positionState.activeStopLossReason = bestCandidate.reason;
+            }
+            openPosition = positionState; // The SL is now set for this candle period.
+            // --- End of SL update logic ---
+
             const stopReason = openPosition.activeStopLossReason.includes('Trail') || openPosition.activeStopLossReason.includes('Secure') || openPosition.activeStopLossReason === 'Breakeven' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
             
-            const pricePath = currentCandle.open < currentCandle.close 
-                ? [currentCandle.open, currentCandle.high, currentCandle.low, currentCandle.close] 
-                : [currentCandle.open, currentCandle.low, currentCandle.high, currentCandle.close];
+            // Now, check the candle's price path against the UPDATED stop loss
+            const pricePath = isLong 
+                ? [currentCandle.low, currentCandle.high] // Check for SL first (low), then TP (high)
+                : [currentCandle.high, currentCandle.low]; // Check for SL first (high), then TP (low)
 
             for (const pricePoint of pricePath) {
                 if (!openPosition) break;
@@ -213,80 +251,25 @@ async function runBacktest(
                 }
             }
             if (hasTradedInThisCandle) { equityCurve.push(equity); continue; }
-
-            // --- ON-CANDLE-CLOSE MANAGEMENT (using CANDIDATE MODEL) ---
+            
+            // If not closed by wicks, perform final on-close management and state updates
             openPosition.candlesSinceEntry!++;
-            const currentPrice = currentCandle.close;
-            let positionState: SimulatedPosition = { ...openPosition };
+            if (isLong) {
+                openPosition.peakPrice = Math.max(openPosition.peakPrice!, currentCandle.high);
+                openPosition.troughPrice = Math.min(openPosition.troughPrice!, currentCandle.low);
+            } else {
+                openPosition.peakPrice = Math.min(openPosition.peakPrice!, currentCandle.low);
+                openPosition.troughPrice = Math.max(openPosition.troughPrice!, currentCandle.high);
+            }
 
-            // Supervisor Check (runs first, can exit position)
             if (config.isInvalidationCheckEnabled) {
                 const htfHistorySlice = allHtfKlines ? allHtfKlines.filter(k => k.time <= currentCandle.time) : undefined;
                 const supervisorSignal = await getSupervisorSignal(openPosition, historySlice, config, htfHistorySlice);
                 if (supervisorSignal.action === 'close') {
-                    hasTradedInThisCandle = closePosition(currentPrice, supervisorSignal.reason, currentCandle.time);
+                    hasTradedInThisCandle = closePosition(currentCandle.close, supervisorSignal.reason, currentCandle.time);
                     if (hasTradedInThisCandle) { equityCurve.push(equity); continue; }
                 }
             }
-
-            // Candidate Stop-Loss Collection
-            const stopCandidates: { price: number; reason: Position['activeStopLossReason']; newState?: Partial<Position> }[] = [
-                { price: positionState.stopLossPrice, reason: positionState.activeStopLossReason }
-            ];
-
-            if (config.isInvalidationCheckEnabled) {
-                const spikeSignal = getProfitSpikeSignal(positionState, currentPrice);
-                if (spikeSignal.newStopLoss) {
-                    stopCandidates.push({ price: spikeSignal.newStopLoss, reason: 'Profit Secure', newState: spikeSignal.newState });
-                }
-            }
-            
-            if (config.isBreakevenTrailEnabled) {
-                const breakevenSignal = getMandatoryBreakevenSignal(positionState, currentPrice);
-                if (breakevenSignal.newStopLoss) {
-                    stopCandidates.push({ price: breakevenSignal.newStopLoss, reason: 'Breakeven', newState: breakevenSignal.newState });
-                }
-            }
-            
-            if (config.isUniversalProfitTrailEnabled) {
-                const profitSecureSignal = getMultiStageProfitSecureSignal(positionState, currentPrice);
-                if (profitSecureSignal.newStopLoss) {
-                    stopCandidates.push({ price: profitSecureSignal.newStopLoss, reason: 'Profit Secure', newState: profitSecureSignal.newState });
-                }
-            }
-            
-            if (config.isAgentTrailEnabled) {
-                const agentTrailSignal = getAgentExitSignal(positionState, historySlice, currentPrice, config);
-                if (agentTrailSignal.newStopLoss) {
-                    stopCandidates.push({ price: agentTrailSignal.newStopLoss, reason: 'Agent Trail', newState: agentTrailSignal.newState });
-                }
-            }
-
-            const aggressiveTrailSignal = getAggressiveRangeTrailSignal(positionState, currentPrice);
-            if (aggressiveTrailSignal.newStopLoss) {
-                stopCandidates.push({ price: aggressiveTrailSignal.newStopLoss, reason: 'Profit Secure', newState: aggressiveTrailSignal.newState });
-            }
-            
-            // Selection: The Tightest Stop Wins
-            let bestCandidate = stopCandidates[0];
-            for (const candidate of stopCandidates) {
-                const isValid = isLong ? candidate.price < currentPrice : candidate.price > currentPrice;
-                const isTighter = isLong ? candidate.price > bestCandidate.price : candidate.price < bestCandidate.price;
-                if (isValid && isTighter) {
-                    bestCandidate = candidate;
-                }
-            }
-
-            // Application
-            if (bestCandidate.price !== positionState.stopLossPrice) {
-                if (bestCandidate.newState) {
-                    positionState = { ...positionState, ...(bestCandidate.newState as Partial<Position>) };
-                }
-                positionState.stopLossPrice = bestCandidate.price;
-                positionState.activeStopLossReason = bestCandidate.reason;
-            }
-
-            openPosition = positionState;
         }
         
         // --- CHECK FOR NEW ENTRY ---

@@ -403,8 +403,9 @@ class BotInstance {
         this.bot.lastPriceUpdateTimestamp = Date.now();
         
         if (this.bot.openPosition) {
-            this.checkPriceBoundaries(price);
+            // CRITICAL FIX: The SL must be updated for the current tick *before* checking if the price has breached it.
             await this.managePositionOnTick(price);
+            this.checkPriceBoundaries(price);
         }
 
         this.onUpdate();

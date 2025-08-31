@@ -1,6 +1,6 @@
-import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, RiskMode, TradingMode, BinanceOrderResponse, TradeManagementSignal, AgentParams } from '../types';
+import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, RiskMode, TradingMode, BinanceOrderResponse, TradeManagementSignal, AgentParams, MarketDataContext } from '../types';
 import * as binanceService from './binanceService';
-import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAdaptiveTakeProfit, getAggressiveRangeTrailSignal } from './localAgentService';
+import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAdaptiveTakeProfit, getAggressiveRangeTrailSignal, captureMarketContext } from './localAgentService';
 import { DEFAULT_AGENT_PARAMS, TIME_FRAMES, TAKER_FEE_RATE, CHAMELEON_TIMEFRAME_SETTINGS, MIN_PROFIT_BUFFER_MULTIPLIER } from '../constants';
 import { telegramBotService } from './telegramBotService';
 
@@ -154,7 +154,8 @@ export interface BotHandlers {
         botId: string,
         executionDetails: {
             agentStopLoss: number,
-            slReason: 'Agent Logic' | 'Hard Cap'
+            slReason: 'Agent Logic' | 'Hard Cap',
+            entryContext: MarketDataContext,
         }
     ) => Promise<void>;
     onClosePosition: (position: Position, exitReason: string, exitPrice: number) => void;
@@ -375,7 +376,7 @@ class BotInstance {
                     
                     if (options.execute) {
                         this.updateState({ status: BotStatus.ExecutingTrade });
-                        await this.executeTrade(signal, klinesToUse);
+                        await this.executeTrade(signal, klinesToUse, htfKlines);
                     } else {
                         this.addLog(`Initial analysis found a ${signal.signal} signal. Waiting for the current candle to close before taking action.`, LogType.Info);
                     }
@@ -469,7 +470,7 @@ class BotInstance {
         this.updateState({ status: BotStatus.Monitoring });
     }
 
-    private async executeTrade(signal: TradeSignal, klinesForAnalysis: Kline[]) {
+    private async executeTrade(signal: TradeSignal, klinesForAnalysis: Kline[], htfKlines?: Kline[]) {
         if (!this.handlers?.onExecuteTrade) {
             this.addLog("Execution handler not available.", LogType.Error);
             this.updateState({ status: BotStatus.Monitoring });
@@ -520,10 +521,12 @@ class BotInstance {
             stopLossPrice: stopLossPrice,
         };
         
+        const entryContext = captureMarketContext(klinesForAnalysis, htfKlines);
+        
         this.handlers.onExecuteTrade(
             execSignal, 
             this.bot.id,
-            { agentStopLoss, slReason }
+            { agentStopLoss, slReason, entryContext }
         );
     }
 

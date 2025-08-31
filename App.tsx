@@ -4,7 +4,7 @@ import { Sidebar } from './components/Sidebar';
 import { ChartComponent } from './components/ChartComponent';
 import { TradingLog } from './components/TradingLog';
 import { RunningBots } from './components/RunningBots';
-import { TradingMode, Agent, TradeSignal, Position, Trade, WalletBalance, Kline, SymbolInfo, LiveTicker, AccountInfo, RunningBot, BotConfig, BotStatus, BinanceOrderResponse, AgentParams, BacktestResult, LogType } from './types';
+import { TradingMode, Agent, TradeSignal, Position, Trade, WalletBalance, Kline, SymbolInfo, LiveTicker, AccountInfo, RunningBot, BotConfig, BotStatus, BinanceOrderResponse, AgentParams, BacktestResult, LogType, MarketDataContext } from './types';
 import * as constants from './constants';
 import * as binanceService from './services/binanceService';
 import { historyService } from './services/historyService';
@@ -191,7 +191,7 @@ const AppContent: React.FC = () => {
             const mae = Math.abs(maePrice - posToClose.entryPrice) * posToClose.size;
             
             const bot = botManagerService.getBot(posToClose.botId!);
-            const botKlines = bot ? bot.klines : klines; // Fallback to chart klines
+            const botKlines = bot ? bot.klines : []; // Use bot's klines
 
             // --- Enhanced Context Capture ---
             let htfKlines: Kline[] | undefined;
@@ -328,14 +328,15 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             await closePositionInState(exitPrice, simulatedFees);
         }
 
-    }, [closingPositionIds, klines]);
+    }, [closingPositionIds]);
 
     const handleExecuteTrade = useCallback(async (
         execSignal: TradeSignal,
         botId: string,
         executionDetails: {
             agentStopLoss: number,
-            slReason: 'Agent Logic' | 'Hard Cap'
+            slReason: 'Agent Logic' | 'Hard Cap',
+            entryContext: MarketDataContext,
         }
     ) => {
         const bot = botManagerService.getBot(botId);
@@ -475,17 +476,6 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             isMarketCohesionEnabled: config.isMarketCohesionEnabled,
             entryTiming: config.entryTiming,
         };
-        
-        let htfKlinesForContext: Kline[] | undefined;
-        if (config.isHtfConfirmationEnabled) {
-            const htf = config.htfTimeFrame === 'auto' 
-                ? constants.TIME_FRAMES[constants.TIME_FRAMES.indexOf(config.timeFrame) + 1] 
-                : config.htfTimeFrame;
-            if(htf) {
-                htfKlinesForContext = await binanceService.fetchKlines(config.pair.replace('/',''), htf, { limit: 205, mode: config.mode });
-            }
-        }
-        const entryContext = localAgentService.captureMarketContext(klines, htfKlinesForContext);
 
         const newPosition: Position = {
             id: Date.now(),
@@ -525,7 +515,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             initialRiskRewardRatio,
             agentParamsSnapshot: config.agentParams,
             botConfigSnapshot,
-            entryContext,
+            entryContext: executionDetails.entryContext,
         };
 
         if (config.executionMode === 'live') {
@@ -549,7 +539,7 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
             openPosition: newPosition,
         });
 
-    }, [accountInfo, klines]);
+    }, [accountInfo]);
 
     const handleClearHistory = useCallback(() => {
         if (window.confirm('Are you sure you want to permanently delete all trade history? This action cannot be undone.')) {

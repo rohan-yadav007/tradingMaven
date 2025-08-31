@@ -128,15 +128,7 @@ function applyTimeframeSettings(config: BotConfig): BotConfig {
     let finalParams: Required<AgentParams> = { ...constants.DEFAULT_AGENT_PARAMS };
     
     // Agent-specific timeframe settings
-    let timeframeSettings: Partial<AgentParams> = {};
-    switch (agent.id) {
-        case 9:  timeframeSettings = constants.QUANTUM_SCALPER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
-        case 11: timeframeSettings = constants.HISTORIC_EXPERT_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
-        case 13: timeframeSettings = constants.CHAMELEON_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
-        case 14: timeframeSettings = constants.SENTINEL_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
-        // FIX: Add case for Ichimoku Trend Rider agent to apply timeframe-specific settings.
-        case 16: timeframeSettings = constants.ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
-    }
+    const timeframeSettings: Partial<AgentParams> = constants.getAgentTimeframeSettings(agent.id, timeFrame);
     
     finalParams = { ...finalParams, ...timeframeSettings };
 
@@ -984,23 +976,24 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
 
         let direction: 'BUY' | 'SELL' | null = null;
         const aiGates = { htf: false, macd: false, rsi: false, stochRsi: false, bb: false, adxDi: false, candle: false };
+        const DI_SPREAD_THRESHOLD = 4; // The new minimum difference between PDI and MDI
 
         if (isBullishSignal) {
             aiGates.htf = !config.isHtfConfirmationEnabled || (htfContext?.htf_trend === 'bullish' && (htfContext?.htf_rsi14 ?? 0) > 50);
-            aiGates.macd = macd.histogram! > 0.0001;
+            aiGates.macd = macd.histogram! > 0;
             aiGates.rsi = rsi > params.qsc_rsiBuyThreshold;
-            aiGates.stochRsi = stochRsi.k > 60;
-            aiGates.bb = lastBbForWidth.pb > 0.65;
-            aiGates.adxDi = (adx.pdi / adx.mdi) > 1.3;
+            aiGates.stochRsi = stochRsi.k > 55;
+            aiGates.bb = lastBbForWidth.pb > 0.55;
+            aiGates.adxDi = (adx.pdi - adx.mdi) > DI_SPREAD_THRESHOLD;
             aiGates.candle = !isLastCandleContradictory(klines, 'BUY').veto;
             if (Object.values(aiGates).every(v => v)) direction = 'BUY';
         } else if (isBearishSignal) {
             aiGates.htf = !config.isHtfConfirmationEnabled || (htfContext?.htf_trend === 'bearish' && (htfContext?.htf_rsi14 ?? 100) < 50);
-            aiGates.macd = macd.histogram! < -0.0001;
+            aiGates.macd = macd.histogram! < 0;
             aiGates.rsi = rsi < params.qsc_rsiSellThreshold;
-            aiGates.stochRsi = stochRsi.k < 40;
-            aiGates.bb = lastBbForWidth.pb < 0.35;
-            aiGates.adxDi = (adx.mdi / adx.pdi) > 1.3;
+            aiGates.stochRsi = stochRsi.k < 45;
+            aiGates.bb = lastBbForWidth.pb < 0.45;
+            aiGates.adxDi = (adx.mdi - adx.pdi) > DI_SPREAD_THRESHOLD;
             aiGates.candle = !isLastCandleContradictory(klines, 'SELL').veto;
             if (Object.values(aiGates).every(v => v)) direction = 'SELL';
         }

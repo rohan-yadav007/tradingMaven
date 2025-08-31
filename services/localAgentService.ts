@@ -1,3 +1,4 @@
+
 import { TradingMode, type Agent, type TradeSignal, type Kline, type AgentParams, type Position, type ADXOutput, type MACDOutput, type BollingerBandsOutput, type StochasticRSIOutput, type TradeManagementSignal, type BotConfig, VortexIndicatorOutput, SentinelAnalysis, KSTOutput, type IchimokuCloudOutput, MarketDataContext } from '../types';
 // FIX: Import missing candlestick pattern indicators 'eveningdojistar' and 'eveningstar' to resolve reference errors.
 import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, IchimokuCloud, KST, abandonedbaby, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, downsidetasukigap, dragonflydoji, gravestonedoji, bullishharami, bearishharami, bullishharamicross, bearishharamicross, hammerpattern, hangingman, morningdojistar, morningstar, piercingline, shootingstar, threeblackcrows, threewhitesoldiers, eveningdojistar, eveningstar } from 'technicalindicators';
@@ -981,7 +982,7 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
         if (isBullishSignal) {
             aiGates.htf = !config.isHtfConfirmationEnabled || (htfContext?.htf_trend === 'bullish' && (htfContext?.htf_rsi14 ?? 0) > 50);
             aiGates.macd = macd.histogram! > 0;
-            aiGates.rsi = rsi > params.qsc_rsiBuyThreshold;
+            aiGates.rsi = rsi > params.qsc_rsiBuyThreshold && rsi < params.qsc_rsiOverextendedLong;
             aiGates.stochRsi = stochRsi.k > 55;
             aiGates.bb = lastBbForWidth.pb > 0.55;
             aiGates.adxDi = (adx.pdi - adx.mdi) > DI_SPREAD_THRESHOLD;
@@ -990,7 +991,7 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
         } else if (isBearishSignal) {
             aiGates.htf = !config.isHtfConfirmationEnabled || (htfContext?.htf_trend === 'bearish' && (htfContext?.htf_rsi14 ?? 100) < 50);
             aiGates.macd = macd.histogram! < 0;
-            aiGates.rsi = rsi < params.qsc_rsiSellThreshold;
+            aiGates.rsi = rsi < params.qsc_rsiSellThreshold && rsi > params.qsc_rsiOverextendedShort;
             aiGates.stochRsi = stochRsi.k < 45;
             aiGates.bb = lastBbForWidth.pb < 0.45;
             aiGates.adxDi = (adx.mdi - adx.pdi) > DI_SPREAD_THRESHOLD;

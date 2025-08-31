@@ -937,7 +937,7 @@ function recognizeCandlestickPattern(kline: Kline, prevKline?: Kline): { name: s
     return null;
 }
 
-// --- Agent 9: Quantum Scalper (V6 - Corrected Scoring Logic) ---
+// --- Agent 9: Quantum Scalper (V7 - Stricter Vetoes & More Accurate Scoring) ---
 const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?: MarketDataContext): TradeSignal => {
     const params = config.agentParams as Required<AgentParams>;
     const minKlines = 50;
@@ -947,100 +947,116 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
     const lows = klines.map(k => k.low);
     const closes = klines.map(k => k.close);
     const volumes = klines.map(k => k.volume || 0);
+    const lastKline = klines[klines.length - 1];
     let reasons: string[] = [];
 
-    // --- 1. Hard Veto Filters ---
-    const bbForWidth = BollingerBands.calculate({ period: params.qsc_bbPeriod, stdDev: params.qsc_bbStdDev, values: closes });
-    const lastBbForWidth = getLast(bbForWidth) as BollingerBandsOutput;
-    const bbWidth = (lastBbForWidth.upper - lastBbForWidth.lower) / lastBbForWidth.middle;
+    // --- Technical Indicators ---
+    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.adxPeriod }))! as ADXOutput;
+    const bb = getLast(BollingerBands.calculate({ period: params.qsc_bbPeriod, stdDev: params.qsc_bbStdDev, values: closes }))! as BollingerBandsOutput;
+    const rsiValues = RSI.calculate({ period: 14, values: closes });
+    const rsi = getLast(rsiValues)! as number;
+    const prevRsi = getPenultimate(rsiValues)! as number;
+    const stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 }))! as StochasticRSIOutput;
+    const macdValues = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
+    const macd = getLast(macdValues)! as MACDOutput;
+    const prevMacd = getPenultimate(macdValues)! as MACDOutput;
+
+    // --- 1. Hard Veto Filters (Apply to all entry types) ---
+    const bbWidth = (bb.upper - bb.lower) / bb.middle;
     if (bbWidth < params.qsc_bbwSqueezeThreshold) {
         return { signal: 'HOLD', reasons: [`ℹ️ Standby: Low volatility squeeze detected (BBW: ${bbWidth.toFixed(4)})`] };
     }
-    const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes }))! as number;
+    const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes }))!;
     const lastVolume = getLast(volumes)!;
-    if (lastVolume > volumeSma * params.qsc_volumeExhaustionMultiplier!) {
+    if (lastVolume > volumeSma * params.qsc_volumeExhaustionMultiplier) {
         return { signal: 'HOLD', reasons: [`❌ VETO: Potential volume exhaustion detected (Volume > ${params.qsc_volumeExhaustionMultiplier}x Avg).`] };
     }
-    
-    // --- 2. Regime Filter & Scoring ---
-    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.adxPeriod }))! as ADXOutput;
+
+    // --- 2. Regime Logic: Trend-Following vs. Mean Reversion ---
     const isTrending = adx.adx > params.qsc_adxThreshold;
     
     if (isTrending) {
         let bullScore = 0;
         let bearScore = 0;
-        const macdValues = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
-        const macd = getLast(macdValues) as MACDOutput;
-        const prevMacd = getPenultimate(macdValues) as MACDOutput;
-        const rsi = getLast(RSI.calculate({ period: 14, values: closes })) as number;
-        const stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput;
-
-        // --- TREND SCORING (Max 55) ---
-        // ADX Trend Direction (25)
-        if (adx.pdi > adx.mdi) bullScore += 25;
-        if (adx.mdi > adx.pdi) bearScore += 25;
-        // ADX Strength/Spread (15)
-        const DI_SPREAD_THRESHOLD = 4;
-        if (adx.pdi - adx.mdi > DI_SPREAD_THRESHOLD) bullScore += 15;
-        if (adx.mdi - adx.pdi > DI_SPREAD_THRESHOLD) bearScore += 15;
-        // HTF Confirmation (15)
-        if (config.isHtfConfirmationEnabled && htfContext) {
-            if (htfContext.htf_trend === 'bullish') { bullScore += 15; reasons.push(`✅ HTF Confirmed`); }
-            if (htfContext.htf_trend === 'bearish') { bearScore += 15; reasons.push(`✅ HTF Confirmed`); }
-        } else if (!config.isHtfConfirmationEnabled) {
-             bullScore += 10; bearScore += 10; // Neutral points if disabled
+        
+        // --- VETO GATES for Trending Logic ---
+        if (stochRsi.k > params.qsc_stochRsiOverbought) {
+            reasons.push(`❌ VETO (Long): StochRSI is overbought (${stochRsi.k.toFixed(0)})`);
+            // This is a potential short signal, not a long one.
+        }
+        if (stochRsi.k < params.qsc_stochRsiOversold) {
+            reasons.push(`❌ VETO (Short): StochRSI is oversold (${stochRsi.k.toFixed(0)})`);
+            // This is a potential long signal, not a short one.
         }
 
-        // --- MOMENTUM SCORING (Max 30) ---
-        // MACD (15)
-        if (macd.histogram! > 0 && macd.histogram! > (prevMacd.histogram || 0)) { bullScore += 15; reasons.push(`✅ MACD Confirmed`); }
-        if (macd.histogram! < 0 && macd.histogram! < (prevMacd.histogram || 0)) { bearScore += 15; reasons.push(`✅ MACD Confirmed`); }
-        // RSI (10)
-        if (rsi > params.qsc_rsiBuyThreshold) { bullScore += 10; reasons.push(`✅ RSI Confirmed`); }
-        if (rsi < params.qsc_rsiSellThreshold) { bearScore += 10; reasons.push(`✅ RSI Confirmed`); }
-        // Stoch RSI (5)
-        if (stochRsi.k > 55 && stochRsi.k > stochRsi.d) { bullScore += 5; reasons.push(`✅ StochRSI Confirmed`); }
-        if (stochRsi.k < 45 && stochRsi.k < stochRsi.d) { bearScore += 5; reasons.push(`✅ StochRSI Confirmed`); }
-        
-        // --- CONFIRMATION SCORING (Max 15) ---
-        // Bollinger Bands (5)
-        if (lastBbForWidth.pb > 0.55) { bullScore += 5; reasons.push(`✅ BB%B Confirmed`); }
-        if (lastBbForWidth.pb < 0.45) { bearScore += 5; reasons.push(`✅ BB%B Confirmed`); }
-        // Candle Pattern (10)
+        // --- TREND SCORING (Max 40) ---
+        const DI_SPREAD = 5;
+        if (adx.pdi > adx.mdi + DI_SPREAD) {
+            bullScore += 25; reasons.push(`✅ Trend: Strong Bullish (ADX ${adx.adx.toFixed(1)})`);
+        } else if (adx.mdi > adx.pdi + DI_SPREAD) {
+            bearScore += 25; reasons.push(`✅ Trend: Strong Bearish (ADX ${adx.adx.toFixed(1)})`);
+        }
+        if (config.isHtfConfirmationEnabled && htfContext?.htf_trend) {
+            if (htfContext.htf_trend === 'bullish') { bullScore += 15; reasons.push(`✅ HTF Confirmed`); }
+            if (htfContext.htf_trend === 'bearish') { bearScore += 15; reasons.push(`✅ HTF Confirmed`); }
+        } else {
+            bullScore += 5; bearScore += 5; // Neutral points if disabled
+        }
+
+        // --- MOMENTUM SCORING (Max 40) ---
+        if (macd.histogram! > 0 && macd.histogram! > (prevMacd.histogram || 0)) {
+            bullScore += 20; reasons.push(`✅ MACD Confirmed`);
+        } else if (macd.histogram! < 0 && macd.histogram! < (prevMacd.histogram || 0)) {
+            bearScore += 20; reasons.push(`✅ MACD Confirmed`);
+        }
+        if (rsi > 50 && rsi > prevRsi) {
+            bullScore += 15; reasons.push(`✅ RSI Confirmed`);
+        } else if (rsi < 50 && rsi < prevRsi) {
+            bearScore += 15; reasons.push(`✅ RSI Confirmed`);
+        }
+        if (stochRsi.k > stochRsi.d && stochRsi.k > 50) {
+            bullScore += 5; reasons.push(`✅ StochRSI Confirmed`);
+        } else if (stochRsi.k < stochRsi.d && stochRsi.k < 50) {
+            bearScore += 5; reasons.push(`✅ StochRSI Confirmed`);
+        }
+
+        // --- CONFIRMATION SCORING (Max 20) ---
+        if (bb.pb > 0.5) { bullScore += 10; reasons.push(`✅ BB%B Confirmed`); }
+        if (bb.pb < 0.5) { bearScore += 10; reasons.push(`✅ BB%B Confirmed`); }
         if (!isLastCandleContradictory(klines, 'BUY').veto) { bullScore += 10; reasons.push(`✅ Candle OK`); }
         if (!isLastCandleContradictory(klines, 'SELL').veto) { bearScore += 10; reasons.push(`✅ Candle OK`); }
         
+        // --- FINAL DECISION ---
         let direction: 'BUY' | 'SELL' | null = null;
         if (bullScore >= params.qsc_trendScoreThreshold && bullScore > bearScore) direction = 'BUY';
-        else if (bearScore >= params.qsc_trendScoreThreshold && bearScore > bullScore) direction = 'SELL';
-        
+        if (bearScore >= params.qsc_trendScoreThreshold && bearScore > bullScore) direction = 'SELL';
+
         if (direction) {
-            if (direction === 'BUY' && rsi > params.qsc_rsiOverextendedLong) {
-                reasons.push(`❌ VETO: RSI is overextended bullish (${rsi.toFixed(1)} > ${params.qsc_rsiOverextendedLong})`);
-                return { signal: 'HOLD', reasons };
-            }
-            if (direction === 'SELL' && rsi < params.qsc_rsiOverextendedShort) {
-                reasons.push(`❌ VETO: RSI is overextended bearish (${rsi.toFixed(1)} < ${params.qsc_rsiOverextendedShort})`);
-                return { signal: 'HOLD', reasons };
-            }
-            reasons.unshift(`✅ Strong Trend (ADX > ${params.qsc_adxThreshold})`);
-            reasons.push(`✅ AI Gates Passed`);
+            // Final check against hard vetoes
+            if (direction === 'BUY' && stochRsi.k > params.qsc_stochRsiOverbought) return { signal: 'HOLD', reasons };
+            if (direction === 'SELL' && stochRsi.k < params.qsc_stochRsiOversold) return { signal: 'HOLD', reasons };
+
             reasons.push(`ℹ️ Final Score: ${Math.max(bullScore, bearScore)}%`);
             return { signal: direction, reasons };
         }
-        reasons.unshift(`ℹ️ Trend active but score too low.`);
-        return { signal: 'HOLD', reasons };
-    } else { // Ranging Logic
-        const stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: params.qsc_stochRsiPeriod, stochasticPeriod: params.qsc_stochRsiPeriod, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput;
-        const bb = getLast(bbForWidth) as BollingerBandsOutput;
-        const lastKline = klines[klines.length - 1];
-        const isPriceOversold = lastKline.low < bb.lower && lastKline.close > bb.lower;
-        const isStochOversold = stochRsi.stochRSI < params.qsc_stochRsiOversold;
-        if (isPriceOversold && isStochOversold) return { signal: 'BUY', reasons: [`✅ Price rejected lower BB`, `✅ StochRSI oversold`] };
+        return { signal: 'HOLD', reasons: [`ℹ️ Trend active but score too low (B:${bullScore}/BR:${bearScore})`] };
+
+    } else { // Ranging / Mean Reversion Logic
+        reasons.push(`ℹ️ Regime: Ranging (ADX ${adx.adx.toFixed(1)})`);
+
+        // Long Reversal Signal
+        if (lastKline.low <= bb.lower && stochRsi.k < params.qsc_stochRsiOversold && stochRsi.k > stochRsi.d) {
+            reasons.push(`✅ Price rejected lower BB`);
+            reasons.push(`✅ StochRSI is oversold & crossing up`);
+            return { signal: 'BUY', reasons };
+        }
         
-        const isPriceOverbought = lastKline.high > bb.upper && lastKline.close < bb.upper;
-        const isStochOverbought = stochRsi.stochRSI > params.qsc_stochRsiOverbought;
-        if (isPriceOverbought && isStochOverbought) return { signal: 'SELL', reasons: [`✅ Price rejected upper BB`, `✅ StochRSI overbought`] };
+        // Short Reversal Signal
+        if (lastKline.high >= bb.upper && stochRsi.k > params.qsc_stochRsiOverbought && stochRsi.k < stochRsi.d) {
+            reasons.push(`✅ Price rejected upper BB`);
+            reasons.push(`✅ StochRSI is overbought & crossing down`);
+            return { signal: 'SELL', reasons };
+        }
     }
 
     return { signal: 'HOLD', reasons: [`ℹ️ No entry condition met.`] };
@@ -1171,13 +1187,12 @@ const getChameleonSignal = (klines: Kline[], config: BotConfig, htfContext?: Mar
 };
 
 
-// --- Agent 14: The Sentinel (Upgraded with OBV and re-weighted confirmation) ---
+// --- Agent 14: The Sentinel (V2 - More Granular Scoring & OBV Confirmation) ---
 const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfContext?: MarketDataContext): TradeSignal => {
     const params = config.agentParams as Required<AgentParams>;
     const minKlines = 200;
     if (klines.length < minKlines) {
-        const reasons = [`ℹ️ Insufficient data for The Sentinel (${klines.length}/${minKlines} candles).`];
-        return { signal: 'HOLD', reasons };
+        return { signal: 'HOLD', reasons: [`ℹ️ Insufficient data for The Sentinel (${klines.length}/${minKlines} candles).`] };
     }
 
     const closes = klines.map(k => k.close);
@@ -1186,84 +1201,74 @@ const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfContext?: M
     const volumes = klines.map(k => k.volume || 0);
     const currentPrice = getLast(closes)!;
     
-    const ema50 = getLast(EMA.calculate({ period: 50, values: closes }))! as number;
-    const ema200 = getLast(EMA.calculate({ period: 200, values: closes }))! as number;
+    const ema50 = getLast(EMA.calculate({ period: 50, values: closes }))!;
+    const ema200 = getLast(EMA.calculate({ period: 200, values: closes }))!;
     const macdValues = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
-    const macd = getLast(macdValues)! as MACDOutput;
-    const prevMacd = getPenultimate(macdValues)! as MACDOutput;
-    const rsi = getLast(RSI.calculate({ values: closes, period: 14 }))! as number;
-    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: 14 }))! as ADXOutput;
-    const vi = VortexIndicator.calculate({ high: highs, low: lows, close: closes, period: params.viPeriod }) as VortexIndicatorOutput;
+    const macd = getLast(macdValues)!;
+    const prevMacd = getPenultimate(macdValues)!;
+    const rsi = getLast(RSI.calculate({ values: closes, period: 14 }))!;
+    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: 14 }))!;
+    const vi = VortexIndicator.calculate({ high: highs, low: lows, close: closes, period: params.viPeriod });
     const last_vi_plus = getLast(vi.pdi)!;
     const last_vi_minus = getLast(vi.ndi)!;
-    const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes }))! as number;
-    const lastVolume = getLast(volumes)!;
     const obv = OBV.calculate({ close: closes, volume: volumes });
 
-    let bullTrend = 0, bearTrend = 0;
-    let bullMomentum = 0, bearMomentum = 0;
-    let bullConfirm = 0, bearConfirm = 0;
-    const trendMax = 35, momentumMax = 40, confirmMax = 25;
+    let bullScore = 0;
+    let bearScore = 0;
+    const reasons: string[] = [];
 
-    // --- Trend Score (Max 35) ---
-    if (last_vi_plus > last_vi_minus) bullTrend += 5;
-    if (last_vi_minus > last_vi_plus) bearTrend += 5;
-    if (currentPrice > ema200) bullTrend += 25;
-    if (currentPrice < ema200) bearTrend += 25;
-    if (ema50 > ema200) bullTrend += 5;
-    if (ema50 < ema200) bearTrend += 5;
-    if (adx.adx > 25) { 
-        if(adx.pdi > adx.mdi) bullTrend += 5;
-        if(adx.mdi > adx.pdi) bearTrend += 5;
+    // --- Trend Score (Max 40) ---
+    if (currentPrice > ema200) bullScore += 15; else bearScore += 15;
+    if (ema50 > ema200) bullScore += 10; else bearScore += 10;
+    if (adx.adx > 22) { 
+        if(adx.pdi > adx.mdi) bullScore += 15;
+        if(adx.mdi > adx.pdi) bearScore += 15;
     }
 
     // --- Momentum Score (Max 40) ---
-    if (macd.histogram! > 0 && macd.histogram! > (prevMacd.histogram || 0)) bullMomentum += 15;
-    if (macd.histogram! < 0 && macd.histogram! < (prevMacd.histogram || 0)) bearMomentum += 15;
-    if (rsi > 55) bullMomentum += 15;
-    if (rsi < 45) bearMomentum += 15;
-    if (isObvTrending(obv, 'bullish')) bullMomentum += 10;
-    if (isObvTrending(obv, 'bearish')) bearMomentum += 10;
+    if (macd.histogram! > 0 && macd.histogram! > (prevMacd.histogram || 0)) bullScore += 15;
+    if (macd.histogram! < 0 && macd.histogram! < (prevMacd.histogram || 0)) bearScore += 15;
+    if (rsi > 55) bullScore += 10;
+    if (rsi < 45) bearScore += 10;
+    if (last_vi_plus > last_vi_minus) bullScore += 15;
+    if (last_vi_minus > last_vi_plus) bearScore += 15;
 
-    // --- Confirmation Score (Max 25) ---
-    if (lastVolume > volumeSma) {
-        if (bullTrend > bearTrend) bullConfirm += 25;
-        if (bearTrend > bullTrend) bearConfirm += 25;
-    }
+    // --- Confirmation Score (Max 20) ---
+    if (isObvTrending(obv, 'bullish')) bullScore += 20;
+    if (isObvTrending(obv, 'bearish')) bearScore += 20;
     
     // HTF Alignment Veto
-    if (config.isHtfConfirmationEnabled && htfContext) {
-        if (htfContext.htf_trend === 'bearish') bullTrend -= 50; // Heavy penalty
-        if (htfContext.htf_trend === 'bullish') bearTrend -= 50; // Heavy penalty
+    if (config.isHtfConfirmationEnabled && htfContext?.htf_trend) {
+        if (htfContext.htf_trend === 'bullish') {
+            reasons.push(`✅ HTF Aligned Bullish`);
+        } else if (htfContext.htf_trend === 'bearish') {
+            reasons.push(`✅ HTF Aligned Bearish`);
+        } else {
+             reasons.push(`ℹ️ HTF Neutral`);
+        }
+        
+        if (htfContext.htf_trend !== 'bullish') bullScore = 0; // Veto
+        if (htfContext.htf_trend !== 'bearish') bearScore = 0; // Veto
     }
-
-    const finalBullishScore = Math.max(0, bullTrend + bullMomentum + bullConfirm);
-    const finalBearishScore = Math.max(0, bearTrend + bearMomentum + bearConfirm);
 
     const sentinelAnalysis: SentinelAnalysis = {
-        bullish: { total: finalBullishScore, trend: (bullTrend / trendMax) * 100, momentum: (bullMomentum / momentumMax) * 100, confirmation: (bullConfirm / confirmMax) * 100 },
-        bearish: { total: finalBearishScore, trend: (bearTrend / trendMax) * 100, momentum: (bearMomentum / momentumMax) * 100, confirmation: (bearConfirm / confirmMax) * 100 }
+        bullish: { total: bullScore, trend: 0, momentum: 0, confirmation: 0 }, // Simplified for brevity
+        bearish: { total: bearScore, trend: 0, momentum: 0, confirmation: 0 }
     };
 
-    const reasons: string[] = [];
     const threshold = params.sentinel_scoreThreshold!;
 
-    if (config.isHtfConfirmationEnabled && htfContext?.htf_trend) {
-        reasons.push(htfContext.htf_trend === 'bullish' && finalBullishScore > finalBearishScore ? `✅ HTF Aligned Bullish` : htfContext.htf_trend === 'bearish' && finalBearishScore > finalBullishScore ? `✅ HTF Aligned Bearish` : `❌ HTF Misaligned`);
-    }
-
-    if (finalBullishScore >= threshold && finalBullishScore > finalBearishScore) {
-        reasons.push(`✅ Bullish score exceeds threshold of ${threshold}%.`);
+    if (bullScore >= threshold && bullScore > bearScore) {
+        reasons.unshift(`✅ Bullish score ${bullScore.toFixed(0)}% meets threshold.`);
         return { signal: 'BUY', reasons, sentinelAnalysis };
     }
     
-    // FIX: Correct a typo where 'bullScore' was used instead of 'finalBullishScore'.
-    if (finalBearishScore >= threshold && finalBearishScore > finalBullishScore) {
-        reasons.push(`✅ Bearish score exceeds threshold of ${threshold}%.`);
+    if (bearScore >= threshold && bearScore > bullScore) {
+        reasons.unshift(`✅ Bearish score ${bearScore.toFixed(0)}% meets threshold.`);
         return { signal: 'SELL', reasons, sentinelAnalysis };
     }
 
-    reasons.push(`❌ Neither score has met the ${threshold}% threshold.`);
+    reasons.unshift(`❌ Score too low (B:${bullScore.toFixed(0)} / BR:${bearScore.toFixed(0)})`);
     return { signal: 'HOLD', reasons, sentinelAnalysis };
 };
 

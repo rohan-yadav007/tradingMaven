@@ -1,3 +1,4 @@
+
 // FIX: Import 'WalletBalance' type.
 import { Agent, AgentParams, WalletBalance } from './types';
 

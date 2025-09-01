@@ -493,15 +493,6 @@ export type AgentParams = Partial<{
     ch_slowEmaPeriod: number;
     ch_trendEmaPeriod: number;
     ch_adxThreshold: number;
-    ch_kst_rocPer1: number;
-    ch_kst_rocPer2: number;
-    ch_kst_rocPer3: number;
-    ch_kst_rocPer4: number;
-    ch_kst_smaRocPer1: number;
-    ch_kst_smaRocPer2: number;
-    ch_kst_smaRocPer3: number;
-    ch_kst_smaRocPer4: number;
-    ch_kst_signalPeriod: number;
     
     // The Sentinel (14)
     sentinel_scoreThreshold: number;

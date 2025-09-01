@@ -30,7 +30,7 @@ async function sendMessage(text: string, specificChatId?: string) {
         return;
     }
 
-    for (const bot of bots) {
+    for (const bot of targets) {
         try {
             await fetch(`https://api.telegram.org/bot${bot.token}/sendMessage`, {
                 method: 'POST',
@@ -62,7 +62,7 @@ async function handleCommand(command: string, args: string[], chatId: string) {
   • \`mode\`: paper | live
   • \`platform\`: spot | futures (optional, defaults to futures)
   _Ex (Futures): /create 9 SOL/USDT 50 20x live futures_
-  _Ex (Spot): /create 7 BTC/USDT 500 1x paper spot_
+  _Ex (Spot): /create 13 BTC/USDT 500 1x paper spot_
 */pause* \`bot_id\` - Pause a running bot.
 */resume* \`bot_id\` - Resume a paused bot.
 */stop* \`bot_id\` - Stop a bot (can't be resumed).
@@ -159,14 +159,20 @@ ID: \`${bot.id}\``;
                     executionMode: executionMode as 'paper' | 'live',
                     timeFrame: '5m', // Default
                     maxMarginLossPercent: constants.MAX_MARGIN_LOSS_PERCENT,
+                    // --- Full default configuration ---
+                    marginType: 'ISOLATED',
                     isHtfConfirmationEnabled: false,
+                    htfTimeFrame: 'auto',
                     isUniversalProfitTrailEnabled: true,
                     isMinRrEnabled: true,
                     isInvalidationCheckEnabled: true,
                     isReanalysisEnabled: true,
-                    // FIX: Add missing properties to satisfy BotConfig type.
                     isAgentTrailEnabled: true,
                     isBreakevenTrailEnabled: true,
+                    isMarketCohesionEnabled: true,
+                    isVwapConfirmationEnabled: true,
+                    agentParams: {},
+                    htfAgentParams: {},
                     pricePrecision: binanceService.getPricePrecision(symbolInfo),
                     quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                     stepSize: binanceService.getStepSize(symbolInfo),

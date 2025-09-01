@@ -108,13 +108,13 @@ const getPenultimate = <T>(arr: T[] | undefined): T | undefined => arr && arr.le
 const MIN_STOP_LOSS_PERCENT = 0.5; // Minimum 0.5% SL distance from entry price.
 const { TIMEFRAME_ATR_CONFIG, MIN_PROFIT_BUFFER_MULTIPLIER } = constants;
 
-const isObvTrending = (obvValues: number[], direction: 'bullish' | 'bearish', period: number = 5): boolean => {
-    if (obvValues.length < period + 1) return false;
+const isObvTrending = (obvValues: number[], direction: 'bullish' | 'bearish', period: number = 20): boolean => {
+    if (obvValues.length < period) return false;
     const obvSma = SMA.calculate({ period, values: obvValues });
+    const lastObv = getLast(obvValues);
     const lastSma = getLast(obvSma);
-    const prevSma = getPenultimate(obvSma);
-    if (lastSma === undefined || prevSma === undefined) return false;
-    return direction === 'bullish' ? lastSma > prevSma : lastSma < prevSma;
+    if (lastObv === undefined || lastSma === undefined) return false;
+    return direction === 'bullish' ? lastObv > lastSma : lastObv < lastSma;
 };
 
 /**
@@ -317,25 +317,12 @@ function isMarketCohesive(
         }
     };
 
-    const lowerTimeframes = ['1m', '3m', '5m'];
-    const isLowerTimeframe = lowerTimeframes.includes(timeframe);
-
-    if (isLowerTimeframe) {
-        // Relaxed Rule: At least ONE of the last N candles is perfectly cohesive.
-        const hasCohesiveCandle = relevantKlines.some(k => isKlinePerfectlyCohesive(k, direction));
-        if (hasCohesiveCandle) {
-            return { cohesive: true, reason: `✅ HA Cohesion: Passed (Relaxed TF Rule)` };
-        } else {
-            return { cohesive: false, reason: `❌ VETO: Market lacks cohesion on low timeframe.` };
-        }
+    // Strict Rule for all timeframes: ALL of the last N candles must be perfectly cohesive.
+    const allCandlesCohesive = relevantKlines.every(k => isKlinePerfectlyCohesive(k, direction));
+    if (allCandlesCohesive) {
+        return { cohesive: true, reason: `✅ HA Cohesion: Passed` };
     } else {
-        // Strict Rule: ALL of the last N candles must be perfectly cohesive.
-        const allCandlesCohesive = relevantKlines.every(k => isKlinePerfectlyCohesive(k, direction));
-        if (allCandlesCohesive) {
-            return { cohesive: true, reason: `✅ HA Cohesion: Passed (Strict TF Rule)` };
-        } else {
-            return { cohesive: false, reason: `❌ VETO: Market lacks cohesion on high timeframe.` };
-        }
+        return { cohesive: false, reason: `❌ VETO: Market lacks cohesion.` };
     }
 }
 
@@ -1185,20 +1172,19 @@ const getHistoricExpertSignal = (klines: Kline[], config: BotConfig, htfContext?
     return { signal: 'HOLD', reasons };
 };
 
-// --- Agent 13: The Chameleon (V6 - KST Momentum Flip Strategy with Zero-Line Confirmation) ---
+// --- Agent 13: The Chameleon (REVERTED to EMA Crossover Flip Strategy) ---
 const getChameleonSignal = (klines: Kline[], config: BotConfig, htfContext?: MarketDataContext): TradeSignal => {
     const params = config.agentParams as Required<AgentParams>;
     const minKlines = Math.max(
         params.ch_trendEmaPeriod!,
-        params.ch_kst_rocPer4! + params.ch_kst_smaRocPer4!,
+        params.ch_slowEmaPeriod!,
         params.adxPeriod
-    ) + 5;
+    );
     if (klines.length < minKlines) return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data for analysis.'] };
 
     const closes = klines.map(k => k.close);
     const highs = klines.map(k => k.high);
     const lows = klines.map(k => k.low);
-    const volumes = klines.map(k => k.volume || 0);
     const currentPrice = getLast(closes)!;
     const reasons: string[] = [];
 
@@ -1209,41 +1195,29 @@ const getChameleonSignal = (klines: Kline[], config: BotConfig, htfContext?: Mar
     const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.adxPeriod }))! as ADXOutput;
     const isTrending = adx.adx > params.ch_adxThreshold!;
 
-    const kstInput = {
-        values: closes,
-        ROCPer1: params.ch_kst_rocPer1!, ROCPer2: params.ch_kst_rocPer2!, ROCPer3: params.ch_kst_rocPer3!, ROCPer4: params.ch_kst_rocPer4!,
-        SMAROCPer1: params.ch_kst_smaRocPer1!, SMAROCPer2: params.ch_kst_smaRocPer2!, SMAROCPer3: params.ch_kst_smaRocPer3!, SMAROCPer4: params.ch_kst_smaRocPer4!,
-        signalPeriod: params.ch_kst_signalPeriod!,
-    };
-    const kstValues = KST.calculate(kstInput) as KSTOutput[];
-    const lastKst = getLast(kstValues)!;
-    const prevKst = getPenultimate(kstValues)!;
-    const kstBullishCross = prevKst.kst < prevKst.signal && lastKst.kst > lastKst.signal;
-    const kstBearishCross = prevKst.kst > prevKst.signal && lastKst.kst < lastKst.signal;
-    const isKstBullishBias = lastKst.kst > 0;
-    const isKstBearishBias = lastKst.kst < 0;
-    
-    const obv = OBV.calculate({ close: closes, volume: volumes });
-    const isObvBullish = isObvTrending(obv, 'bullish');
-    const isObvBearish = isObvTrending(obv, 'bearish');
+    const fastEmaValues = EMA.calculate({ period: params.ch_fastEmaPeriod!, values: closes });
+    const slowEmaValues = EMA.calculate({ period: params.ch_slowEmaPeriod!, values: closes });
+    const lastFastEma = getLast(fastEmaValues)!;
+    const prevFastEma = getPenultimate(fastEmaValues)!;
+    const lastSlowEma = getLast(slowEmaValues)!;
+    const prevSlowEma = getPenultimate(slowEmaValues)!;
 
+    const bullishCross = prevFastEma < prevSlowEma && lastFastEma > lastSlowEma;
+    const bearishCross = prevFastEma > prevSlowEma && lastFastEma < lastSlowEma;
+    
     reasons.push(isMacroBullish ? `✅ Trend: Bullish` : isMacroBearish ? `✅ Trend: Bearish` : `❌ Trend: Neutral`);
     reasons.push(isTrending ? `✅ Regime: Trending (ADX ${adx.adx.toFixed(1)})` : `❌ Regime: Ranging`);
 
     if (isMacroBullish && isTrending) {
-        reasons.push(kstBullishCross ? `✅ KST: Bullish Cross` : `❌ KST: No Bullish Cross`);
-        reasons.push(isKstBullishBias ? `✅ KST > 0 (Bullish Bias)` : `❌ KST: Not in Bullish Territory`);
-        reasons.push(isObvBullish ? `✅ Volume: Bullish Flow` : `❌ Volume: Not Bullish`);
-        if (kstBullishCross && isKstBullishBias && isObvBullish) {
+        reasons.push(bullishCross ? `✅ EMA: Bullish Cross` : `❌ EMA: No Bullish Cross`);
+        if (bullishCross) {
             return { signal: 'BUY', reasons };
         }
     }
     
     if (isMacroBearish && isTrending) {
-        reasons.push(kstBearishCross ? `✅ KST: Bearish Cross` : `❌ KST: No Bearish Cross`);
-        reasons.push(isKstBearishBias ? `✅ KST < 0 (Bearish Bias)` : `❌ KST: Not in Bearish Territory`);
-        reasons.push(isObvBearish ? `✅ Volume: Bearish Flow` : `❌ Volume: Not Bearish`);
-        if (kstBearishCross && isKstBearishBias && isObvBearish) {
+        reasons.push(bearishCross ? `✅ EMA: Bearish Cross` : `❌ EMA: No Bearish Cross`);
+        if (bearishCross) {
             return { signal: 'SELL', reasons };
         }
     }
@@ -1331,7 +1305,7 @@ const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfContext?: M
         return { signal: 'BUY', reasons, sentinelAnalysis };
     }
     
-    if (totalBear >= threshold && totalBear > totalBull) {
+    if (totalBear >= threshold && totalBear > totalBear) {
         reasons.unshift(`✅ Bearish score meets threshold.`);
         return { signal: 'SELL', reasons, sentinelAnalysis };
     }
@@ -1475,14 +1449,29 @@ export async function getSupervisorSignal(
         return { action: 'hold', reason: '' };
     }
 
-    const currentSignal = await getTradingSignal(agent, klines, config, htfKlines);
+    // --- LOGIC CHANGE: Get the RAW signal from the agent, bypassing entry gatekeepers ---
+    let htfContext: MarketDataContext | undefined;
+    if (config.isHtfConfirmationEnabled && htfKlines && htfKlines.length > 50) {
+        htfContext = captureMarketContext([], htfKlines);
+    }
+
+    let rawSignal: TradeSignal;
+    switch (agent.id) {
+        case 9:  rawSignal = getQuantumScalperSignal(klines, config, htfContext); break;
+        case 11: rawSignal = getHistoricExpertSignal(klines, config, htfContext); break;
+        case 13: rawSignal = getChameleonSignal(klines, config, htfContext); break;
+        case 14: rawSignal = getTheSentinelSignal(klines, config, htfContext); break;
+        case 16: rawSignal = getIchimokuTrendRiderSignal(klines, config, htfContext); break;
+        default: rawSignal = { signal: 'HOLD', reasons: ['Agent not found for re-analysis'] }; break;
+    }
+    // --- END LOGIC CHANGE ---
     
     const isLong = position.direction === 'LONG';
     const oppositeSignal = isLong ? 'SELL' : 'BUY';
 
-    if (currentSignal.signal === oppositeSignal) {
-        if (agent.id === 14 && currentSignal.sentinelAnalysis) {
-             const oppositeScore = isLong ? currentSignal.sentinelAnalysis.bearish.total : currentSignal.sentinelAnalysis.bullish.total;
+    if (rawSignal.signal === oppositeSignal) {
+        if (agent.id === 14 && rawSignal.sentinelAnalysis) {
+             const oppositeScore = isLong ? rawSignal.sentinelAnalysis.bearish.total : rawSignal.sentinelAnalysis.bullish.total;
              if (oppositeScore >= (config.agentParams?.sentinel_scoreThreshold || 70)) {
                  return { action: 'close', reason: 'Supervisor Exit: Strong counter-signal detected.' };
              }

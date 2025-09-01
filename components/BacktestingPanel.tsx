@@ -92,12 +92,6 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                     onChange={(v) => updateParam('ch_slowEmaPeriod', v)}
                     min={20} max={50} step={1}
                 />
-                <ParamSlider 
-                    label="KST Signal Period"
-                    value={allParams.ch_kst_signalPeriod}
-                    onChange={(v) => updateParam('ch_kst_signalPeriod', v)}
-                    min={3} max={20} step={1}
-                />
             </div>);
         case 14: 
             return (<div className="space-y-4">

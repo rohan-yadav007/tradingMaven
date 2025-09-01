@@ -43,8 +43,8 @@ export const AGENTS: Agent[] = [
     {
         id: 13,
         name: 'The Chameleon',
-        description: 'A dynamic momentum agent centered on the KST indicator. It uses a long-period EMA for trend direction and ADX to filter for trending conditions. Entries require a KST/signal line crossover confirmed by OBV, ensuring trades align with strong, volume-backed momentum.',
-        indicators: ['KST', 'EMA Cross', 'ADX', 'OBV'],
+        description: 'A classic momentum agent that enters trades on EMA crossovers. It uses a long-period EMA for trend direction and ADX to filter for trending conditions, ensuring trades are only taken during periods of strong, confirmed trend.',
+        indicators: ['EMA Cross', 'ADX', 'Trend EMA'],
     },
     {
         id: 14,
@@ -118,16 +118,6 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     ch_slowEmaPeriod: 21,
     ch_trendEmaPeriod: 200,
     ch_adxThreshold: 22,
-    // KST Defaults for Agent 13
-    ch_kst_rocPer1: 10,
-    ch_kst_rocPer2: 15,
-    ch_kst_rocPer3: 20,
-    ch_kst_rocPer4: 30,
-    ch_kst_smaRocPer1: 10,
-    ch_kst_smaRocPer2: 10,
-    ch_kst_smaRocPer3: 10,
-    ch_kst_smaRocPer4: 15,
-    ch_kst_signalPeriod: 9,
     
     // Agent 14: The Sentinel
     sentinel_scoreThreshold: 70,
@@ -162,9 +152,9 @@ export const HISTORIC_EXPERT_TIMEFRAME_SETTINGS: Record<string, Partial<AgentPar
 };
 
 export const CHAMELEON_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '1m':  { ch_trendEmaPeriod: 100, ch_adxThreshold: 25, ch_kst_rocPer1: 8, ch_kst_rocPer2: 12, ch_kst_rocPer3: 16, ch_kst_rocPer4: 24, ch_kst_smaRocPer1: 8, ch_kst_smaRocPer2: 8, ch_kst_smaRocPer3: 8, ch_kst_smaRocPer4: 12 },
-    '3m':  { ch_trendEmaPeriod: 150, ch_adxThreshold: 23, ch_kst_rocPer1: 9, ch_kst_rocPer2: 13, ch_kst_rocPer3: 17, ch_kst_rocPer4: 26, ch_kst_smaRocPer1: 9, ch_kst_smaRocPer2: 9, ch_kst_smaRocPer3: 9, ch_kst_smaRocPer4: 13 },
-    '5m':  { ch_trendEmaPeriod: 200, ch_adxThreshold: 22 }, // Uses default KST params
+    '1m':  { ch_trendEmaPeriod: 100, ch_adxThreshold: 25, ch_fastEmaPeriod: 8, ch_slowEmaPeriod: 18 },
+    '3m':  { ch_trendEmaPeriod: 150, ch_adxThreshold: 23, ch_fastEmaPeriod: 9, ch_slowEmaPeriod: 20 },
+    '5m':  { ch_trendEmaPeriod: 200, ch_adxThreshold: 22 }, // Uses default EMA params
     '30m': {},
 };
 

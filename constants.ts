@@ -1,5 +1,3 @@
-
-
 // FIX: Import 'WalletBalance' type.
 import { Agent, AgentParams, WalletBalance } from './types';
 
@@ -31,7 +29,7 @@ export const AGENTS: Agent[] = [
     {
         id: 9,
         name: 'Quantum Scalper',
-        description: "A dynamic, aggressive agent using a weighted scoring system. It filters for volatility and trend regime, then scores signals based on Trend, Momentum (VI, OBV), and Confirmation (Ichimoku, Supertrend). Features a Dynamic Momentum Filter to improve entry timing and a Volume Exhaustion Veto to avoid chasing blow-off tops/bottoms. Supports 'Breakout' and 'Pullback' entry modes. Now enhanced with AI-driven filters for MACD, RSI, StochRSI, Bollinger Bands, and ADX strength for higher-conviction entries.",
+        description: "A dynamic, aggressive agent using a weighted scoring system. It filters for volatility and trend regime, then scores signals based on Trend, Momentum, and Confirmation. Now features a 'Mean Reversion Veto' to prevent chasing exhausted moves, and 'HTF Momentum Sync' to ensure entries align with higher timeframe momentum, not just trend direction. Supports 'Breakout' and 'Pullback' entry modes.",
         indicators: ['Market Regime Filter (ADX)', 'Volatility Filter (BBW)', 'Ichimoku Cloud', 'OBV'],
     },
     {
@@ -128,16 +126,16 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
 
 export const QUANTUM_SCALPER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
     // Scalping: Stricter thresholds to filter noise and prevent chasing blow-offs
-    '1m':  { qsc_stochRsiOversold: 20, qsc_stochRsiOverbought: 80, qsc_adxThreshold: 30, qsc_rsiMomentumThreshold: 62, qsc_rsiOverextendedLong: 80, qsc_rsiOverextendedShort: 20 },
-    '3m':  { qsc_stochRsiOversold: 25, qsc_stochRsiOverbought: 75, qsc_adxThreshold: 28, qsc_rsiMomentumThreshold: 60, qsc_rsiOverextendedLong: 78, qsc_rsiOverextendedShort: 22 },
-    '5m':  { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 25, qsc_rsiMomentumThreshold: 58, qsc_rsiOverextendedLong: 75, qsc_rsiOverextendedShort: 25 },
+    '1m':  { qsc_stochRsiOversold: 20, qsc_stochRsiOverbought: 80, qsc_adxThreshold: 30, qsc_rsiMomentumThreshold: 62, qsc_rsiOverextendedLong: 80, qsc_rsiOverextendedShort: 20, qsc_trendScoreThreshold: 85 },
+    '3m':  { qsc_stochRsiOversold: 25, qsc_stochRsiOverbought: 75, qsc_adxThreshold: 28, qsc_rsiMomentumThreshold: 60, qsc_rsiOverextendedLong: 78, qsc_rsiOverextendedShort: 22, qsc_trendScoreThreshold: 80 },
+    '5m':  { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 25, qsc_rsiMomentumThreshold: 58, qsc_rsiOverextendedLong: 75, qsc_rsiOverextendedShort: 25, qsc_trendScoreThreshold: 78 },
     // Day Trading: Balanced thresholds
-    '15m': { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 25, qsc_rsiMomentumThreshold: 55, qsc_rsiOverextendedLong: 80, qsc_rsiOverextendedShort: 20 },
-    '30m': { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 23, qsc_rsiMomentumThreshold: 55, qsc_rsiOverextendedLong: 85, qsc_rsiOverextendedShort: 15 },
-    '1h':  { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 22, qsc_rsiMomentumThreshold: 55, qsc_rsiOverextendedLong: 85, qsc_rsiOverextendedShort: 15 },
+    '15m': { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 25, qsc_rsiMomentumThreshold: 55, qsc_rsiOverextendedLong: 80, qsc_rsiOverextendedShort: 20, qsc_trendScoreThreshold: 75 },
+    '30m': { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 23, qsc_rsiMomentumThreshold: 55, qsc_rsiOverextendedLong: 85, qsc_rsiOverextendedShort: 15, qsc_trendScoreThreshold: 70 },
+    '1h':  { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 22, qsc_rsiMomentumThreshold: 55, qsc_rsiOverextendedLong: 85, qsc_rsiOverextendedShort: 15, qsc_trendScoreThreshold: 70 },
     // Swing Trading: Looser thresholds to catch trends early
-    '4h':  { qsc_stochRsiOversold: 35, qsc_stochRsiOverbought: 65, qsc_adxThreshold: 22, qsc_rsiMomentumThreshold: 52, qsc_rsiOverextendedLong: 90, qsc_rsiOverextendedShort: 10 },
-    '1d':  { qsc_stochRsiOversold: 35, qsc_stochRsiOverbought: 65, qsc_adxThreshold: 22, qsc_rsiMomentumThreshold: 52, qsc_rsiOverextendedLong: 90, qsc_rsiOverextendedShort: 10 },
+    '4h':  { qsc_stochRsiOversold: 35, qsc_stochRsiOverbought: 65, qsc_adxThreshold: 22, qsc_rsiMomentumThreshold: 52, qsc_rsiOverextendedLong: 90, qsc_rsiOverextendedShort: 10, qsc_trendScoreThreshold: 65 },
+    '1d':  { qsc_stochRsiOversold: 35, qsc_stochRsiOverbought: 65, qsc_adxThreshold: 22, qsc_rsiMomentumThreshold: 52, qsc_rsiOverextendedLong: 90, qsc_rsiOverextendedShort: 10, qsc_trendScoreThreshold: 65 },
 };
 
 export const HISTORIC_EXPERT_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {

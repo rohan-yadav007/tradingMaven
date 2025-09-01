@@ -1040,31 +1040,9 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
         reasons.push(`ℹ️ Score: Bull ${bullScore} vs Bear ${bearScore}`);
 
         if (bullScore >= params.qsc_trendScoreThreshold && bullScore > bearScore) {
-            const avgVolume = getLast(SMA.calculate({ period: 20, values: volumes }))!;
-            const lastVolume = getLast(volumes)!;
-            const isClimacticUpMove = lastKline.close > lastKline.open && (lastKline.close - lastKline.open) > (lastKline.high - lastKline.low) * 0.7;
-            if (lastVolume > avgVolume * params.qsc_volumeExhaustionMultiplier! && isClimacticUpMove) {
-                reasons.push(`❌ VETO: Potential volume exhaustion on climactic up-move.`);
-                return { signal: 'HOLD', reasons };
-            }
-            if (lastRsi > params.qsc_rsiOverextendedLong!) {
-                reasons.push(`❌ VETO: RSI is overextended long (${lastRsi.toFixed(1)} > ${params.qsc_rsiOverextendedLong})`);
-                return { signal: 'HOLD', reasons };
-            }
             return { signal: 'BUY', reasons };
         }
         if (bearScore >= params.qsc_trendScoreThreshold && bearScore > bullScore) {
-            const avgVolume = getLast(SMA.calculate({ period: 20, values: volumes }))!;
-            const lastVolume = getLast(volumes)!;
-            const isClimacticDownMove = lastKline.close < lastKline.open && (lastKline.open - lastKline.close) > (lastKline.high - lastKline.low) * 0.7;
-            if (lastVolume > avgVolume * params.qsc_volumeExhaustionMultiplier! && isClimacticDownMove) {
-                reasons.push(`❌ VETO: Potential volume exhaustion on climactic down-move.`);
-                return { signal: 'HOLD', reasons };
-            }
-            if (lastRsi < params.qsc_rsiOverextendedShort!) {
-                reasons.push(`❌ VETO: RSI is overextended short (${lastRsi.toFixed(1)} < ${params.qsc_rsiOverextendedShort})`);
-                return { signal: 'HOLD', reasons };
-            }
             return { signal: 'SELL', reasons };
         }
         
@@ -1305,7 +1283,7 @@ const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfContext?: M
         return { signal: 'BUY', reasons, sentinelAnalysis };
     }
     
-    if (totalBear >= threshold && totalBear > totalBear) {
+    if (totalBear >= threshold && totalBear > totalBull) {
         reasons.unshift(`✅ Bearish score meets threshold.`);
         return { signal: 'SELL', reasons, sentinelAnalysis };
     }
@@ -1515,6 +1493,62 @@ export function getAdaptiveTakeProfit(
 }
 
 
+/**
+ * NEW: A universal gatekeeper to prevent entering trades when the trend is likely exhausted.
+ * It checks for mean reversion signals (overextended RSI + BB touch).
+ */
+function getMeanReversionVeto(
+    klines: Kline[],
+    direction: 'BUY' | 'SELL',
+    config: BotConfig,
+): { veto: boolean; reason: string } {
+    const params = config.agentParams as Required<AgentParams>;
+    const closes = klines.map(k => k.close);
+    const lastRsi = getLast(RSI.calculate({ period: 14, values: closes }))!;
+    const bb = getLast(BollingerBands.calculate({ period: params.qsc_bbPeriod, stdDev: params.qsc_bbStdDev, values: closes }))! as BollingerBandsOutput;
+
+    const isLong = direction === 'BUY';
+    const isOverextended = isLong
+        ? lastRsi > params.qsc_rsiOverextendedLong && bb.pb >= 0.98
+        : lastRsi < params.qsc_rsiOverextendedShort && bb.pb <= 0.02;
+    
+    if (isOverextended) {
+        return { veto: true, reason: `❌ VETO: Mean Reversion risk detected (RSI: ${lastRsi.toFixed(1)}, BB%: ${(bb.pb * 100).toFixed(0)})` };
+    }
+    return { veto: false, reason: '' };
+}
+
+/**
+ * NEW: A universal gatekeeper to ensure trade entries align with higher timeframe momentum.
+ * Prevents entering trades if the HTF is showing signs of exhaustion/reversal.
+ */
+function getHtfMomentumSyncVeto(
+    direction: 'BUY' | 'SELL',
+    htfContext: MarketDataContext | undefined,
+    config: BotConfig,
+): { veto: boolean; reason: string } {
+    if (!config.isHtfConfirmationEnabled || !htfContext?.htf_stochRsi) {
+        return { veto: false, reason: '' };
+    }
+    
+    const params = config.agentParams as Required<AgentParams>;
+    const htfStochRsi = htfContext.htf_stochRsi;
+    const isLong = direction === 'BUY';
+
+    const isHtfOverbought = htfStochRsi.k > params.qsc_stochRsiOverbought;
+    const isHtfOversold = htfStochRsi.k < params.qsc_stochRsiOversold;
+
+    if (isLong && isHtfOverbought) {
+        return { veto: true, reason: `❌ VETO: HTF Momentum is overbought (StochRSI K: ${htfStochRsi.k.toFixed(1)})` };
+    }
+    if (!isLong && isHtfOversold) {
+        return { veto: true, reason: `❌ VETO: HTF Momentum is oversold (StochRSI K: ${htfStochRsi.k.toFixed(1)})` };
+    }
+
+    return { veto: false, reason: '' };
+}
+
+
 export const getTradingSignal = async (
     agent: Agent,
     klines: Kline[],
@@ -1548,8 +1582,23 @@ export const getTradingSignal = async (
     const lastKline = getLast(klines)!;
     const entryPrice = lastKline.close;
     const isLong = signal.signal === 'BUY';
+    const params = config.agentParams as Required<AgentParams>;
 
-    // Gatekeeper 0: VWAP Confirmation
+    // Gatekeeper 0: NEW - Mean Reversion / Exhaustion Veto
+    const reversionVeto = getMeanReversionVeto(klines, signal.signal, config);
+    if (reversionVeto.veto) {
+        signal.reasons.push(reversionVeto.reason);
+        return { ...signal, signal: 'HOLD' };
+    }
+
+    // Gatekeeper 1: NEW - HTF Momentum Sync Veto
+    const htfMomentumVeto = getHtfMomentumSyncVeto(signal.signal, htfContext, config);
+    if (htfMomentumVeto.veto) {
+        signal.reasons.push(htfMomentumVeto.reason);
+        return { ...signal, signal: 'HOLD' };
+    }
+
+    // Gatekeeper 2: VWAP Confirmation
     if (config.isVwapConfirmationEnabled) {
         const vwapValues = calculateVwap(klines);
         const lastVwap = getLast(vwapValues);
@@ -1566,7 +1615,7 @@ export const getTradingSignal = async (
         }
     }
 
-    // Gatekeeper 1: Higher Timeframe Confirmation
+    // Gatekeeper 3: Higher Timeframe Trend Confirmation
     if (config.isHtfConfirmationEnabled && htfContext?.htf_trend) {
         signal.reasons.push(`ℹ️ HTF Trend is ${htfContext.htf_trend}.`);
         if (signal.signal === 'BUY' && htfContext.htf_trend === 'bearish') {
@@ -1580,7 +1629,7 @@ export const getTradingSignal = async (
         signal.reasons.push(`✅ HTF Confirmation: Passed.`);
     }
 
-    // Gatekeeper 2: Market Cohesion Filter
+    // Gatekeeper 4: Market Cohesion Filter
     if (config.isMarketCohesionEnabled) {
         const heikinAshiKlines = calculateHeikinAshi(klines);
         const lookback = (config.agentParams as Required<AgentParams>).qsc_marketCohesionCandles || 2;
@@ -1592,7 +1641,7 @@ export const getTradingSignal = async (
         signal.reasons.push(cohesionCheck.reason);
     }
 
-    // Gatekeeper 3: Minimum R:R Ratio Veto
+    // Gatekeeper 5: Minimum R:R Ratio Veto
     if (config.isMinRrEnabled) {
         const { stopLossPrice, takeProfitPrice } = getInitialAgentTargets(klines, entryPrice, isLong ? 'LONG' : 'SHORT', config);
         const risk = Math.abs(entryPrice - stopLossPrice);
@@ -1605,7 +1654,7 @@ export const getTradingSignal = async (
         signal.reasons.push(`✅ R:R Veto: Passed (${rrRatio.toFixed(2)}:1).`);
     }
 
-    // Gatekeeper 4: Contradictory Candlestick Pattern Veto
+    // Gatekeeper 6: Contradictory Candlestick Pattern Veto
     const contradictoryCandleVeto = isLastCandleContradictory(klines, signal.signal);
     if (contradictoryCandleVeto.veto) {
         signal.reasons.push(contradictoryCandleVeto.reason);

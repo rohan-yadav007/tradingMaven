@@ -1,4 +1,5 @@
 
+
 // FIX: Import 'WalletBalance' type.
 import { Agent, AgentParams, WalletBalance } from './types';
 
@@ -67,11 +68,11 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
 
     // Agent 9: Quantum Scalper
     qsc_adxPeriod: 10,
-    qsc_adxThreshold: 30,
+    qsc_adxThreshold: 28,
     qsc_adxChopBuffer: 3,
     qsc_bbPeriod: 20,
     qsc_bbStdDev: 2,
-    qsc_bbwSqueezeThreshold: 0.01,
+    qsc_bbwSqueezeThreshold: 0.005,
     qsc_stochRsiPeriod: 14,
     qsc_stochRsiOversold: 25,
     qsc_stochRsiOverbought: 75,
@@ -81,7 +82,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     qsc_psarMax: 0.2,
     qsc_atrPeriod: 14,
     qsc_atrMultiplier: 1.5,
-    qsc_trendScoreThreshold: 60,
+    qsc_trendScoreThreshold: 75,
     qsc_rangeScoreThreshold: 2,
     qsc_ichi_conversionPeriod: 9,
     qsc_ichi_basePeriod: 26,
@@ -136,14 +137,17 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
 // --- TIMEFRAME-SPECIFIC PARAMETER OVERRIDES ---
 
 export const QUANTUM_SCALPER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '1m':  { qsc_stochRsiOversold: 20, qsc_stochRsiOverbought: 80, qsc_adxThreshold: 30, viPeriod: 10, qsc_rsiOverextendedLong: 80, qsc_rsiOverextendedShort: 20 },
-    '3m':  { qsc_stochRsiOversold: 25, qsc_stochRsiOverbought: 75, qsc_adxThreshold: 28, viPeriod: 12, qsc_rsiOverextendedLong: 78, qsc_rsiOverextendedShort: 22 },
-    '5m':  { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 25, viPeriod: 14, qsc_rsiOverextendedLong: 75, qsc_rsiOverextendedShort: 25, qsc_rsiBuyThreshold: 60, qsc_rsiSellThreshold: 40 },
-    '15m': { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 25, viPeriod: 14, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30 },
-    '30m': { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 23, viPeriod: 16, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30 },
-    '1h':  { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 22, viPeriod: 18, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30 },
-    '4h':  { qsc_stochRsiOversold: 35, qsc_stochRsiOverbought: 65, qsc_adxThreshold: 22, viPeriod: 20, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30 },
-    '1d':  { qsc_stochRsiOversold: 35, qsc_stochRsiOverbought: 65, qsc_adxThreshold: 22, viPeriod: 20, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30 },
+    // Scalping: Stricter thresholds to filter noise and prevent chasing blow-offs
+    '1m':  { qsc_stochRsiOversold: 20, qsc_stochRsiOverbought: 80, qsc_adxThreshold: 30, qsc_rsiMomentumThreshold: 62, qsc_rsiOverextendedLong: 80, qsc_rsiOverextendedShort: 20 },
+    '3m':  { qsc_stochRsiOversold: 25, qsc_stochRsiOverbought: 75, qsc_adxThreshold: 28, qsc_rsiMomentumThreshold: 60, qsc_rsiOverextendedLong: 78, qsc_rsiOverextendedShort: 22 },
+    '5m':  { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 25, qsc_rsiMomentumThreshold: 58, qsc_rsiOverextendedLong: 75, qsc_rsiOverextendedShort: 25 },
+    // Day Trading: Balanced thresholds
+    '15m': { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 25, qsc_rsiMomentumThreshold: 55, qsc_rsiOverextendedLong: 80, qsc_rsiOverextendedShort: 20 },
+    '30m': { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 23, qsc_rsiMomentumThreshold: 55, qsc_rsiOverextendedLong: 85, qsc_rsiOverextendedShort: 15 },
+    '1h':  { qsc_stochRsiOversold: 30, qsc_stochRsiOverbought: 70, qsc_adxThreshold: 22, qsc_rsiMomentumThreshold: 55, qsc_rsiOverextendedLong: 85, qsc_rsiOverextendedShort: 15 },
+    // Swing Trading: Looser thresholds to catch trends early
+    '4h':  { qsc_stochRsiOversold: 35, qsc_stochRsiOverbought: 65, qsc_adxThreshold: 22, qsc_rsiMomentumThreshold: 52, qsc_rsiOverextendedLong: 90, qsc_rsiOverextendedShort: 10 },
+    '1d':  { qsc_stochRsiOversold: 35, qsc_stochRsiOverbought: 65, qsc_adxThreshold: 22, qsc_rsiMomentumThreshold: 52, qsc_rsiOverextendedLong: 90, qsc_rsiOverextendedShort: 10 },
 };
 
 export const HISTORIC_EXPERT_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {

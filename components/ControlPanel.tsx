@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig, Agent } from '../types';
 import * as constants from '../constants';
-import { PlayIcon, LockIcon, UnlockIcon, CpuIcon, ChevronDown, ChevronUp } from './icons';
+import { PlayIcon, LockIcon, UnlockIcon, CpuIcon, ChevronDown, ChevronUp, InfoIcon } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
 import { getTradingSignal } from '../services/localAgentService';
 import { SearchableDropdown } from './SearchableDropdown';
@@ -157,7 +157,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         maxLeverage, isLeverageLoading, isHtfConfirmationEnabled, htfTimeFrame,
         isUniversalProfitTrailEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
         isReanalysisEnabled, entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
-        isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled
+        isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled
     } = config;
 
     const {
@@ -166,7 +166,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setMarginType, onSetMultiAssetMode, setAgentParams, setMaxMarginLossPercent,
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setIsUniversalProfitTrailEnabled,
         setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled,
-        setEntryTiming, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setIsMarketCohesionEnabled
+        setEntryTiming, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setIsMarketCohesionEnabled,
+        setIsVwapConfirmationEnabled
     } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -224,6 +225,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         isAgentTrailEnabled: config.isAgentTrailEnabled,
                         isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
                         isMarketCohesionEnabled: config.isMarketCohesionEnabled,
+                        isVwapConfirmationEnabled: config.isVwapConfirmationEnabled,
                         htfTimeFrame: config.htfTimeFrame,
                         agentParams: agentParams,
                         pricePrecision: 8,
@@ -462,6 +464,26 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             </div>
 
             <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
+            
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                     <div className="flex items-center gap-1.5">
+                        <label htmlFor="vwap-toggle" className={formLabelClass}>
+                            VWAP Confirmation
+                        </label>
+                         <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                Filters trades to only allow LONGs above the daily VWAP and SHORTs below it. A powerful intraday trend filter.
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch
+                        checked={isVwapConfirmationEnabled}
+                        onChange={setIsVwapConfirmationEnabled}
+                    />
+                </div>
+            </div>
 
             <div className={formGroupClass}>
                 <div className="flex items-center justify-between">

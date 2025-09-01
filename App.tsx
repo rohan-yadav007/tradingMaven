@@ -35,7 +35,7 @@ const AppContent: React.FC = () => {
         leverage, marginType, isHtfConfirmationEnabled, htfTimeFrame, isUniversalProfitTrailEnabled,
         isMinRrEnabled, isInvalidationCheckEnabled, isReanalysisEnabled, htfAgentParams,
         entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
-        isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled
+        isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled
     } = configState;
 
     const {
@@ -136,6 +136,7 @@ const AppContent: React.FC = () => {
                     isAgentTrailEnabled,
                     isBreakevenTrailEnabled,
                     isMarketCohesionEnabled,
+                    isVwapConfirmationEnabled,
                     agentParams,
                     htfAgentParams,
                     pricePrecision: pricePrecisionForBot,
@@ -161,7 +162,7 @@ const AppContent: React.FC = () => {
         isHtfConfirmationEnabled, htfTimeFrame, agentParams, htfAgentParams,
         isUniversalProfitTrailEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
         isReanalysisEnabled, currentFeeRate, entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
-        isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled
+        isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled
     ]);
 
     // ---- Handlers ----
@@ -474,6 +475,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             isAgentTrailEnabled: config.isAgentTrailEnabled,
             isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
             isMarketCohesionEnabled: config.isMarketCohesionEnabled,
+            isVwapConfirmationEnabled: config.isVwapConfirmationEnabled,
             entryTiming: config.entryTiming,
         };
 

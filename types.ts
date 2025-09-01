@@ -56,6 +56,7 @@ export interface MarketDataContext {
     vi14?: { pdi: number; ndi: number };
     ichiCloud?: IchimokuCloudOutput;
     lastCandlePattern?: { name: string; type: 'bullish' | 'bearish' } | null;
+    vwap?: number;
     // Higher Timeframe Context
     htf_stochRsi?: StochasticRSIOutput;
     htf_rsi14?: number;
@@ -68,6 +69,7 @@ export interface MarketDataContext {
     htf_obvTrend?: 'bullish' | 'bearish' | 'neutral';
     htf_vi14?: { pdi: number; ndi: number };
     htf_trend?: 'bullish' | 'bearish' | 'neutral';
+    htf_vwap?: number;
 }
 
 
@@ -170,6 +172,7 @@ export interface Position {
         isAgentTrailEnabled: boolean;
         isBreakevenTrailEnabled: boolean;
         isMarketCohesionEnabled?: boolean;
+        isVwapConfirmationEnabled?: boolean;
         htfTimeFrame?: 'auto' | string;
         entryTiming?: 'immediate' | 'onNextCandle';
     };
@@ -332,6 +335,7 @@ export interface BotConfig {
     isAgentTrailEnabled: boolean;
     isBreakevenTrailEnabled: boolean;
     isMarketCohesionEnabled?: boolean;
+    isVwapConfirmationEnabled?: boolean;
     htfTimeFrame?: 'auto' | string;
     agentParams?: AgentParams;
     htfAgentParams?: AgentParams;

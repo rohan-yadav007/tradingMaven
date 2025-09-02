@@ -177,6 +177,9 @@ export interface Position {
         isBreakevenTrailEnabled: boolean;
         isMarketCohesionEnabled?: boolean;
         isVwapConfirmationEnabled?: boolean;
+        isBtcConfirmationEnabled?: boolean;
+        isVolumeFilterEnabled?: boolean;
+        isAdxFilterEnabled?: boolean;
         htfTimeFrame?: 'auto' | string;
         entryTiming?: 'immediate' | 'onNextCandle';
     };
@@ -340,6 +343,9 @@ export interface BotConfig {
     isBreakevenTrailEnabled: boolean;
     isMarketCohesionEnabled?: boolean;
     isVwapConfirmationEnabled?: boolean;
+    isBtcConfirmationEnabled?: boolean;
+    isVolumeFilterEnabled?: boolean;
+    isAdxFilterEnabled?: boolean;
     htfTimeFrame?: 'auto' | string;
     agentParams?: AgentParams;
     htfAgentParams?: AgentParams;

@@ -1,9 +1,12 @@
 
 
+
+
 import { TradingMode, type Agent, type TradeSignal, type Kline, type AgentParams, type Position, type ADXOutput, type MACDOutput, type BollingerBandsOutput, type StochasticRSIOutput, type TradeManagementSignal, type BotConfig, VortexIndicatorOutput, SentinelAnalysis, KSTOutput, type IchimokuCloudOutput, MarketDataContext } from '../types';
 // FIX: Import missing candlestick pattern indicators 'eveningdojistar' and 'eveningstar' to resolve reference errors.
 import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, IchimokuCloud, KST, abandonedbaby, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, downsidetasukigap, dragonflydoji, gravestonedoji, bullishharami, bearishharami, bullishharamicross, bearishharamicross, hammerpattern, hangingman, morningdojistar, morningstar, piercingline, shootingstar, threeblackcrows, threewhitesoldiers, eveningdojistar, eveningstar } from 'technicalindicators';
 import * as constants from '../constants';
+import * as binanceService from './binanceService';
 
 class Supertrend {
     static calculate(options: { high: number[]; low: number[]; close: number[]; period: number; multiplier: number; }): (number | undefined)[] {
@@ -954,10 +957,14 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
         return { signal: 'HOLD', reasons: [`ℹ️ Standby: Low volatility squeeze detected (BBW: ${bbWidth.toFixed(4)})`] };
     }
     
-    const isTrending = adx.adx > params.qsc_adxThreshold;
+    const isTrending = !config.isAdxFilterEnabled || adx.adx > params.qsc_adxThreshold;
     
     if (isTrending) {
-        reasons.push(`ℹ️ Regime: Trending (ADX ${adx.adx.toFixed(1)})`);
+        if (config.isAdxFilterEnabled) {
+            reasons.push(`ℹ️ Regime: Trending (ADX ${adx.adx.toFixed(1)})`);
+        } else {
+            reasons.push('ℹ️ Regime: Trending (ADX Filter Disabled)');
+        }
         let bullScore = 0;
         let bearScore = 0;
         
@@ -1007,7 +1014,7 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
         if (bullScore >= params.qsc_trendScoreThreshold && bullScore > bearScore) {
             return { signal: 'BUY', reasons };
         }
-        if (bearScore >= params.qsc_trendScoreThreshold && bearScore > bearScore) {
+        if (bearScore >= params.qsc_trendScoreThreshold && bearScore > bullScore) {
             return { signal: 'SELL', reasons };
         }
         
@@ -1073,8 +1080,12 @@ const getHistoricExpertSignal = (klines: Kline[], config: BotConfig, htfContext?
     const reasons: string[] = [];
 
     const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.adxPeriod }))! as ADXOutput;
-    const isTrending = adx.adx > params.he_adxTrendThreshold;
-    reasons.push(isTrending ? `✅ Trend Active (ADX > ${params.he_adxTrendThreshold})` : `❌ Chop Zone (ADX < ${params.he_adxTrendThreshold})`);
+    const isTrending = !config.isAdxFilterEnabled || adx.adx > params.he_adxTrendThreshold;
+    if(config.isAdxFilterEnabled) {
+        reasons.push(isTrending ? `✅ Trend Active (ADX > ${params.he_adxTrendThreshold})` : `❌ Chop Zone (ADX < ${params.he_adxTrendThreshold})`);
+    } else {
+        reasons.push('✅ Trend Active (ADX Filter Disabled)');
+    }
     if (!isTrending) return { signal: 'HOLD', reasons };
 
     const atr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: params.atrPeriod }))! as number;
@@ -1136,7 +1147,7 @@ const getChameleonSignal = (klines: Kline[], config: BotConfig, htfContext?: Mar
     const isMacroBearish = currentPrice < trendEma;
     
     const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.adxPeriod }))! as ADXOutput;
-    const isTrending = adx.adx > params.ch_adxThreshold!;
+    const isTrending = !config.isAdxFilterEnabled || adx.adx > params.ch_adxThreshold!;
 
     const fastEmaValues = EMA.calculate({ period: params.ch_fastEmaPeriod!, values: closes });
     const slowEmaValues = EMA.calculate({ period: params.ch_slowEmaPeriod!, values: closes });
@@ -1149,7 +1160,11 @@ const getChameleonSignal = (klines: Kline[], config: BotConfig, htfContext?: Mar
     const bearishCross = prevFastEma > prevSlowEma && lastFastEma < lastSlowEma;
     
     reasons.push(isMacroBullish ? `✅ Trend: Bullish` : isMacroBearish ? `✅ Trend: Bearish` : `❌ Trend: Neutral`);
-    reasons.push(isTrending ? `✅ Regime: Trending (ADX ${adx.adx.toFixed(1)})` : `❌ Regime: Ranging`);
+    if (config.isAdxFilterEnabled) {
+        reasons.push(isTrending ? `✅ Regime: Trending (ADX ${adx.adx.toFixed(1)})` : `❌ Regime: Ranging`);
+    } else {
+        reasons.push('✅ Regime: Trending (ADX Filter Disabled)');
+    }
 
     if (isMacroBullish && isTrending) {
         reasons.push(bullishCross ? `✅ EMA: Bullish Cross` : `❌ EMA: No Bullish Cross`);
@@ -1559,6 +1574,40 @@ export const getTradingSignal = async (
         return signal;
     }
     
+    // --- BTC Trend Confirmation Gatekeeper ---
+    if (config.isBtcConfirmationEnabled && !config.pair.startsWith('BTC/')) {
+        try {
+            const btcKlines = await binanceService.fetchKlines('BTCUSDT', config.timeFrame, { limit: 205, mode: config.mode });
+            if (btcKlines.length > 50) {
+                const btcCloses = btcKlines.map(k => k.close);
+                const btcEma50 = getLast(EMA.calculate({ period: 50, values: btcCloses }));
+                const btcLastClose = getLast(btcCloses);
+
+                if (btcEma50 && btcLastClose) {
+                    const isBtcBearish = btcLastClose < btcEma50;
+                    const isBtcBullish = btcLastClose > btcEma50;
+                    
+                    if (signal.signal === 'BUY' && isBtcBearish) {
+                        signal.reasons.push('❌ VETO: BTC trend is bearish.');
+                        return { ...signal, signal: 'HOLD' };
+                    }
+                    if (signal.signal === 'SELL' && isBtcBullish) {
+                        signal.reasons.push('❌ VETO: BTC trend is bullish.');
+                        return { ...signal, signal: 'HOLD' };
+                    }
+                    signal.reasons.push(`✅ BTC Trend: Aligned.`);
+                } else {
+                     signal.reasons.push(`⚠️ BTC Trend: Could not calculate trend.`);
+                }
+            } else {
+                 signal.reasons.push(`⚠️ BTC Trend: Could not confirm (insufficient data).`);
+            }
+        } catch (e) {
+            console.warn("Could not fetch BTC klines for confirmation:", e);
+            signal.reasons.push(`⚠️ BTC Trend: Could not confirm (API error).`);
+        }
+    }
+    
     // --- ENTRY GATEKEEPER SYSTEM ---
     const marketContext = captureMarketContext(klines);
     const lastKline = getLast(klines)!;
@@ -1566,11 +1615,13 @@ export const getTradingSignal = async (
     const isLong = signal.signal === 'BUY';
 
     // Gatekeeper -1: Volume Veto
-    if (marketContext.lastVolume && marketContext.volumeSma20 && marketContext.lastVolume < marketContext.volumeSma20) {
-        signal.reasons.push('❌ VETO: Low entry volume.');
-        return { ...signal, signal: 'HOLD' };
+    if (config.isVolumeFilterEnabled) {
+        if (marketContext.lastVolume && marketContext.volumeSma20 && marketContext.lastVolume < marketContext.volumeSma20) {
+            signal.reasons.push('❌ VETO: Low entry volume.');
+            return { ...signal, signal: 'HOLD' };
+        }
+        signal.reasons.push('✅ Volume: Passed.');
     }
-    signal.reasons.push('✅ Volume: Passed.');
 
     const reversionVeto = getMeanReversionVeto(klines, signal.signal, config);
     if (reversionVeto.veto) {

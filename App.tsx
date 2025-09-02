@@ -35,7 +35,8 @@ const AppContent: React.FC = () => {
         leverage, marginType, isHtfConfirmationEnabled, htfTimeFrame, isUniversalProfitTrailEnabled,
         isMinRrEnabled, isInvalidationCheckEnabled, isReanalysisEnabled, htfAgentParams,
         entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
-        isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled
+        isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
+        isBtcConfirmationEnabled, isVolumeFilterEnabled, isAdxFilterEnabled
     } = configState;
 
     const {
@@ -137,6 +138,9 @@ const AppContent: React.FC = () => {
                     isBreakevenTrailEnabled,
                     isMarketCohesionEnabled,
                     isVwapConfirmationEnabled,
+                    isBtcConfirmationEnabled,
+                    isVolumeFilterEnabled,
+                    isAdxFilterEnabled,
                     agentParams,
                     htfAgentParams,
                     pricePrecision: pricePrecisionForBot,
@@ -162,7 +166,8 @@ const AppContent: React.FC = () => {
         isHtfConfirmationEnabled, htfTimeFrame, agentParams, htfAgentParams,
         isUniversalProfitTrailEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
         isReanalysisEnabled, currentFeeRate, entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
-        isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled
+        isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
+        isBtcConfirmationEnabled, isVolumeFilterEnabled, isAdxFilterEnabled
     ]);
 
     // ---- Handlers ----
@@ -476,6 +481,9 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
             isMarketCohesionEnabled: config.isMarketCohesionEnabled,
             isVwapConfirmationEnabled: config.isVwapConfirmationEnabled,
+            isBtcConfirmationEnabled: config.isBtcConfirmationEnabled,
+            isVolumeFilterEnabled: config.isVolumeFilterEnabled,
+            isAdxFilterEnabled: config.isAdxFilterEnabled,
             entryTiming: config.entryTiming,
         };
 

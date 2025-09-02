@@ -30,6 +30,9 @@ interface TradingConfigState {
     isBreakevenTrailEnabled: boolean;
     isMarketCohesionEnabled: boolean;
     isVwapConfirmationEnabled: boolean;
+    isBtcConfirmationEnabled: boolean;
+    isVolumeFilterEnabled: boolean;
+    isAdxFilterEnabled: boolean;
     htfTimeFrame: 'auto' | string;
     agentParams: AgentParams;
     htfAgentParams: AgentParams;
@@ -66,6 +69,9 @@ interface TradingConfigActions {
     setIsBreakevenTrailEnabled: (isEnabled: boolean) => void;
     setIsMarketCohesionEnabled: (isEnabled: boolean) => void;
     setIsVwapConfirmationEnabled: (isEnabled: boolean) => void;
+    setIsBtcConfirmationEnabled: (isEnabled: boolean) => void;
+    setIsVolumeFilterEnabled: (isEnabled: boolean) => void;
+    setIsAdxFilterEnabled: (isEnabled: boolean) => void;
     setHtfTimeFrame: (tf: 'auto' | string) => void;
     setAgentParams: (params: AgentParams) => void;
     setHtfAgentParams: (params: AgentParams) => void;
@@ -107,6 +113,9 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [isBreakevenTrailEnabled, setIsBreakevenTrailEnabled] = useState<boolean>(true);
     const [isMarketCohesionEnabled, setIsMarketCohesionEnabled] = useState<boolean>(true);
     const [isVwapConfirmationEnabled, setIsVwapConfirmationEnabled] = useState<boolean>(true);
+    const [isBtcConfirmationEnabled, setIsBtcConfirmationEnabled] = useState<boolean>(false);
+    const [isVolumeFilterEnabled, setIsVolumeFilterEnabled] = useState<boolean>(true);
+    const [isAdxFilterEnabled, setIsAdxFilterEnabled] = useState<boolean>(true);
     const [htfTimeFrame, setHtfTimeFrame] = useState<'auto' | string>('auto');
     const [isApiConnected, setIsApiConnected] = useState(false);
     const [walletViewMode, setWalletViewMode] = useState<TradingMode>(TradingMode.Spot);
@@ -275,7 +284,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setAgentParams, setHtfAgentParams, setIsApiConnected, setWalletViewMode,
         setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError, setIsUniversalProfitTrailEnabled,
         setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setEntryTiming,
-        setIsMarketCohesionEnabled, setIsVwapConfirmationEnabled,
+        setIsMarketCohesionEnabled, setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
     }), [onSetMultiAssetMode]);
     
     const state = {
@@ -287,7 +296,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         takeProfitValue: 0,
         isTakeProfitLocked: false,
         isHtfConfirmationEnabled, isUniversalProfitTrailEnabled, 
-        isMinRrEnabled, isReanalysisEnabled, isInvalidationCheckEnabled, isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled, htfTimeFrame,
+        isMinRrEnabled, isReanalysisEnabled, isInvalidationCheckEnabled, isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled, isBtcConfirmationEnabled, isVolumeFilterEnabled, isAdxFilterEnabled, htfTimeFrame,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
         futuresSettingsError, multiAssetModeError, entryTiming
     };

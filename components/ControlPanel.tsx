@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig, Agent, MarketDataContext } from '../types';
 import * as constants from '../constants';
@@ -59,7 +60,7 @@ const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) =>
     </button>
 );
 
-const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParamsChange: (p: AgentParams) => void}> = ({ agent, params, onParamsChange }) => {
+const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParamsChange: (p: AgentParams) => void, isAdxFilterEnabled: boolean}> = ({ agent, params, onParamsChange, isAdxFilterEnabled }) => {
     const allParams: Required<AgentParams> = {...constants.DEFAULT_AGENT_PARAMS, ...params};
     const updateParam = (key: keyof AgentParams, value: number | boolean | string) => { onParamsChange({ ...params, [key]: value }); };
     switch (agent.id) {
@@ -81,7 +82,9 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                     </button>
                 </div>
             </div>
-            <ParamSlider label="ADX Trend Threshold" value={allParams.qsc_adxThreshold} onChange={v => updateParam('qsc_adxThreshold', v)} min={20} max={40} step={1} />
+            {isAdxFilterEnabled && (
+                <ParamSlider label="ADX Trend Threshold" value={allParams.qsc_adxThreshold} onChange={v => updateParam('qsc_adxThreshold', v)} min={20} max={40} step={1} />
+            )}
             {(allParams.qsc_entryMode ?? 'breakout') === 'breakout' ? (
                 <ParamSlider label="RSI Crossover Threshold" value={allParams.qsc_rsiMomentumThreshold} onChange={v => updateParam('qsc_rsiMomentumThreshold', v)} min={51} max={70} step={1} />
             ) : (
@@ -104,12 +107,14 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                     onChange={(v) => updateParam('ch_trendEmaPeriod', v)}
                     min={50} max={200} step={10}
                 />
-                <ParamSlider 
-                    label="ADX Threshold"
-                    value={allParams.ch_adxThreshold}
-                    onChange={(v) => updateParam('ch_adxThreshold', v)}
-                    min={18} max={30} step={1}
-                />
+                {isAdxFilterEnabled && (
+                    <ParamSlider 
+                        label="ADX Threshold"
+                        value={allParams.ch_adxThreshold}
+                        onChange={(v) => updateParam('ch_adxThreshold', v)}
+                        min={18} max={30} step={1}
+                    />
+                )}
                  <ParamSlider 
                     label="Fast EMA Period"
                     value={allParams.ch_fastEmaPeriod}
@@ -153,7 +158,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         maxLeverage, isLeverageLoading, isHtfConfirmationEnabled, htfTimeFrame,
         isUniversalProfitTrailEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
         isReanalysisEnabled, entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
-        isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled
+        isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
+        isBtcConfirmationEnabled, isVolumeFilterEnabled, isAdxFilterEnabled
     } = config;
 
     const {
@@ -163,7 +169,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setIsUniversalProfitTrailEnabled,
         setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled,
         setEntryTiming, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setIsMarketCohesionEnabled,
-        setIsVwapConfirmationEnabled
+        setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setIsVolumeFilterEnabled, setIsAdxFilterEnabled
     } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -234,6 +240,9 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
                         isMarketCohesionEnabled: config.isMarketCohesionEnabled,
                         isVwapConfirmationEnabled: config.isVwapConfirmationEnabled,
+                        isBtcConfirmationEnabled: config.isBtcConfirmationEnabled,
+                        isVolumeFilterEnabled: config.isVolumeFilterEnabled,
+                        isAdxFilterEnabled: config.isAdxFilterEnabled,
                         htfTimeFrame: config.htfTimeFrame,
                         agentParams: agentParams,
                         pricePrecision: 8,
@@ -428,22 +437,22 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 <p className="text-xs text-slate-500 dark:text-slate-400">{selectedAgent.description}</p>
                  {selectedAgent.id === 9 && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-4">
-                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} />
+                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} />
                     </div>
                 )}
                  {selectedAgent.id === 13 && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
-                         <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} />
+                         <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} />
                     </div>
                 )}
                  {selectedAgent.id === 14 && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700">
-                         <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} />
+                         <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} />
                     </div>
                 )}
                 {selectedAgent.id === 11 && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
-                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} />
+                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} />
                     </div>
                 )}
             </div>
@@ -472,6 +481,46 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             </div>
 
             <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
+            
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                     <div className="flex items-center gap-1.5">
+                        <label htmlFor="adx-filter-toggle" className={formLabelClass}>
+                            ADX Trend Filter
+                        </label>
+                         <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                Requires a strong trend (high ADX) to be present before allowing an entry. Disabling allows earlier entries at the risk of trading in choppy markets.
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch
+                        checked={isAdxFilterEnabled}
+                        onChange={setIsAdxFilterEnabled}
+                    />
+                </div>
+            </div>
+            
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                     <div className="flex items-center gap-1.5">
+                        <label htmlFor="btc-confirm-toggle" className={formLabelClass}>
+                            BTC Trend Confirmation
+                        </label>
+                         <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                Vetoes trades that go against the current trend of BTC/USDT on the same timeframe.
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch
+                        checked={isBtcConfirmationEnabled}
+                        onChange={setIsBtcConfirmationEnabled}
+                    />
+                </div>
+            </div>
             
             <div className={formGroupClass}>
                 <div className="flex items-center justify-between">
@@ -515,6 +564,20 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         </select>
                     </div>
                 )}
+            </div>
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="volume-filter-toggle" className={formLabelClass}>
+                        Universal Volume Filter
+                    </label>
+                    <ToggleSwitch
+                        checked={isVolumeFilterEnabled}
+                        onChange={setIsVolumeFilterEnabled}
+                    />
+                </div>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Ensures entry candle volume is above the 20-period moving average.
+                </p>
             </div>
             <div className={formGroupClass}>
                 <div className="flex items-center justify-between">

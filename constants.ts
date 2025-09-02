@@ -50,6 +50,12 @@ export const AGENTS: Agent[] = [
         description: 'A comprehensive scoring engine. Analyzes Trend, Momentum, and Confirmation factors, using On-Balance Volume and HTF alignment to weigh momentum and confirm entries. Signals are filtered to avoid high-risk, low-conviction setups.',
         indicators: ['Weighted Scoring', 'Vortex Indicator', 'OBV', 'Multi-Indicator Analysis'],
     },
+    {
+        id: 16,
+        name: 'Ichimoku Trend Rider',
+        description: 'A pure Ichimoku Kinko Hyo strategy. It identifies strong trends by checking if the price is above/below the Kumo cloud, then enters on Tenkan/Kijun-sen crossovers, confirmed by volume and momentum indicators.',
+        indicators: ['Ichimoku Cloud', 'Vortex Indicator', 'OBV'],
+    }
 ];
 
 export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
@@ -96,7 +102,6 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     qsc_volumeExhaustionMultiplier: 2.5,
     qsc_marketCohesionCandles: 2,
 
-    // FIX: Add default parameters for Ichimoku Trend Rider agent (ID 16).
     // Agent 16: Ichimoku Trend Rider
     ichi_conversionPeriod: 9,
     ichi_basePeriod: 26,
@@ -167,7 +172,6 @@ export const SENTINEL_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> =
     '1d':  { sentinel_scoreThreshold: 60, viPeriod: 20 },
 };
 
-// FIX: Add timeframe settings constant for Ichimoku Trend Rider agent.
 export const ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
     '1m':  {},
     '3m':  {},
@@ -191,7 +195,6 @@ export const getAgentTimeframeSettings = (agentId: number, timeFrame: string): P
         case 11: return HISTORIC_EXPERT_TIMEFRAME_SETTINGS[timeFrame] || {};
         case 13: return CHAMELEON_TIMEFRAME_SETTINGS[timeFrame] || {};
         case 14: return SENTINEL_TIMEFRAME_SETTINGS[timeFrame] || {};
-        // FIX: Add case for Ichimoku Trend Rider agent.
         case 16: return ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS[timeFrame] || {};
         default: return {};
     }

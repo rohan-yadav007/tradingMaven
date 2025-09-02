@@ -44,7 +44,7 @@ const ParamDisplay: React.FC<{ params?: AgentParams }> = ({ params }) => {
     );
 };
 
-const MarketContextDisplay: React.FC<{ context?: MarketDataContext, title: string }> = ({ context, title }) => {
+const MarketContextDisplay: React.FC<{ context?: Partial<MarketDataContext>, title: string }> = ({ context, title }) => {
     if (!context || Object.keys(context).length === 0) return (
         <div>
             <h4 className="font-semibold text-slate-700 dark:text-slate-300 mb-1">{title}</h4>

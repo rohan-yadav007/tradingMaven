@@ -787,11 +787,6 @@ export function getAgentExitSignal(
     currentPrice: number,
     originalConfig: BotConfig
 ): TradeManagementSignal {
-    // The agent's native trailing stop is always active from the moment a position is opened.
-    // It competes with other stop-loss systems (initial SL, breakeven, profit secure),
-    // and the bot manager will always choose the tightest, most protective stop.
-    // We only need to return the raw indicator value; the manager handles the comparison logic.
-
     const config = applyTimeframeSettings(originalConfig);
     const { agent } = config;
     const params = config.agentParams as Required<AgentParams>;
@@ -807,27 +802,20 @@ export function getAgentExitSignal(
     // --- Profit Velocity Engine ---
     const initialRiskInPrice = position.initialRiskInPrice;
     const currentProfitInPrice = isLong ? currentPrice - position.entryPrice : position.entryPrice - currentPrice;
-    // Ensure initialRisk is not zero to avoid division by zero
     const currentRR = (initialRiskInPrice > 1e-9 && currentProfitInPrice > 0) ? currentProfitInPrice / initialRiskInPrice : 0;
     
-    // Timeframe-aware R:R thresholds for accelerating the trail
     const isLowTimeframe = ['1m', '3m', '5m'].includes(position.timeFrame);
     const rrThresholds = isLowTimeframe
-        ? { high: 1.5, hyper: 2.5, max: 4 } // More aggressive for scalps
-        : { high: 2, hyper: 4, max: 6 }; // Standard for longer trades
+        ? { high: 1.5, hyper: 2.5, max: 4 }
+        : { high: 2, hyper: 4, max: 6 }; 
     
-    let profitVelocity = 1; // 1x Velocity: Normal speed
-    if (currentRR > rrThresholds.max) {
-        profitVelocity = 4; // 4x Velocity: Maximum
-    } else if (currentRR > rrThresholds.hyper) {
-        profitVelocity = 3; // 3x Velocity: Hyper speed
-    } else if (currentRR > rrThresholds.high) {
-        profitVelocity = 2; // 2x Velocity: High speed
-    }
-
+    let profitVelocity = 1;
+    if (currentRR > rrThresholds.max) profitVelocity = 4;
+    else if (currentRR > rrThresholds.hyper) profitVelocity = 3;
+    else if (currentRR > rrThresholds.high) profitVelocity = 2;
 
     switch (agent.id) {
-        case 9: // Quantum Scalper: PSAR-based trailing stop
+        case 9: // Quantum Scalper: PSAR-based trailing stop with ATR buffer
             let step = params.qsc_psarStep;
             let max = params.qsc_psarMax;
             
@@ -839,51 +827,39 @@ export function getAgentExitSignal(
                  reasons.push('Agent PSAR Trail');
             }
             
-            const psarInput = { high: klines.map(k => k.high), low: klines.map(k => k.low), step, max };
+            const psarInput = { high: highs, low: lows, step, max };
             if (psarInput.high.length >= 2) {
-                const psar = PSAR.calculate(psarInput);
-                newStopLoss = getLast(psar) as number | undefined;
+                const psar = getLast(PSAR.calculate(psarInput)) as number | undefined;
+                if (psar) {
+                    // Add a small ATR buffer to prevent overly tight stops
+                    const atrValues = ATR.calculate({ high: highs, low: lows, close: closes, period: 14 });
+                    const lastAtr = getLast(atrValues) || 0;
+                    const buffer = lastAtr * 0.1; // 10% of ATR as a buffer
+                    newStopLoss = isLong ? psar - buffer : psar + buffer;
+                }
             }
             break;
 
-        case 11: // Historic Expert
-        case 13: // The Chameleon
+        case 11: 
+        case 13: 
             const baseEmaPeriod = agent.id === 11 ? params.he_slowEmaPeriod : params.ch_slowEmaPeriod!;
             const fastEmaPeriod = agent.id === 11 ? params.he_fastEmaPeriod : params.ch_fastEmaPeriod!;
-
-            // Make the EMA faster by dividing the period, but don't let it get faster than the agent's fastest EMA setting.
             const trailEmaPeriod = Math.max(fastEmaPeriod, Math.round(baseEmaPeriod / profitVelocity));
-
-            if (profitVelocity > 1) {
-                reasons.push(`Agent Trail: Profit Velocity active (${profitVelocity}x speed)`);
-            } else {
-                reasons.push('Agent EMA Trail');
-            }
+            if (profitVelocity > 1) reasons.push(`Agent Trail: Profit Velocity active (${profitVelocity}x speed)`);
+            else reasons.push('Agent EMA Trail');
             newStopLoss = getLast(EMA.calculate({ period: trailEmaPeriod, values: closes }));
             break;
 
-        case 14: // The Sentinel
+        case 14: 
             const baseMultiplier = 3;
-            // Make the ST tighter by dividing the multiplier, but don't let it go below a safe minimum (e.g., 1).
             const trailMultiplier = Math.max(1, baseMultiplier / profitVelocity);
-            
-            if (profitVelocity > 1) {
-                reasons.push(`Agent Trail: Profit Velocity active (${profitVelocity}x speed)`);
-            } else {
-                reasons.push('Agent Supertrend Trail');
-            }
-
+            if (profitVelocity > 1) reasons.push(`Agent Trail: Profit Velocity active (${profitVelocity}x speed)`);
+            else reasons.push('Agent Supertrend Trail');
             newStopLoss = getLast(Supertrend.calculate({ high: highs, low: lows, close: closes, period: 10, multiplier: trailMultiplier }));
             break;
 
-        case 16: // Ichimoku Trend Rider
-            const ichi_params = {
-                high: klines.map(k => k.high), low: klines.map(k => k.low),
-                conversionPeriod: params.ichi_conversionPeriod,
-                basePeriod: params.ichi_basePeriod,
-                spanPeriod: params.ichi_laggingSpanPeriod,
-                displacement: params.ichi_displacement
-            };
+        case 16:
+            const ichi_params = { high: highs, low: lows, conversionPeriod: params.ichi_conversionPeriod, basePeriod: params.ichi_basePeriod, spanPeriod: params.ichi_laggingSpanPeriod, displacement: params.ichi_displacement };
             const ichiValues = IchimokuCloud.calculate(ichi_params) as IchimokuCloudOutput[];
             const lastIchi = getLast(ichiValues);
             if(lastIchi) {
@@ -896,23 +872,15 @@ export function getAgentExitSignal(
             break;
     }
     
-    // FIX: Ensure the agent trail respects the breakeven point as a minimum floor.
     if (position.isBreakevenSet && newStopLoss !== undefined) {
-        // Recalculate the breakeven price to ensure accuracy.
         const feeRate = position.takerFeeRate;
         const breakevenPrice = isLong
-            ? position.entryPrice * (1 + feeRate) / (1 - feeRate)
+            ? position.entryPrice * (1 + feeRate) / (1 + feeRate)
             : position.entryPrice * (1 - feeRate) / (1 + feeRate);
-
-        // The agent's trail cannot suggest a stop that is worse than the established breakeven point.
-        if (isLong) {
-            newStopLoss = Math.max(newStopLoss, breakevenPrice);
-        } else {
-            newStopLoss = Math.min(newStopLoss, breakevenPrice);
-        }
+        if (isLong) newStopLoss = Math.max(newStopLoss, breakevenPrice);
+        else newStopLoss = Math.min(newStopLoss, breakevenPrice);
         reasons.push('Agent Trail active post-breakeven.');
     }
-
 
     return { newStopLoss, action, reasons };
 }
@@ -974,7 +942,6 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
     const closes = klines.map(k => k.close);
     const volumes = klines.map(k => k.volume || 0);
     const lastKline = klines[klines.length - 1];
-    const prevKline = klines[klines.length - 2];
     let reasons: string[] = [];
 
     const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.adxPeriod }))! as ADXOutput;
@@ -1001,28 +968,18 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
             if (htfContext.htf_trend === 'bullish') { bullScore += 15; reasons.push(`✅ HTF Trend: Confirmed Bullish`); }
             if (htfContext.htf_trend === 'bearish') { bearScore += 15; reasons.push(`✅ HTF Trend: Confirmed Bearish`); }
         } else {
-            bullScore += 5; bearScore += 5; // Neutral points if HTF is disabled or neutral
+            bullScore += 5; bearScore += 5;
         }
 
         // --- MOMENTUM SCORING (Max 40) ---
         const rsiValues = RSI.calculate({ period: 14, values: closes });
         const lastRsi = getLast(rsiValues)!;
         
-        if (params.qsc_entryMode === 'pullback') {
-             // Not fully implemented yet, use breakout as default
-             const rsiSellThreshold = 100 - params.qsc_rsiMomentumThreshold;
-             if (lastRsi > params.qsc_rsiMomentumThreshold) {
-                bullScore += 20; reasons.push(`✅ Momentum: Breakout Buy (RSI > ${params.qsc_rsiMomentumThreshold})`);
-            } else if (lastRsi < rsiSellThreshold) {
-                bearScore += 20; reasons.push(`✅ Momentum: Breakout Sell (RSI < ${rsiSellThreshold})`);
-            }
-        } else { // 'breakout' mode is default
-            const rsiSellThreshold = 100 - params.qsc_rsiMomentumThreshold;
-            if (lastRsi > params.qsc_rsiMomentumThreshold) {
-                bullScore += 20; reasons.push(`✅ Momentum: Breakout Buy (RSI > ${params.qsc_rsiMomentumThreshold})`);
-            } else if (lastRsi < rsiSellThreshold) {
-                bearScore += 20; reasons.push(`✅ Momentum: Breakout Sell (RSI < ${rsiSellThreshold})`);
-            }
+        const rsiSellThreshold = 100 - params.qsc_rsiMomentumThreshold;
+        if (lastRsi > params.qsc_rsiMomentumThreshold) {
+            bullScore += 20; reasons.push(`✅ Momentum: Breakout Buy (RSI > ${params.qsc_rsiMomentumThreshold})`);
+        } else if (lastRsi < rsiSellThreshold) {
+            bearScore += 20; reasons.push(`✅ Momentum: Breakout Sell (RSI < ${rsiSellThreshold})`);
         }
         
         if (stochRsi.k > stochRsi.d && stochRsi.k > 50) { bullScore += 20; reasons.push(`✅ Momentum: StochRSI Bullish`); }
@@ -1032,8 +989,16 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
         
         // --- CONFIRMATION SCORING (Max 20) ---
         const macd = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false }))!;
-        if (macd.histogram! > 0) { bullScore += 10; reasons.push(`✅ Confirmation: MACD Bullish`); }
-        else if (macd.histogram! < 0) { bearScore += 10; reasons.push(`✅ Confirmation: MACD Bearish`); }
+        
+        // LOGIC FIX: Penalize contradictory signals
+        if (macd.histogram! > 0) { // Bullish histogram
+            bullScore += 10; reasons.push(`✅ Confirmation: MACD Bullish`);
+            bearScore -= 10; // PENALTY for shorting a bullish MACD
+        } else if (macd.histogram! < 0) { // Bearish histogram
+            bearScore += 10; reasons.push(`✅ Confirmation: MACD Bearish`);
+            bullScore -= 10; // PENALTY for longing a bearish MACD
+        }
+
         if (bb.pb > 0.55) { bullScore += 10; reasons.push(`✅ Confirmation: Price in Upper BB`); }
         else if (bb.pb < 0.45) { bearScore += 10; reasons.push(`✅ Confirmation: Price in Lower BB`); }
         
@@ -1042,7 +1007,7 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
         if (bullScore >= params.qsc_trendScoreThreshold && bullScore > bearScore) {
             return { signal: 'BUY', reasons };
         }
-        if (bearScore >= params.qsc_trendScoreThreshold && bearScore > bullScore) {
+        if (bearScore >= params.qsc_trendScoreThreshold && bearScore > bearScore) {
             return { signal: 'SELL', reasons };
         }
         
@@ -1427,7 +1392,6 @@ export async function getSupervisorSignal(
         return { action: 'hold', reason: '' };
     }
 
-    // --- LOGIC CHANGE: Get the RAW signal from the agent, bypassing entry gatekeepers ---
     let htfContext: MarketDataContext | undefined;
     if (config.isHtfConfirmationEnabled && htfKlines && htfKlines.length > 50) {
         htfContext = captureMarketContext([], htfKlines);
@@ -1442,7 +1406,6 @@ export async function getSupervisorSignal(
         case 16: rawSignal = getIchimokuTrendRiderSignal(klines, config, htfContext); break;
         default: rawSignal = { signal: 'HOLD', reasons: ['Agent not found for re-analysis'] }; break;
     }
-    // --- END LOGIC CHANGE ---
     
     const isLong = position.direction === 'LONG';
     const oppositeSignal = isLong ? 'SELL' : 'BUY';
@@ -1471,6 +1434,30 @@ export async function getSupervisorSignal(
         }
     }
 
+    // Fading Momentum Check
+    const entryRsi = position.entryContext?.rsi14;
+    if (entryRsi && position.hasBeenProfitable) {
+        const currentContext = captureMarketContext(klines, htfKlines);
+        const currentRsi = currentContext.rsi14;
+        
+        if (currentRsi) {
+            const isLongPosition = position.direction === 'LONG';
+            const rsiMidline = 50;
+            // Use a small buffer to prevent exits on minor fluctuations
+            const rsiExhaustionThreshold = isLongPosition ? 48 : 52; 
+
+            // If a long trade entered with RSI above the midline, but now RSI has dropped below the exhaustion threshold.
+            if (isLongPosition && entryRsi > rsiMidline && currentRsi < rsiExhaustionThreshold) {
+                return { action: 'close', reason: `Supervisor Exit: Bullish momentum faded (RSI dropped from ${entryRsi.toFixed(1)} to ${currentRsi.toFixed(1)})` };
+            }
+            
+            // If a short trade entered with RSI below the midline, but now RSI has risen above the exhaustion threshold.
+            if (!isLongPosition && entryRsi < rsiMidline && currentRsi > rsiExhaustionThreshold) {
+                return { action: 'close', reason: `Supervisor Exit: Bearish momentum faded (RSI rose from ${entryRsi.toFixed(1)} to ${currentRsi.toFixed(1)})` };
+            }
+        }
+    }
+
     return { action: 'hold', reason: '' };
 }
 
@@ -1482,12 +1469,9 @@ export function getAdaptiveTakeProfit(
 ): { newTakeProfit?: number; reason?: string } {
     const { direction, takeProfitPrice, entryPrice } = position;
 
-    // This logic only applies to HTF-confirmed trades where TP isn't locked by the user.
     if (!config.isHtfConfirmationEnabled || config.isTakeProfitLocked) {
         return {};
     }
-
-    // HTF logic is not implemented yet, so return empty for now.
     
     return {};
 }
@@ -1495,7 +1479,6 @@ export function getAdaptiveTakeProfit(
 
 /**
  * NEW: A universal gatekeeper to prevent entering trades when the trend is likely exhausted.
- * It checks for mean reversion signals (overextended RSI + BB touch).
  */
 function getMeanReversionVeto(
     klines: Kline[],
@@ -1520,7 +1503,6 @@ function getMeanReversionVeto(
 
 /**
  * NEW: A universal gatekeeper to ensure trade entries align with higher timeframe momentum.
- * Prevents entering trades if the HTF is showing signs of exhaustion/reversal.
  */
 function getHtfMomentumSyncVeto(
     direction: 'BUY' | 'SELL',
@@ -1578,36 +1560,37 @@ export const getTradingSignal = async (
     }
     
     // --- ENTRY GATEKEEPER SYSTEM ---
-    
+    const marketContext = captureMarketContext(klines);
     const lastKline = getLast(klines)!;
     const entryPrice = lastKline.close;
     const isLong = signal.signal === 'BUY';
-    const params = config.agentParams as Required<AgentParams>;
 
-    // Gatekeeper 0: NEW - Mean Reversion / Exhaustion Veto
+    // Gatekeeper -1: Volume Veto
+    if (marketContext.lastVolume && marketContext.volumeSma20 && marketContext.lastVolume < marketContext.volumeSma20) {
+        signal.reasons.push('❌ VETO: Low entry volume.');
+        return { ...signal, signal: 'HOLD' };
+    }
+    signal.reasons.push('✅ Volume: Passed.');
+
     const reversionVeto = getMeanReversionVeto(klines, signal.signal, config);
     if (reversionVeto.veto) {
         signal.reasons.push(reversionVeto.reason);
         return { ...signal, signal: 'HOLD' };
     }
 
-    // Gatekeeper 1: NEW - HTF Momentum Sync Veto
     const htfMomentumVeto = getHtfMomentumSyncVeto(signal.signal, htfContext, config);
     if (htfMomentumVeto.veto) {
         signal.reasons.push(htfMomentumVeto.reason);
         return { ...signal, signal: 'HOLD' };
     }
 
-    // Gatekeeper 2: VWAP Confirmation
     if (config.isVwapConfirmationEnabled) {
-        const vwapValues = calculateVwap(klines);
-        const lastVwap = getLast(vwapValues);
-        if (lastVwap) {
-            if (isLong && entryPrice < lastVwap) {
+        if (marketContext.vwap) {
+            if (isLong && entryPrice < marketContext.vwap) {
                 signal.reasons.push(`❌ VETO: Price is below daily VWAP.`);
                 return { ...signal, signal: 'HOLD' };
             }
-            if (!isLong && entryPrice > lastVwap) {
+            if (!isLong && entryPrice > marketContext.vwap) {
                 signal.reasons.push(`❌ VETO: Price is above daily VWAP.`);
                 return { ...signal, signal: 'HOLD' };
             }
@@ -1615,7 +1598,6 @@ export const getTradingSignal = async (
         }
     }
 
-    // Gatekeeper 3: Higher Timeframe Trend Confirmation
     if (config.isHtfConfirmationEnabled && htfContext?.htf_trend) {
         signal.reasons.push(`ℹ️ HTF Trend is ${htfContext.htf_trend}.`);
         if (signal.signal === 'BUY' && htfContext.htf_trend === 'bearish') {
@@ -1629,7 +1611,6 @@ export const getTradingSignal = async (
         signal.reasons.push(`✅ HTF Confirmation: Passed.`);
     }
 
-    // Gatekeeper 4: Market Cohesion Filter
     if (config.isMarketCohesionEnabled) {
         const heikinAshiKlines = calculateHeikinAshi(klines);
         const lookback = (config.agentParams as Required<AgentParams>).qsc_marketCohesionCandles || 2;
@@ -1641,7 +1622,6 @@ export const getTradingSignal = async (
         signal.reasons.push(cohesionCheck.reason);
     }
 
-    // Gatekeeper 5: Minimum R:R Ratio Veto
     if (config.isMinRrEnabled) {
         const { stopLossPrice, takeProfitPrice } = getInitialAgentTargets(klines, entryPrice, isLong ? 'LONG' : 'SHORT', config);
         const risk = Math.abs(entryPrice - stopLossPrice);
@@ -1654,7 +1634,6 @@ export const getTradingSignal = async (
         signal.reasons.push(`✅ R:R Veto: Passed (${rrRatio.toFixed(2)}:1).`);
     }
 
-    // Gatekeeper 6: Contradictory Candlestick Pattern Veto
     const contradictoryCandleVeto = isLastCandleContradictory(klines, signal.signal);
     if (contradictoryCandleVeto.veto) {
         signal.reasons.push(contradictoryCandleVeto.reason);
@@ -1678,6 +1657,8 @@ export function captureMarketContext(klines: Kline[], htfKlines?: Kline[]): Mark
             const lows = klines.map(k => k.low);
             const volumes = klines.map(k => k.volume || 0);
             
+            context.lastClose = getLast(closes);
+            context.lastVolume = getLast(volumes);
             context.rsi14 = getLast(RSI.calculate({ period: 14, values: closes }));
             context.stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 }));
             context.ema9 = getLast(EMA.calculate({ period: 9, values: closes }));
@@ -1728,14 +1709,12 @@ export function captureMarketContext(klines: Kline[], htfKlines?: Kline[]): Mark
             const htfEma200 = context.htf_ema200;
             const htfLastClose = getLast(htfCloses);
             if(htfEma50 && htfEma200 && htfLastClose) {
-                // FIX: Corrected a typo where a variable `htfEma50` was being called as a function.
                 if (htfLastClose > htfEma50 && htfEma50 > htfEma200) context.htf_trend = 'bullish';
                 else if (htfLastClose < htfEma50 && htfEma50 < htfEma200) context.htf_trend = 'bearish';
                 else context.htf_trend = 'neutral';
             }
         }
     } catch (e) {
-        // In a backtest or live environment, we don't want to crash, just return what we have.
         console.warn("Could not calculate full market context:", e);
     }
     

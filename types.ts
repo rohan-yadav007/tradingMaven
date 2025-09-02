@@ -39,6 +39,7 @@ export interface IchimokuCloudOutput {
 }
 
 export interface MarketDataContext {
+    // Current Timeframe Indicators
     rsi14?: number;
     stochRsi?: StochasticRSIOutput;
     ema9?: number;
@@ -57,9 +58,12 @@ export interface MarketDataContext {
     ichiCloud?: IchimokuCloudOutput;
     lastCandlePattern?: { name: string; type: 'bullish' | 'bearish' } | null;
     vwap?: number;
+    lastVolume?: number;
+    lastClose?: number;
+
     // Higher Timeframe Context
-    htf_stochRsi?: StochasticRSIOutput;
     htf_rsi14?: number;
+    htf_stochRsi?: StochasticRSIOutput;
     htf_ema9?: number;
     htf_ema21?: number;
     htf_ema50?: number;
@@ -176,7 +180,7 @@ export interface Position {
         htfTimeFrame?: 'auto' | string;
         entryTiming?: 'immediate' | 'onNextCandle';
     };
-    entryContext?: MarketDataContext;
+    entryContext?: Partial<MarketDataContext>;
 }
 
 export interface Trade extends Position {
@@ -186,7 +190,7 @@ export interface Trade extends Position {
     exitReason: string;
     mfe?: number; // Max Favorable Excursion in dollars
     mae?: number; // Max Adverse Excursion in dollars
-    exitContext?: MarketDataContext;
+    exitContext?: Partial<MarketDataContext>;
 }
 
 export interface RawWalletBalance {

@@ -1,3 +1,4 @@
+
 import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, RiskMode, TradingMode, BinanceOrderResponse, TradeManagementSignal, AgentParams, MarketDataContext } from '../types';
 import * as binanceService from './binanceService';
 import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAdaptiveTakeProfit, getAggressiveRangeTrailSignal, captureMarketContext } from './localAgentService';
@@ -305,29 +306,26 @@ class BotInstance {
 
     public async refreshAnalysisPreview(klinesOverride?: Kline[]) {
         const klinesToUse = klinesOverride || this.klines;
-        if (klinesToUse.length < 50) {
-            return;
-        }
-        this.addLog('Refreshing analysis preview...', LogType.Info);
+        if (klinesToUse.length < 50) return;
 
-        let htfKlines: Kline[] | undefined = undefined;
+        this.addLog('Refreshing analysis preview...', LogType.Info);
+        
         try {
+            let htfKlines: Kline[] | undefined;
             if (this.bot.config.isHtfConfirmationEnabled) {
                 const htf = this.bot.config.htfTimeFrame === 'auto'
                     ? TIME_FRAMES[TIME_FRAMES.indexOf(this.bot.config.timeFrame) + 1]
                     : this.bot.config.htfTimeFrame;
-
-                if (htf) {
-                    htfKlines = await binanceService.fetchKlines(this.bot.config.pair.replace('/', ''), htf, { limit: 205, mode: this.bot.config.mode });
-                }
+                if (htf) htfKlines = await binanceService.fetchKlines(this.bot.config.pair.replace('/', ''), htf, { limit: 205, mode: this.bot.config.mode });
             }
-        } catch (e) {
-            this.addLog(`Warning: Could not fetch HTF klines for preview: ${e}`, LogType.Error);
-        }
 
-        const signal = await getTradingSignal(this.bot.config.agent, klinesToUse, this.bot.config, htfKlines);
-        this.updateState({ analysis: signal });
-        this.onUpdate();
+            const signal = await getTradingSignal(this.bot.config.agent, klinesToUse, this.bot.config, htfKlines);
+            this.updateState({ analysis: signal });
+        } catch (e) {
+            this.addLog(`Error during preview refresh: ${e}`, LogType.Error);
+        } finally {
+            this.onUpdate();
+        }
     }
 
     public async runAnalysis(isFlipAttempt: boolean = false, options: { execute: boolean } = { execute: true }, klinesOverride?: Kline[]) {
@@ -360,7 +358,8 @@ class BotInstance {
                         this.addLog(`Warning: Could not fetch HTF klines: ${e}`, LogType.Error);
                     }
                 }
-
+                
+                const marketContext = captureMarketContext(klinesToUse, htfKlines);
                 const signal = await getTradingSignal(this.bot.config.agent, klinesToUse, this.bot.config, htfKlines);
                 this.bot.analysis = signal;
 
@@ -376,7 +375,7 @@ class BotInstance {
                     
                     if (options.execute) {
                         this.updateState({ status: BotStatus.ExecutingTrade });
-                        await this.executeTrade(signal, klinesToUse, htfKlines);
+                        await this.executeTrade(signal, marketContext, klinesToUse);
                     } else {
                         this.addLog(`Initial analysis found a ${signal.signal} signal. Waiting for the current candle to close before taking action.`, LogType.Info);
                     }
@@ -470,7 +469,7 @@ class BotInstance {
         this.updateState({ status: BotStatus.Monitoring });
     }
 
-    private async executeTrade(signal: TradeSignal, klinesForAnalysis: Kline[], htfKlines?: Kline[]) {
+    private async executeTrade(signal: TradeSignal, marketContext: MarketDataContext, klinesForAnalysis: Kline[]) {
         if (!this.handlers?.onExecuteTrade) {
             this.addLog("Execution handler not available.", LogType.Error);
             this.updateState({ status: BotStatus.Monitoring });
@@ -521,12 +520,10 @@ class BotInstance {
             stopLossPrice: stopLossPrice,
         };
         
-        const entryContext = captureMarketContext(klinesForAnalysis, htfKlines);
-        
         this.handlers.onExecuteTrade(
             execSignal, 
             this.bot.id,
-            { agentStopLoss, slReason, entryContext }
+            { agentStopLoss, slReason, entryContext: marketContext }
         );
     }
 
@@ -668,8 +665,8 @@ class BotInstance {
         if (!currentPrice) return;
 
         let htfKlines: Kline[] | undefined = undefined;
-        if (config.isHtfConfirmationEnabled) {
-            try {
+        try {
+            if (config.isHtfConfirmationEnabled) {
                 const htf = config.htfTimeFrame === 'auto' 
                     ? TIME_FRAMES[TIME_FRAMES.indexOf(config.timeFrame) + 1] 
                     : config.htfTimeFrame;
@@ -677,11 +674,11 @@ class BotInstance {
                 if (htf) {
                     htfKlines = await binanceService.fetchKlines(config.pair.replace('/', ''), htf, { limit: 205, mode: config.mode });
                 }
-            } catch (e) {
-                this.addLog(`Warning: Could not fetch HTF for management loop: ${e}`, LogType.Error);
             }
+        } catch (e) {
+            this.addLog(`Warning: Could not fetch HTF for management loop: ${e}`, LogType.Error);
         }
-
+        
         // --- Supervisor Check (Proactive Exit & Invalidation) ---
         if (config.isInvalidationCheckEnabled) {
             const supervisorSignal = await getSupervisorSignal(openPosition, klinesForAnalysis, config, htfKlines);

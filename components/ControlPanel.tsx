@@ -1,9 +1,11 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
-import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig, Agent } from '../types';
+import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig, Agent, MarketDataContext } from '../types';
 import * as constants from '../constants';
 import { PlayIcon, LockIcon, UnlockIcon, CpuIcon, ChevronDown, ChevronUp, InfoIcon } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
-import { getTradingSignal } from '../services/localAgentService';
+import { getTradingSignal, captureMarketContext } from '../services/localAgentService';
+import * as binanceService from '../services/binanceService';
 import { SearchableDropdown } from './SearchableDropdown';
 import { useTradingConfigState, useTradingConfigActions } from '../contexts/TradingConfigContext';
 
@@ -201,6 +203,18 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 const previewKlines = [...klines.slice(0, -1), previewKline];
 
                 try {
+                    let htfKlines: Kline[] | undefined;
+                    if (config.isHtfConfirmationEnabled) {
+                        const htf = config.htfTimeFrame === 'auto'
+                            ? constants.TIME_FRAMES[constants.TIME_FRAMES.indexOf(timeFrame) + 1]
+                            : config.htfTimeFrame;
+                        if (htf) {
+                            htfKlines = await binanceService.fetchKlines(analysisPair.replace('/', ''), htf, { limit: 205, mode: config.tradingMode });
+                        }
+                    }
+                    
+                    const marketContext = captureMarketContext(previewKlines, htfKlines);
+                    
                     const previewConfig: BotConfig = {
                         pair: analysisPair,
                         mode: config.tradingMode,
@@ -232,7 +246,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         isTakeProfitLocked: isTakeProfitLocked,
                     };
 
-                    const signal = await getTradingSignal(selectedAgent, previewKlines, previewConfig);
+                    const signal = await getTradingSignal(selectedAgent, previewKlines, previewConfig, htfKlines);
                     setAnalysisSignal(signal);
                 } catch (e) {
                     console.error("Error fetching analysis signal:", e);

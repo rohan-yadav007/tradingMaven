@@ -1,5 +1,6 @@
+
 import { Kline, BotConfig, BacktestResult, Trade, AgentParams, Position, RiskMode, TradingMode, OptimizationResultItem } from '../types';
-import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal } from './localAgentService';
+import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext } from './localAgentService';
 import * as constants from '../constants';
 
 // --- Worker-local Helper Functions ---
@@ -182,18 +183,16 @@ async function runBacktest(
     for (let i = minCandles; i < targetTimeframeKlines.length; i++) {
         const historySlice = targetTimeframeKlines.slice(0, i + 1);
         const currentCandle = targetTimeframeKlines[i]; // This is the candle we are simulating
+        const htfHistorySlice = allHtfKlines ? allHtfKlines.filter(k => k.time <= currentCandle.time) : undefined;
         let hasTradedInThisCandle = false;
 
         // --- MANAGE OPEN POSITION ---
         if (openPosition) {
             const isLong = openPosition.direction === 'LONG';
 
-            // --- CRITICAL RE-ARCH: Update SL based on candle open first, just like a live tick ---
-            // This ensures the SL for the duration of this candle is set correctly before checking high/low wicks.
             const candleOpenPrice = currentCandle.open;
             let positionState: SimulatedPosition = { ...openPosition };
 
-            // Run all stop-loss candidate collectors with the open price
             const stopCandidates: { price: number; reason: Position['activeStopLossReason']; newState?: Partial<Position> }[] = [
                 { price: positionState.stopLossPrice, reason: positionState.activeStopLossReason }
             ];
@@ -210,7 +209,7 @@ async function runBacktest(
                 if (profitSecureSignal.newStopLoss) stopCandidates.push({ price: profitSecureSignal.newStopLoss, reason: 'Profit Secure', newState: profitSecureSignal.newState });
             }
             if (config.isAgentTrailEnabled) {
-                const agentTrailSignal = getAgentExitSignal(positionState, historySlice.slice(0, -1), candleOpenPrice, config); // Use history before current candle
+                const agentTrailSignal = getAgentExitSignal(positionState, historySlice.slice(0, -1), candleOpenPrice, config);
                 if (agentTrailSignal.newStopLoss) {
                     stopCandidates.push({ price: agentTrailSignal.newStopLoss, reason: 'Agent Trail', newState: agentTrailSignal.newState });
                 }
@@ -218,7 +217,6 @@ async function runBacktest(
             const aggressiveTrailSignal = getAggressiveRangeTrailSignal(positionState, candleOpenPrice);
             if (aggressiveTrailSignal.newStopLoss) stopCandidates.push({ price: aggressiveTrailSignal.newStopLoss, reason: 'Profit Secure', newState: aggressiveTrailSignal.newState });
 
-            // Select and apply the best candidate
             let bestCandidate = stopCandidates[0];
             for (const candidate of stopCandidates) {
                 const isValid = isLong ? candidate.price < candleOpenPrice : candidate.price > candleOpenPrice;
@@ -230,15 +228,13 @@ async function runBacktest(
                 positionState.stopLossPrice = bestCandidate.price;
                 positionState.activeStopLossReason = bestCandidate.reason;
             }
-            openPosition = positionState; // The SL is now set for this candle period.
-            // --- End of SL update logic ---
-
+            openPosition = positionState;
+            
             const stopReason = openPosition.activeStopLossReason.includes('Trail') || openPosition.activeStopLossReason.includes('Secure') || openPosition.activeStopLossReason === 'Breakeven' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
             
-            // Now, check the candle's price path against the UPDATED stop loss
             const pricePath = isLong 
-                ? [currentCandle.low, currentCandle.high] // Check for SL first (low), then TP (high)
-                : [currentCandle.high, currentCandle.low]; // Check for SL first (high), then TP (low)
+                ? [currentCandle.low, currentCandle.high]
+                : [currentCandle.high, currentCandle.low];
 
             for (const pricePoint of pricePath) {
                 if (!openPosition) break;
@@ -252,7 +248,6 @@ async function runBacktest(
             }
             if (hasTradedInThisCandle) { equityCurve.push(equity); continue; }
             
-            // If not closed by wicks, perform final on-close management and state updates
             openPosition.candlesSinceEntry!++;
             if (isLong) {
                 openPosition.peakPrice = Math.max(openPosition.peakPrice!, currentCandle.high);
@@ -263,7 +258,6 @@ async function runBacktest(
             }
 
             if (config.isInvalidationCheckEnabled) {
-                const htfHistorySlice = allHtfKlines ? allHtfKlines.filter(k => k.time <= currentCandle.time) : undefined;
                 const supervisorSignal = await getSupervisorSignal(openPosition, historySlice, config, htfHistorySlice);
                 if (supervisorSignal.action === 'close') {
                     hasTradedInThisCandle = closePosition(currentCandle.close, supervisorSignal.reason, currentCandle.time);
@@ -274,7 +268,6 @@ async function runBacktest(
         
         // --- CHECK FOR NEW ENTRY ---
         if (!openPosition && !hasTradedInThisCandle) {
-            const htfHistorySlice = allHtfKlines ? allHtfKlines.filter(k => k.time <= currentCandle.time) : undefined;
             const signal = await getTradingSignal(config.agent, historySlice, config, htfHistorySlice);
             
             if (signal.signal !== 'HOLD') {
@@ -312,6 +305,7 @@ async function runBacktest(
                             isAgentTrailEnabled: config.isAgentTrailEnabled,
                             isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
                         };
+                        const entryContext = captureMarketContext(historySlice, htfHistorySlice);
 
                         openPosition = {
                             id: currentCandle.time,
@@ -330,6 +324,7 @@ async function runBacktest(
                             initialRiskRewardRatio,
                             agentParamsSnapshot: config.agentParams,
                             botConfigSnapshot,
+                            entryContext
                         };
                     }
                 }
@@ -362,7 +357,6 @@ async function runOptimization(
         case 13: 
             paramRanges = {
                 ch_adxThreshold: [20, 22, 25],
-                ch_kst_signalPeriod: [7, 9, 12]
             };
             break;
         case 14: paramRanges = { sentinel_scoreThreshold: [65, 70, 75], viPeriod: [10, 14, 20] }; break;

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -12,6 +13,7 @@ import { botManagerService, BotHandlers } from './services/botManagerService';
 import * as localAgentService from './services/localAgentService';
 import { telegramBotService } from './services/telegramBotService';
 import { BacktestingPanel } from './components/BacktestingPanel';
+import { PreferencesPanel } from './components/PreferencesPanel';
 import { TradingConfigProvider, useTradingConfigState, useTradingConfigActions } from './contexts/TradingConfigContext';
 
 const AppContent: React.FC = () => {
@@ -21,7 +23,7 @@ const AppContent: React.FC = () => {
     const [theme, setTheme] = useState<'light' | 'dark'>(() => {
         return (localStorage.getItem('theme') as 'light' | 'dark') || 'dark';
     });
-    const [activeView, setActiveView] = useState<'trading' | 'backtesting'>('trading');
+    const [activeView, setActiveView] = useState<'trading' | 'backtesting' | 'preferences'>('trading');
     
     // Trading Configuration (from context)
     const configState = useTradingConfigState();
@@ -635,14 +637,16 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
                       onStopBot={botManagerService.stopBot} onDeleteBot={botManagerService.deleteBot}
                       onUpdateBotConfig={botManagerService.updateBotConfig} onRefreshBotAnalysis={botManagerService.refreshBotAnalysis}
                     />
-                    <TradingLog tradeHistory={tradeHistory} setTradeHistory={setTradeHistory} />
+                    <TradingLog tradeHistory={tradeHistory} setTradeHistory={setTradeHistory} theme={theme} />
                   </div>
                 </div>
-              ) : (
+              ) : activeView === 'backtesting' ? (
                 <BacktestingPanel
                   backtestResult={backtestResult} setBacktestResult={setBacktestResult}
                   setActiveView={setActiveView} klines={klines} theme={theme}
                 />
+              ) : (
+                <PreferencesPanel theme={theme} />
               )}
             </main>
         </div>

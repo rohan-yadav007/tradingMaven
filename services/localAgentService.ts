@@ -1,3 +1,4 @@
+
 import { TradingMode, type Agent, type TradeSignal, type Kline, type AgentParams, type Position, type ADXOutput, type MACDOutput, type BollingerBandsOutput, type StochasticRSIOutput, type TradeManagementSignal, type BotConfig, VortexIndicatorOutput, SentinelAnalysis, KSTOutput, type IchimokuCloudOutput, MarketDataContext } from '../types';
 import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, IchimokuCloud, KST, abandonedbaby, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, downsidetasukigap, dragonflydoji, gravestonedoji, bullishharami, bearishharami, bullishharamicross, bearishharamicross, hammerpattern, hangingman, morningdojistar, morningstar, piercingline, shootingstar, threeblackcrows, threewhitesoldiers, eveningdojistar, eveningstar } from 'technicalindicators';
 import * as constants from '../constants';
@@ -1352,7 +1353,7 @@ const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfContext?: M
         return { signal: 'BUY', reasons, sentinelAnalysis };
     }
     
-    if (totalBear >= threshold && totalBear > totalBull) {
+    if (totalBear > totalBear && totalBear >= threshold) {
         reasons.unshift(`✅ Bearish score meets threshold.`);
         reasons.push(`ℹ️ Final Score: Bull ${totalBull.toFixed(0)} vs Bear ${totalBear.toFixed(0)}`);
         return { signal: 'SELL', reasons, sentinelAnalysis };
@@ -1553,10 +1554,13 @@ export async function getSupervisorSignal(
         }
         
         const isLong = position.direction === 'LONG';
-        const oppositeSignal = isLong ? 'SELL' : 'BUY';
-
-        if (rawSignal.signal === oppositeSignal) {
-             return { action: 'close', reason: 'Supervisor Exit: Trade thesis invalidated (signal flipped).' };
+        const requiredSignal = isLong ? 'BUY' : 'SELL';
+        
+        if (rawSignal.signal !== requiredSignal) {
+             const reason = rawSignal.signal === 'HOLD'
+                ? 'Supervisor Exit: Trade thesis invalidated (entry conditions no longer met).'
+                : 'Supervisor Exit: Trade thesis invalidated (signal flipped).';
+             return { action: 'close', reason };
         }
     }
 

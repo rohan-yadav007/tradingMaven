@@ -1,13 +1,13 @@
 import React from 'react';
-import { BotIcon, SunIcon, MoonIcon, FlaskIcon, ChartIcon } from './icons';
+import { BotIcon, SunIcon, MoonIcon, FlaskIcon, ChartIcon, SettingsIcon } from './icons';
 
 interface HeaderProps {
     isApiConnected: boolean;
     executionMode: 'live' | 'paper';
     theme: 'light' | 'dark';
     setTheme: (theme: 'light' | 'dark') => void;
-    activeView: 'trading' | 'backtesting';
-    setActiveView: (view: 'trading' | 'backtesting') => void;
+    activeView: 'trading' | 'backtesting' | 'preferences';
+    setActiveView: (view: 'trading' | 'backtesting' | 'preferences') => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({ isApiConnected, executionMode, theme, setTheme, activeView, setActiveView }) => {
@@ -69,6 +69,14 @@ export const Header: React.FC<HeaderProps> = ({ isApiConnected, executionMode, t
                         >
                             <FlaskIcon className="w-4 h-4" />
                             Backtesting
+                        </button>
+                         <button 
+                            onClick={() => setActiveView('preferences')}
+                            className={`${navLinkClasses} ${activeView === 'preferences' ? activeLinkClasses : inactiveLinkClasses}`}
+                            aria-current={activeView === 'preferences' ? 'page' : undefined}
+                        >
+                            <SettingsIcon className="w-4 h-4" />
+                            Preferences
                         </button>
                     </div>
 

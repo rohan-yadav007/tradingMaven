@@ -153,7 +153,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
     const {
         executionMode, availableBalance, tradingMode, allPairs, selectedPairs,
         isPairsLoading, leverage, chartTimeFrame: timeFrame, selectedAgent, investmentAmount,
-        agentParams, maxMarginLossPercent,
+        agentParams, maxMarginLossPercent, tradingPairLists,
         marginType, futuresSettingsError, isMultiAssetMode, multiAssetModeError,
         maxLeverage, isLeverageLoading, isHtfConfirmationEnabled, htfTimeFrame,
         isUniversalProfitTrailEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
@@ -178,7 +178,21 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
 
     const [analysisSignal, setAnalysisSignal] = useState<TradeSignal | null>(null);
     const [isAnalysisLoading, setIsAnalysisLoading] = useState(false);
-    const [isAnalysisOpen, setIsAnalysisOpen] = useState(true); // Open by default
+    const [isAnalysisOpen, setIsAnalysisOpen] = useState(true);
+    const [selectedList, setSelectedList] = useState<string | null>(null);
+
+    const pairListOptions = useMemo(() => tradingPairLists.map(list => list.name), [tradingPairLists]);
+
+    const handleLoadList = (listName: string | string[]) => {
+        if (typeof listName === 'string') {
+            const list = tradingPairLists.find(l => l.name === listName);
+            if (list) {
+                setSelectedPairs(list.pairs);
+                setTradingMode(list.tradingMode);
+            }
+            setSelectedList(null); 
+        }
+    };
 
     const higherTimeFrames = useMemo(() => {
         const currentIndex = constants.TIME_FRAMES.indexOf(timeFrame);
@@ -199,7 +213,6 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             if (analysisPair && klines.length > 0 && livePrice > 0) {
                 setIsAnalysisLoading(true);
 
-                // Construct a preview kline array with the latest live price to ensure real-time analysis
                 const lastKline = klines[klines.length - 1];
                 const previewKline: Kline = {
                     ...lastKline,
@@ -297,6 +310,18 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     {Object.values(TradingMode).map(mode => <option key={mode} value={mode}>{mode}</option>)}
                 </select>
             </div>
+
+            {tradingPairLists.length > 0 && (
+                <div className={formGroupClass}>
+                    <label htmlFor="pair-list-loader" className={formLabelClass}>Load Pair List</label>
+                    <SearchableDropdown
+                        options={pairListOptions}
+                        value={selectedList || ''}
+                        onChange={handleLoadList}
+                        theme={theme}
+                    />
+                </div>
+            )}
             
             <div className={formGroupClass}>
                 <label htmlFor="market-pair" className={formLabelClass}>Market(s)</label>

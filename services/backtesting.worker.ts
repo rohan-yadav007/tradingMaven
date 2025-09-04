@@ -1,5 +1,6 @@
 
 
+
 import { Kline, BotConfig, BacktestResult, Trade, AgentParams, Position, RiskMode, TradingMode, OptimizationResultItem } from '../types';
 import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext } from './localAgentService';
 import * as constants from '../constants';
@@ -148,7 +149,7 @@ async function runBacktest(
         return calculateResults([], [], STARTING_CAPITAL);
     }
 
-    const closePosition = (exitPrice: number, exitReason: string, exitTime: number): boolean => {
+    const closePosition = (exitPrice: number, exitReason: string, exitTime: number, klinesForContext: Kline[], htfKlinesForContext?: Kline[]): boolean => {
         if (!openPosition) return false;
         const isLong = openPosition.direction === 'LONG';
         const grossPnl = (exitPrice - openPosition.entryPrice) * openPosition.size * (isLong ? 1 : -1);
@@ -163,6 +164,8 @@ async function runBacktest(
         const maePrice = openPosition.troughPrice ?? openPosition.entryPrice;
         const mfe = Math.abs(mfePrice - openPosition.entryPrice) * openPosition.size;
         const mae = Math.abs(maePrice - openPosition.entryPrice) * openPosition.size;
+        
+        const exitContext = captureMarketContext(klinesForContext, htfKlinesForContext);
 
         const finalTrade: Trade = {
             ...openPosition,
@@ -173,6 +176,7 @@ async function runBacktest(
             exitReason,
             mfe,
             mae,
+            exitContext,
         };
         
         trades.push(finalTrade);
@@ -240,11 +244,11 @@ async function runBacktest(
             for (const pricePoint of pricePath) {
                 if (!openPosition) break;
                 if (isLong) {
-                    if (pricePoint <= openPosition.stopLossPrice) { hasTradedInThisCandle = closePosition(openPosition.stopLossPrice, stopReason, currentCandle.time); break; }
-                    if (pricePoint >= openPosition.takeProfitPrice) { hasTradedInThisCandle = closePosition(openPosition.takeProfitPrice, 'Take Profit Hit', currentCandle.time); break; }
+                    if (pricePoint <= openPosition.stopLossPrice) { hasTradedInThisCandle = closePosition(openPosition.stopLossPrice, stopReason, currentCandle.time, historySlice, htfHistorySlice); break; }
+                    if (pricePoint >= openPosition.takeProfitPrice) { hasTradedInThisCandle = closePosition(openPosition.takeProfitPrice, 'Take Profit Hit', currentCandle.time, historySlice, htfHistorySlice); break; }
                 } else {
-                    if (pricePoint >= openPosition.stopLossPrice) { hasTradedInThisCandle = closePosition(openPosition.stopLossPrice, stopReason, currentCandle.time); break; }
-                    if (pricePoint <= openPosition.takeProfitPrice) { hasTradedInThisCandle = closePosition(openPosition.takeProfitPrice, 'Take Profit Hit', currentCandle.time); break; }
+                    if (pricePoint >= openPosition.stopLossPrice) { hasTradedInThisCandle = closePosition(openPosition.stopLossPrice, stopReason, currentCandle.time, historySlice, htfHistorySlice); break; }
+                    if (pricePoint <= openPosition.takeProfitPrice) { hasTradedInThisCandle = closePosition(openPosition.takeProfitPrice, 'Take Profit Hit', currentCandle.time, historySlice, htfHistorySlice); break; }
                 }
             }
             if (hasTradedInThisCandle) { equityCurve.push(equity); continue; }
@@ -261,7 +265,7 @@ async function runBacktest(
             if (config.isInvalidationCheckEnabled) {
                 const supervisorSignal = await getSupervisorSignal(openPosition, historySlice, config, htfHistorySlice);
                 if (supervisorSignal.action === 'close') {
-                    hasTradedInThisCandle = closePosition(currentCandle.close, supervisorSignal.reason, currentCandle.time);
+                    hasTradedInThisCandle = closePosition(currentCandle.close, supervisorSignal.reason, currentCandle.time, historySlice, htfHistorySlice);
                     if (hasTradedInThisCandle) { equityCurve.push(equity); continue; }
                 }
             }
@@ -339,7 +343,7 @@ async function runBacktest(
     }
     
     if (openPosition) {
-        closePosition(targetTimeframeKlines[targetTimeframeKlines.length - 1].close, 'End of backtest', targetTimeframeKlines[targetTimeframeKlines.length - 1].time);
+        closePosition(targetTimeframeKlines[targetTimeframeKlines.length - 1].close, 'End of backtest', targetTimeframeKlines[targetTimeframeKlines.length - 1].time, targetTimeframeKlines, allHtfKlines);
     }
     
     return calculateResults(trades, equityCurve, STARTING_CAPITAL);

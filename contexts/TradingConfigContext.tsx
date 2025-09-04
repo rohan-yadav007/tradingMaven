@@ -1,7 +1,8 @@
 import React, { createContext, useState, useContext, useMemo, useEffect, useCallback } from 'react';
-import { TradingMode, Agent, AgentParams, RiskMode } from '../types';
+import { TradingMode, Agent, AgentParams, RiskMode, TradingPairList } from '../types';
 import * as constants from '../constants';
 import * as binanceService from '../services/binanceService';
+import { userPreferencesService } from '../services/userPreferencesService';
 
 // --- State Interface ---
 interface TradingConfigState {
@@ -42,6 +43,7 @@ interface TradingConfigState {
     walletViewMode: TradingMode;
     isMultiAssetMode: boolean;
     entryTiming: 'immediate' | 'onNextCandle';
+    tradingPairLists: TradingPairList[];
     // Context-specific state
     maxLeverage: number;
     isLeverageLoading: boolean;
@@ -86,6 +88,10 @@ interface TradingConfigActions {
     // Complex actions
     onSetMultiAssetMode: (isEnabled: boolean) => Promise<void>;
     setFuturesSettingsError: (error: string | null) => void;
+    // New actions for pair lists
+    addTradingPairList: (list: Omit<TradingPairList, 'id'>) => void;
+    updateTradingPairList: (list: TradingPairList) => void;
+    deleteTradingPairList: (listId: string) => void;
 }
 
 // --- Context Creation ---
@@ -127,6 +133,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [walletViewMode, setWalletViewMode] = useState<TradingMode>(TradingMode.Spot);
     const [isMultiAssetMode, setIsMultiAssetMode] = useState(false);
     const [entryTiming, setEntryTiming] = useState<'immediate' | 'onNextCandle'>('onNextCandle');
+    const [tradingPairLists, setTradingPairLists] = useState<TradingPairList[]>([]);
 
     // Context-internal state
     const [isPairsLoading, setIsPairsLoading] = useState(true);
@@ -136,6 +143,10 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [multiAssetModeError, setMultiAssetModeError] = useState<string | null>(null);
 
     // --- Effects moved from App.tsx ---
+
+    useEffect(() => {
+        setTradingPairLists(userPreferencesService.getTradingPairLists());
+    }, []);
 
     // Fetch tradable pairs when trading mode changes
     useEffect(() => {
@@ -267,6 +278,18 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     }, [selectedAgent, chartTimeFrame]);
 
     // --- Action Definitions ---
+    const addTradingPairList = (list: Omit<TradingPairList, 'id'>) => {
+        const updatedLists = userPreferencesService.addTradingPairList(list);
+        setTradingPairLists(updatedLists);
+    };
+    const updateTradingPairList = (list: TradingPairList) => {
+        const updatedLists = userPreferencesService.updateTradingPairList(list);
+        setTradingPairLists(updatedLists);
+    };
+    const deleteTradingPairList = (listId: string) => {
+        const updatedLists = userPreferencesService.deleteTradingPairList(listId);
+        setTradingPairLists(updatedLists);
+    };
     
     const setSelectedAgentWithReset = useCallback((agent: Agent) => {
         setSelectedAgent(agent);
@@ -300,6 +323,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setEntryTiming,
         setIsMarketCohesionEnabled, setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
         setIsExhaustionFilterEnabled,
+        addTradingPairList, updateTradingPairList, deleteTradingPairList,
     }), [onSetMultiAssetMode, setSelectedAgentWithReset]);
     
     const state = {
@@ -312,7 +336,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         isTakeProfitLocked: false,
         isHtfConfirmationEnabled, isUniversalProfitTrailEnabled, 
         isMinRrEnabled, isReanalysisEnabled, isInvalidationCheckEnabled, isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled, isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
-        isExhaustionFilterEnabled, htfTimeFrame,
+        isExhaustionFilterEnabled, htfTimeFrame, tradingPairLists,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
         futuresSettingsError, multiAssetModeError, entryTiming
     };

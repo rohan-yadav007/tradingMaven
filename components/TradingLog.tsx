@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import Select from 'react-select';
+import Select, { StylesConfig, GroupBase } from 'react-select';
 import { Trade, TradingMode, AgentParams, MarketDataContext } from '../types';
 import * as constants from '../constants';
 import { historyService } from '../services/historyService';
@@ -8,6 +8,7 @@ import { HistoryIcon, ChevronDown, ChevronUp, TrashIcon, DownloadIcon } from './
 interface TradingLogProps {
     tradeHistory: Trade[];
     setTradeHistory: (trades: Trade[]) => void;
+    theme: 'light' | 'dark';
 }
 
 const formatPrice = (price: number | undefined, precision: number) => {
@@ -86,8 +87,8 @@ const MarketContextDisplay: React.FC<{ context?: Partial<MarketDataContext>, tit
         if (value === undefined || value === null || (typeof value === 'object' && Object.keys(value).length === 0)) return null;
         return (
              <div key={key} className="flex justify-between items-baseline">
-                <span className="text-slate-400 capitalize">{key.replace(/([A-Z0-9]+)/g, " $1").trim()}:</span>
-                <span className="font-semibold text-slate-200">{formatValue(key, value)}</span>
+                <span className="text-slate-500 dark:text-slate-400 capitalize">{key.replace(/([A-Z0-9]+)/g, " $1").trim()}:</span>
+                <span className="font-semibold text-slate-800 dark:text-slate-200">{formatValue(key, value)}</span>
             </div>
         )
     };
@@ -168,7 +169,7 @@ const TradeRow: React.FC<{ trade: Trade; isOpen: boolean; onToggle: () => void; 
                                 <DetailItem label="Exit Reason" value={<p className="whitespace-pre-wrap break-words">{trade.exitReason}</p>} />
                                 <DetailItem label="Bot Config Snapshot" value={
                                      <div className="font-mono space-y-1">
-                                        {Object.entries(trade.botConfigSnapshot || {}).map(([key, value]) => (
+                                        {Object.entries(trade.botConfigSnapshot || {}).filter(([key]) => key !== 'agentParamsSnapshot').map(([key, value]) => (
                                              <p key={key}>{key}: <span className="font-semibold">{String(value)}</span></p>
                                         ))}
                                      </div>
@@ -183,7 +184,28 @@ const TradeRow: React.FC<{ trade: Trade; isOpen: boolean; onToggle: () => void; 
     );
 };
 
-export const TradingLog: React.FC<TradingLogProps> = ({ tradeHistory, setTradeHistory }) => {
+const getCustomStyles = (isDark: boolean): StylesConfig<any, boolean, GroupBase<any>> => ({
+    control: (provided, state) => ({
+        ...provided,
+        backgroundColor: isDark ? '#334155' : '#ffffff',
+        borderColor: state.isFocused ? '#0ea5e9' : (isDark ? '#475569' : '#cbd5e1'),
+        boxShadow: state.isFocused ? '0 0 0 1px #0ea5e9' : 'none',
+        '&:hover': {
+            borderColor: state.isFocused ? '#0ea5e9' : (isDark ? '#64748b' : '#94a3b8')
+        },
+        minHeight: '38px', borderRadius: '0.375rem'
+    }),
+    valueContainer: (provided) => ({ ...provided, padding: '0 8px' }),
+    input: (provided) => ({ ...provided, margin: '0px', color: isDark ? '#f1f5f9' : '#1e293b' }),
+    indicatorSeparator: () => ({ display: 'none' }),
+    menu: (provided) => ({ ...provided, backgroundColor: isDark ? '#1e293b' : '#ffffff', border: `1px solid ${isDark ? '#334155' : '#e2e8f0'}`, zIndex: 50, borderRadius: '0.375rem' }),
+    option: (provided, state) => ({ ...provided, backgroundColor: state.isSelected ? '#0ea5e9' : (state.isFocused ? (isDark ? '#334155' : '#f1f5f9') : 'transparent'), color: state.isSelected ? '#ffffff' : (isDark ? '#f1f5f9' : '#1e293b'), '&:active': { backgroundColor: isDark ? '#475569' : '#e2e8f0' }, cursor: 'pointer' }),
+    multiValue: (provided) => ({ ...provided, backgroundColor: isDark ? '#475569' : '#e2e8f0' }),
+    multiValueLabel: (provided) => ({ ...provided, color: isDark ? '#f1f5f9' : '#1e293b' }),
+    placeholder: (provided) => ({ ...provided, color: isDark ? '#94a3b8' : '#64748b' })
+});
+
+export const TradingLog: React.FC<TradingLogProps> = ({ tradeHistory, setTradeHistory, theme }) => {
     const [expandedRowId, setExpandedRowId] = useState<number | null>(null);
     const [selectedTimeframes, setSelectedTimeframes] = useState<{ value: string; label: string; }[]>([]);
 
@@ -224,9 +246,8 @@ export const TradingLog: React.FC<TradingLogProps> = ({ tradeHistory, setTradeHi
         if (window.confirm(message)) {
             if (isFiltered) {
                 const idsToDelete = new Set(filteredTrades.map(t => t.id));
-                const newHistory = tradeHistory.filter(t => !idsToDelete.has(t.id));
-                historyService.removeTrades(Array.from(idsToDelete)); // Update storage
-                setTradeHistory(newHistory); // Update state
+                const newHistory = historyService.removeTrades(Array.from(idsToDelete));
+                setTradeHistory(newHistory);
             } else {
                 historyService.clearTrades();
                 setTradeHistory([]);
@@ -239,7 +260,6 @@ export const TradingLog: React.FC<TradingLogProps> = ({ tradeHistory, setTradeHi
             alert("No trade history to export.");
             return;
         }
-        // Format as a single, pretty-printed JSON array string.
         const dataToExport = JSON.stringify(filteredTrades, null, 2);
         const blob = new Blob([dataToExport], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -251,6 +271,8 @@ export const TradingLog: React.FC<TradingLogProps> = ({ tradeHistory, setTradeHi
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
     };
+    
+    const customStyles = useMemo(() => getCustomStyles(theme === 'dark'), [theme]);
 
     return (
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm overflow-hidden min-h-14">
@@ -289,9 +311,7 @@ export const TradingLog: React.FC<TradingLogProps> = ({ tradeHistory, setTradeHi
                             placeholder="Filter by timeframe..."
                             className="text-sm react-select-container"
                             classNamePrefix="react-select"
-                            styles={{
-                                menu: (provided) => ({ ...provided, zIndex: 50 }),
-                            }}
+                            styles={customStyles}
                         />
                     </div>
                     <button onClick={handleExport} className="p-2 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700 rounded-full transition-colors" title="Export Filtered History">

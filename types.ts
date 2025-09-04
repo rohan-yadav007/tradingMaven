@@ -514,3 +514,15 @@ export type AgentParams = Partial<{
     sentinel_rsiOverextendedLong?: number;
     sentinel_rsiOverextendedShort?: number;
 }>;
+
+// --- User Preferences ---
+export interface TradingPairList {
+    id: string;
+    name: string;
+    pairs: string[];
+    tradingMode: TradingMode;
+}
+
+export interface UserPreferences {
+    tradingPairLists: TradingPairList[];
+}

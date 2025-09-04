@@ -1353,7 +1353,7 @@ const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfContext?: M
         return { signal: 'BUY', reasons, sentinelAnalysis };
     }
     
-    if (totalBear > totalBear && totalBear >= threshold) {
+    if (totalBear > totalBull && totalBear >= threshold) {
         reasons.unshift(`✅ Bearish score meets threshold.`);
         reasons.push(`ℹ️ Final Score: Bull ${totalBull.toFixed(0)} vs Bear ${totalBear.toFixed(0)}`);
         return { signal: 'SELL', reasons, sentinelAnalysis };
@@ -1737,7 +1737,7 @@ export const getTradingSignal = async (
         case 13: signal = getChameleonSignal(klines, config, htfContext); break;
         case 14: signal = getTheSentinelSignal(klines, config, htfContext); break;
         case 16: signal = getIchimokuTrendRiderSignal(klines, config, htfContext); break;
-        default: signal = { signal: 'HOLD', reasons: ['Agent not found'] }; break;
+        default: signal = { signal: 'HOLD', reasons: ['Agent not found'] };
     }
 
     if (signal.signal === 'HOLD') {

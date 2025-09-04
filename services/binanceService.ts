@@ -207,10 +207,12 @@ export const fetchKlines = async (symbol: string, interval: string, options: { l
         throw new Error("404 File not found");
     }
     const data = await response.json();
-    return data.map((k: any) => ({
+    const klinesResult: Kline[] = data.map((k: any) => ({
         time: k[0], open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]),
         close: parseFloat(k[4]), volume: parseFloat(k[5]), isFinal: true,
     }));
+    
+    return klinesResult;
 };
 
 export const fetchFullKlines = async (symbol: string, interval: string, startTime: number, endTime: number, mode: TradingMode): Promise<Kline[]> => {

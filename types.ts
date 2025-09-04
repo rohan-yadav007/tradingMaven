@@ -148,11 +148,11 @@ export interface Position {
     orderId: number | null; // Store the real order ID from Binance
     liquidationPrice?: number; // For futures positions
     // For R:R based trailing
-    initialStopLossPrice: number;
     initialTakeProfitPrice: number;
-
+    initialStopLossPrice: number;
     initialRiskInPrice: number;
     // For SL transparency
+    initialStopLossReason: 'Agent Logic' | 'Hard Cap';
     activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Profit Secure' | 'Agent Trail' | 'Breakeven';
     isBreakevenSet?: boolean;
     proactiveLossCheckTriggered: boolean;
@@ -178,8 +178,10 @@ export interface Position {
         isMarketCohesionEnabled?: boolean;
         isVwapConfirmationEnabled?: boolean;
         isBtcConfirmationEnabled?: boolean;
+        btcConfirmationThreshold?: number;
         isVolumeFilterEnabled?: boolean;
         isAdxFilterEnabled?: boolean;
+        isExhaustionFilterEnabled?: boolean;
         htfTimeFrame?: 'auto' | string;
         entryTiming?: 'immediate' | 'onNextCandle';
     };
@@ -337,15 +339,17 @@ export interface BotConfig {
     isHtfConfirmationEnabled: boolean;
     isUniversalProfitTrailEnabled: boolean;
     isMinRrEnabled: boolean;
-    isInvalidationCheckEnabled?: boolean;
     isReanalysisEnabled?: boolean;
+    isInvalidationCheckEnabled?: boolean;
     isAgentTrailEnabled: boolean;
     isBreakevenTrailEnabled: boolean;
     isMarketCohesionEnabled?: boolean;
     isVwapConfirmationEnabled?: boolean;
     isBtcConfirmationEnabled?: boolean;
+    btcConfirmationThreshold?: number;
     isVolumeFilterEnabled?: boolean;
     isAdxFilterEnabled?: boolean;
+    isExhaustionFilterEnabled?: boolean;
     htfTimeFrame?: 'auto' | string;
     agentParams?: AgentParams;
     htfAgentParams?: AgentParams;
@@ -355,6 +359,7 @@ export interface BotConfig {
     takerFeeRate: number;
     refreshInterval?: number;
     entryTiming: 'immediate' | 'onNextCandle';
+    telegramChatId?: string;
 }
 export interface RunningBot {
     id: string;
@@ -506,4 +511,6 @@ export type AgentParams = Partial<{
     
     // The Sentinel (14)
     sentinel_scoreThreshold: number;
+    sentinel_rsiOverextendedLong?: number;
+    sentinel_rsiOverextendedShort?: number;
 }>;

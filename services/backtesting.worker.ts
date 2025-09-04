@@ -1,4 +1,5 @@
 
+
 import { Kline, BotConfig, BacktestResult, Trade, AgentParams, Position, RiskMode, TradingMode, OptimizationResultItem } from '../types';
 import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext } from './localAgentService';
 import * as constants from '../constants';
@@ -288,11 +289,11 @@ async function runBacktest(
                     }
                 }
                 
-                if (validateTradeProfitability(entryPrice, stopLossPrice, finalTp, isLong ? 'LONG' : 'SHORT', config).isValid) {
+                if (validateTradeProfitability(entryPrice, stopLossPrice, agentStopLoss, finalTp, isLong ? 'LONG' : 'SHORT', config).isValid) {
                     const posVal = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
                     const size = posVal / entryPrice;
                     if (size > 0) {
-                        const risk = Math.abs(entryPrice - stopLossPrice);
+                        const risk = Math.abs(entryPrice - agentStopLoss);
                         const reward = Math.abs(finalTp - entryPrice);
                         const initialRiskRewardRatio = risk > 0 ? reward / risk : 0;
                         const botConfigSnapshot = {
@@ -304,6 +305,7 @@ async function runBacktest(
                             isInvalidationCheckEnabled: config.isInvalidationCheckEnabled,
                             isAgentTrailEnabled: config.isAgentTrailEnabled,
                             isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
+                            isExhaustionFilterEnabled: config.isExhaustionFilterEnabled,
                         };
                         const entryContext = captureMarketContext(historySlice, htfHistorySlice);
 
@@ -316,6 +318,7 @@ async function runBacktest(
                             entryReason: signal.reasons.join(' '), agentName: config.agent.name, takeProfitPrice: finalTp,
                             stopLossPrice, initialStopLossPrice: agentStopLoss, initialTakeProfitPrice: takeProfitPrice,
                             pricePrecision: config.pricePrecision, timeFrame: config.timeFrame, marginType: config.marginType,
+                            initialStopLossReason: slReason,
                             activeStopLossReason: slReason, isBreakevenSet: false, profitLockTier: 0,
                             profitSpikeTier: 0, aggressiveTrailTier: 0,
                             peakPrice: entryPrice, troughPrice: entryPrice, proactiveLossCheckTriggered: false, candlesSinceEntry: 0,

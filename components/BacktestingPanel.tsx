@@ -1,3 +1,5 @@
+
+
 import React from 'react';
 import { useState, useEffect, useMemo } from 'react';
 import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, Kline, RiskMode, OptimizationResultItem } from '../types';
@@ -126,9 +128,9 @@ export type BacktestConfig = {
     isAgentTrailEnabled: boolean;
     isBreakevenTrailEnabled: boolean;
     isMarketCohesionEnabled?: boolean;
+    isExhaustionFilterEnabled?: boolean;
     agentParams: AgentParams; leverage: number;
     entryTiming: 'immediate' | 'onNextCandle';
-    // Legacy properties for BotConfig compatibility
     takeProfitMode: RiskMode;
     takeProfitValue: number;
     isTakeProfitLocked: boolean;
@@ -164,8 +166,8 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         isAgentTrailEnabled: globalConfig.isAgentTrailEnabled,
         isBreakevenTrailEnabled: globalConfig.isBreakevenTrailEnabled,
         isMarketCohesionEnabled: globalConfig.isMarketCohesionEnabled,
+        isExhaustionFilterEnabled: globalConfig.isExhaustionFilterEnabled,
         entryTiming: globalConfig.entryTiming,
-        // Use default values from context for legacy properties to satisfy BotConfig type
         takeProfitMode: globalConfig.takeProfitMode,
         takeProfitValue: globalConfig.takeProfitValue,
         isTakeProfitLocked: globalConfig.isTakeProfitLocked,
@@ -234,6 +236,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 isAgentTrailEnabled: config.isAgentTrailEnabled,
                 isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
                 isMarketCohesionEnabled: config.isMarketCohesionEnabled,
+                isExhaustionFilterEnabled: config.isExhaustionFilterEnabled,
                 htfTimeFrame: config.htfTimeFrame, agentParams: config.agentParams,
                 pricePrecision: binanceService.getPricePrecision(symbolInfo), quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
@@ -280,6 +283,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 isAgentTrailEnabled: config.isAgentTrailEnabled,
                 isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
                 isMarketCohesionEnabled: config.isMarketCohesionEnabled,
+                isExhaustionFilterEnabled: config.isExhaustionFilterEnabled,
                 htfTimeFrame: config.htfTimeFrame, agentParams: config.agentParams,
                 pricePrecision: binanceService.getPricePrecision(symbolInfo), quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
@@ -335,8 +339,23 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                         step={0.5}
                         valueDisplay={v => `${v.toFixed(1)}%`}
                     />
-                    <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
+                     <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
                     <div className="space-y-3 pt-2">
+                        <div className="flex items-center justify-between"><label className={formLabelClass}>Fixed Take Profit</label>
+                            <button onClick={() => updateConfig('isTakeProfitLocked', !config.isTakeProfitLocked)} className="text-slate-500 dark:text-slate-400">
+                                {config.isTakeProfitLocked ? <UnlockIcon className="w-5 h-5"/> : <LockIcon className="w-5 h-5"/>}
+                            </button>
+                        </div>
+                        {config.isTakeProfitLocked && (
+                            <div className="flex gap-2 items-center">
+                                <select value={config.takeProfitMode} onChange={e => updateConfig('takeProfitMode', e.target.value as RiskMode)} className={`${formInputClass} w-1/3`}>
+                                    <option value={RiskMode.Percent}>%</option>
+                                    <option value={RiskMode.Amount}>$</option>
+                                </select>
+                                <input type="number" value={config.takeProfitValue} onChange={e => updateConfig('takeProfitValue', Number(e.target.value))} className={`${formInputClass} w-2/3`} min="0.1" step="0.1" />
+                            </div>
+                        )}
+                        <div className="flex items-center justify-between"><label className={formLabelClass}>Exhaustion Filter</label><ToggleSwitch checked={config.isExhaustionFilterEnabled ?? true} onChange={v => updateConfig('isExhaustionFilterEnabled', v)} /></div>
                         <div>
                             <div className="flex items-center justify-between">
                                 <label className={formLabelClass}>Higher Timeframe Confirmation</label>

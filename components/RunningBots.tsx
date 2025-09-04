@@ -100,19 +100,10 @@ const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) =>
     );
 };
 
-const ConfigToggle: React.FC<{label: string; description: string; tooltip: string; checked: boolean; onChange: (checked: boolean) => void}> = ({label, description, tooltip, checked, onChange}) => (
+const ConfigToggle: React.FC<{label: string; checked: boolean; onChange: (checked: boolean) => void}> = ({label, checked, onChange}) => (
     <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
-        <div className="flex flex-col">
-            <div className="flex items-center gap-1.5">
-                <span className="font-medium text-slate-700 dark:text-slate-300">{label}</span>
-                 <div className="relative group">
-                    <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
-                    <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
-                        {tooltip}
-                    </div>
-                </div>
-            </div>
-            <span className="text-xs text-slate-500 dark:text-slate-400">{description}</span>
+        <div className="flex items-center gap-1.5">
+            <span className="font-medium text-slate-700 dark:text-slate-300 text-sm">{label}</span>
         </div>
         <ToggleSwitch
             checked={checked}
@@ -123,64 +114,23 @@ const ConfigToggle: React.FC<{label: string; description: string; tooltip: strin
 );
 
 
-const BotConfigDetails: React.FC<{ bot: RunningBot; onUpdate: (change: Partial<BotConfig>) => void }> = ({ bot, onUpdate }) => {
+const FilterConfiguration: React.FC<{ bot: RunningBot; onUpdate: (change: Partial<BotConfig>) => void }> = ({ bot, onUpdate }) => {
     const { config } = bot;
     return (
-    <div>
-        <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Configuration</h4>
-        <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg space-y-2 text-sm">
-            <div className="grid grid-cols-2 gap-x-4">
-                <InfoItem label="Mode" value={config.mode} />
-                <InfoItem label="Timeframe" value={config.timeFrame} />
-                {config.mode === TradingMode.USDSM_Futures && <InfoItem label="Leverage" value={`${config.leverage}x`} />}
-                {config.mode === TradingMode.USDSM_Futures && <InfoItem label="Margin" value={config.marginType || 'N/A'} />}
-                <InfoItem label="Investment" value={`$${config.investmentAmount}`} />
-            </div>
-            <ConfigToggle
-                label="Agent Indicator Trail"
-                description="Agent's native trailing logic"
-                tooltip="Enable/disable the agent's indicator-based (e.g., PSAR) trailing stop. Affects the current open trade."
-                checked={config.isAgentTrailEnabled}
-                onChange={(checked) => onUpdate({ isAgentTrailEnabled: checked })}
-            />
-             <ConfigToggle
-                label="Mandatory Breakeven"
-                description="Moves SL to BE at 3x fees"
-                tooltip="Enable/disable the mandatory breakeven system. If disabled, the agent trail may still set a breakeven stop loss. Affects the current open trade."
-                checked={config.isBreakevenTrailEnabled}
-                onChange={(checked) => onUpdate({ isBreakevenTrailEnabled: checked })}
-            />
-            <ConfigToggle
-                label="Universal Profit Trail"
-                description="Fee-based profit locking"
-                tooltip="Affects the current open trade."
-                checked={config.isUniversalProfitTrailEnabled}
-                onChange={(checked) => onUpdate({ isUniversalProfitTrailEnabled: checked })}
-            />
-             <ConfigToggle
-                label="Minimum R:R Veto"
-                description="Enforces minimum risk-reward"
-                tooltip="Affects the NEXT trade only."
-                checked={config.isMinRrEnabled}
-                onChange={(checked) => onUpdate({ isMinRrEnabled: checked })}
-            />
-             <ConfigToggle
-                label="Agent Re-analysis"
-                description="Proactively exits on signal loss"
-                tooltip="On a set interval, the agent re-evaluates the market. If the original entry conditions are no longer met, the bot will proactively exit the trade. Affects the current open trade."
-                checked={config.isReanalysisEnabled ?? false}
-                onChange={(checked) => onUpdate({ isReanalysisEnabled: checked })}
-            />
-             <ConfigToggle
-                label="Proactive Exit & Invalidation"
-                description="Protects profit & cuts losses"
-                tooltip="Protects profits by exiting on fading momentum. Actively cuts losses on losing trades if the thesis is invalidated or strong counter-signals appear. Affects the current open trade."
-                checked={config.isInvalidationCheckEnabled ?? false}
-                onChange={(checked) => onUpdate({ isInvalidationCheckEnabled: checked })}
-            />
+        <div>
+            <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Filter Configuration</h4>
+             <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg space-y-2 text-sm">
+                <p className="text-xs text-slate-500 dark:text-slate-400">Toggle entry filters for the next trade. These changes apply immediately.</p>
+                <ConfigToggle label="ADX Trend Filter" checked={config.isAdxFilterEnabled ?? false} onChange={v => onUpdate({ isAdxFilterEnabled: v })} />
+                <ConfigToggle label="BTC Trend Confirmation" checked={config.isBtcConfirmationEnabled ?? false} onChange={v => onUpdate({ isBtcConfirmationEnabled: v })} />
+                <ConfigToggle label="VWAP Confirmation" checked={config.isVwapConfirmationEnabled ?? false} onChange={v => onUpdate({ isVwapConfirmationEnabled: v })} />
+                <ConfigToggle label="Higher TF Confirmation" checked={config.isHtfConfirmationEnabled} onChange={v => onUpdate({ isHtfConfirmationEnabled: v })} />
+                <ConfigToggle label="Universal Volume Filter" checked={config.isVolumeFilterEnabled ?? false} onChange={v => onUpdate({ isVolumeFilterEnabled: v })} />
+                <ConfigToggle label="Market Cohesion Filter" checked={config.isMarketCohesionEnabled ?? false} onChange={v => onUpdate({ isMarketCohesionEnabled: v })} />
+             </div>
         </div>
-    </div>
-)};
+    )
+};
 
 
 const PositionPnlProgress: React.FC<{position: Position; livePrice: number}> = ({ position, livePrice }) => {
@@ -241,7 +191,7 @@ interface StopLossDetailsProps {
 const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) => {
     const {
         stopLossPrice, initialStopLossPrice, activeStopLossReason, pricePrecision,
-        profitLockTier, isBreakevenSet, profitSpikeTier
+        profitLockTier, isBreakevenSet, profitSpikeTier, initialStopLossReason
     } = position;
 
     const isBreakevenActive = activeStopLossReason === 'Breakeven';
@@ -277,11 +227,6 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
         // It's always enabled if a position is open, just might be overridden
         return { text: 'Enabled', className: 'bg-slate-500 dark:bg-slate-400 text-white dark:text-slate-900' };
     }, [isAgentTrailActive]);
-
-    const initialSlReasonText = position.activeStopLossReason === 'Hard Cap' &&
-        (isBreakevenActive || isProfitSecureActive || isAgentTrailActive)
-        ? 'Hard Cap'
-        : 'Agent Logic';
 
     return (
         <div>
@@ -329,7 +274,7 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
                 </div>
 
                 <div className="text-xs text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">
-                    Initial SL: {formatPrice(initialStopLossPrice, pricePrecision)} ({initialSlReasonText}).
+                    Initial SL: {formatPrice(initialStopLossPrice, pricePrecision)} ({position.initialStopLossReason}).
                 </div>
             </div>
         </div>
@@ -338,6 +283,14 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
 
 
 const BotLog: React.FC<{ log: BotLogEntry[] }> = ({ log }) => {
+    const logContainerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (logContainerRef.current) {
+            logContainerRef.current.scrollTop = 0;
+        }
+    }, [log]);
+
     const getLogColor = (type: LogType) => {
         switch (type) {
             case LogType.Error: return 'text-rose-500';
@@ -348,7 +301,7 @@ const BotLog: React.FC<{ log: BotLogEntry[] }> = ({ log }) => {
         }
     };
     return (
-        <div className="bg-slate-900 text-white font-mono text-xs rounded-lg p-3 h-[28rem] overflow-y-auto">
+        <div ref={logContainerRef} className="bg-slate-900 text-white font-mono text-xs rounded-lg p-3 h-[28rem] overflow-y-auto">
             {log.map((entry, index) => (
                 <div key={index} className="flex">
                     <span className="text-slate-500 mr-2">{new Date(entry.timestamp).toLocaleTimeString()}</span>
@@ -399,18 +352,6 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
     const roundTripFee = position ? position.entryPrice * position.size * TAKER_FEE_RATE * 2 : 0;
     
     const REFRESH_INTERVALS = [10, 20, 30, 60];
-    const handleIntervalChange = () => {
-        // Trigger an immediate refresh first
-        actions.onRefreshBotAnalysis(bot.id);
-
-        // Then cycle to the next interval and update the config
-        const currentInterval = bot.config.refreshInterval ?? 30;
-        const currentIndex = REFRESH_INTERVALS.indexOf(currentInterval);
-        const nextIndex = (currentIndex + 1) % REFRESH_INTERVALS.length;
-        const newInterval = REFRESH_INTERVALS[nextIndex];
-        actions.onUpdateBotConfig(bot.id, { refreshInterval: newInterval });
-    };
-
 
     return (
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm overflow-hidden transition-all duration-300">
@@ -492,26 +433,32 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
             {/* Expanded Details */}
             {isExpanded && (
                 <div className="bg-slate-50 dark:bg-slate-800/50 p-4 border-t border-slate-200 dark:border-slate-700">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         {position && <StopLossDetails position={position} config={bot.config} />}
-                        <div className={position ? '' : 'lg:col-span-1'}>
+                         <FilterConfiguration bot={bot} onUpdate={(partial) => actions.onUpdateBotConfig(bot.id, partial)} />
+                         <div>
                             <div className="flex justify-between items-center mb-2">
                                  <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base">AI Analysis</h4>
-                                <button 
-                                    onClick={handleIntervalChange} 
-                                    className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-sky-500 dark:hover:text-sky-400 bg-slate-100 dark:bg-slate-700/50 px-2 py-1 rounded-full transition-colors"
-                                    title="Change AI analysis refresh interval"
-                                >
-                                    <RefreshIcon className="w-3.5 h-3.5" />
-                                    <span>{bot.config.refreshInterval ?? 30}s</span>
-                                </button>
+                                <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-700/50 px-2 py-0.5 rounded-full">
+                                    <RefreshIcon className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                                    <select
+                                        value={bot.config.refreshInterval ?? 10}
+                                        onChange={(e) => {
+                                            actions.onUpdateBotConfig(bot.id, { refreshInterval: Number(e.target.value) });
+                                            actions.onRefreshBotAnalysis(bot.id);
+                                        }}
+                                        className="bg-transparent text-xs font-semibold text-slate-500 dark:text-slate-400 focus:outline-none border-none p-0.5"
+                                        title="Change AI analysis refresh interval"
+                                    >
+                                        {REFRESH_INTERVALS.map(interval => (
+                                            <option key={interval} value={interval}>{interval}s</option>
+                                        ))}
+                                    </select>
+                                </div>
                             </div>
                              <AnalysisPreview agent={bot.config.agent} agentParams={bot.config.agentParams} analysis={bot.analysis} isLoading={false} />
                         </div>
-                         <div className={position ? '' : 'lg:col-span-1'}>
-                           <BotConfigDetails bot={bot} onUpdate={(partial) => actions.onUpdateBotConfig(bot.id, partial)} />
-                        </div>
-                         <div className={position ? 'md:col-span-2 lg:col-span-1' : 'lg:col-span-1'}>
+                         <div className="md:col-span-2 lg:col-span-1">
                             <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Activity Log</h4>
                             <BotLog log={bot.log} />
                         </div>

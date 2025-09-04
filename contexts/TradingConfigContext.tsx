@@ -31,8 +31,10 @@ interface TradingConfigState {
     isMarketCohesionEnabled: boolean;
     isVwapConfirmationEnabled: boolean;
     isBtcConfirmationEnabled: boolean;
+    btcConfirmationThreshold: number;
     isVolumeFilterEnabled: boolean;
     isAdxFilterEnabled: boolean;
+    isExhaustionFilterEnabled: boolean;
     htfTimeFrame: 'auto' | string;
     agentParams: AgentParams;
     htfAgentParams: AgentParams;
@@ -70,8 +72,10 @@ interface TradingConfigActions {
     setIsMarketCohesionEnabled: (isEnabled: boolean) => void;
     setIsVwapConfirmationEnabled: (isEnabled: boolean) => void;
     setIsBtcConfirmationEnabled: (isEnabled: boolean) => void;
+    setBtcConfirmationThreshold: (threshold: number) => void;
     setIsVolumeFilterEnabled: (isEnabled: boolean) => void;
     setIsAdxFilterEnabled: (isEnabled: boolean) => void;
+    setIsExhaustionFilterEnabled: (isEnabled: boolean) => void;
     setHtfTimeFrame: (tf: 'auto' | string) => void;
     setAgentParams: (params: AgentParams) => void;
     setHtfAgentParams: (params: AgentParams) => void;
@@ -114,8 +118,10 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [isMarketCohesionEnabled, setIsMarketCohesionEnabled] = useState<boolean>(true);
     const [isVwapConfirmationEnabled, setIsVwapConfirmationEnabled] = useState<boolean>(true);
     const [isBtcConfirmationEnabled, setIsBtcConfirmationEnabled] = useState<boolean>(false);
+    const [btcConfirmationThreshold, setBtcConfirmationThreshold] = useState<number>(60);
     const [isVolumeFilterEnabled, setIsVolumeFilterEnabled] = useState<boolean>(true);
     const [isAdxFilterEnabled, setIsAdxFilterEnabled] = useState<boolean>(true);
+    const [isExhaustionFilterEnabled, setIsExhaustionFilterEnabled] = useState<boolean>(true);
     const [htfTimeFrame, setHtfTimeFrame] = useState<'auto' | string>('auto');
     const [isApiConnected, setIsApiConnected] = useState(false);
     const [walletViewMode, setWalletViewMode] = useState<TradingMode>(TradingMode.Spot);
@@ -253,14 +259,22 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         }
     }, [selectedPairs, tradingMode]);
 
-    // Reset agent-specific parameters when the agent or timeframe changes
+    // Reset agent-specific parameters when the timeframe changes, preserving user customizations
     useEffect(() => {
-        const timeframeSettings = constants.getAgentTimeframeSettings(selectedAgent.id, chartTimeFrame);
-        // This resets any user customizations, which is the desired behavior.
-        setAgentParams(timeframeSettings);
+        const timeframeDefaults = constants.getAgentTimeframeSettings(selectedAgent.id, chartTimeFrame);
+        // Merge defaults with existing params, letting existing ones take precedence.
+        setAgentParams(prev => ({...timeframeDefaults, ...prev}));
     }, [selectedAgent, chartTimeFrame]);
 
     // --- Action Definitions ---
+    
+    const setSelectedAgentWithReset = useCallback((agent: Agent) => {
+        setSelectedAgent(agent);
+        // This is the key: reset params when agent is explicitly changed.
+        const timeframeDefaults = constants.getAgentTimeframeSettings(agent.id, chartTimeFrame);
+        setAgentParams(timeframeDefaults); 
+    }, [chartTimeFrame]);
+
 
     const onSetMultiAssetMode = useCallback(async (isEnabled: boolean) => {
         if (executionMode !== 'live' || !isApiConnected) return;
@@ -278,14 +292,15 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     // Memoize actions to prevent re-renders in consumers
     const actions = useMemo(() => ({
         setExecutionMode, setTradingMode, setSelectedPairs, setAllPairs,
-        setLeverage, setMarginType, setTimeFrame, setSelectedAgent,
+        setLeverage, setMarginType, setTimeFrame, setSelectedAgent: setSelectedAgentWithReset,
         setInvestmentAmount, setAvailableBalance,
         setMaxMarginLossPercent,
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setAgentParams, setHtfAgentParams, setIsApiConnected, setWalletViewMode,
         setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError, setIsUniversalProfitTrailEnabled,
         setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setEntryTiming,
-        setIsMarketCohesionEnabled, setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
-    }), [onSetMultiAssetMode]);
+        setIsMarketCohesionEnabled, setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
+        setIsExhaustionFilterEnabled,
+    }), [onSetMultiAssetMode, setSelectedAgentWithReset]);
     
     const state = {
         executionMode, tradingMode, selectedPairs, allPairs, isPairsLoading, leverage, marginType, chartTimeFrame,
@@ -296,7 +311,8 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         takeProfitValue: 0,
         isTakeProfitLocked: false,
         isHtfConfirmationEnabled, isUniversalProfitTrailEnabled, 
-        isMinRrEnabled, isReanalysisEnabled, isInvalidationCheckEnabled, isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled, isBtcConfirmationEnabled, isVolumeFilterEnabled, isAdxFilterEnabled, htfTimeFrame,
+        isMinRrEnabled, isReanalysisEnabled, isInvalidationCheckEnabled, isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled, isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
+        isExhaustionFilterEnabled, htfTimeFrame,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
         futuresSettingsError, multiAssetModeError, entryTiming
     };

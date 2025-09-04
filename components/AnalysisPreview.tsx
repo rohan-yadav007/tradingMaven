@@ -139,19 +139,9 @@ export const AnalysisPreview: React.FC<AnalysisPreviewProps> = ({ analysis, isLo
                             <SentinelAnalysisDisplay analysis={displayAnalysis.sentinelAnalysis} />
                         )}
 
-                        {(!isSentinelAgent || !displayAnalysis.sentinelAnalysis) && (
-                             <div className="text-xs text-slate-600 dark:text-slate-400 flex-grow">
+                        {displayAnalysis.reasons.length > 0 && (
+                            <div className={`text-xs flex-grow ${isSentinelAgent && displayAnalysis.sentinelAnalysis ? 'pt-3 border-t border-slate-200 dark:border-slate-700 mt-3' : ''}`}>
                                 <ul className="space-y-1.5">
-                                    {displayAnalysis.reasons.map((reason, index) => (
-                                        <ReasonItem key={index} reason={reason} />
-                                    ))}
-                                </ul>
-                            </div>
-                        )}
-
-                        {isSentinelAgent && displayAnalysis.reasons.length > 0 && (
-                            <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
-                                 <ul className="space-y-1.5 text-xs">
                                     {displayAnalysis.reasons.map((reason, index) => (
                                         <ReasonItem key={index} reason={reason} />
                                     ))}

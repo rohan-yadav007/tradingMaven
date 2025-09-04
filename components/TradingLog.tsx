@@ -2,11 +2,12 @@ import React, { useState, useMemo } from 'react';
 import Select from 'react-select';
 import { Trade, TradingMode, AgentParams, MarketDataContext } from '../types';
 import * as constants from '../constants';
+import { historyService } from '../services/historyService';
 import { HistoryIcon, ChevronDown, ChevronUp, TrashIcon, DownloadIcon } from './icons';
 
 interface TradingLogProps {
     tradeHistory: Trade[];
-    onClearHistory: () => void;
+    setTradeHistory: (trades: Trade[]) => void;
 }
 
 const formatPrice = (price: number | undefined, precision: number) => {
@@ -182,7 +183,7 @@ const TradeRow: React.FC<{ trade: Trade; isOpen: boolean; onToggle: () => void; 
     );
 };
 
-export const TradingLog: React.FC<TradingLogProps> = ({ tradeHistory, onClearHistory }) => {
+export const TradingLog: React.FC<TradingLogProps> = ({ tradeHistory, setTradeHistory }) => {
     const [expandedRowId, setExpandedRowId] = useState<number | null>(null);
     const [selectedTimeframes, setSelectedTimeframes] = useState<{ value: string; label: string; }[]>([]);
 
@@ -212,6 +213,25 @@ export const TradingLog: React.FC<TradingLogProps> = ({ tradeHistory, onClearHis
 
     const handleToggleRow = (tradeId: number) => {
         setExpandedRowId(prevId => (prevId === tradeId ? null : tradeId));
+    };
+
+    const handleDelete = () => {
+        const isFiltered = selectedTimeframes.length > 0;
+        const message = isFiltered 
+            ? `Are you sure you want to delete the ${filteredTrades.length} trades matching the current filter? This action cannot be undone.`
+            : 'Are you sure you want to permanently delete all trade history? This action cannot be undone.';
+
+        if (window.confirm(message)) {
+            if (isFiltered) {
+                const idsToDelete = new Set(filteredTrades.map(t => t.id));
+                const newHistory = tradeHistory.filter(t => !idsToDelete.has(t.id));
+                historyService.removeTrades(Array.from(idsToDelete)); // Update storage
+                setTradeHistory(newHistory); // Update state
+            } else {
+                historyService.clearTrades();
+                setTradeHistory([]);
+            }
+        }
     };
 
     const handleExport = () => {
@@ -277,7 +297,7 @@ export const TradingLog: React.FC<TradingLogProps> = ({ tradeHistory, onClearHis
                     <button onClick={handleExport} className="p-2 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700 rounded-full transition-colors" title="Export Filtered History">
                         <DownloadIcon className="w-5 h-5" />
                     </button>
-                    <button onClick={onClearHistory} className="p-2 text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-900/50 rounded-full transition-colors" title="Delete All History">
+                    <button onClick={handleDelete} className="p-2 text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-900/50 rounded-full transition-colors" title={selectedTimeframes.length > 0 ? "Delete Filtered History" : "Delete All History"}>
                         <TrashIcon className="w-5 h-5" />
                     </button>
                 </div>

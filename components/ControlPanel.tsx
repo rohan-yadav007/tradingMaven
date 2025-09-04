@@ -159,7 +159,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         isUniversalProfitTrailEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
         isReanalysisEnabled, entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
-        isBtcConfirmationEnabled, isVolumeFilterEnabled, isAdxFilterEnabled
+        isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
+        isExhaustionFilterEnabled
     } = config;
 
     const {
@@ -169,7 +170,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setIsUniversalProfitTrailEnabled,
         setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled,
         setEntryTiming, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setIsMarketCohesionEnabled,
-        setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setIsVolumeFilterEnabled, setIsAdxFilterEnabled
+        setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
+        setIsExhaustionFilterEnabled
     } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -241,8 +243,10 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         isMarketCohesionEnabled: config.isMarketCohesionEnabled,
                         isVwapConfirmationEnabled: config.isVwapConfirmationEnabled,
                         isBtcConfirmationEnabled: config.isBtcConfirmationEnabled,
+                        btcConfirmationThreshold: config.btcConfirmationThreshold,
                         isVolumeFilterEnabled: config.isVolumeFilterEnabled,
                         isAdxFilterEnabled: config.isAdxFilterEnabled,
+                        isExhaustionFilterEnabled: config.isExhaustionFilterEnabled,
                         htfTimeFrame: config.htfTimeFrame,
                         agentParams: agentParams,
                         pricePrecision: 8,
@@ -428,7 +432,10 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     value={selectedAgent.id} 
                     onChange={e => {
                         const agent = constants.AGENTS.find(a => a.id === Number(e.target.value));
-                        if (agent) setSelectedAgent(agent);
+                        if (agent) {
+                            setSelectedAgent(agent);
+                            setAgentParams({}); // Reset params on agent change for a clean slate
+                        }
                     }} 
                     className={formInputClass}
                 >
@@ -520,6 +527,17 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         onChange={setIsBtcConfirmationEnabled}
                     />
                 </div>
+                {isBtcConfirmationEnabled && (
+                     <ParamSlider
+                        label="BTC Trend Threshold"
+                        value={btcConfirmationThreshold}
+                        onChange={setBtcConfirmationThreshold}
+                        min={50}
+                        max={85}
+                        step={5}
+                        valueDisplay={(v) => `${v}%`}
+                    />
+                )}
             </div>
             
             <div className={formGroupClass}>
@@ -591,6 +609,20 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 </div>
                  <p className="text-xs text-slate-500 dark:text-slate-400">
                     Uses Heikin-Ashi candles as a final gatekeeper to ensure trades are only taken in smooth, cohesive trends, avoiding choppy markets.
+                </p>
+            </div>
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="exhaustion-filter-toggle" className={formLabelClass}>
+                        Exhaustion Filter
+                    </label>
+                    <ToggleSwitch
+                        checked={isExhaustionFilterEnabled}
+                        onChange={setIsExhaustionFilterEnabled}
+                    />
+                </div>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                   Prevents entries on over-extended moves using StochRSI.
                 </p>
             </div>
              <div className={formGroupClass}>

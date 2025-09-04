@@ -27,15 +27,18 @@ async function sendMessage(text: string, specificChatId?: string) {
 
     if (targets.length === 0) {
         if(specificChatId) console.error(`Telegram: No bot configured for chat ID ${specificChatId}`);
+        else console.warn('Telegram: sendMessage called but no bots are configured or no specific chat ID was provided.');
         return;
     }
+
+    const targetChatId = specificChatId || targets[0].chatId;
 
     for (const bot of targets) {
         try {
             await fetch(`https://api.telegram.org/bot${bot.token}/sendMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chat_id: bot.chatId, text, parse_mode: 'Markdown' }),
+                body: JSON.stringify({ chat_id: targetChatId, text, parse_mode: 'Markdown' }),
             });
         } catch (error) {
             console.error(`Telegram: Failed to send message with bot ${bot.token.substring(0,10)}...:`, error);
@@ -171,6 +174,10 @@ ID: \`${bot.id}\``;
                     isBreakevenTrailEnabled: true,
                     isMarketCohesionEnabled: true,
                     isVwapConfirmationEnabled: true,
+                    isBtcConfirmationEnabled: false,
+                    btcConfirmationThreshold: 60,
+                    isVolumeFilterEnabled: true,
+                    isAdxFilterEnabled: true,
                     agentParams: {},
                     htfAgentParams: {},
                     pricePrecision: binanceService.getPricePrecision(symbolInfo),
@@ -178,6 +185,7 @@ ID: \`${bot.id}\``;
                     stepSize: binanceService.getStepSize(symbolInfo),
                     takerFeeRate: constants.TAKER_FEE_RATE,
                     entryTiming: 'onNextCandle',
+                    telegramChatId: chatId, // Attach the chat ID to the config
                     // Default legacy TP properties
                     takeProfitMode: RiskMode.Percent,
                     takeProfitValue: 0,
@@ -270,7 +278,7 @@ async function longPoll(bot: { token: string; chatId: string; }) {
                 maxUpdateId = Math.max(maxUpdateId, update.update_id);
                 const message = update.message;
 
-                if (message && message.text && message.chat.id.toString() === bot.chatId) {
+                if (message && message.text && message.chat.id) {
                     try {
                         const [command, ...args] = message.text.split(' ');
                         await handleCommand(command.toLowerCase(), args, message.chat.id.toString());
@@ -304,12 +312,16 @@ function start() {
     if (bots.length > 0) {
         isStarted = true;
         console.log(`Telegram bot service starting with ${bots.length} bot(s)...`);
-        sendMessage("Trading Assistant is online. Use /help for commands.");
+        
+        const uniqueChatIds = [...new Set(bots.map(b => b.chatId))];
+        uniqueChatIds.forEach(chatId => {
+            sendMessage("Trading Assistant is online. Use /help for commands.", chatId);
+        });
         
         for (const bot of bots) {
             lastUpdateIds.set(bot.token, 0);
             longPoll(bot);
-            console.log(`- Listening for commands on bot with chat ID: ${bot.chatId}`);
+            console.log(`- Listening for commands on bot with token ...${bot.token.slice(-6)}`);
         }
     } else {
         console.warn("Telegram bot credentials not found in environment variables. Service will not start.");

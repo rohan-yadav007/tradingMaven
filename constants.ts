@@ -125,10 +125,26 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     sentinel_scoreThreshold: 70,
     sentinel_rsiOverextendedLong: 80,
     sentinel_rsiOverextendedShort: 20,
+
+    // SMC Reversal Veto
+    smc_divergenceLookback: 12,
+    smc_volumeMultiplier: 2.0,
+    smc_chochLookback: 5,
 };
 
 
 // --- TIMEFRAME-SPECIFIC PARAMETER OVERRIDES ---
+
+export const SMC_VETO_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
+    '1m':  { smc_divergenceLookback: 5, smc_volumeMultiplier: 1.5, smc_chochLookback: 3 },
+    '3m':  { smc_divergenceLookback: 8, smc_volumeMultiplier: 2.0, smc_chochLookback: 4 },
+    '5m':  { smc_divergenceLookback: 12, smc_volumeMultiplier: 2.0, smc_chochLookback: 5 },
+    '15m': { smc_divergenceLookback: 20, smc_volumeMultiplier: 2.5, smc_chochLookback: 8 },
+    '30m': { smc_divergenceLookback: 20, smc_volumeMultiplier: 2.5, smc_chochLookback: 8 },
+    '1h':  { smc_divergenceLookback: 20, smc_volumeMultiplier: 2.5, smc_chochLookback: 8 },
+    '4h':  { smc_divergenceLookback: 20, smc_volumeMultiplier: 2.5, smc_chochLookback: 8 },
+    '1d':  { smc_divergenceLookback: 20, smc_volumeMultiplier: 2.5, smc_chochLookback: 8 },
+};
 
 export const QUANTUM_SCALPER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
     // Scalping: Stricter thresholds to filter noise and prevent chasing blow-offs
@@ -186,19 +202,24 @@ export const ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS: Record<string, Partial<Age
 
 /**
  * A helper function to get the correct, timeframe-specific parameters for a given agent.
+ * This now merges general SMC settings with agent-specific settings.
  * @param agentId The ID of the agent.
  * @param timeFrame The timeframe string (e.g., '5m', '1h').
  * @returns An object with the agent's parameters for that timeframe.
  */
 export const getAgentTimeframeSettings = (agentId: number, timeFrame: string): Partial<AgentParams> => {
+    const smcSettings = SMC_VETO_TIMEFRAME_SETTINGS[timeFrame] || {};
+    let agentSettings: Partial<AgentParams> = {};
+
     switch (agentId) {
-        case 9:  return QUANTUM_SCALPER_TIMEFRAME_SETTINGS[timeFrame] || {};
-        case 11: return HISTORIC_EXPERT_TIMEFRAME_SETTINGS[timeFrame] || {};
-        case 13: return CHAMELEON_TIMEFRAME_SETTINGS[timeFrame] || {};
-        case 14: return SENTINEL_TIMEFRAME_SETTINGS[timeFrame] || {};
-        case 16: return ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS[timeFrame] || {};
-        default: return {};
+        case 9:  agentSettings = QUANTUM_SCALPER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+        case 11: agentSettings = HISTORIC_EXPERT_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+        case 13: agentSettings = CHAMELEON_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+        case 14: agentSettings = SENTINEL_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+        case 16: agentSettings = ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
     }
+
+    return { ...smcSettings, ...agentSettings };
 };
 
 

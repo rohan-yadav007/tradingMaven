@@ -36,6 +36,7 @@ interface TradingConfigState {
     isVolumeFilterEnabled: boolean;
     isAdxFilterEnabled: boolean;
     isExhaustionFilterEnabled: boolean;
+    isSmcVetoEnabled: boolean;
     htfTimeFrame: 'auto' | string;
     agentParams: AgentParams;
     htfAgentParams: AgentParams;
@@ -78,6 +79,7 @@ interface TradingConfigActions {
     setIsVolumeFilterEnabled: (isEnabled: boolean) => void;
     setIsAdxFilterEnabled: (isEnabled: boolean) => void;
     setIsExhaustionFilterEnabled: (isEnabled: boolean) => void;
+    setIsSmcVetoEnabled: (isEnabled: boolean) => void;
     setHtfTimeFrame: (tf: 'auto' | string) => void;
     setAgentParams: (params: AgentParams) => void;
     setHtfAgentParams: (params: AgentParams) => void;
@@ -128,6 +130,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [isVolumeFilterEnabled, setIsVolumeFilterEnabled] = useState<boolean>(true);
     const [isAdxFilterEnabled, setIsAdxFilterEnabled] = useState<boolean>(true);
     const [isExhaustionFilterEnabled, setIsExhaustionFilterEnabled] = useState<boolean>(true);
+    const [isSmcVetoEnabled, setIsSmcVetoEnabled] = useState<boolean>(true);
     const [htfTimeFrame, setHtfTimeFrame] = useState<'auto' | string>('auto');
     const [isApiConnected, setIsApiConnected] = useState(false);
     const [walletViewMode, setWalletViewMode] = useState<TradingMode>(TradingMode.Spot);
@@ -322,7 +325,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError, setIsUniversalProfitTrailEnabled,
         setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setEntryTiming,
         setIsMarketCohesionEnabled, setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
-        setIsExhaustionFilterEnabled,
+        setIsExhaustionFilterEnabled, setIsSmcVetoEnabled,
         addTradingPairList, updateTradingPairList, deleteTradingPairList,
     }), [onSetMultiAssetMode, setSelectedAgentWithReset]);
     
@@ -336,7 +339,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         isTakeProfitLocked: false,
         isHtfConfirmationEnabled, isUniversalProfitTrailEnabled, 
         isMinRrEnabled, isReanalysisEnabled, isInvalidationCheckEnabled, isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled, isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
-        isExhaustionFilterEnabled, htfTimeFrame, tradingPairLists,
+        isExhaustionFilterEnabled, isSmcVetoEnabled, htfTimeFrame, tradingPairLists,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
         futuresSettingsError, multiAssetModeError, entryTiming
     };

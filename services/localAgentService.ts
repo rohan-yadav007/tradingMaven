@@ -1,4 +1,3 @@
-
 import { TradingMode, type Agent, type TradeSignal, type Kline, type AgentParams, type Position, type ADXOutput, type MACDOutput, type BollingerBandsOutput, type StochasticRSIOutput, type TradeManagementSignal, type BotConfig, VortexIndicatorOutput, SentinelAnalysis, KSTOutput, type IchimokuCloudOutput, MarketDataContext } from '../types';
 import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, IchimokuCloud, KST, abandonedbaby, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, downsidetasukigap, dragonflydoji, gravestonedoji, bullishharami, bearishharami, bullishharamicross, bearishharamicross, hammerpattern, hangingman, morningdojistar, morningstar, piercingline, shootingstar, threeblackcrows, threewhitesoldiers, eveningdojistar, eveningstar } from 'technicalindicators';
 import * as constants from '../constants';
@@ -663,7 +662,8 @@ export function getProfitSpikeSignal(
             return {
                 newStopLoss,
                 reasons: [`Spike Protector: Locked ${(applicableTier.lockPercent * 100).toFixed(0)}% of profit at ${pnlPercentage.toFixed(0)}% gain.`],
-                newState: { profitSpikeTier: applicableTier.tier, activeStopLossReason: 'Profit Secure' }
+                newState: { profitSpikeTier: applicableTier.tier },
+                activeStopLossReason: 'Profit Secure'
             };
         }
     }
@@ -717,7 +717,8 @@ export function getMandatoryBreakevenSignal(
             return {
                 newStopLoss: breakevenStop,
                 reasons: [`Profit Secure: Breakeven set at 3x fee gain.`],
-                newState: { isBreakevenSet: true, profitLockTier: 3 }
+                newState: { isBreakevenSet: true, profitLockTier: 3 },
+                activeStopLossReason: 'Breakeven'
             };
         }
     }
@@ -727,8 +728,8 @@ export function getMandatoryBreakevenSignal(
 
 
 /**
- * A multi-stage, fee-multiple-based profit-locking mechanism that runs after breakeven is secured.
- * Moves SL to lock in profits at (N-1)x fee-multiple milestones for every N >= 4 profit tier reached.
+ * A multi-stage, fee-multiple-based profit-locking mechanism that can run independently.
+ * Moves SL to breakeven at 3x fee gain, then locks in (N-1)x fee-multiple milestones for every N >= 4 profit tier reached.
  * This is controlled by the "Universal Profit Trail" toggle.
  * @param position - The current open position.
  * @param currentPrice - The live price tick.
@@ -738,19 +739,11 @@ export function getMultiStageProfitSecureSignal(
     position: Position,
     currentPrice: number
 ): TradeManagementSignal {
-    const { entryPrice, stopLossPrice, direction, isBreakevenSet, profitLockTier, size, takerFeeRate } = position;
-
-    // This logic only applies after mandatory breakeven has been set.
-    if (!isBreakevenSet) {
-        return { reasons: [] };
-    }
+    const { entryPrice, stopLossPrice, direction, profitLockTier, size, takerFeeRate } = position;
 
     const isLong = direction === 'LONG';
-
-    // --- Direct Dollar-Based Calculation ---
     const currentPnlDollars = (currentPrice - entryPrice) * size * (isLong ? 1 : -1);
 
-    // Not in profit, no action needed.
     if (currentPnlDollars <= 0) {
         return { reasons: [] };
     }
@@ -758,37 +751,49 @@ export function getMultiStageProfitSecureSignal(
     const positionValueDollars = entryPrice * size;
     const roundTripFeeDollars = positionValueDollars * takerFeeRate * 2;
 
-    // Cannot calculate fee multiples if fee is zero.
     if (roundTripFeeDollars <= 0) {
         return { reasons: [] };
     }
 
     const currentFeeMultiple = currentPnlDollars / roundTripFeeDollars;
-    
-    // Dynamic (N)x -> (N-1)x fee-multiple based profit lock (for N >= 4 after 3x breakeven)
-    const startingTier = 4;
-    if (currentFeeMultiple >= startingTier) {
-        const triggerFeeMultiple = Math.floor(currentFeeMultiple); // This is our 'N'
-        
-        if (triggerFeeMultiple > profitLockTier) {
-            const lockFeeMultiple = triggerFeeMultiple - 1; // This is 'N-1'
-            
-            // Calculate the locked-in PNL in dollars
-            const lockedPnlDollars = roundTripFeeDollars * lockFeeMultiple;
-            
-            // Convert the locked-in PNL back to a price difference
-            const lockedPnlInPrice = lockedPnlDollars / size;
-            
-            const newStopLoss = entryPrice + (lockedPnlInPrice * (isLong ? 1 : -1));
+    const triggerFeeMultiple = Math.floor(currentFeeMultiple);
 
-            if ((isLong && newStopLoss > stopLossPrice) || (!isLong && newStopLoss < stopLossPrice)) {
-                const reason = `Profit Secure: Tier ${triggerFeeMultiple - 3} activated at ${triggerFeeMultiple}x fee gain.`;
-                return {
-                    newStopLoss,
-                    reasons: [reason],
-                    newState: { profitLockTier: triggerFeeMultiple } // Update the tier to the new trigger level
-                };
-            }
+    if (triggerFeeMultiple <= profitLockTier) {
+        return { reasons: [] };
+    }
+
+    // Handle the first profit lock (breakeven equivalent) if it hasn't been done
+    if (triggerFeeMultiple >= 3 && profitLockTier < 3) {
+        const feeRate = takerFeeRate;
+        const breakevenStop = isLong
+            ? entryPrice * (1 + feeRate) / (1 - feeRate)
+            : entryPrice * (1 - feeRate) / (1 + feeRate);
+
+        if ((isLong && breakevenStop > stopLossPrice) || (!isLong && breakevenStop < stopLossPrice)) {
+            return {
+                newStopLoss: breakevenStop,
+                reasons: [`Universal Trail: Breakeven set at 3x fee gain.`],
+                newState: { isBreakevenSet: true, profitLockTier: 3 },
+                activeStopLossReason: 'Breakeven'
+            };
+        }
+    }
+    
+    // Handle subsequent profit locks (N-1) for N >= 4
+    if (triggerFeeMultiple > profitLockTier && triggerFeeMultiple >= 4) {
+        const lockFeeMultiple = triggerFeeMultiple - 1;
+        const lockedPnlDollars = roundTripFeeDollars * lockFeeMultiple;
+        const lockedPnlInPrice = lockedPnlDollars / size;
+        const newStopLoss = entryPrice + (lockedPnlInPrice * (isLong ? 1 : -1));
+
+        if ((isLong && newStopLoss > stopLossPrice) || (!isLong && newStopLoss < stopLossPrice)) {
+            const reason = `Universal Trail: Tier ${triggerFeeMultiple - 3} activated at ${triggerFeeMultiple}x fee gain.`;
+            return {
+                newStopLoss,
+                reasons: [reason],
+                newState: { profitLockTier: triggerFeeMultiple },
+                activeStopLossReason: 'Profit Secure'
+            };
         }
     }
 
@@ -839,7 +844,8 @@ export function getAggressiveRangeTrailSignal(
             return {
                 newStopLoss,
                 reasons: [`Aggressive Trail: Price >50% to TP, trailing SL.`],
-                newState: { aggressiveTrailTier: 1, activeStopLossReason: 'Profit Secure' }
+                newState: { aggressiveTrailTier: 1 },
+                activeStopLossReason: 'Profit Secure'
             };
         }
     }
@@ -959,7 +965,7 @@ export function getAgentExitSignal(
         reasons.push('Agent Trail active post-breakeven.');
     }
 
-    return { newStopLoss, action, reasons };
+    return { newStopLoss, action, reasons, activeStopLossReason: 'Agent Trail' };
 }
 
 
@@ -1715,6 +1721,93 @@ function getBtcTrendScore(
     return { bullScore, bearScore };
 }
 
+/**
+ * New Gatekeeper: Implements the Smart Money Concepts (SMC) reversal pattern veto.
+ */
+function getSmcVeto(
+    klines: Kline[],
+    direction: 'BUY' | 'SELL',
+    config: BotConfig,
+    rsiValues: number[],
+    volumeSma: number | undefined,
+): { veto: boolean; reason: string } {
+    if (!config.isSmcVetoEnabled || klines.length < 50) {
+        return { veto: false, reason: '' };
+    }
+
+    const params = config.agentParams as Required<AgentParams>;
+    const isLongSignal = direction === 'BUY';
+    const lookback = params.smc_divergenceLookback;
+    
+    // Find recent swing highs/lows
+    const pivots: { index: number; price: number, type: 'high' | 'low' }[] = [];
+    for (let i = lookback; i < klines.length - lookback; i++) {
+        const window = klines.slice(i - lookback, i + 1 + lookback);
+        const currentHigh = klines[i].high;
+        const currentLow = klines[i].low;
+        if (currentHigh === Math.max(...window.map(k => k.high))) pivots.push({ index: i, price: currentHigh, type: 'high'});
+        if (currentLow === Math.min(...window.map(k => k.low))) pivots.push({ index: i, price: currentLow, type: 'low'});
+    }
+
+    const recentHighs = pivots.filter(p => p.type === 'high').slice(-2);
+    const recentLows = pivots.filter(p => p.type === 'low').slice(-2);
+
+    // --- Check for BEARISH Reversal (to VETO a BUY signal) ---
+    if (isLongSignal && recentHighs.length === 2) {
+        const [prevHigh, lastHigh] = recentHighs;
+        const priceMakesHigherHigh = lastHigh.price > prevHigh.price;
+        const rsiMakesLowerHigh = rsiValues[lastHigh.index] < rsiValues[prevHigh.index];
+        
+        if (priceMakesHigherHigh && rsiMakesLowerHigh) {
+            // 1. Divergence confirmed. Now check for liquidity sweep.
+            const sweepCandle = klines[lastHigh.index];
+            const hasHighVolume = sweepCandle.volume! > (volumeSma || 0) * params.smc_volumeMultiplier;
+            
+            if (hasHighVolume) {
+                 // 2. Liquidity sweep confirmed. Now check for CHoCH.
+                 const minorLows = pivots.filter(p => p.type === 'low' && p.index > prevHigh.index && p.index < lastHigh.index);
+                 if (minorLows.length > 0) {
+                     const lastMinorLow = minorLows[minorLows.length - 1];
+                     // Check if price has closed below that minor low since the last high
+                     const candlesSinceHigh = klines.slice(lastHigh.index + 1);
+                     const hasBrokenStructure = candlesSinceHigh.some(k => k.close < lastMinorLow.price);
+                     if (hasBrokenStructure) {
+                         return { veto: true, reason: `❌ VETO: Bearish SMC reversal pattern detected (Divergence + Sweep + CHoCH).` };
+                     }
+                 }
+            }
+        }
+    }
+
+    // --- Check for BULLISH Reversal (to VETO a SELL signal) ---
+    if (!isLongSignal && recentLows.length === 2) {
+        const [prevLow, lastLow] = recentLows;
+        const priceMakesLowerLow = lastLow.price < prevLow.price;
+        const rsiMakesHigherLow = rsiValues[lastLow.index] > rsiValues[prevLow.index];
+
+        if (priceMakesLowerLow && rsiMakesHigherLow) {
+            // 1. Divergence confirmed.
+            const sweepCandle = klines[lastLow.index];
+            const hasHighVolume = sweepCandle.volume! > (volumeSma || 0) * params.smc_volumeMultiplier;
+
+            if (hasHighVolume) {
+                // 2. Liquidity sweep confirmed.
+                const minorHighs = pivots.filter(p => p.type === 'high' && p.index > prevLow.index && p.index < lastLow.index);
+                if (minorHighs.length > 0) {
+                    const lastMinorHigh = minorHighs[minorHighs.length - 1];
+                    const candlesSinceLow = klines.slice(lastLow.index + 1);
+                    const hasBrokenStructure = candlesSinceLow.some(k => k.close > lastMinorHigh.price);
+                    if (hasBrokenStructure) {
+                        return { veto: true, reason: `❌ VETO: Bullish SMC reversal pattern detected (Divergence + Sweep + CHoCH).` };
+                    }
+                }
+            }
+        }
+    }
+
+    return { veto: false, reason: '' };
+}
+
 
 export const getTradingSignal = async (
     agent: Agent,
@@ -1744,6 +1837,20 @@ export const getTradingSignal = async (
         return signal;
     }
     
+    // --- SMC Reversal Veto Gatekeeper ---
+    if (config.isSmcVetoEnabled) {
+        const closes = klines.map(k => k.close);
+        const volumes = klines.map(k => k.volume || 0);
+        const rsiValues = RSI.calculate({ period: 14, values: closes });
+        const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes }));
+        const smcVeto = getSmcVeto(klines, signal.signal, config, rsiValues, volumeSma);
+        if (smcVeto.veto) {
+            signal.reasons.push(smcVeto.reason);
+            return { ...signal, signal: 'HOLD' };
+        }
+        signal.reasons.push('✅ SMC Veto: Passed.');
+    }
+
     // --- Exhaustion Filter Gatekeeper ---
     if (config.isExhaustionFilterEnabled) {
         const exhaustionVeto = getExhaustionFilterVeto(klines, signal.signal, config);

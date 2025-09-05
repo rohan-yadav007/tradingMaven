@@ -160,7 +160,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         isReanalysisEnabled, entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
-        isExhaustionFilterEnabled
+        isExhaustionFilterEnabled, isSmcVetoEnabled
     } = config;
 
     const {
@@ -171,7 +171,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled,
         setEntryTiming, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setIsMarketCohesionEnabled,
         setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
-        setIsExhaustionFilterEnabled
+        setIsExhaustionFilterEnabled, setIsSmcVetoEnabled
     } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -260,6 +260,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         isVolumeFilterEnabled: config.isVolumeFilterEnabled,
                         isAdxFilterEnabled: config.isAdxFilterEnabled,
                         isExhaustionFilterEnabled: config.isExhaustionFilterEnabled,
+                        isSmcVetoEnabled: config.isSmcVetoEnabled,
                         htfTimeFrame: config.htfTimeFrame,
                         agentParams: agentParams,
                         pricePrecision: 8,
@@ -514,6 +515,26 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
 
             <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
             
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                     <div className="flex items-center gap-1.5">
+                        <label htmlFor="smc-veto-toggle" className={formLabelClass}>
+                            SMC Reversal Veto
+                        </label>
+                         <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                Smart Money Concepts. Vetoes trades that go against a high-probability reversal pattern (divergence + volume sweep + change of character).
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch
+                        checked={isSmcVetoEnabled}
+                        onChange={setIsSmcVetoEnabled}
+                    />
+                </div>
+            </div>
+
             <div className={formGroupClass}>
                 <div className="flex items-center justify-between">
                      <div className="flex items-center gap-1.5">

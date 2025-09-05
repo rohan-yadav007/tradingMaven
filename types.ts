@@ -1,5 +1,3 @@
-
-
 // Manually define indicator output types as they are not exported by 'technicalindicators'
 export interface ADXOutput {
   adx: number;
@@ -123,6 +121,7 @@ export interface TradeManagementSignal {
     action?: 'hold' | 'close' | 'flip';
     reasons: string[];
     newState?: any; // Generic state update object
+    activeStopLossReason?: Position['activeStopLossReason'];
 }
 
 
@@ -182,6 +181,7 @@ export interface Position {
         isVolumeFilterEnabled?: boolean;
         isAdxFilterEnabled?: boolean;
         isExhaustionFilterEnabled?: boolean;
+        isSmcVetoEnabled?: boolean;
         htfTimeFrame?: 'auto' | string;
         entryTiming?: 'immediate' | 'onNextCandle';
     };
@@ -350,6 +350,7 @@ export interface BotConfig {
     isVolumeFilterEnabled?: boolean;
     isAdxFilterEnabled?: boolean;
     isExhaustionFilterEnabled?: boolean;
+    isSmcVetoEnabled?: boolean;
     htfTimeFrame?: 'auto' | string;
     agentParams?: AgentParams;
     htfAgentParams?: AgentParams;
@@ -513,6 +514,11 @@ export type AgentParams = Partial<{
     sentinel_scoreThreshold: number;
     sentinel_rsiOverextendedLong?: number;
     sentinel_rsiOverextendedShort?: number;
+    
+    // SMC Reversal Veto
+    smc_divergenceLookback: number;
+    smc_volumeMultiplier: number;
+    smc_chochLookback: number;
 }>;
 
 // --- User Preferences ---

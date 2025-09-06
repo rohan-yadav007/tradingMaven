@@ -107,7 +107,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [tradingMode, setTradingMode] = useState<TradingMode>(TradingMode.Spot);
     const [allPairs, setAllPairs] = useState<string[]>(constants.TRADING_PAIRS);
     const [selectedPairs, setSelectedPairs] = useState<string[]>(['BTC/USDT']);
-    const [leverage, setLeverage] = useState<number>(20);
+    const [leverage, setLeverage] = useState<number>(5);
     const [marginType, setMarginType] = useState<'ISOLATED' | 'CROSSED'>('ISOLATED');
     const [chartTimeFrame, setTimeFrame] = useState<string>('5m');
     const [selectedAgent, setSelectedAgent] = useState<Agent>(constants.AGENTS[0]);
@@ -135,7 +135,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [isApiConnected, setIsApiConnected] = useState(false);
     const [walletViewMode, setWalletViewMode] = useState<TradingMode>(TradingMode.Spot);
     const [isMultiAssetMode, setIsMultiAssetMode] = useState(false);
-    const [entryTiming, setEntryTiming] = useState<'immediate' | 'onNextCandle'>('onNextCandle');
+    const [entryTiming, setEntryTiming] = useState<'immediate' | 'onNextCandle'>('immediate');
     const [tradingPairLists, setTradingPairLists] = useState<TradingPairList[]>([]);
 
     // Context-internal state
@@ -273,11 +273,13 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         }
     }, [selectedPairs, tradingMode]);
 
-    // Reset agent-specific parameters when the timeframe changes, preserving user customizations
+    // Reset agent parameters when the agent or timeframe changes.
     useEffect(() => {
         const timeframeDefaults = constants.getAgentTimeframeSettings(selectedAgent.id, chartTimeFrame);
-        // Merge defaults with existing params, letting existing ones take precedence.
-        setAgentParams(prev => ({...timeframeDefaults, ...prev}));
+        // When timeframe or agent changes, reset the params to the new defaults.
+        // This ensures the UI always reflects the correct base parameters for the selected context.
+        // User customizations are initiated from this new baseline.
+        setAgentParams(timeframeDefaults);
     }, [selectedAgent, chartTimeFrame]);
 
     // --- Action Definitions ---
@@ -296,10 +298,8 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     
     const setSelectedAgentWithReset = useCallback((agent: Agent) => {
         setSelectedAgent(agent);
-        // This is the key: reset params when agent is explicitly changed.
-        const timeframeDefaults = constants.getAgentTimeframeSettings(agent.id, chartTimeFrame);
-        setAgentParams(timeframeDefaults); 
-    }, [chartTimeFrame]);
+        // The useEffect above will handle resetting the agent parameters.
+    }, []);
 
 
     const onSetMultiAssetMode = useCallback(async (isEnabled: boolean) => {

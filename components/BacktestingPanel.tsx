@@ -105,6 +105,21 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                     valueDisplay={(v) => `${v}%`}
                  />
             </div>);
+        case 17:
+            return (<div className="space-y-4">
+                <ParamSlider 
+                   label="Fast EMA Period"
+                   value={allParams.mst_emaFastPeriod!}
+                   onChange={(v) => updateParam('mst_emaFastPeriod', v)}
+                   min={20} max={100} step={1}
+               />
+               <ParamSlider 
+                   label="Slow EMA Period"
+                   value={allParams.mst_emaSlowPeriod!}
+                   onChange={(v) => updateParam('mst_emaSlowPeriod', v)}
+                   min={100} max={300} step={10}
+               />
+           </div>);
         default: return <p className="text-sm text-slate-500">This agent does not have any customizable parameters.</p>;
     }
 };
@@ -124,7 +139,7 @@ export type BacktestConfig = {
     tradingMode: TradingMode; selectedPair: string; chartTimeFrame: string; selectedAgent: Agent;
     investmentAmount: number; maxMarginLossPercent: number;
     isHtfConfirmationEnabled: boolean; isUniversalProfitTrailEnabled: boolean;
-    isMinRrEnabled: boolean; htfTimeFrame: 'auto' | string; isInvalidationCheckEnabled?: boolean;
+    isMinRrEnabled: boolean; htfTimeFrame: 'auto' | string; invalidationSensitivity: 'low' | 'medium' | 'high';
     isAgentTrailEnabled: boolean;
     isBreakevenTrailEnabled: boolean;
     isMarketCohesionEnabled?: boolean;
@@ -162,7 +177,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         isHtfConfirmationEnabled: globalConfig.isHtfConfirmationEnabled,
         isUniversalProfitTrailEnabled: globalConfig.isUniversalProfitTrailEnabled, htfTimeFrame: globalConfig.htfTimeFrame,
         agentParams: globalConfig.agentParams, leverage: globalConfig.leverage,
-        isMinRrEnabled: globalConfig.isMinRrEnabled, isInvalidationCheckEnabled: globalConfig.isInvalidationCheckEnabled,
+        isMinRrEnabled: globalConfig.isMinRrEnabled, invalidationSensitivity: globalConfig.invalidationSensitivity,
         isAgentTrailEnabled: globalConfig.isAgentTrailEnabled,
         isBreakevenTrailEnabled: globalConfig.isBreakevenTrailEnabled,
         isMarketCohesionEnabled: globalConfig.isMarketCohesionEnabled,
@@ -307,6 +322,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         globalActions.setIsHtfConfirmationEnabled(config.isHtfConfirmationEnabled);
         globalActions.setIsUniversalProfitTrailEnabled(config.isUniversalProfitTrailEnabled);
         globalActions.setIsMinRrEnabled(config.isMinRrEnabled);
+        globalActions.setInvalidationSensitivity(config.invalidationSensitivity);
         globalActions.setAgentParams(paramsToApply);
         globalActions.setEntryTiming(config.entryTiming);
         setActiveView('trading');
@@ -376,6 +392,19 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                         <div className="flex items-center justify-between"><label className={formLabelClass}>Mandatory Breakeven Trail</label><ToggleSwitch checked={config.isBreakevenTrailEnabled} onChange={v => updateConfig('isBreakevenTrailEnabled', v)} /></div>
                         <div className="flex items-center justify-between"><label className={formLabelClass}>Universal Profit Trail</label><ToggleSwitch checked={config.isUniversalProfitTrailEnabled} onChange={v => updateConfig('isUniversalProfitTrailEnabled', v)} /></div>
                         <div className="flex items-center justify-between"><label className={formLabelClass}>Minimum R:R Veto</label><ToggleSwitch checked={config.isMinRrEnabled} onChange={v => updateConfig('isMinRrEnabled', v)} /></div>
+                        <div className={formGroupClass}>
+                            <label htmlFor="invalidation-sensitivity-bt" className={formLabelClass}>Invalidation Sensitivity</label>
+                            <select 
+                                id="invalidation-sensitivity-bt" 
+                                value={config.invalidationSensitivity} 
+                                onChange={e => updateConfig('invalidationSensitivity', e.target.value as 'low' | 'medium' | 'high')}
+                                className={formInputClass}
+                            >
+                                <option value="low">Low</option>
+                                <option value="medium">Medium</option>
+                                <option value="high">High</option>
+                            </select>
+                        </div>
                          <div className="flex items-center justify-between">
                             <label className={formLabelClass}>Immediate Entry</label>
                             <ToggleSwitch checked={config.entryTiming === 'immediate'} onChange={v => updateConfig('entryTiming', v ? 'immediate' : 'onNextCandle')} />

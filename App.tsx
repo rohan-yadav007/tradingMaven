@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -33,7 +34,7 @@ const AppContent: React.FC = () => {
         selectedAgent, investmentAmount, isApiConnected,
         agentParams, maxMarginLossPercent,
         leverage, marginType, isHtfConfirmationEnabled, htfTimeFrame, isUniversalProfitTrailEnabled,
-        isMinRrEnabled, isInvalidationCheckEnabled, isReanalysisEnabled, htfAgentParams,
+        isMinRrEnabled, invalidationSensitivity, htfAgentParams,
         entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
@@ -125,8 +126,7 @@ const AppContent: React.FC = () => {
                     htfTimeFrame,
                     isUniversalProfitTrailEnabled,
                     isMinRrEnabled,
-                    isInvalidationCheckEnabled,
-                    isReanalysisEnabled,
+                    invalidationSensitivity,
                     isAgentTrailEnabled,
                     isBreakevenTrailEnabled,
                     isMarketCohesionEnabled,
@@ -158,8 +158,8 @@ const AppContent: React.FC = () => {
         botsToCreate, tradingMode, executionMode, leverage, marginType,
         selectedAgent, chartTimeFrame, investmentAmount, maxMarginLossPercent,
         isHtfConfirmationEnabled, htfTimeFrame, agentParams, htfAgentParams,
-        isUniversalProfitTrailEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
-        isReanalysisEnabled, currentFeeRate, entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
+        isUniversalProfitTrailEnabled, isMinRrEnabled, invalidationSensitivity,
+        currentFeeRate, entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled

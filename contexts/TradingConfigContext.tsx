@@ -25,8 +25,7 @@ interface TradingConfigState {
     isHtfConfirmationEnabled: boolean;
     isUniversalProfitTrailEnabled: boolean;
     isMinRrEnabled: boolean;
-    isReanalysisEnabled: boolean;
-    isInvalidationCheckEnabled: boolean;
+    invalidationSensitivity: 'low' | 'medium' | 'high';
     isAgentTrailEnabled: boolean;
     isBreakevenTrailEnabled: boolean;
     isMarketCohesionEnabled: boolean;
@@ -68,8 +67,7 @@ interface TradingConfigActions {
     setIsHtfConfirmationEnabled: (isEnabled: boolean) => void;
     setIsUniversalProfitTrailEnabled: (isEnabled: boolean) => void;
     setIsMinRrEnabled: (isEnabled: boolean) => void;
-    setIsReanalysisEnabled: (isEnabled: boolean) => void;
-    setIsInvalidationCheckEnabled: (isEnabled: boolean) => void;
+    setInvalidationSensitivity: (sensitivity: 'low' | 'medium' | 'high') => void;
     setIsAgentTrailEnabled: (isEnabled: boolean) => void;
     setIsBreakevenTrailEnabled: (isEnabled: boolean) => void;
     setIsMarketCohesionEnabled: (isEnabled: boolean) => void;
@@ -119,8 +117,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [isHtfConfirmationEnabled, setIsHtfConfirmationEnabled] = useState<boolean>(false);
     const [isUniversalProfitTrailEnabled, setIsUniversalProfitTrailEnabled] = useState<boolean>(true);
     const [isMinRrEnabled, setIsMinRrEnabled] = useState<boolean>(true);
-    const [isReanalysisEnabled, setIsReanalysisEnabled] = useState<boolean>(true);
-    const [isInvalidationCheckEnabled, setIsInvalidationCheckEnabled] = useState<boolean>(true);
+    const [invalidationSensitivity, setInvalidationSensitivity] = useState<'low' | 'medium' | 'high'>('medium');
     const [isAgentTrailEnabled, setIsAgentTrailEnabled] = useState<boolean>(true);
     const [isBreakevenTrailEnabled, setIsBreakevenTrailEnabled] = useState<boolean>(true);
     const [isMarketCohesionEnabled, setIsMarketCohesionEnabled] = useState<boolean>(true);
@@ -323,7 +320,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         setMaxMarginLossPercent,
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setAgentParams, setHtfAgentParams, setIsApiConnected, setWalletViewMode,
         setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError, setIsUniversalProfitTrailEnabled,
-        setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setEntryTiming,
+        setIsMinRrEnabled, setInvalidationSensitivity, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setEntryTiming,
         setIsMarketCohesionEnabled, setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
         setIsExhaustionFilterEnabled, setIsSmcVetoEnabled,
         addTradingPairList, updateTradingPairList, deleteTradingPairList,
@@ -338,15 +335,15 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         takeProfitValue: 0,
         isTakeProfitLocked: false,
         isHtfConfirmationEnabled, isUniversalProfitTrailEnabled, 
-        isMinRrEnabled, isReanalysisEnabled, isInvalidationCheckEnabled, isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled, isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
+        isMinRrEnabled, invalidationSensitivity, isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled, isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isSmcVetoEnabled, htfTimeFrame, tradingPairLists,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
         futuresSettingsError, multiAssetModeError, entryTiming
     };
 
     return (
-        <TradingConfigStateContext.Provider value={state}>
-            <TradingConfigActionsContext.Provider value={actions}>
+        <TradingConfigStateContext.Provider value={state as TradingConfigState}>
+            <TradingConfigActionsContext.Provider value={actions as any}>
                 {children}
             </TradingConfigActionsContext.Provider>
         </TradingConfigStateContext.Provider>

@@ -7,42 +7,37 @@ const bots = [
     { token: import.meta.env.VITE_TELEGRAM_BOT_TOKEN, chatId: import.meta.env.VITE_TELEGRAM_CHAT_ID },
     { token: import.meta.env.VITE_TELEGRAM_BOT_TOKEN_2, chatId: import.meta.env.VITE_TELEGRAM_CHAT_ID_2 },
     { token: import.meta.env.VITE_TELEGRAM_BOT_TOKEN_3, chatId: import.meta.env.VITE_TELEGRAM_CHAT_ID_3 },
-].filter(bot => bot.token && bot.chatId);
+].filter(bot => bot.token);
 
 const lastUpdateIds = new Map<string, number>();
-let isStarted = false; // Guard to prevent multiple initializations
+let isStarted = false;
 
 let _botManagerService: any;
 
 
-/**
- * Sends a message via Telegram. Can broadcast to all bots or send to a specific one.
- * @param text The message content (Markdown formatted).
- * @param specificChatId If provided, sends the message only to this chat ID. Otherwise, broadcasts to all.
- */
 async function sendMessage(text: string, specificChatId?: string) {
-    const targets = specificChatId 
-        ? bots.filter(b => b.chatId === specificChatId)
-        : bots;
-
-    if (targets.length === 0) {
-        if(specificChatId) console.error(`Telegram: No bot configured for chat ID ${specificChatId}`);
-        else console.warn('Telegram: sendMessage called but no bots are configured or no specific chat ID was provided.');
+    if (bots.length === 0) {
+        console.warn('Telegram: sendMessage called but no bots are configured.');
         return;
     }
 
-    const targetChatId = specificChatId || targets[0].chatId;
+    const targetChatId = specificChatId || bots[0].chatId;
+    if (!targetChatId) {
+        console.error('Telegram: No target chat ID available to send the message.');
+        return;
+    }
+    
+    // Use the first configured bot as the sender, but target the correct chat ID.
+    const senderBot = bots[0];
 
-    for (const bot of targets) {
-        try {
-            await fetch(`https://api.telegram.org/bot${bot.token}/sendMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chat_id: targetChatId, text, parse_mode: 'Markdown' }),
-            });
-        } catch (error) {
-            console.error(`Telegram: Failed to send message with bot ${bot.token.substring(0,10)}...:`, error);
-        }
+    try {
+        await fetch(`https://api.telegram.org/bot${senderBot.token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: targetChatId, text, parse_mode: 'Markdown' }),
+        });
+    } catch (error) {
+        console.error(`Telegram: Failed to send message with bot ${senderBot.token.substring(0,10)}...:`, error);
     }
 }
 
@@ -160,16 +155,14 @@ ID: \`${bot.id}\``;
                     leverage: finalTradingMode === TradingMode.Spot ? 1 : leverage,
                     mode: finalTradingMode,
                     executionMode: executionMode as 'paper' | 'live',
-                    timeFrame: '5m', // Default
+                    timeFrame: '5m',
                     maxMarginLossPercent: constants.MAX_MARGIN_LOSS_PERCENT,
-                    // --- Full default configuration ---
                     marginType: 'ISOLATED',
                     isHtfConfirmationEnabled: false,
                     htfTimeFrame: 'auto',
                     isUniversalProfitTrailEnabled: true,
                     isMinRrEnabled: true,
-                    isInvalidationCheckEnabled: true,
-                    isReanalysisEnabled: true,
+                    invalidationSensitivity: 'medium',
                     isAgentTrailEnabled: true,
                     isBreakevenTrailEnabled: true,
                     isMarketCohesionEnabled: true,
@@ -185,8 +178,7 @@ ID: \`${bot.id}\``;
                     stepSize: binanceService.getStepSize(symbolInfo),
                     takerFeeRate: constants.TAKER_FEE_RATE,
                     entryTiming: 'onNextCandle',
-                    telegramChatId: chatId, // Attach the chat ID to the config
-                    // Default legacy TP properties
+                    telegramChatId: chatId,
                     takeProfitMode: RiskMode.Percent,
                     takeProfitValue: 0,
                     isTakeProfitLocked: false,
@@ -264,7 +256,7 @@ Wins: ${wins} | Losses: ${losses}`,
     }
 }
 
-async function longPoll(bot: { token: string; chatId: string; }) {
+async function longPoll(bot: { token: string; chatId?: string; }) {
     if (!isStarted) return;
     const currentUpdateId = lastUpdateIds.get(bot.token) || 0;
 
@@ -290,9 +282,8 @@ async function longPoll(bot: { token: string; chatId: string; }) {
             }
             lastUpdateIds.set(bot.token, maxUpdateId);
         } else if (!data.ok && data.error_code === 409) {
-            // This is the conflict error. Stop polling from this instance.
             console.warn(`[Telegram Bot ${bot.token.substring(0,10)}...] 409 Conflict: Terminated by another getUpdates request. This instance will stop polling.`);
-            isStarted = false; // Stop this instance's loop
+            isStarted = false;
             return;
         }
     } catch (error) {
@@ -313,7 +304,7 @@ function start() {
         isStarted = true;
         console.log(`Telegram bot service starting with ${bots.length} bot(s)...`);
         
-        const uniqueChatIds = [...new Set(bots.map(b => b.chatId))];
+        const uniqueChatIds = [...new Set(bots.map(b => b.chatId).filter(id => id))];
         uniqueChatIds.forEach(chatId => {
             sendMessage("Trading Assistant is online. Use /help for commands.", chatId);
         });

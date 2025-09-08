@@ -113,6 +113,7 @@ const isObvTrending = (obvValues: number[], direction: 'bullish' | 'bearish', pe
     const lastObv = getLast(obvValues);
     const lastSma = getLast(obvSma);
     if (lastObv === undefined || lastSma === undefined) return false;
+    // @ts-ignore
     return direction === 'bullish' ? lastObv > lastSma : lastObv < lastSma;
 };
 
@@ -326,6 +327,58 @@ function isMarketCohesive(
 }
 
 /**
+ * Detects classic bullish or bearish divergence between price and RSI.
+ * @param klines - The kline data to analyze.
+ * @param rsiValues - Pre-calculated RSI values corresponding to the klines.
+ * @param positionDirection - The direction of the current trade ('LONG' or 'SHORT').
+ * @param lookback - The lookback period for finding pivots.
+ * @returns `true` if divergence is detected, `false` otherwise.
+ */
+function detectRsiDivergence(klines: Kline[], rsiValues: number[], positionDirection: 'LONG' | 'SHORT', lookback: number): boolean {
+    if (klines.length < (lookback * 2) + 2 || klines.length !== rsiValues.length) {
+        return false;
+    }
+
+    const pivots: { index: number; price: number, type: 'high' | 'low' }[] = [];
+    // A simplified pivot finder for this purpose
+    for (let i = lookback; i < klines.length - lookback; i++) {
+        const window = klines.slice(i - lookback, i + 1 + lookback);
+        const currentHigh = klines[i].high;
+        const currentLow = klines[i].low;
+        if (currentHigh === Math.max(...window.map(k => k.high))) pivots.push({ index: i, price: currentHigh, type: 'high'});
+        if (currentLow === Math.min(...window.map(k => k.low))) pivots.push({ index: i, price: currentLow, type: 'low'});
+    }
+
+    // Looking for bearish divergence to exit a LONG
+    if (positionDirection === 'LONG') {
+        const recentHighs = pivots.filter(p => p.type === 'high').slice(-2);
+        if (recentHighs.length === 2) {
+            const [prevHigh, lastHigh] = recentHighs;
+            const priceMakesHigherHigh = lastHigh.price > prevHigh.price;
+            const rsiMakesLowerHigh = rsiValues[lastHigh.index] < rsiValues[prevHigh.index];
+            if (priceMakesHigherHigh && rsiMakesLowerHigh) {
+                return true; // Bearish divergence found
+            }
+        }
+    }
+
+    // Looking for bullish divergence to exit a SHORT
+    if (positionDirection === 'SHORT') {
+        const recentLows = pivots.filter(p => p.type === 'low').slice(-2);
+        if (recentLows.length === 2) {
+            const [prevLow, lastLow] = recentLows;
+            const priceMakesLowerLow = lastLow.price < prevLow.price;
+            const rsiMakesHigherLow = rsiValues[lastLow.index] > rsiValues[prevLow.index];
+            if (priceMakesLowerLow && rsiMakesHigherLow) {
+                return true; // Bullish divergence found
+            }
+        }
+    }
+
+    return false;
+}
+
+/**
  * Captures a snapshot of the market's technical indicators for a given set of klines.
  * Can also capture a higher timeframe context if htfKlines are provided.
  * @param klines - The primary timeframe klines.
@@ -346,22 +399,22 @@ export function captureMarketContext(klines: Kline[], htfKlines?: Kline[]): Part
         const result: Partial<MarketDataContext> = {};
         if (k.length >= 14) {
              result.rsi14 = getLast(RSI.calculate({ period: 14, values: closes }));
-             result.adx14 = getLast(ADX.calculate({ period: 14, high: highs, low: lows, close: closes }));
+             result.adx14 = getLast(ADX.calculate({ period: 14, high: highs, low: lows, close: closes })) as ADXOutput | undefined;
              result.atr14 = getLast(ATR.calculate({ period: 14, high: highs, low: lows, close: closes }));
-             result.stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 }));
+             result.stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
              const vi14 = VortexIndicator.calculate({ period: 14, high: highs, low: lows, close: closes });
              if(getLast(vi14.pdi) !== undefined && getLast(vi14.ndi) !== undefined) {
                 result.vi14 = { pdi: getLast(vi14.pdi)!, ndi: getLast(vi14.ndi)! };
              }
         }
          if (k.length >= 20) {
-             result.bb20_2 = getLast(BollingerBands.calculate({ period: 20, stdDev: 2, values: closes }));
+             result.bb20_2 = getLast(BollingerBands.calculate({ period: 20, stdDev: 2, values: closes })) as BollingerBandsOutput | undefined;
              result.volumeSma20 = getLast(SMA.calculate({ period: 20, values: volumes }));
              const obv = OBV.calculate({ close: closes, volume: volumes });
              result.obvTrend = isObvTrending(obv, 'bullish') ? 'bullish' : isObvTrending(obv, 'bearish') ? 'bearish' : 'neutral';
          }
          if (k.length >= 26) {
-             result.macd = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false }));
+             result.macd = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false })) as MACDOutput | undefined;
          }
          if (k.length >= 9) result.ema9 = getLast(EMA.calculate({ period: 9, values: closes }));
          if (k.length >= 21) result.ema21 = getLast(EMA.calculate({ period: 21, values: closes }));
@@ -369,7 +422,7 @@ export function captureMarketContext(klines: Kline[], htfKlines?: Kline[]): Part
          if (k.length >= 200) result.ema200 = getLast(EMA.calculate({ period: 200, values: closes }));
          if (k.length >= 50) result.sma50 = getLast(SMA.calculate({ period: 50, values: closes }));
          if (k.length >= 200) result.sma200 = getLast(SMA.calculate({ period: 200, values: closes }));
-         result.ichiCloud = getLast(IchimokuCloud.calculate({ conversionPeriod: 9, basePeriod: 26, spanPeriod: 52, displacement: 26, high: highs, low: lows }));
+         result.ichiCloud = getLast(IchimokuCloud.calculate({ conversionPeriod: 9, basePeriod: 26, spanPeriod: 52, displacement: 26, high: highs, low: lows })) as IchimokuCloudOutput | undefined;
          result.lastCandlePattern = recognizeCandlestickPattern(k[k.length - 1], k[k.length - 2]);
          result.vwap = getLast(calculateVwap(k));
          result.lastVolume = getLast(volumes);
@@ -425,7 +478,7 @@ export const getInitialAgentTargets = (
     let agentStopLoss: number;
     const atrPeriod = params.atrPeriod;
     const atrValues = ATR.calculate({ high: highs, low: lows, close: closes, period: atrPeriod });
-    const currentAtr = getLast(atrValues) || (entryPrice * 0.01);
+    const currentAtr = (getLast(atrValues) as number | undefined) || (entryPrice * 0.01);
 
     // Default Fallback SL
     const fallbackStop = () => {
@@ -437,16 +490,16 @@ export const getInitialAgentTargets = (
     switch (agent.id) {
         case 9: // Quantum Scalper: Context-aware SL (Trending vs. Ranging).
             const adxValues = ADX.calculate({ high: highs, low: lows, close: closes, period: params.qsc_adxPeriod });
-            const adx = getLast(adxValues);
+            const adx = getLast(adxValues) as ADXOutput | undefined;
             if (!adx) { agentStopLoss = fallbackStop(); break; }
             
             const isTrending = adx.adx > params.qsc_adxThreshold;
             if (isTrending) { 
                 const psarInput = { high: highs, low: lows, step: params.qsc_psarStep, max: params.qsc_psarMax };
-                const psar = getLast(PSAR.calculate(psarInput));
+                const psar = getLast(PSAR.calculate(psarInput)) as number | undefined;
 
                 const stInput = { high: highs, low: lows, close: closes, period: params.qsc_superTrendPeriod, multiplier: params.qsc_superTrendMultiplier };
-                const st = getLast(Supertrend.calculate(stInput));
+                const st = getLast(Supertrend.calculate(stInput)) as number | undefined;
 
                 let psarCandidate: number | undefined;
                 if (psar && ((isLong && psar < entryPrice) || (!isLong && psar > entryPrice))) {
@@ -470,7 +523,7 @@ export const getInitialAgentTargets = (
                 }
             } else { // Use BB for ranging/reversion SL
                 const bbValues = BollingerBands.calculate({ period: params.qsc_bbPeriod, stdDev: params.qsc_bbStdDev, values: closes });
-                const bb = getLast(bbValues);
+                const bb = getLast(bbValues) as BollingerBandsOutput | undefined;
                 if (!bb) { agentStopLoss = fallbackStop(); break; }
                 agentStopLoss = isLong ? bb.lower - currentAtr * 0.2 : bb.upper + currentAtr * 0.2;
             }
@@ -482,7 +535,7 @@ export const getInitialAgentTargets = (
                 conversionPeriod: params.ichi_conversionPeriod, basePeriod: params.ichi_basePeriod,
                 spanPeriod: params.ichi_laggingSpanPeriod, displacement: params.ichi_displacement
             };
-            const ichi = getLast(IchimokuCloud.calculate(ichi_params_ch));
+            const ichi = getLast(IchimokuCloud.calculate(ichi_params_ch)) as IchimokuCloudOutput | undefined;
             if (ichi?.base) {
                 const kijunSen = ichi.base;
                 // Check if Kijun is on the protective side
@@ -501,7 +554,7 @@ export const getInitialAgentTargets = (
             break;
             
         case 14: // The Sentinel: SL based on Supertrend.
-            const st = getLast(Supertrend.calculate({ high: highs, low: lows, close: closes, period: 10, multiplier: 3 }));
+            const st = getLast(Supertrend.calculate({ high: highs, low: lows, close: closes, period: 10, multiplier: 3 })) as number | undefined;
             if (st) {
                 agentStopLoss = st;
             } else {
@@ -802,7 +855,7 @@ export function getMultiStageProfitSecureSignal(
 
 /**
  * An aggressive profit-locking system that activates after the price has moved 50%
- * of the distance from the current Stop Loss to the Take Profit target.
+ * of the distance from the trade's entry price to the Take Profit target.
  * It trails the price tightly to secure gains as it approaches the TP.
  * @param position - The current open position.
  * @param currentPrice - The live price tick.
@@ -813,7 +866,7 @@ export function getAggressiveRangeTrailSignal(
     currentPrice: number
 ): TradeManagementSignal {
     const { 
-        entryPrice, 
+        entryPrice,
         stopLossPrice,
         takeProfitPrice,
         direction, 
@@ -821,29 +874,34 @@ export function getAggressiveRangeTrailSignal(
 
     const isLong = direction === 'LONG';
     
-    // Total distance from the *current* stop loss to the take profit
-    const slToTpDistance = Math.abs(takeProfitPrice - stopLossPrice);
-    if (slToTpDistance <= 1e-9) { // Avoid division by zero
+    // Total distance from the *entry point* to the take profit target
+    const entryToTpDistance = Math.abs(takeProfitPrice - entryPrice);
+    if (entryToTpDistance <= 1e-9) { // Avoid division by zero
         return { reasons: [] };
     }
 
-    // How far the price has moved from the stop loss towards the take profit
-    const progressFromSl = isLong ? (currentPrice - stopLossPrice) : (stopLossPrice - currentPrice);
+    // How far the price has moved from the entry point towards the take profit
+    const progressFromEntry = isLong ? (currentPrice - entryPrice) : (entryPrice - currentPrice);
 
-    // Trigger when price moves 50% of the way from SL to TP
-    const triggerDistance = slToTpDistance * 0.5;
+    // This trail should only be active when the trade is in profit.
+    if (progressFromEntry <= 0) {
+        return { reasons: [] };
+    }
 
-    if (progressFromSl > triggerDistance) {
+    // Trigger when price moves 50% of the way from Entry to TP
+    const triggerDistance = entryToTpDistance * 0.5;
+
+    if (progressFromEntry > triggerDistance) {
         // Once triggered, it trails aggressively.
-        // The trail distance will be 25% of the total SL-to-TP range.
-        const trailDistance = slToTpDistance * 0.25;
+        // The trail distance will be 25% of the total Entry-to-TP range.
+        const trailDistance = entryToTpDistance * 0.25;
         const newStopLoss = isLong ? currentPrice - trailDistance : currentPrice + trailDistance;
         
         // Only update if the new stop loss is an improvement.
         if ((isLong && newStopLoss > stopLossPrice) || (!isLong && newStopLoss < stopLossPrice)) {
             return {
                 newStopLoss,
-                reasons: [`Aggressive Trail: Price >50% to TP, trailing SL.`],
+                reasons: [`Aggressive Trail: Price >50% of Entry-to-TP range.`],
                 newState: { aggressiveTrailTier: 1 },
                 activeStopLossReason: 'Profit Secure'
             };
@@ -912,11 +970,11 @@ export function getAgentExitSignal(
             
             const psarInput = { high: highs, low: lows, step, max };
             if (psarInput.high.length >= 2) {
-                const psar = getLast(PSAR.calculate(psarInput));
+                const psar = getLast(PSAR.calculate(psarInput)) as number | undefined;
                 if (psar) {
                     // Add a small ATR buffer to prevent overly tight stops
                     const atrValues = ATR.calculate({ high: highs, low: lows, close: closes, period: 14 });
-                    const lastAtr = getLast(atrValues) || 0;
+                    const lastAtr = (getLast(atrValues) as number | undefined) || 0;
                     const buffer = lastAtr * 0.1; // 10% of ATR as a buffer
                     newStopLoss = isLong ? psar - buffer : psar + buffer;
                 }
@@ -926,11 +984,11 @@ export function getAgentExitSignal(
         case 11: 
         case 13: 
             const baseEmaPeriod = agent.id === 11 ? params.he_slowEmaPeriod : params.ch_slowEmaPeriod;
-            const fastEmaPeriod = agent.id === 11 ? params.he_fastEmaPeriod : params.ch_fastEmaPeriod;
+            const fastEmaPeriod = agent.id === 11 ? params.he_fastEmaPeriod : params.ch_slowEmaPeriod;
             const trailEmaPeriod = Math.max(fastEmaPeriod, Math.round(baseEmaPeriod / profitVelocity));
             if (profitVelocity > 1) reasons.push(`Agent Trail: Profit Velocity active (${profitVelocity}x speed)`);
             else reasons.push('Agent EMA Trail');
-            newStopLoss = getLast(EMA.calculate({ period: trailEmaPeriod, values: closes }));
+            newStopLoss = getLast(EMA.calculate({ period: trailEmaPeriod, values: closes })) as number | undefined;
             break;
 
         case 14: 
@@ -938,13 +996,13 @@ export function getAgentExitSignal(
             const trailMultiplier = Math.max(1, baseMultiplier / profitVelocity);
             if (profitVelocity > 1) reasons.push(`Agent Trail: Profit Velocity active (${profitVelocity}x speed)`);
             else reasons.push('Agent Supertrend Trail');
-            newStopLoss = getLast(Supertrend.calculate({ high: highs, low: lows, close: closes, period: 10, multiplier: trailMultiplier }));
+            newStopLoss = getLast(Supertrend.calculate({ high: highs, low: lows, close: closes, period: 10, multiplier: trailMultiplier })) as number | undefined;
             break;
 
         case 16:
             const ichi_params = { high: highs, low: lows, conversionPeriod: params.ichi_conversionPeriod, basePeriod: params.ichi_basePeriod, spanPeriod: params.ichi_laggingSpanPeriod, displacement: params.ichi_displacement };
             const ichiValues = IchimokuCloud.calculate(ichi_params);
-            const lastIchi = getLast(ichiValues);
+            const lastIchi = getLast(ichiValues) as IchimokuCloudOutput | undefined;
             if(lastIchi) {
                 newStopLoss = isLong ? lastIchi.spanA : lastIchi.spanB;
                 if(newStopLoss) reasons.push('Agent Ichimoku Cloud Trail');
@@ -957,8 +1015,9 @@ export function getAgentExitSignal(
     
     if (position.isBreakevenSet && newStopLoss !== undefined) {
         const feeRate = position.takerFeeRate;
+        // FIX: Corrected breakeven calculation logic
         const breakevenPrice = isLong
-            ? position.entryPrice * (1 + feeRate) / (1 + feeRate)
+            ? position.entryPrice * (1 + feeRate) / (1 - feeRate)
             : position.entryPrice * (1 - feeRate) / (1 + feeRate);
         if (isLong) newStopLoss = Math.max(newStopLoss, breakevenPrice);
         else newStopLoss = Math.min(newStopLoss, breakevenPrice);
@@ -1027,10 +1086,10 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
     const lastKline = klines[klines.length - 1];
     let reasons: string[] = [];
 
-    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.adxPeriod }));
+    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.adxPeriod })) as ADXOutput | undefined;
     const bbValues = BollingerBands.calculate({ period: params.qsc_bbPeriod, stdDev: params.qsc_bbStdDev, values: closes });
-    const bb = getLast(bbValues);
-    const stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 }));
+    const bb = getLast(bbValues) as BollingerBandsOutput | undefined;
+    const stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
     
     if (!adx || !bb || !stochRsi) {
         return { signal: 'HOLD', reasons: [`ℹ️ Insufficient data for core indicators.`] };
@@ -1064,7 +1123,7 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
 
         // --- MOMENTUM SCORING (Max 40) ---
         const rsiValues = RSI.calculate({ period: 14, values: closes });
-        const lastRsi = getLast(rsiValues);
+        const lastRsi = getLast(rsiValues) as number | undefined;
         if (!lastRsi) return { signal: 'HOLD', reasons: ['ℹ️ Cannot calculate RSI for momentum.'] };
         
         const rsiSellThreshold = 100 - params.qsc_rsiMomentumThreshold;
@@ -1080,7 +1139,7 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
         else if (stochRsi.k > stochRsi.d && stochRsi.k < 50) { bearScore -= 15; reasons.push(`❌ Momentum: StochRSI Bullish Crossover`); }
         
         // --- CONFIRMATION SCORING (Max 20) ---
-        const macd = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false }));
+        const macd = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false })) as MACDOutput | undefined;
         if (!macd || macd.histogram === undefined) return { signal: 'HOLD', reasons: ['ℹ️ Cannot calculate MACD for confirmation.'] };
 
         
@@ -1101,7 +1160,7 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
         if (bullScore >= params.qsc_trendScoreThreshold && bullScore > bearScore) {
             return { signal: 'BUY', reasons };
         }
-        if (bearScore >= params.qsc_trendScoreThreshold && bearScore > bullScore) {
+        if (bearScore >= params.qsc_trendScoreThreshold && bearScore > bearScore) {
             return { signal: 'SELL', reasons };
         }
         
@@ -1165,11 +1224,11 @@ const getHistoricExpertSignal = (klines: Kline[], config: BotConfig, htfContext?
     const lastKline = getLast(klines);
     const reasons: string[] = [];
 
-    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.adxPeriod }));
-    const atr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: params.atrPeriod }));
-    const trendSma = getLast(SMA.calculate({ period: params.he_trendSmaPeriod, values: closes }));
-    const pullbackEma = getLast(EMA.calculate({ period: params.he_fastEmaPeriod, values: closes }));
-    const rsi = getLast(RSI.calculate({ period: params.he_rsiPeriod, values: closes }));
+    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.adxPeriod })) as ADXOutput | undefined;
+    const atr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: params.atrPeriod })) as number | undefined;
+    const trendSma = getLast(SMA.calculate({ period: params.he_trendSmaPeriod, values: closes })) as number | undefined;
+    const pullbackEma = getLast(EMA.calculate({ period: params.he_fastEmaPeriod, values: closes })) as number | undefined;
+    const rsi = getLast(RSI.calculate({ period: params.he_rsiPeriod, values: closes })) as number | undefined;
 
     if (!lastKline || !adx || !atr || !trendSma || !pullbackEma || !rsi) {
         return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data for indicators.'] };
@@ -1229,15 +1288,15 @@ const getChameleonSignal = (klines: Kline[], config: BotConfig, htfContext?: Mar
     const lows = klines.map(k => k.low);
     const reasons: string[] = [];
 
-    const trendEma = getLast(EMA.calculate({ period: params.ch_trendEmaPeriod, values: closes }));
-    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.adxPeriod }));
+    const trendEma = getLast(EMA.calculate({ period: params.ch_trendEmaPeriod, values: closes })) as number | undefined;
+    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.adxPeriod })) as ADXOutput | undefined;
     const fastEmaValues = EMA.calculate({ period: params.ch_fastEmaPeriod, values: closes });
     const slowEmaValues = EMA.calculate({ period: params.ch_slowEmaPeriod, values: closes });
-    const lastFastEma = getLast(fastEmaValues);
-    const prevFastEma = getPenultimate(fastEmaValues);
-    const lastSlowEma = getLast(slowEmaValues);
-    const prevSlowEma = getPenultimate(slowEmaValues);
-    const currentPrice = getLast(closes);
+    const lastFastEma = getLast(fastEmaValues) as number | undefined;
+    const prevFastEma = getPenultimate(fastEmaValues) as number | undefined;
+    const lastSlowEma = getLast(slowEmaValues) as number | undefined;
+    const prevSlowEma = getPenultimate(slowEmaValues) as number | undefined;
+    const currentPrice = getLast(closes) as number | undefined;
     
     if(!trendEma || !adx || !lastFastEma || !prevFastEma || !lastSlowEma || !prevSlowEma || !currentPrice) {
          return { signal: 'HOLD', reasons: ['ℹ️ Insufficient data for indicators.'] };
@@ -1288,14 +1347,14 @@ const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfContext?: M
     const highs = klines.map(k => k.high);
     const lows = klines.map(k => k.low);
     const volumes = klines.map(k => k.volume || 0);
-    const currentPrice = getLast(closes);
-    const ema50 = getLast(EMA.calculate({ period: 50, values: closes }));
-    const ema200 = getLast(EMA.calculate({ period: 200, values: closes }));
+    const currentPrice = getLast(closes) as number | undefined;
+    const ema50 = getLast(EMA.calculate({ period: 50, values: closes })) as number | undefined;
+    const ema200 = getLast(EMA.calculate({ period: 200, values: closes })) as number | undefined;
     const macdValues = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
-    const macd = getLast(macdValues);
-    const prevMacd = getPenultimate(macdValues);
-    const rsi = getLast(RSI.calculate({ values: closes, period: 14 }));
-    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: 14 }));
+    const macd = getLast(macdValues) as MACDOutput | undefined;
+    const prevMacd = getPenultimate(macdValues) as MACDOutput | undefined;
+    const rsi = getLast(RSI.calculate({ values: closes, period: 14 })) as number | undefined;
+    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: 14 })) as ADXOutput | undefined;
     const vi = VortexIndicator.calculate({ high: highs, low: lows, close: closes, period: params.viPeriod });
     const last_vi_plus = getLast(vi.pdi);
     const last_vi_minus = getLast(vi.ndi);
@@ -1392,14 +1451,14 @@ const getIchimokuTrendRiderSignal = (klines: Kline[], config: BotConfig, htfCont
     const highs = klines.map(k => k.high);
     const lows = klines.map(k => k.low);
     const volumes = klines.map(k => k.volume || 0);
-    const currentPrice = getLast(closes);
-    const prevPrice = getPenultimate(closes);
+    const currentPrice = getLast(closes) as number | undefined;
+    const prevPrice = getPenultimate(closes) as number | undefined;
     let reasons: string[] = [];
 
     const ichi_params = { high: highs, low: lows, conversionPeriod: params.ichi_conversionPeriod, basePeriod: params.ichi_basePeriod, spanPeriod: params.ichi_laggingSpanPeriod, displacement: params.ichi_displacement };
     const ichiValues = IchimokuCloud.calculate(ichi_params);
-    const lastIchi = getLast(ichiValues);
-    const prevIchi = getPenultimate(ichiValues);
+    const lastIchi = getLast(ichiValues) as IchimokuCloudOutput | undefined;
+    const prevIchi = getPenultimate(ichiValues) as IchimokuCloudOutput | undefined;
     
     if (!currentPrice || !prevPrice || !lastIchi || !prevIchi || !lastIchi.spanA || !lastIchi.spanB || !prevIchi.spanA || !prevIchi.spanB) {
         return { signal: 'HOLD', reasons: ['ℹ️ Ichimoku Cloud not yet formed.'] };
@@ -1468,10 +1527,85 @@ const getIchimokuTrendRiderSignal = (klines: Kline[], config: BotConfig, htfCont
     return { signal: 'HOLD', reasons: ['ℹ️ No valid Ichimoku signal.'] };
 };
 
+// --- Agent 17: Momentum Swing Trader ---
+const getMomentumSwingTraderSignal = (klines: Kline[], config: BotConfig, htfContext?: MarketDataContext): TradeSignal => {
+    const params = config.agentParams as Required<AgentParams>;
+    const minKlines = params.mst_emaSlowPeriod;
+    if (klines.length < minKlines) {
+        return { signal: 'HOLD', reasons: [`ℹ️ Insufficient data for analysis (${klines.length}/${minKlines} candles).`] };
+    }
+
+    const closes = klines.map(k => k.close);
+    const currentPrice = getLast(closes) as number | undefined;
+    
+    // Indicators
+    const vwap = getLast(calculateVwap(klines));
+    const emaFast = getLast(EMA.calculate({ period: params.mst_emaFastPeriod, values: closes })) as number | undefined;
+    const emaSlow = getLast(EMA.calculate({ period: params.mst_emaSlowPeriod, values: closes })) as number | undefined;
+    const macd = getLast(MACD.calculate({
+        values: closes,
+        fastPeriod: params.mst_macdFastPeriod,
+        slowPeriod: params.mst_macdSlowPeriod,
+        signalPeriod: params.mst_macdSignalPeriod,
+        SimpleMAOscillator: false,
+        SimpleMASignal: false
+    })) as MACDOutput | undefined;
+
+    if (!currentPrice || !vwap || !emaFast || !emaSlow || !macd?.histogram) {
+        return { signal: 'HOLD', reasons: ['ℹ️ Required indicators are not ready.'] };
+    }
+
+    // Bullish Conditions
+    const isBullishTrend = emaFast > emaSlow;
+    const isPriceAboveVwap = currentPrice > vwap;
+    const isMacdBullish = macd.histogram > 0;
+    
+    // Bearish Conditions
+    const isBearishTrend = emaFast < emaSlow;
+    const isPriceBelowVwap = currentPrice < vwap;
+    const isMacdBearish = macd.histogram < 0;
+
+    const bullishReasons: string[] = [
+        isBullishTrend ? `✅ Trend: Bullish (EMA ${params.mst_emaFastPeriod} > ${params.mst_emaSlowPeriod})` : `❌ Trend: Not Bullish`,
+        isPriceAboveVwap ? `✅ Bias: Bullish (Price > VWAP)` : `❌ Bias: Not Bullish`,
+        isMacdBullish ? `✅ Momentum: Bullish (MACD Hist > 0)` : `❌ Momentum: Not Bullish`
+    ];
+    
+    // Check for a BUY signal
+    if (isBullishTrend && isPriceAboveVwap && isMacdBullish) {
+        return { signal: 'BUY', reasons: bullishReasons };
+    }
+
+    const bearishReasons: string[] = [
+        isBearishTrend ? `✅ Trend: Bearish (EMA ${params.mst_emaFastPeriod} < ${params.mst_emaSlowPeriod})` : `❌ Trend: Not Bearish`,
+        isPriceBelowVwap ? `✅ Bias: Bearish (Price < VWAP)` : `❌ Bias: Not Bearish`,
+        isMacdBearish ? `✅ Momentum: Bearish (MACD Hist < 0)` : `❌ Momentum: Not Bearish`
+    ];
+
+    // Check for a SELL signal
+    if (isBearishTrend && isPriceBelowVwap && isMacdBearish) {
+        return { signal: 'SELL', reasons: bearishReasons };
+    }
+    
+    // If no signal, determine which direction has more conviction to provide better feedback.
+    const bullConditionsMet = [isBullishTrend, isPriceAboveVwap, isMacdBullish].filter(Boolean).length;
+    const bearConditionsMet = [isBearishTrend, isPriceBelowVwap, isMacdBearish].filter(Boolean).length;
+
+    if (bullConditionsMet > bearConditionsMet) {
+        bullishReasons.unshift('ℹ️ Waiting for bullish signal confirmation.');
+        return { signal: 'HOLD', reasons: bullishReasons };
+    } else if (bearConditionsMet > bullConditionsMet) {
+        bearishReasons.unshift('ℹ️ Waiting for bearish signal confirmation.');
+        return { signal: 'HOLD', reasons: bearishReasons };
+    }
+
+    // Default message if conviction is tied or zero.
+    return { signal: 'HOLD', reasons: ['ℹ️ No clear directional bias. Waiting for conditions to align.'] };
+};
+
 export const validateTradeProfitability = (
     entryPrice: number,
     finalStopLossPrice: number,
-    agentStopLossPrice: number,
     takeProfitPrice: number,
     direction: 'LONG' | 'SHORT',
     config: BotConfig
@@ -1499,13 +1633,13 @@ export const validateTradeProfitability = (
 
     // Check 3: Enforce Minimum Risk/Reward if enabled.
     if (config.isMinRrEnabled) {
-        // CRITICAL FIX: Use agent's intended stop loss for R:R calculation, not the hard cap.
-        const risk = Math.abs(entryPrice - agentStopLossPrice);
+        // CRITICAL FIX: Use the final, actual stop loss for R:R calculation.
+        const risk = Math.abs(entryPrice - finalStopLossPrice);
         const reward = Math.abs(takeProfitPrice - entryPrice);
         const rrRatio = risk > 0 ? reward / risk : 0;
 
         if (rrRatio < constants.MIN_RISK_REWARD_RATIO) {
-            return { isValid: false, reason: `❌ VETO: Agent's R:R (${rrRatio.toFixed(2)}) is below the system minimum of ${constants.MIN_RISK_REWARD_RATIO}.` };
+            return { isValid: false, reason: `❌ VETO: R:R (${rrRatio.toFixed(2)}) is below the system minimum of ${constants.MIN_RISK_REWARD_RATIO}.` };
         }
         return { isValid: true, reason: `✅ R:R Veto: Passed (${rrRatio.toFixed(2)}:1)` };
     }
@@ -1518,59 +1652,71 @@ export async function getSupervisorSignal(
     klines: Kline[],
     originalConfig: BotConfig,
     htfKlines?: Kline[]
-): Promise<{ action: 'hold' | 'close'; reason: string }> {
+): Promise<{ score: number; reasons: string[] }> {
     const config = applyTimeframeSettings(originalConfig);
-    const { agent } = config;
+    const params = config.agentParams as Required<AgentParams>;
+
+    let score = 0;
+    const reasons: string[] = [];
 
     if ((position.candlesSinceEntry || 0) < 3) {
-        return { action: 'hold', reason: '' };
+        return { score: 0, reasons: ['Initial grace period.'] };
+    }
+
+    const currentContext = captureMarketContext(klines, htfKlines);
+    const lastClose = currentContext.lastClose;
+    if (!lastClose) return { score: 0, reasons: ['Could not get last close price.'] };
+
+    const isLong = position.direction === 'LONG';
+
+    // 1. Momentum Decay (Max 30 points)
+    const rsi = currentContext.rsi14;
+    if (rsi) {
+        if (isLong && rsi < 48) {
+            score += 30;
+            reasons.push(`Momentum Faded (RSI < 48)`);
+        } else if (!isLong && rsi > 52) {
+            score += 30;
+            reasons.push(`Momentum Faded (RSI > 52)`);
+        }
+    }
+
+    // 2. Market Structure Break (Max 40 points)
+    const ema21 = currentContext.ema21;
+    if (ema21) {
+        if (isLong && lastClose < ema21) {
+            score += 40;
+            reasons.push(`Market Structure Break (Price < EMA21)`);
+        } else if (!isLong && lastClose > ema21) {
+            score += 40;
+            reasons.push(`Market Structure Break (Price > EMA21)`);
+        }
     }
     
-    // Fading Momentum Check: The most critical part of this system.
-    // If a trade has become profitable but the underlying momentum has completely died,
-    // it's a strong signal to exit and protect profits/minimize loss.
-    const currentContext = captureMarketContext(klines, htfKlines);
-    const currentRsi = currentContext.rsi14;
-
-    if (position.hasBeenProfitable && currentRsi) {
-        const isLong = position.direction === 'LONG';
-        if (isLong && currentRsi < 48) { // RSI drops below neutral, bullish momentum is gone
-            return { action: 'close', reason: `Supervisor Exit: Bullish momentum faded (RSI dropped to ${currentRsi.toFixed(1)})` };
+    // 3. Contradictory Candlestick Pattern (Max 20 points)
+    const lastPattern = currentContext.lastCandlePattern;
+    if (lastPattern) {
+        if (isLong && lastPattern.type === 'bearish') {
+            score += 20;
+            reasons.push(`Contradictory Pattern (${lastPattern.name})`);
+        } else if (!isLong && lastPattern.type === 'bullish') {
+            score += 20;
+            reasons.push(`Contradictory Pattern (${lastPattern.name})`);
         }
-        if (!isLong && currentRsi > 52) { // RSI rises above neutral, bearish momentum is gone
-            return { action: 'close', reason: `Supervisor Exit: Bearish momentum faded (RSI rose to ${currentRsi.toFixed(1)})` };
+    }
+    
+    // 4. Time-Based Decay (Max 30 points)
+    const candlesSinceEntry = position.candlesSinceEntry || 0;
+    const invalidationCandleLimit = params.invalidationCandleLimit || 10;
+    if (!position.hasBeenProfitable && candlesSinceEntry > invalidationCandleLimit) {
+        const decayScore = Math.min(30, Math.floor((candlesSinceEntry - invalidationCandleLimit) / (invalidationCandleLimit / 2)) * 10);
+        if (decayScore > 0) {
+            score += decayScore;
+            reasons.push(`Time Decay (${candlesSinceEntry} candles w/ no profit)`);
         }
     }
 
-    // Agent Re-analysis: Check if the original entry thesis is still valid.
-    if (config.isReanalysisEnabled) {
-        let htfContext: MarketDataContext | undefined;
-        if (config.isHtfConfirmationEnabled && htfKlines && htfKlines.length > 50) {
-            htfContext = captureMarketContext([], htfKlines);
-        }
-
-        let rawSignal: TradeSignal;
-        switch (agent.id) {
-            case 9:  rawSignal = getQuantumScalperSignal(klines, config, htfContext); break;
-            case 11: rawSignal = getHistoricExpertSignal(klines, config, htfContext); break;
-            case 13: rawSignal = getChameleonSignal(klines, config, htfContext); break;
-            case 14: rawSignal = getTheSentinelSignal(klines, config, htfContext); break;
-            case 16: rawSignal = getIchimokuTrendRiderSignal(klines, config, htfContext); break;
-            default: rawSignal = { signal: 'HOLD', reasons: ['Agent not found for re-analysis'] }; break;
-        }
-        
-        const isLong = position.direction === 'LONG';
-        const requiredSignal = isLong ? 'BUY' : 'SELL';
-        
-        if (rawSignal.signal !== requiredSignal) {
-             const reason = rawSignal.signal === 'HOLD'
-                ? 'Supervisor Exit: Trade thesis invalidated (entry conditions no longer met).'
-                : 'Supervisor Exit: Trade thesis invalidated (signal flipped).';
-             return { action: 'close', reason };
-        }
-    }
-
-    return { action: 'hold', reason: '' };
+    return { score: Math.min(100, score), reasons };
 }
 
 export function getAdaptiveTakeProfit(
@@ -1599,7 +1745,7 @@ function getExhaustionFilterVeto(
 ): { veto: boolean; reason: string } {
     if (klines.length < 14) return { veto: false, reason: '' }; // Need enough data for StochRSI
     const closes = klines.map(k => k.close);
-    const stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 }));
+    const stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
     if (!stochRsi) return { veto: false, reason: '' };
 
     const isLong = direction === 'BUY';
@@ -1627,7 +1773,7 @@ function getMeanReversionVeto(
 ): { veto: boolean; reason: string } {
     const params = config.agentParams as Required<AgentParams>;
     const closes = klines.map(k => k.close);
-    const lastRsi = getLast(RSI.calculate({ period: 14, values: closes }));
+    const lastRsi = getLast(RSI.calculate({ period: 14, values: closes })) as number | undefined;
     if (lastRsi === undefined) return { veto: false, reason: '' };
     
     const isLong = direction === 'BUY';
@@ -1684,14 +1830,14 @@ function getBtcTrendScore(
     const closes = btcKlines.map(k => k.close);
     const highs = btcKlines.map(k => k.high);
     const lows = btcKlines.map(k => k.low);
-    const currentPrice = getLast(closes)!;
+    const currentPrice = getLast(closes)! as number;
 
     let bullScore = 0;
     let bearScore = 0;
 
     // 1. Trend Component (50 points) - EMA Alignment
-    const ema21 = getLast(EMA.calculate({ period: 21, values: closes }))!;
-    const ema50 = getLast(EMA.calculate({ period: 50, values: closes }))!;
+    const ema21 = getLast(EMA.calculate({ period: 21, values: closes }))! as number;
+    const ema50 = getLast(EMA.calculate({ period: 50, values: closes }))! as number;
     if (currentPrice > ema21 && ema21 > ema50) {
         bullScore += 50;
     } else if (currentPrice < ema21 && ema21 < ema50) {
@@ -1700,8 +1846,8 @@ function getBtcTrendScore(
 
     // 2. Momentum Component (30 points) - MACD
     const macdValues = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
-    const macd = getLast(macdValues)!;
-    const prevMacd = getPenultimate(macdValues)!;
+    const macd = getLast(macdValues)! as MACDOutput;
+    const prevMacd = getPenultimate(macdValues)! as MACDOutput;
     if (macd.histogram! > 0 && macd.histogram! > (prevMacd.histogram || 0)) {
         bullScore += 30;
     } else if (macd.histogram! < 0 && macd.histogram! < (prevMacd.histogram || 0)) {
@@ -1709,7 +1855,7 @@ function getBtcTrendScore(
     }
     
     // 3. Strength Component (20 points) - ADX
-    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: 14 }))!;
+    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: 14 }))! as ADXOutput;
     if (adx.adx > 20) { // Only score if trend has strength
         if (adx.pdi > adx.mdi) {
             bullScore += 20;
@@ -1830,6 +1976,7 @@ export const getTradingSignal = async (
         case 13: signal = getChameleonSignal(klines, config, htfContext); break;
         case 14: signal = getTheSentinelSignal(klines, config, htfContext); break;
         case 16: signal = getIchimokuTrendRiderSignal(klines, config, htfContext); break;
+        case 17: signal = getMomentumSwingTraderSignal(klines, config, htfContext); break;
         default: signal = { signal: 'HOLD', reasons: ['Agent not found'] };
     }
 
@@ -1841,8 +1988,8 @@ export const getTradingSignal = async (
     if (config.isSmcVetoEnabled) {
         const closes = klines.map(k => k.close);
         const volumes = klines.map(k => k.volume || 0);
-        const rsiValues = RSI.calculate({ period: 14, values: closes });
-        const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes }));
+        const rsiValues = RSI.calculate({ period: 14, values: closes }) as number[];
+        const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes })) as number | undefined;
         const smcVeto = getSmcVeto(klines, signal.signal, config, rsiValues, volumeSma);
         if (smcVeto.veto) {
             signal.reasons.push(smcVeto.reason);

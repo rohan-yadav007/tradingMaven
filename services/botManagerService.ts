@@ -1,3 +1,5 @@
+
+
 import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, RiskMode, TradingMode, BinanceOrderResponse, TradeManagementSignal, AgentParams, MarketDataContext } from '../types';
 import * as binanceService from './binanceService';
 import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext } from './localAgentService';
@@ -277,14 +279,25 @@ class BotInstance {
                     this.addLog(`Analysis: HOLD. ${primaryReason.substring(2)}`, LogType.Info);
                 }
             } else if (isForManagement) {
-                 if(this.bot.config.isInvalidationCheckEnabled) {
-                    const supervisorSignal = await getSupervisorSignal(this.bot.openPosition!, this.klines, this.bot.config, htfKlines);
-                    if (supervisorSignal.action === 'close') {
-                        this.addLog(supervisorSignal.reason, LogType.Action);
-                        this.handlers.onClosePosition(this.bot.openPosition!, supervisorSignal.reason, this.bot.livePrice || 0);
-                        return;
-                    }
-                 }
+                const { score, reasons } = await getSupervisorSignal(this.bot.openPosition!, this.klines, this.bot.config, htfKlines);
+
+                this.updateState({
+                    openPosition: { ...this.bot.openPosition!, invalidationScore: score }
+                });
+
+                const sensitivityThreshold = {
+                    low: 80,
+                    medium: 65,
+                    high: 50
+                }[this.bot.config.invalidationSensitivity];
+
+                if (score >= sensitivityThreshold) {
+                    const reason = `Supervisor Exit: Thesis Invalidated (Score: ${score} >= ${sensitivityThreshold}). Reasons: ${reasons.join(' ')}`;
+                    this.addLog(reason, LogType.Action);
+                    this.handlers.onClosePosition(this.bot.openPosition!, reason, this.bot.livePrice || 0);
+                    return;
+                }
+
             } else { // It's for preview
                 const signal = await getTradingSignal(this.bot.config.agent, this.klines, this.bot.config, htfKlines);
                 this.updateState({ analysis: signal });
@@ -363,7 +376,7 @@ class BotInstance {
         const { config } = this.bot;
         const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(klinesForAnalysis, currentPrice, isLong ? 'LONG' : 'SHORT', config);
         
-        const validation = validateTradeProfitability(currentPrice, stopLossPrice, agentStopLoss, takeProfitPrice, isLong ? 'LONG' : 'SHORT', this.bot.config);
+        const validation = validateTradeProfitability(currentPrice, stopLossPrice, takeProfitPrice, isLong ? 'LONG' : 'SHORT', this.bot.config);
         if (!validation.isValid) {
             this.notifyTradeExecutionFailed(validation.reason);
             return;
@@ -400,51 +413,78 @@ class BotInstance {
         let positionState: Position = { ...this.bot.openPosition };
         const isLong = positionState.direction === 'LONG';
         let changes: Partial<Position> = {};
-        
+    
+        // Track MFE/MAE and profit status
         const isInProfit = isLong ? currentPrice > positionState.entryPrice : currentPrice < positionState.entryPrice;
         if (!positionState.hasBeenProfitable && isInProfit) changes.hasBeenProfitable = true;
-
         const peak = positionState.peakPrice ?? positionState.entryPrice;
         if ((isLong && currentPrice > peak) || (!isLong && currentPrice < peak)) changes.peakPrice = currentPrice;
-        
         const trough = positionState.troughPrice ?? positionState.entryPrice;
         if ((isLong && currentPrice < trough) || (!isLong && currentPrice > trough)) changes.troughPrice = currentPrice;
-
-        const stopCandidates: { price: number; reason: Position['activeStopLossReason']; newState?: Partial<Position> }[] = [
-            { price: positionState.stopLossPrice, reason: positionState.activeStopLossReason }
-        ];
-
-        if (this.bot.config.isInvalidationCheckEnabled) {
-            const spikeSignal = getProfitSpikeSignal(positionState, currentPrice);
-            if (spikeSignal.newStopLoss) stopCandidates.push({ price: spikeSignal.newStopLoss, reason: 'Profit Secure', newState: spikeSignal.newState });
-        }
-        if (this.bot.config.isBreakevenTrailEnabled) {
-            const breakevenSignal = getMandatoryBreakevenSignal(positionState, currentPrice);
-            if (breakevenSignal.newStopLoss) stopCandidates.push({ price: breakevenSignal.newStopLoss, reason: 'Breakeven', newState: breakevenSignal.newState });
-        }
-        if (this.bot.config.isUniversalProfitTrailEnabled) {
-            const profitSecureSignal = getMultiStageProfitSecureSignal(positionState, currentPrice);
-            if (profitSecureSignal.newStopLoss) stopCandidates.push({ price: profitSecureSignal.newStopLoss, reason: 'Profit Secure', newState: profitSecureSignal.newState });
-        }
+    
+        // --- LOGIC REFACTOR: Correctly prioritize Agent Trail ---
+    
+        // 1. Establish the baseline Stop Loss from the Agent Trail if enabled
+        let baselineStop = positionState.stopLossPrice;
+        let baselineReason = positionState.activeStopLossReason;
+        let baselineNewState: Partial<Position> | undefined = undefined;
+    
         if (this.bot.config.isAgentTrailEnabled) {
             const lastFinalKline = this.klines[this.klines.length - 1];
             if (lastFinalKline) {
                 const previewKline: Kline = { ...lastFinalKline, high: Math.max(lastFinalKline.high, currentPrice), low: Math.min(lastFinalKline.low, currentPrice), close: currentPrice, isFinal: false };
                 const klinesForAnalysis = [...this.klines.slice(0, -1), previewKline];
                 const agentTrailSignal = getAgentExitSignal(positionState, klinesForAnalysis, currentPrice, this.bot.config);
-                if (agentTrailSignal.newStopLoss) stopCandidates.push({ price: agentTrailSignal.newStopLoss, reason: 'Agent Trail', newState: agentTrailSignal.newState });
+                
+                if (agentTrailSignal.newStopLoss) {
+                    const newAgentSL = agentTrailSignal.newStopLoss;
+                    const isValid = isLong ? newAgentSL < currentPrice : newAgentSL > currentPrice;
+                    const isImprovement = isLong ? newAgentSL > baselineStop : newAgentSL < baselineStop;
+                    
+                    // The Agent Trail can move the SL, even wider, as long as it's an improvement over the last known value
+                    if (isValid && isImprovement) {
+                        baselineStop = newAgentSL;
+                        baselineReason = 'Agent Trail';
+                        baselineNewState = agentTrailSignal.newState;
+                    }
+                }
             }
         }
-        const aggressiveTrailSignal = getAggressiveRangeTrailSignal(positionState, currentPrice);
-        if (aggressiveTrailSignal.newStopLoss) stopCandidates.push({ price: aggressiveTrailSignal.newStopLoss, reason: 'Profit Secure', newState: aggressiveTrailSignal.newState });
-        
-        let bestCandidate = stopCandidates[0];
-        for (const candidate of stopCandidates) {
-            const isValid = isLong ? candidate.price < currentPrice : candidate.price > currentPrice;
-            const isTighter = isLong ? candidate.price > bestCandidate.price : candidate.price < bestCandidate.price;
-            if (isValid && isTighter) bestCandidate = candidate;
+    
+        // 2. Now, check if profit-locking mechanisms can provide an even TIGHTER stop loss
+        const profitLockCandidates: { price: number; reason: Position['activeStopLossReason']; newState?: Partial<Position> }[] = [
+            { price: baselineStop, reason: baselineReason, newState: baselineNewState }
+        ];
+    
+        // The Proactive Exit system is now controlled by the sensitivity level.
+        // Higher sensitivity enables more aggressive trailing like spike protection.
+        if (this.bot.config.invalidationSensitivity !== 'low') {
+            const spikeSignal = getProfitSpikeSignal(positionState, currentPrice);
+            if (spikeSignal.newStopLoss) profitLockCandidates.push({ price: spikeSignal.newStopLoss, reason: 'Profit Secure', newState: spikeSignal.newState });
+            
+            const aggressiveTrailSignal = getAggressiveRangeTrailSignal(positionState, currentPrice);
+            if (aggressiveTrailSignal.newStopLoss) profitLockCandidates.push({ price: aggressiveTrailSignal.newStopLoss, reason: 'Profit Secure', newState: aggressiveTrailSignal.newState });
+        }
+        if (this.bot.config.isBreakevenTrailEnabled) {
+            const breakevenSignal = getMandatoryBreakevenSignal(positionState, currentPrice);
+            if (breakevenSignal.newStopLoss) profitLockCandidates.push({ price: breakevenSignal.newStopLoss, reason: 'Breakeven', newState: breakevenSignal.newState });
+        }
+        if (this.bot.config.isUniversalProfitTrailEnabled) {
+            const profitSecureSignal = getMultiStageProfitSecureSignal(positionState, currentPrice);
+            if (profitSecureSignal.newStopLoss) profitLockCandidates.push({ price: profitSecureSignal.newStopLoss, reason: 'Profit Secure', newState: profitSecureSignal.newState });
         }
     
+        // 3. Find the best (tightest) valid stop loss among all candidates
+        let bestCandidate = profitLockCandidates[0];
+        for (const candidate of profitLockCandidates) {
+            const isValid = isLong ? candidate.price < currentPrice : candidate.price > currentPrice;
+            const isTighter = isLong ? candidate.price > bestCandidate.price : candidate.price < bestCandidate.price;
+            if (isValid && isTighter) {
+                bestCandidate = candidate;
+            }
+        }
+    
+        // 4. Apply the final, best stop loss if it's different from the original
         if (bestCandidate.price !== positionState.stopLossPrice) {
             const previousSL = positionState.stopLossPrice;
             if (bestCandidate.newState) changes = { ...changes, ...(bestCandidate.newState as Partial<Position>) };
@@ -453,6 +493,7 @@ class BotInstance {
             this.addLog(`SL updated from ${previousSL.toFixed(this.bot.config.pricePrecision)} to ${bestCandidate.price.toFixed(this.bot.config.pricePrecision)}. Reason: ${bestCandidate.reason}.`, LogType.Info);
         }
         
+        // 5. Update the bot's state with all accumulated changes
         if (Object.keys(changes).length > 0) {
             this.updateState({ openPosition: { ...this.bot.openPosition!, ...changes } });
         }

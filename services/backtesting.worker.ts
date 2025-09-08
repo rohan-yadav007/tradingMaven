@@ -1,6 +1,5 @@
 
 
-
 import { Kline, BotConfig, BacktestResult, Trade, AgentParams, Position, RiskMode, TradingMode, OptimizationResultItem } from '../types';
 import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext } from './localAgentService';
 import * as constants from '../constants';
@@ -201,9 +200,12 @@ async function runBacktest(
             const stopCandidates: { price: number; reason: Position['activeStopLossReason']; newState?: Partial<Position> }[] = [
                 { price: positionState.stopLossPrice, reason: positionState.activeStopLossReason }
             ];
-             if (config.isInvalidationCheckEnabled) {
+             if (config.invalidationSensitivity !== 'low') { // Simplified for backtest; assume this covers spike/aggressive
                 const spikeSignal = getProfitSpikeSignal(positionState, candleOpenPrice);
                 if (spikeSignal.newStopLoss) stopCandidates.push({ price: spikeSignal.newStopLoss, reason: 'Profit Secure', newState: spikeSignal.newState });
+                
+                const aggressiveTrailSignal = getAggressiveRangeTrailSignal(positionState, candleOpenPrice);
+                if (aggressiveTrailSignal.newStopLoss) stopCandidates.push({ price: aggressiveTrailSignal.newStopLoss, reason: 'Profit Secure', newState: aggressiveTrailSignal.newState });
             }
             if (config.isBreakevenTrailEnabled) {
                 const breakevenSignal = getMandatoryBreakevenSignal(positionState, candleOpenPrice);
@@ -219,8 +221,6 @@ async function runBacktest(
                     stopCandidates.push({ price: agentTrailSignal.newStopLoss, reason: 'Agent Trail', newState: agentTrailSignal.newState });
                 }
             }
-            const aggressiveTrailSignal = getAggressiveRangeTrailSignal(positionState, candleOpenPrice);
-            if (aggressiveTrailSignal.newStopLoss) stopCandidates.push({ price: aggressiveTrailSignal.newStopLoss, reason: 'Profit Secure', newState: aggressiveTrailSignal.newState });
 
             let bestCandidate = stopCandidates[0];
             for (const candidate of stopCandidates) {
@@ -262,11 +262,17 @@ async function runBacktest(
                 openPosition.troughPrice = Math.max(openPosition.troughPrice!, currentCandle.high);
             }
 
-            if (config.isInvalidationCheckEnabled) {
-                const supervisorSignal = await getSupervisorSignal(openPosition, historySlice, config, htfHistorySlice);
-                if (supervisorSignal.action === 'close') {
-                    hasTradedInThisCandle = closePosition(currentCandle.close, supervisorSignal.reason, currentCandle.time, historySlice, htfHistorySlice);
-                    if (hasTradedInThisCandle) { equityCurve.push(equity); continue; }
+            const { score, reasons } = await getSupervisorSignal(openPosition, historySlice, config, htfHistorySlice);
+            openPosition.invalidationScore = score;
+            
+            const sensitivityThreshold = { low: 80, medium: 65, high: 50 }[config.invalidationSensitivity];
+
+            if (score >= sensitivityThreshold) {
+                const reason = `Supervisor Exit: Thesis Invalidated (Score: ${score}).`;
+                hasTradedInThisCandle = closePosition(currentCandle.close, reason, currentCandle.time, historySlice, htfHistorySlice);
+                if (hasTradedInThisCandle) {
+                    equityCurve.push(equity);
+                    continue;
                 }
             }
         }
@@ -293,7 +299,7 @@ async function runBacktest(
                     }
                 }
                 
-                if (validateTradeProfitability(entryPrice, stopLossPrice, agentStopLoss, finalTp, isLong ? 'LONG' : 'SHORT', config).isValid) {
+                if (validateTradeProfitability(entryPrice, stopLossPrice, finalTp, isLong ? 'LONG' : 'SHORT', config).isValid) {
                     const posVal = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
                     const size = posVal / entryPrice;
                     if (size > 0) {
@@ -305,8 +311,7 @@ async function runBacktest(
                             htfTimeFrame: config.htfTimeFrame,
                             isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
                             isMinRrEnabled: config.isMinRrEnabled,
-                            isReanalysisEnabled: config.isReanalysisEnabled,
-                            isInvalidationCheckEnabled: config.isInvalidationCheckEnabled,
+                            invalidationSensitivity: config.invalidationSensitivity,
                             isAgentTrailEnabled: config.isAgentTrailEnabled,
                             isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
                             isExhaustionFilterEnabled: config.isExhaustionFilterEnabled,

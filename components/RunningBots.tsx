@@ -114,11 +114,11 @@ const ConfigToggle: React.FC<{label: string; checked: boolean; onChange: (checke
 );
 
 
-const FilterConfiguration: React.FC<{ bot: RunningBot; onUpdate: (change: Partial<BotConfig>) => void }> = ({ bot, onUpdate }) => {
+const EntryFilterConfiguration: React.FC<{ bot: RunningBot; onUpdate: (change: Partial<BotConfig>) => void }> = ({ bot, onUpdate }) => {
     const { config } = bot;
     return (
         <div>
-            <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Filter Configuration</h4>
+            <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Entry Filter Configuration</h4>
              <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg space-y-2 text-sm">
                 <p className="text-xs text-slate-500 dark:text-slate-400">Toggle entry filters for the next trade. These changes apply immediately.</p>
                 <ConfigToggle label="ADX Trend Filter" checked={config.isAdxFilterEnabled ?? false} onChange={v => onUpdate({ isAdxFilterEnabled: v })} />
@@ -127,6 +127,37 @@ const FilterConfiguration: React.FC<{ bot: RunningBot; onUpdate: (change: Partia
                 <ConfigToggle label="Higher TF Confirmation" checked={config.isHtfConfirmationEnabled} onChange={v => onUpdate({ isHtfConfirmationEnabled: v })} />
                 <ConfigToggle label="Universal Volume Filter" checked={config.isVolumeFilterEnabled ?? false} onChange={v => onUpdate({ isVolumeFilterEnabled: v })} />
                 <ConfigToggle label="Market Cohesion Filter" checked={config.isMarketCohesionEnabled ?? false} onChange={v => onUpdate({ isMarketCohesionEnabled: v })} />
+                <ConfigToggle label="Exhaustion Filter" checked={config.isExhaustionFilterEnabled ?? true} onChange={v => onUpdate({ isExhaustionFilterEnabled: v })} />
+                <ConfigToggle label="Minimum R:R Veto" checked={config.isMinRrEnabled} onChange={v => onUpdate({ isMinRrEnabled: v })} />
+                <ConfigToggle label="Immediate Entry" checked={config.entryTiming === 'immediate'} onChange={v => onUpdate({ entryTiming: v ? 'immediate' : 'onNextCandle' })} />
+             </div>
+        </div>
+    )
+};
+
+const TradeManagementConfiguration: React.FC<{ bot: RunningBot; onUpdate: (change: Partial<BotConfig>) => void }> = ({ bot, onUpdate }) => {
+    const { config } = bot;
+    return (
+        <div>
+            <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Trade Management Configuration</h4>
+             <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg space-y-2 text-sm">
+                <p className="text-xs text-slate-500 dark:text-slate-400">Toggle rules for open and future trades.</p>
+                <ConfigToggle label="Agent Indicator Trail" checked={config.isAgentTrailEnabled} onChange={v => onUpdate({ isAgentTrailEnabled: v })} />
+                <ConfigToggle label="Mandatory Breakeven Trail" checked={config.isBreakevenTrailEnabled} onChange={v => onUpdate({ isBreakevenTrailEnabled: v })} />
+                <ConfigToggle label="Universal Profit Trail" checked={config.isUniversalProfitTrailEnabled} onChange={v => onUpdate({ isUniversalProfitTrailEnabled: v })} />
+                <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                    <label htmlFor={`invalidation-sensitivity-${bot.id}`} className="font-medium text-slate-700 dark:text-slate-300 text-sm">Invalidation Sensitivity</label>
+                    <select 
+                        id={`invalidation-sensitivity-${bot.id}`}
+                        value={config.invalidationSensitivity} 
+                        onChange={e => onUpdate({ invalidationSensitivity: e.target.value as 'low' | 'medium' | 'high'})}
+                        className="text-xs font-semibold bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md p-1 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                    >
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                    </select>
+                </div>
              </div>
         </div>
     )
@@ -191,15 +222,38 @@ interface StopLossDetailsProps {
 const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) => {
     const {
         stopLossPrice, initialStopLossPrice, activeStopLossReason, pricePrecision,
-        profitLockTier, isBreakevenSet, profitSpikeTier, initialStopLossReason
+        profitLockTier, isBreakevenSet, profitSpikeTier, aggressiveTrailTier
     } = position;
 
-    const isBreakevenActive = activeStopLossReason === 'Breakeven';
+    const ActiveReasonTag: React.FC<{ reason: Position['activeStopLossReason'] }> = ({ reason }) => {
+        const reasonInfo = useMemo(() => {
+            switch (reason) {
+                case 'Hard Cap':
+                    return { text: 'Hard Cap', className: 'bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300' };
+                case 'Agent Logic':
+                    return { text: 'Agent Logic', className: 'bg-slate-200 dark:bg-slate-600 text-slate-700 dark:text-slate-200' };
+                case 'Profit Secure':
+                    return { text: 'Profit Secure', className: 'bg-teal-100 dark:bg-teal-900/50 text-teal-700 dark:text-teal-300' };
+                case 'Breakeven':
+                    return { text: 'Breakeven', className: 'bg-sky-100 dark:bg-sky-900/50 text-sky-700 dark:text-sky-300' };
+                case 'Agent Trail':
+                    return { text: 'Agent Trail', className: 'bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300' };
+                default:
+                    return { text: reason, className: 'bg-slate-200 dark:bg-slate-600' };
+            }
+        }, [reason]);
+
+        return (
+            <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${reasonInfo.className}`}>
+                {reasonInfo.text}
+            </span>
+        );
+    };
+
     const isProfitSecureActive = activeStopLossReason === 'Profit Secure';
     const isAgentTrailActive = activeStopLossReason === 'Agent Trail';
     
     const isUniversalTrailEnabled = config.isUniversalProfitTrailEnabled;
-    const isSpikeProtectorEnabled = config.isInvalidationCheckEnabled;
 
     const universalTrailStatus = useMemo(() => {
         if (!isUniversalTrailEnabled) return { text: 'Disabled by user', className: 'bg-slate-200 dark:bg-slate-600' };
@@ -211,22 +265,31 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
         return { text: 'Enabled', className: 'bg-slate-500 dark:bg-slate-400 text-white dark:text-slate-900' };
     }, [isUniversalTrailEnabled, isProfitSecureActive, isBreakevenSet, profitLockTier]);
     
-    const spikeProtectorStatus = useMemo(() => {
-        if (!isSpikeProtectorEnabled) return { text: 'Disabled by user', className: 'bg-slate-200 dark:bg-slate-600' };
+    const proactiveExitStatus = useMemo(() => {
+        if (config.invalidationSensitivity === 'low') {
+             return { text: 'Low Sensitivity', className: 'bg-slate-200 dark:bg-slate-600' };
+        }
+        if (aggressiveTrailTier && aggressiveTrailTier > 0) {
+            return { text: 'Aggressive Trail', className: 'bg-purple-500 text-white' };
+        }
         if (profitSpikeTier && profitSpikeTier > 0) {
-             return { text: `Tier ${profitSpikeTier} Active`, className: 'bg-purple-500 text-white' };
+             return { text: `Spike Protector T${profitSpikeTier}`, className: 'bg-purple-500 text-white' };
         }
         return { text: 'Enabled', className: 'bg-slate-500 dark:bg-slate-400 text-white dark:text-slate-900' };
-    }, [isSpikeProtectorEnabled, profitSpikeTier]);
+    }, [config.invalidationSensitivity, profitSpikeTier, aggressiveTrailTier]);
 
 
     const agentTrailStatus = useMemo(() => {
+        if (!config.isAgentTrailEnabled) {
+            return { text: 'Disabled by user', className: 'bg-slate-200 dark:bg-slate-600' };
+        }
         if (isAgentTrailActive) {
             return { text: 'ACTIVE', className: 'bg-indigo-500 text-white' };
         }
-        // It's always enabled if a position is open, just might be overridden
         return { text: 'Enabled', className: 'bg-slate-500 dark:bg-slate-400 text-white dark:text-slate-900' };
-    }, [isAgentTrailActive]);
+    }, [isAgentTrailActive, config.isAgentTrailEnabled]);
+    
+    const isProactiveSystemActive = (profitSpikeTier && profitSpikeTier > 0) || (aggressiveTrailTier && aggressiveTrailTier > 0);
 
     return (
         <div>
@@ -234,24 +297,27 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
             <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg space-y-3 text-sm">
                 <div className="flex justify-between items-center">
                     <span className="font-bold">Active SL Price</span>
-                    <span className="font-bold font-mono bg-slate-200 dark:bg-slate-700 px-2 py-1 rounded-md">{formatPrice(stopLossPrice, pricePrecision)}</span>
+                    <div className="flex items-center gap-2">
+                        <ActiveReasonTag reason={activeStopLossReason} />
+                        <span className="font-bold font-mono bg-slate-200 dark:bg-slate-700 px-2 py-1 rounded-md">{formatPrice(stopLossPrice, pricePrecision)}</span>
+                    </div>
                 </div>
 
-                <div className={`p-2 rounded-md ${isProfitSecureActive && profitSpikeTier && profitSpikeTier > 0 ? 'bg-purple-100 dark:bg-purple-900 border border-purple-300 dark:border-purple-700' : ''}`}>
+                <div className={`p-2 rounded-md ${isProactiveSystemActive ? 'bg-purple-100 dark:bg-purple-900 border border-purple-300 dark:border-purple-700' : ''}`}>
                     <div className="flex justify-between items-center">
                          <div className="flex items-center gap-1">
                             <ZapIcon className="w-4 h-4 text-purple-600 dark:text-purple-400"/>
-                            <span className={profitSpikeTier && profitSpikeTier > 0 ? 'font-semibold text-purple-700 dark:text-purple-300' : 'font-medium'}>
-                                Spike Protector
+                            <span className={isProactiveSystemActive ? 'font-semibold text-purple-700 dark:text-purple-300' : 'font-medium'}>
+                                Proactive Exit System
                             </span>
                          </div>
-                         <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${spikeProtectorStatus.className}`}>
-                            {spikeProtectorStatus.text}
+                         <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${proactiveExitStatus.className}`}>
+                            {proactiveExitStatus.text}
                          </span>
                     </div>
                 </div>
 
-                <div className={`p-2 rounded-md ${isProfitSecureActive && !(profitSpikeTier && profitSpikeTier > 0) ? 'bg-teal-100 dark:bg-teal-900 border border-teal-300 dark:border-teal-700' : ''}`}>
+                <div className={`p-2 rounded-md ${isProfitSecureActive && !isProactiveSystemActive ? 'bg-teal-100 dark:bg-teal-900 border border-teal-300 dark:border-teal-700' : ''}`}>
                     <div className="flex justify-between items-center">
                          <span className={isProfitSecureActive ? 'font-semibold text-teal-700 dark:text-teal-300' : 'font-medium'}>
                             Universal Profit Trail
@@ -353,6 +419,13 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
     
     const REFRESH_INTERVALS = [10, 20, 30, 60];
 
+    const errorReason = useMemo(() => {
+        if (bot.status === BotStatus.Error && bot.analysis && bot.analysis.reasons.length > 0) {
+            return bot.analysis.reasons[0].replace('CRITICAL: ', '').replace('Please close manually on Binance to prevent loss. Reason: ', '');
+        }
+        return null;
+    }, [bot.status, bot.analysis]);
+
     return (
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm overflow-hidden transition-all duration-300">
             <div className="p-4">
@@ -384,10 +457,17 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
 
                 {/* Status & Performance */}
                 <div className="mt-3 flex items-center justify-between gap-4 flex-wrap border-t border-slate-200 dark:border-slate-700 pt-3">
-                    <div className={`flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-semibold ${statusInfo.bg} ${statusInfo.text_color}`}>
-                         {statusInfo.pulse && <div className="w-2 h-2 rounded-full bg-current animate-pulse"></div>}
-                        {statusInfo.icon}
-                        <span>{statusInfo.text}</span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <div className={`flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-semibold ${statusInfo.bg} ${statusInfo.text_color}`}>
+                             {statusInfo.pulse && <div className="w-2 h-2 rounded-full bg-current animate-pulse"></div>}
+                            {statusInfo.icon}
+                            <span>{statusInfo.text}</span>
+                        </div>
+                        {errorReason && (
+                            <p className="text-xs font-semibold text-rose-600 dark:text-rose-400 truncate" title={errorReason}>
+                                {errorReason}
+                            </p>
+                        )}
                     </div>
                      <div className="flex items-center gap-4 text-sm">
                         <InfoItem 
@@ -434,34 +514,46 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
             {isExpanded && (
                 <div className="bg-slate-50 dark:bg-slate-800/50 p-4 border-t border-slate-200 dark:border-slate-700">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {position && <StopLossDetails position={position} config={bot.config} />}
-                         <FilterConfiguration bot={bot} onUpdate={(partial) => actions.onUpdateBotConfig(bot.id, partial)} />
-                         <div>
-                            <div className="flex justify-between items-center mb-2">
-                                 <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base">AI Analysis</h4>
-                                <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-700/50 px-2 py-0.5 rounded-full">
-                                    <RefreshIcon className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-                                    <select
-                                        value={bot.config.refreshInterval ?? 10}
-                                        onChange={(e) => {
-                                            actions.onUpdateBotConfig(bot.id, { refreshInterval: Number(e.target.value) });
-                                            actions.onRefreshBotAnalysis(bot.id);
-                                        }}
-                                        className="bg-transparent text-xs font-semibold text-slate-500 dark:text-slate-400 focus:outline-none border-none p-0.5"
-                                        title="Change AI analysis refresh interval"
-                                    >
-                                        {REFRESH_INTERVALS.map(interval => (
-                                            <option key={interval} value={interval}>{interval}s</option>
-                                        ))}
-                                    </select>
+
+                        {/* Column 1: Position Details & AI Analysis */}
+                        <div className="space-y-6">
+                            {position && <StopLossDetails position={position} config={bot.config} />}
+                            <div>
+                                <div className="flex justify-between items-center mb-2">
+                                     <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base">AI Analysis</h4>
+                                    <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-700/50 px-2 py-0.5 rounded-full">
+                                        <RefreshIcon className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+                                        <select
+                                            value={bot.config.refreshInterval ?? 10}
+                                            onChange={(e) => {
+                                                actions.onUpdateBotConfig(bot.id, { refreshInterval: Number(e.target.value) });
+                                                actions.onRefreshBotAnalysis(bot.id);
+                                            }}
+                                            className="bg-transparent text-xs font-semibold text-slate-500 dark:text-slate-400 focus:outline-none border-none p-0.5"
+                                            title="Change AI analysis refresh interval"
+                                        >
+                                            {REFRESH_INTERVALS.map(interval => (
+                                                <option key={interval} value={interval}>{interval}s</option>
+                                            ))}
+                                        </select>
+                                    </div>
                                 </div>
+                                 <AnalysisPreview agent={bot.config.agent} agentParams={bot.config.agentParams} analysis={bot.analysis} isLoading={false} />
                             </div>
-                             <AnalysisPreview agent={bot.config.agent} agentParams={bot.config.agentParams} analysis={bot.analysis} isLoading={false} />
                         </div>
-                         <div className="md:col-span-2 lg:col-span-1">
+
+                        {/* Column 2: Configurations */}
+                        <div className="space-y-6">
+                            <EntryFilterConfiguration bot={bot} onUpdate={(partial) => actions.onUpdateBotConfig(bot.id, partial)} />
+                            <TradeManagementConfiguration bot={bot} onUpdate={(partial) => actions.onUpdateBotConfig(bot.id, partial)} />
+                        </div>
+
+                        {/* Column 3: Activity Log */}
+                        <div className="md:col-span-2 lg:col-span-1">
                             <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Activity Log</h4>
                             <BotLog log={bot.log} />
                         </div>
+
                     </div>
                 </div>
             )}

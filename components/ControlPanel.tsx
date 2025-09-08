@@ -138,6 +138,21 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                     valueDisplay={(v) => `${v}%`}
                  />
             </div>);
+        case 17:
+            return (<div className="space-y-4">
+                <ParamSlider 
+                   label="Fast EMA Period"
+                   value={allParams.mst_emaFastPeriod!}
+                   onChange={(v) => updateParam('mst_emaFastPeriod', v)}
+                   min={20} max={100} step={1}
+               />
+               <ParamSlider 
+                   label="Slow EMA Period"
+                   value={allParams.mst_emaSlowPeriod!}
+                   onChange={(v) => updateParam('mst_emaSlowPeriod', v)}
+                   min={100} max={300} step={10}
+               />
+           </div>);
         default: return <p className="text-sm text-slate-500">This agent does not have any customizable parameters.</p>;
     }
 };
@@ -156,11 +171,11 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         agentParams, maxMarginLossPercent, tradingPairLists,
         marginType, futuresSettingsError, isMultiAssetMode, multiAssetModeError,
         maxLeverage, isLeverageLoading, isHtfConfirmationEnabled, htfTimeFrame,
-        isUniversalProfitTrailEnabled, isMinRrEnabled, isInvalidationCheckEnabled,
-        isReanalysisEnabled, entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
+        isUniversalProfitTrailEnabled, isMinRrEnabled, invalidationSensitivity,
+        entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
-        isExhaustionFilterEnabled, isSmcVetoEnabled
+        isExhaustionFilterEnabled
     } = config;
 
     const {
@@ -168,10 +183,10 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setSelectedAgent, setInvestmentAmount,
         setMarginType, onSetMultiAssetMode, setAgentParams, setMaxMarginLossPercent,
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setIsUniversalProfitTrailEnabled,
-        setIsMinRrEnabled, setIsReanalysisEnabled, setIsInvalidationCheckEnabled,
+        setIsMinRrEnabled, setInvalidationSensitivity,
         setEntryTiming, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setIsMarketCohesionEnabled,
         setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
-        setIsExhaustionFilterEnabled, setIsSmcVetoEnabled
+        setIsExhaustionFilterEnabled
     } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -249,8 +264,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
                         isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
                         isMinRrEnabled: config.isMinRrEnabled,
-                        isInvalidationCheckEnabled: config.isInvalidationCheckEnabled,
-                        isReanalysisEnabled: config.isReanalysisEnabled,
+                        invalidationSensitivity: config.invalidationSensitivity,
                         isAgentTrailEnabled: config.isAgentTrailEnabled,
                         isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
                         isMarketCohesionEnabled: config.isMarketCohesionEnabled,
@@ -260,7 +274,6 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         isVolumeFilterEnabled: config.isVolumeFilterEnabled,
                         isAdxFilterEnabled: config.isAdxFilterEnabled,
                         isExhaustionFilterEnabled: config.isExhaustionFilterEnabled,
-                        isSmcVetoEnabled: config.isSmcVetoEnabled,
                         htfTimeFrame: config.htfTimeFrame,
                         agentParams: agentParams,
                         pricePrecision: 8,
@@ -488,6 +501,11 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} />
                     </div>
                 )}
+                {selectedAgent.id === 17 && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
+                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} />
+                    </div>
+                )}
             </div>
             
             <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
@@ -515,26 +533,6 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
 
             <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
             
-            <div className={formGroupClass}>
-                <div className="flex items-center justify-between">
-                     <div className="flex items-center gap-1.5">
-                        <label htmlFor="smc-veto-toggle" className={formLabelClass}>
-                            SMC Reversal Veto
-                        </label>
-                         <div className="relative group">
-                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
-                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
-                                Smart Money Concepts. Vetoes trades that go against a high-probability reversal pattern (divergence + volume sweep + change of character).
-                            </div>
-                        </div>
-                    </div>
-                    <ToggleSwitch
-                        checked={isSmcVetoEnabled}
-                        onChange={setIsSmcVetoEnabled}
-                    />
-                </div>
-            </div>
-
             <div className={formGroupClass}>
                 <div className="flex items-center justify-between">
                      <div className="flex items-center gap-1.5">
@@ -727,32 +725,20 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     Enforces a minimum risk-to-reward ratio of {constants.MIN_RISK_REWARD_RATIO}:1 on all new trades.
                 </p>
             </div>
-            <div className={formGroupClass}>
-                <div className="flex items-center justify-between">
-                    <label htmlFor="reanalysis-toggle" className={formLabelClass}>
-                        Agent Re-analysis
-                    </label>
-                    <ToggleSwitch
-                        checked={isReanalysisEnabled}
-                        onChange={setIsReanalysisEnabled}
-                    />
-                </div>
-                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                    On a set interval, the agent re-evaluates the market. If the original entry conditions are no longer met, the bot will proactively exit the trade.
-                </p>
-            </div>
-            <div className={formGroupClass}>
-                <div className="flex items-center justify-between">
-                    <label htmlFor="invalidation-toggle" className={formLabelClass}>
-                        Proactive Exit & Invalidation
-                    </label>
-                    <ToggleSwitch
-                        checked={isInvalidationCheckEnabled}
-                        onChange={setIsInvalidationCheckEnabled}
-                    />
-                </div>
-                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                    The ultimate safety net. Secures high profits on early signs of reversal and minimizes losses by exiting invalidated trades before the stop loss is hit. Functions as an always-on 'emergency brake' for every trade.
+             <div className={formGroupClass}>
+                <label htmlFor="invalidation-sensitivity" className={formLabelClass}>Invalidation Sensitivity</label>
+                <select 
+                    id="invalidation-sensitivity" 
+                    value={invalidationSensitivity} 
+                    onChange={e => setInvalidationSensitivity(e.target.value as 'low' | 'medium' | 'high')}
+                    className={formInputClass}
+                >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                </select>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Controls how aggressively the bot exits trades when the original thesis weakens. High sensitivity exits faster.
                 </p>
             </div>
              <div className={formGroupClass}>

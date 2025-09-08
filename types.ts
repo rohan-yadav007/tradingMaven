@@ -152,7 +152,7 @@ export interface Position {
     initialRiskInPrice: number;
     // For SL transparency
     initialStopLossReason: 'Agent Logic' | 'Hard Cap';
-    activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Profit Secure' | 'Agent Trail' | 'Breakeven';
+    activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Profit Secure' | 'Breakeven' | 'Agent Trail';
     isBreakevenSet?: boolean;
     proactiveLossCheckTriggered: boolean;
     profitLockTier: number; // 0 for none, or the fee-multiple trigger (e.g., 3, 4, 5)
@@ -163,6 +163,7 @@ export interface Position {
     candlesSinceEntry?: number; // For state-based management (Chameleon V2)
     hasBeenProfitable?: boolean; // For trade invalidation check
     takerFeeRate: number;
+    invalidationScore?: number; // Score for trade thesis health
     // --- Analytics Snapshots ---
     initialRiskRewardRatio?: number;
     agentParamsSnapshot?: AgentParams;
@@ -170,8 +171,7 @@ export interface Position {
         isHtfConfirmationEnabled: boolean;
         isUniversalProfitTrailEnabled: boolean;
         isMinRrEnabled: boolean;
-        isInvalidationCheckEnabled?: boolean;
-        isReanalysisEnabled?: boolean;
+        invalidationSensitivity: 'low' | 'medium' | 'high';
         isAgentTrailEnabled: boolean;
         isBreakevenTrailEnabled: boolean;
         isMarketCohesionEnabled?: boolean;
@@ -339,8 +339,7 @@ export interface BotConfig {
     isHtfConfirmationEnabled: boolean;
     isUniversalProfitTrailEnabled: boolean;
     isMinRrEnabled: boolean;
-    isReanalysisEnabled?: boolean;
-    isInvalidationCheckEnabled?: boolean;
+    invalidationSensitivity: 'low' | 'medium' | 'high';
     isAgentTrailEnabled: boolean;
     isBreakevenTrailEnabled: boolean;
     isMarketCohesionEnabled?: boolean;
@@ -515,6 +514,13 @@ export type AgentParams = Partial<{
     sentinel_rsiOverextendedLong?: number;
     sentinel_rsiOverextendedShort?: number;
     
+    // Momentum Swing Trader (17)
+    mst_emaFastPeriod?: number;
+    mst_emaSlowPeriod?: number;
+    mst_macdFastPeriod?: number;
+    mst_macdSlowPeriod?: number;
+    mst_macdSignalPeriod?: number;
+
     // SMC Reversal Veto
     smc_divergenceLookback: number;
     smc_volumeMultiplier: number;

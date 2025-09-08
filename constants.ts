@@ -54,6 +54,12 @@ export const AGENTS: Agent[] = [
         name: 'Ichimoku Trend Rider',
         description: 'A pure Ichimoku Kinko Hyo strategy. It identifies strong trends by checking if the price is above/below the Kumo cloud, then enters on Tenkan/Kijun-sen crossovers, confirmed by volume and momentum indicators.',
         indicators: ['Ichimoku Cloud', 'Vortex Indicator', 'OBV'],
+    },
+    {
+        id: 17,
+        name: 'Momentum Swing Trader',
+        description: 'An intraday swing strategy using EMA for trend, VWAP for institutional bias, and MACD for momentum confirmation. Enters on alignment of all three factors.',
+        indicators: ['EMA Cross', 'VWAP', 'MACD'],
     }
 ];
 
@@ -125,6 +131,13 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     sentinel_scoreThreshold: 70,
     sentinel_rsiOverextendedLong: 80,
     sentinel_rsiOverextendedShort: 20,
+
+    // Agent 17: Momentum Swing Trader
+    mst_emaFastPeriod: 50,
+    mst_emaSlowPeriod: 200,
+    mst_macdFastPeriod: 12,
+    mst_macdSlowPeriod: 26,
+    mst_macdSignalPeriod: 9,
 
     // SMC Reversal Veto
     smc_divergenceLookback: 12,
@@ -200,6 +213,13 @@ export const ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS: Record<string, Partial<Age
     '1d':  {},
 };
 
+export const MOMENTUM_SWING_TRADER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
+    '5m':  { mst_emaFastPeriod: 50, mst_emaSlowPeriod: 200 },
+    '15m': { mst_emaFastPeriod: 50, mst_emaSlowPeriod: 200 },
+    '30m': { mst_emaFastPeriod: 50, mst_emaSlowPeriod: 200 },
+    '1h':  { mst_emaFastPeriod: 50, mst_emaSlowPeriod: 200 },
+};
+
 /**
  * A helper function to get the correct, timeframe-specific parameters for a given agent.
  * This now merges general SMC settings with agent-specific settings.
@@ -217,6 +237,7 @@ export const getAgentTimeframeSettings = (agentId: number, timeFrame: string): P
         case 13: agentSettings = CHAMELEON_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 14: agentSettings = SENTINEL_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 16: agentSettings = ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+        case 17: agentSettings = MOMENTUM_SWING_TRADER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
     }
 
     return { ...smcSettings, ...agentSettings };

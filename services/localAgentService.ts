@@ -1,4 +1,3 @@
-
 import { TradingMode, type Agent, type TradeSignal, type Kline, type AgentParams, type Position, type ADXOutput, type MACDOutput, type BollingerBandsOutput, type StochasticRSIOutput, type TradeManagementSignal, type BotConfig, VortexIndicatorOutput, SentinelAnalysis, KSTOutput, type IchimokuCloudOutput, MarketDataContext } from '../types';
 import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, IchimokuCloud, KST, abandonedbaby, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, downsidetasukigap, dragonflydoji, gravestonedoji, bullishharami, bearishharami, bullishharamicross, bearishharamicross, hammerpattern, hangingman, morningdojistar, morningstar, piercingline, shootingstar, threeblackcrows, threewhitesoldiers, eveningdojistar, eveningstar } from 'technicalindicators';
 import * as constants from '../constants';
@@ -853,9 +852,9 @@ export function getMultiStageProfitSecureSignal(
 }
 
 /**
- * An aggressive profit-locking system that activates after the price has moved 50%
- * of the distance from the trade's entry price to the Take Profit target.
- * It trails the price tightly to secure gains as it approaches the TP.
+ * An aggressive, dual-mode profit-locking system.
+ * Mode 1 (Distance): Locks profit based on % of distance covered towards TP.
+ * Mode 2 (PNL): Locks profit based on unrealized PNL % of initial investment.
  * @param position - The current open position.
  * @param currentPrice - The live price tick.
  * @returns A TradeManagementSignal with a potential new stop loss.
@@ -864,44 +863,59 @@ export function getAggressiveRangeTrailSignal(
     position: Position,
     currentPrice: number
 ): TradeManagementSignal {
-    const { 
-        entryPrice,
-        stopLossPrice,
-        takeProfitPrice,
-        direction, 
+    const {
+        entryPrice, stopLossPrice, takeProfitPrice, direction, size,
+        investmentAmount, aggressiveTrailTier = 0, botConfigSnapshot
     } = position;
+    
+    if (!botConfigSnapshot || !botConfigSnapshot.aggressiveTrailMode || !size || size <= 0) {
+        return { reasons: [] };
+    }
 
     const isLong = direction === 'LONG';
+    const unrealizedPnlInPrice = (currentPrice - entryPrice) * (isLong ? 1 : -1);
+
+    if (unrealizedPnlInPrice <= 0) {
+        return { reasons: [] }; // Only trail when in profit
+    }
     
-    // Total distance from the *entry point* to the take profit target
-    const entryToTpDistance = Math.abs(takeProfitPrice - entryPrice);
-    if (entryToTpDistance <= 1e-9) { // Avoid division by zero
-        return { reasons: [] };
+    let applicableTier: { trigger: number; lock: number; tier: number } | undefined;
+
+    if (botConfigSnapshot.aggressiveTrailMode === 'distance') {
+        const totalDistance = Math.abs(takeProfitPrice - entryPrice);
+        if (totalDistance <= 1e-9) return { reasons: [] };
+
+        const progressPercent = unrealizedPnlInPrice / totalDistance;
+        const tiers = [
+            { trigger: 0.9, lock: 0.80, tier: 4 }, // at 90% distance, lock 80% of current profit
+            { trigger: 0.8, lock: 0.60, tier: 3 }, // at 80% distance, lock 60%
+            { trigger: 0.6, lock: 0.40, tier: 2 }, // at 60% distance, lock 40%
+            { trigger: 0.5, lock: 0.25, tier: 1 }, // at 50% distance, lock 25%
+        ];
+        applicableTier = tiers.find(t => progressPercent >= t.trigger && aggressiveTrailTier < t.tier);
+    
+    } else { // PNL mode
+        const unrealizedPnl = unrealizedPnlInPrice * size;
+        const pnlPercent = unrealizedPnl / investmentAmount;
+        const tiers = [
+            { trigger: 1.0, lock: 0.95, tier: 5 }, // at 100% PNL, lock 95%
+            { trigger: 0.9, lock: 0.80, tier: 4 }, // at 90% PNL, lock 80%
+            { trigger: 0.8, lock: 0.60, tier: 3 },
+            { trigger: 0.6, lock: 0.40, tier: 2 },
+            { trigger: 0.5, lock: 0.25, tier: 1 },
+        ];
+        applicableTier = tiers.find(t => pnlPercent >= t.trigger && aggressiveTrailTier < t.tier);
     }
+    
+    if (applicableTier) {
+        const profitToLockInPrice = unrealizedPnlInPrice * applicableTier.lock;
+        const newStopLoss = entryPrice + (profitToLockInPrice * (isLong ? 1 : -1));
 
-    // How far the price has moved from the entry point towards the take profit
-    const progressFromEntry = isLong ? (currentPrice - entryPrice) : (entryPrice - currentPrice);
-
-    // This trail should only be active when the trade is in profit.
-    if (progressFromEntry <= 0) {
-        return { reasons: [] };
-    }
-
-    // Trigger when price moves 50% of the way from Entry to TP
-    const triggerDistance = entryToTpDistance * 0.5;
-
-    if (progressFromEntry > triggerDistance) {
-        // Once triggered, it trails aggressively.
-        // The trail distance will be 25% of the total Entry-to-TP range.
-        const trailDistance = entryToTpDistance * 0.25;
-        const newStopLoss = isLong ? currentPrice - trailDistance : currentPrice + trailDistance;
-        
-        // Only update if the new stop loss is an improvement.
         if ((isLong && newStopLoss > stopLossPrice) || (!isLong && newStopLoss < stopLossPrice)) {
             return {
                 newStopLoss,
-                reasons: [`Aggressive Trail: Price >50% of Entry-to-TP range.`],
-                newState: { aggressiveTrailTier: 1 },
+                reasons: [`Aggressive Trail (${botConfigSnapshot.aggressiveTrailMode}): Tier ${applicableTier.tier} activated.`],
+                newState: { aggressiveTrailTier: applicableTier.tier },
                 activeStopLossReason: 'Profit Secure'
             };
         }
@@ -1721,15 +1735,55 @@ export async function getSupervisorSignal(
 export function getAdaptiveTakeProfit(
     position: Position,
     klines: Kline[],
-    config: BotConfig,
-    htfKlines?: Kline[]
+    currentPrice: number,
 ): { newTakeProfit?: number; reason?: string } {
-    const { direction, takeProfitPrice, entryPrice } = position;
-
-    if (!config.isHtfConfirmationEnabled || config.isTakeProfitLocked) {
+    const { direction, entryPrice, initialRiskInPrice, size, botConfigSnapshot } = position;
+    
+    if (!botConfigSnapshot?.isAdaptiveTpEnabled || botConfigSnapshot?.isTakeProfitLocked) {
         return {};
     }
-    
+
+    // Activation Check: Only adapt TP if unrealized PNL is at least 2R.
+    const isLong = direction === 'LONG';
+    const unrealizedPnl = (currentPrice - entryPrice) * size * (isLong ? 1 : -1);
+    const initialRisk = initialRiskInPrice * size;
+    if (unrealizedPnl < (initialRisk * 2)) {
+        return {};
+    }
+
+    if (klines.length < 15) return {};
+
+    const closes = klines.map(k => k.close);
+    const rsiValues = RSI.calculate({ period: 14, values: closes });
+    const lastRsi = getLast(rsiValues);
+    const prevRsi = getPenultimate(rsiValues);
+
+    if (lastRsi === undefined || prevRsi === undefined) return {};
+
+    let momentumFading = false;
+    if (isLong && prevRsi > 70 && lastRsi < 70) {
+        momentumFading = true; // Bearish crossover from overbought
+    } else if (!isLong && prevRsi < 30 && lastRsi > 30) {
+        momentumFading = true; // Bullish crossover from oversold
+    }
+
+    if (momentumFading) {
+        const highs = klines.map(k => k.high);
+        const lows = klines.map(k => k.low);
+        const lastAtr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: 14 })) || 0;
+        
+        // Set a new, tighter TP based on current price + 1.5 * ATR
+        const newTakeProfit = isLong ? currentPrice + (lastAtr * 1.5) : currentPrice - (lastAtr * 1.5);
+
+        // Safety check: ensure new TP is still profitable
+        if ((isLong && newTakeProfit > entryPrice) || (!isLong && newTakeProfit < entryPrice)) {
+            return {
+                newTakeProfit,
+                reason: `Adaptive TP: Momentum fading detected (RSI crossover).`,
+            };
+        }
+    }
+
     return {};
 }
 

@@ -38,7 +38,7 @@ const AppContent: React.FC = () => {
         entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
-        isExhaustionFilterEnabled
+        isExhaustionFilterEnabled, isAdaptiveTpEnabled, aggressiveTrailMode
     } = configState;
 
     const {
@@ -136,6 +136,8 @@ const AppContent: React.FC = () => {
                     isVolumeFilterEnabled,
                     isAdxFilterEnabled,
                     isExhaustionFilterEnabled,
+                    isAdaptiveTpEnabled,
+                    aggressiveTrailMode,
                     agentParams,
                     htfAgentParams,
                     pricePrecision: pricePrecisionForBot,
@@ -162,7 +164,7 @@ const AppContent: React.FC = () => {
         currentFeeRate, entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
-        isExhaustionFilterEnabled
+        isExhaustionFilterEnabled, isAdaptiveTpEnabled, aggressiveTrailMode
     ]);
 
     const handleClosePosition = useCallback(async (posToClose: Position, exitReason: string = "Manual Close", exitPriceOverride?: number) => {
@@ -308,7 +310,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
 
 *Pair:* ${posToClose.pair}
 *Direction:* ${posToClose.direction}
-*Entry Price:* ${posToClose.entryPrice.toFixed(posToClose.pricePrecision)}
+*Entry Price:* ${posToClose.pricePrecision.toFixed(posToClose.pricePrecision)}
 *Size:* ${posToClose.size}
 
 *Reason for Failure:* ${errorMessage}`,

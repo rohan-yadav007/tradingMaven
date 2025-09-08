@@ -44,6 +44,8 @@ interface TradingConfigState {
     isMultiAssetMode: boolean;
     entryTiming: 'immediate' | 'onNextCandle';
     tradingPairLists: TradingPairList[];
+    isAdaptiveTpEnabled: boolean;
+    aggressiveTrailMode: 'distance' | 'pnl';
     // Context-specific state
     maxLeverage: number;
     isLeverageLoading: boolean;
@@ -85,6 +87,8 @@ interface TradingConfigActions {
     setWalletViewMode: (mode: TradingMode) => void;
     setIsMultiAssetMode: (isEnabled: boolean) => void;
     setEntryTiming: (timing: 'immediate' | 'onNextCandle') => void;
+    setIsAdaptiveTpEnabled: (isEnabled: boolean) => void;
+    setAggressiveTrailMode: (mode: 'distance' | 'pnl') => void;
     // Complex actions
     onSetMultiAssetMode: (isEnabled: boolean) => Promise<void>;
     setFuturesSettingsError: (error: string | null) => void;
@@ -134,6 +138,9 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [isMultiAssetMode, setIsMultiAssetMode] = useState(false);
     const [entryTiming, setEntryTiming] = useState<'immediate' | 'onNextCandle'>('immediate');
     const [tradingPairLists, setTradingPairLists] = useState<TradingPairList[]>([]);
+    const [isAdaptiveTpEnabled, setIsAdaptiveTpEnabled] = useState<boolean>(true);
+    const [aggressiveTrailMode, setAggressiveTrailMode] = useState<'distance' | 'pnl'>('distance');
+
 
     // Context-internal state
     const [isPairsLoading, setIsPairsLoading] = useState(true);
@@ -323,6 +330,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         setIsMinRrEnabled, setInvalidationSensitivity, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setEntryTiming,
         setIsMarketCohesionEnabled, setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
         setIsExhaustionFilterEnabled, setIsSmcVetoEnabled,
+        setIsAdaptiveTpEnabled, setAggressiveTrailMode,
         addTradingPairList, updateTradingPairList, deleteTradingPairList,
     }), [onSetMultiAssetMode, setSelectedAgentWithReset]);
     
@@ -338,7 +346,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         isMinRrEnabled, invalidationSensitivity, isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled, isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isSmcVetoEnabled, htfTimeFrame, tradingPairLists,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
-        futuresSettingsError, multiAssetModeError, entryTiming
+        futuresSettingsError, multiAssetModeError, entryTiming, isAdaptiveTpEnabled, aggressiveTrailMode
     };
 
     return (

@@ -284,6 +284,9 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         takeProfitMode: takeProfitMode,
                         takeProfitValue: takeProfitValue,
                         isTakeProfitLocked: isTakeProfitLocked,
+// FIX: Add missing properties to align with BotConfig type for analysis preview.
+                        isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,
+                        aggressiveTrailMode: config.aggressiveTrailMode,
                     };
 
                     const signal = await getTradingSignal(selectedAgent, previewKlines, previewConfig, htfKlines);

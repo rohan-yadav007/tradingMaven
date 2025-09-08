@@ -1,7 +1,6 @@
 
-
 import { Kline, BotConfig, BacktestResult, Trade, AgentParams, Position, RiskMode, TradingMode, OptimizationResultItem } from '../types';
-import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext } from './localAgentService';
+import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext, getAdaptiveTakeProfit } from './localAgentService';
 import * as constants from '../constants';
 
 // --- Worker-local Helper Functions ---
@@ -193,20 +192,30 @@ async function runBacktest(
         // --- MANAGE OPEN POSITION ---
         if (openPosition) {
             const isLong = openPosition.direction === 'LONG';
-
-            const candleOpenPrice = currentCandle.open;
             let positionState: SimulatedPosition = { ...openPosition };
+            
+            // 1. Check for Adaptive TP update based on the state BEFORE this candle
+            const adaptiveTpSignal = getAdaptiveTakeProfit(positionState, historySlice.slice(0, -1), currentCandle.open);
+            if (adaptiveTpSignal.newTakeProfit) {
+                const newTp = adaptiveTpSignal.newTakeProfit;
+                const isTighter = isLong ? newTp < positionState.takeProfitPrice : newTp > positionState.takeProfitPrice;
+                if (isTighter) {
+                    positionState.takeProfitPrice = newTp;
+                }
+            }
 
+            // 2. Update trailing stops based on the candle's open price
+            const candleOpenPrice = currentCandle.open;
             const stopCandidates: { price: number; reason: Position['activeStopLossReason']; newState?: Partial<Position> }[] = [
                 { price: positionState.stopLossPrice, reason: positionState.activeStopLossReason }
             ];
-             if (config.invalidationSensitivity !== 'low') { // Simplified for backtest; assume this covers spike/aggressive
+             if (config.invalidationSensitivity !== 'low') {
                 const spikeSignal = getProfitSpikeSignal(positionState, candleOpenPrice);
                 if (spikeSignal.newStopLoss) stopCandidates.push({ price: spikeSignal.newStopLoss, reason: 'Profit Secure', newState: spikeSignal.newState });
-                
-                const aggressiveTrailSignal = getAggressiveRangeTrailSignal(positionState, candleOpenPrice);
-                if (aggressiveTrailSignal.newStopLoss) stopCandidates.push({ price: aggressiveTrailSignal.newStopLoss, reason: 'Profit Secure', newState: aggressiveTrailSignal.newState });
             }
+             const aggressiveTrailSignal = getAggressiveRangeTrailSignal(positionState, candleOpenPrice);
+            if (aggressiveTrailSignal.newStopLoss) stopCandidates.push({ price: aggressiveTrailSignal.newStopLoss, reason: 'Profit Secure', newState: aggressiveTrailSignal.newState });
+
             if (config.isBreakevenTrailEnabled) {
                 const breakevenSignal = getMandatoryBreakevenSignal(positionState, candleOpenPrice);
                 if (breakevenSignal.newStopLoss) stopCandidates.push({ price: breakevenSignal.newStopLoss, reason: 'Breakeven', newState: breakevenSignal.newState });
@@ -235,6 +244,7 @@ async function runBacktest(
             }
             openPosition = positionState;
             
+            // 3. Simulate candle's price path (low -> high or high -> low)
             const stopReason = openPosition.activeStopLossReason.includes('Trail') || openPosition.activeStopLossReason.includes('Secure') || openPosition.activeStopLossReason === 'Breakeven' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
             
             const pricePath = isLong 
@@ -253,6 +263,7 @@ async function runBacktest(
             }
             if (hasTradedInThisCandle) { equityCurve.push(equity); continue; }
             
+            // 4. Update position state at candle close
             openPosition.candlesSinceEntry!++;
             if (isLong) {
                 openPosition.peakPrice = Math.max(openPosition.peakPrice!, currentCandle.high);
@@ -315,6 +326,8 @@ async function runBacktest(
                             isAgentTrailEnabled: config.isAgentTrailEnabled,
                             isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
                             isExhaustionFilterEnabled: config.isExhaustionFilterEnabled,
+                            isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,
+                            aggressiveTrailMode: config.aggressiveTrailMode,
                         };
                         const entryContext = captureMarketContext(historySlice, htfHistorySlice);
 
@@ -354,53 +367,88 @@ async function runBacktest(
     return calculateResults(trades, equityCurve, STARTING_CAPITAL);
 }
 
-
+// FIX: Add missing implementation for runOptimization and the worker's onmessage handler.
 async function runOptimization(
     klines: Kline[],
     baseConfig: BotConfig,
-    id: number,
-    allHtfKlines?: Kline[]
+    onProgress: (progress: { percent: number; combinations: number }) => void,
+    htfKlines?: Kline[]
 ): Promise<OptimizationResultItem[]> {
-    const { agent } = baseConfig;
-    let paramRanges: Record<string, (number | boolean)[]> = {};
-    switch (agent.id) {
-        case 9: paramRanges = { qsc_adxThreshold: [22, 25, 28], viPeriod: [10, 14, 20] }; break;
-        case 11: paramRanges = { he_trendSmaPeriod: [20, 30, 40], he_fastEmaPeriod: [7, 9, 12], he_slowEmaPeriod: [20, 25], he_rsiPeriod: [10, 14], he_rsiMidline: [48, 50, 52] }; break;
-        case 13: 
-            paramRanges = {
-                ch_adxThreshold: [20, 22, 25],
-            };
-            break;
-        case 14: paramRanges = { sentinel_scoreThreshold: [65, 70, 75], viPeriod: [10, 14, 20] }; break;
-        default: throw new Error(`Agent "${agent.name}" does not support optimization.`);
+    const agentId = baseConfig.agent.id;
+    let paramRanges: Record<string, number[]> = {};
+
+    // Define parameter ranges for optimization based on the selected agent
+    if (agentId === 9) { // Quantum Scalper
+        paramRanges = {
+            qsc_adxThreshold: [20, 25, 30],
+            qsc_stochRsiOversold: [20, 25, 30],
+            qsc_stochRsiOverbought: [70, 75, 80],
+            qsc_trendScoreThreshold: [70, 75, 80],
+        };
+    } else if (agentId === 11) { // Historic Expert
+        paramRanges = {
+            he_trendSmaPeriod: [30, 40, 50],
+            he_fastEmaPeriod: [9, 12],
+            he_slowEmaPeriod: [21, 26],
+        };
+    } else if (agentId === 13) { // The Chameleon
+        paramRanges = {
+            ch_adxThreshold: [20, 22, 25],
+            ch_fastEmaPeriod: [9, 12],
+            ch_slowEmaPeriod: [21, 26],
+        };
+    } else if (agentId === 14) { // The Sentinel
+        paramRanges = {
+            sentinel_scoreThreshold: [65, 70, 75, 80]
+        };
     }
-    const paramCombinations = generateParamCombinations(paramRanges);
-    if (paramCombinations.length > 250) throw new Error(`Too many combinations (${paramCombinations.length}).`);
+
+    const combinations = generateParamCombinations(paramRanges);
     const results: OptimizationResultItem[] = [];
-    for (let i = 0; i < paramCombinations.length; i++) {
-        const testConfig: BotConfig = { ...baseConfig, agentParams: paramCombinations[i] };
-        const result = await runBacktest(klines, testConfig, allHtfKlines);
-        results.push({ params: paramCombinations[i], result });
-        self.postMessage({ type: 'progress', id, progress: { percent: ((i + 1) / paramCombinations.length) * 100, combinations: paramCombinations.length } });
+    let completed = 0;
+
+    for (const params of combinations) {
+        const configWithParams: BotConfig = {
+            ...baseConfig,
+            agentParams: { ...baseConfig.agentParams, ...params },
+        };
+        const result = await runBacktest(klines, configWithParams, htfKlines);
+        
+        // Only include results with positive PNL and a reasonable number of trades
+        if (result.totalPnl > 0 && result.totalTrades > 2) {
+            results.push({ params, result });
+        }
+        
+        completed++;
+        onProgress({ percent: (completed / combinations.length) * 100, combinations: combinations.length });
     }
-    return results.filter(item => item.result.totalTrades > 0).sort((a, b) => b.result.profitFactor - a.result.profitFactor || b.result.totalPnl - b.result.totalPnl);
+
+    results.sort((a, b) => {
+        // Sort by a combination of PNL and Sharpe Ratio for more robust results
+        const scoreA = a.result.totalPnl * (a.result.sharpeRatio || 0.1);
+        const scoreB = b.result.totalPnl * (b.result.sharpeRatio || 0.1);
+        return scoreB - scoreA;
+    });
+
+    return results.slice(0, 20); // Return top 20 best results
 }
 
-
-// --- Worker Message Handler ---
 self.onmessage = async (event: MessageEvent) => {
-    const { type, payload, id } = event.data;
+    const { type, id, payload } = event.data;
+
+    const onProgress = (progress: any) => {
+        self.postMessage({ type: 'progress', id, progress });
+    };
+
     try {
         if (type === 'runBacktest') {
-            const { klines, config, htfKlines } = payload;
-            const result = await runBacktest(klines, config, htfKlines);
+            const result = await runBacktest(payload.klines, payload.config, payload.htfKlines);
             self.postMessage({ type: 'result', id, payload: result });
         } else if (type === 'runOptimization') {
-            const { klines, config, htfKlines } = payload;
-            const results = await runOptimization(klines, config, id, htfKlines);
-            self.postMessage({ type: 'result', id, payload: results });
+            const result = await runOptimization(payload.klines, payload.config, onProgress, payload.htfKlines);
+            self.postMessage({ type: 'result', id, payload: result });
         }
-    } catch (error) {
-        self.postMessage({ type: 'error', id, error: error instanceof Error ? error.message : 'An unknown worker error occurred' });
+    } catch (e: any) {
+        self.postMessage({ type: 'error', id, error: e.message });
     }
 };

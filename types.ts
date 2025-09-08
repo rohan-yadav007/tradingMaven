@@ -184,6 +184,10 @@ export interface Position {
         isSmcVetoEnabled?: boolean;
         htfTimeFrame?: 'auto' | string;
         entryTiming?: 'immediate' | 'onNextCandle';
+        isAdaptiveTpEnabled?: boolean;
+        aggressiveTrailMode?: 'distance' | 'pnl';
+// FIX: Add missing optional property to align with BotConfig and fix type error.
+        isTakeProfitLocked?: boolean;
     };
     entryContext?: Partial<MarketDataContext>;
 }
@@ -360,6 +364,8 @@ export interface BotConfig {
     refreshInterval?: number;
     entryTiming: 'immediate' | 'onNextCandle';
     telegramChatId?: string;
+    isAdaptiveTpEnabled: boolean;
+    aggressiveTrailMode: 'distance' | 'pnl';
 }
 export interface RunningBot {
     id: string;

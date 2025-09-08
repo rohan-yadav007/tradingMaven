@@ -185,6 +185,9 @@ ID: \`${bot.id}\``;
                     takeProfitMode: RiskMode.Percent,
                     takeProfitValue: 0,
                     isTakeProfitLocked: false,
+// FIX: Add missing properties to align with the BotConfig type.
+                    isAdaptiveTpEnabled: true,
+                    aggressiveTrailMode: 'distance',
                 };
                 
                 const newBot = _botManagerService.startBot(config);

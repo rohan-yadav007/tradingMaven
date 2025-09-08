@@ -1,5 +1,3 @@
-
-
 import React from 'react';
 import { useState, useEffect, useMemo } from 'react';
 import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, Kline, RiskMode, OptimizationResultItem } from '../types';
@@ -149,6 +147,8 @@ export type BacktestConfig = {
     takeProfitMode: RiskMode;
     takeProfitValue: number;
     isTakeProfitLocked: boolean;
+    isAdaptiveTpEnabled: boolean;
+    aggressiveTrailMode: 'distance' | 'pnl';
 };
 
 const getTimeframeDuration = (timeframe: string): number => {
@@ -186,6 +186,8 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         takeProfitMode: globalConfig.takeProfitMode,
         takeProfitValue: globalConfig.takeProfitValue,
         isTakeProfitLocked: globalConfig.isTakeProfitLocked,
+        isAdaptiveTpEnabled: globalConfig.isAdaptiveTpEnabled,
+        aggressiveTrailMode: globalConfig.aggressiveTrailMode,
     });
 
     const [backtestDays, setBacktestDays] = useState(1);
@@ -256,7 +258,9 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 htfTimeFrame: config.htfTimeFrame, agentParams: config.agentParams,
                 pricePrecision: binanceService.getPricePrecision(symbolInfo), quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
-                takerFeeRate: constants.TAKER_FEE_RATE
+                takerFeeRate: constants.TAKER_FEE_RATE,
+                isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,
+                aggressiveTrailMode: config.aggressiveTrailMode,
             };
             const result = await runBacktest(backtestKlines, fullBotConfig, htfKlines);
             setBacktestResult(result);
@@ -304,7 +308,9 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 htfTimeFrame: config.htfTimeFrame, agentParams: config.agentParams,
                 pricePrecision: binanceService.getPricePrecision(symbolInfo), quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
-                takerFeeRate: constants.TAKER_FEE_RATE
+                takerFeeRate: constants.TAKER_FEE_RATE,
+                isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,
+                aggressiveTrailMode: config.aggressiveTrailMode,
             };
             const results = await runOptimization(backtestKlines, baseBotConfig, onProgress, htfKlines);
             if (results.length === 0) { setError("Optimization complete, but no profitable parameter combinations were found."); } else { setOptimizationResults(results); }
@@ -327,6 +333,8 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         globalActions.setInvalidationSensitivity(config.invalidationSensitivity);
         globalActions.setAgentParams(paramsToApply);
         globalActions.setEntryTiming(config.entryTiming);
+        globalActions.setIsAdaptiveTpEnabled(config.isAdaptiveTpEnabled);
+        globalActions.setAggressiveTrailMode(config.aggressiveTrailMode);
         setActiveView('trading');
     };
 
@@ -373,6 +381,19 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                                 <input type="number" value={config.takeProfitValue} onChange={e => updateConfig('takeProfitValue', Number(e.target.value))} className={`${formInputClass} w-2/3`} min="0.1" step="0.1" />
                             </div>
                         )}
+                         <div className="flex items-center justify-between"><label className={formLabelClass}>Adaptive Take Profit</label><ToggleSwitch checked={config.isAdaptiveTpEnabled} onChange={v => updateConfig('isAdaptiveTpEnabled', v)} /></div>
+                         <div className={formGroupClass}>
+                            <label htmlFor="aggressive-trail-mode-bt" className={formLabelClass}>Aggressive Trail Mode</label>
+                            <select 
+                                id="aggressive-trail-mode-bt" 
+                                value={config.aggressiveTrailMode} 
+                                onChange={e => updateConfig('aggressiveTrailMode', e.target.value as 'distance' | 'pnl')}
+                                className={formInputClass}
+                            >
+                                <option value="distance">Distance to TP</option>
+                                <option value="pnl">PNL %</option>
+                            </select>
+                        </div>
                         <div className="flex items-center justify-between"><label className={formLabelClass}>Exhaustion Filter</label><ToggleSwitch checked={config.isExhaustionFilterEnabled ?? true} onChange={v => updateConfig('isExhaustionFilterEnabled', v)} /></div>
                         <div>
                             <div className="flex items-center justify-between">

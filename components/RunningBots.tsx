@@ -145,6 +145,19 @@ const TradeManagementConfiguration: React.FC<{ bot: RunningBot; onUpdate: (chang
                 <ConfigToggle label="Agent Indicator Trail" checked={config.isAgentTrailEnabled} onChange={v => onUpdate({ isAgentTrailEnabled: v })} />
                 <ConfigToggle label="Mandatory Breakeven Trail" checked={config.isBreakevenTrailEnabled} onChange={v => onUpdate({ isBreakevenTrailEnabled: v })} />
                 <ConfigToggle label="Universal Profit Trail" checked={config.isUniversalProfitTrailEnabled} onChange={v => onUpdate({ isUniversalProfitTrailEnabled: v })} />
+                <ConfigToggle label="Adaptive Take Profit" checked={config.isAdaptiveTpEnabled} onChange={v => onUpdate({ isAdaptiveTpEnabled: v })} />
+                 <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                    <label htmlFor={`aggressive-trail-mode-${bot.id}`} className="font-medium text-slate-700 dark:text-slate-300 text-sm">Aggressive Trail Mode</label>
+                    <select 
+                        id={`aggressive-trail-mode-${bot.id}`}
+                        value={config.aggressiveTrailMode} 
+                        onChange={e => onUpdate({ aggressiveTrailMode: e.target.value as 'distance' | 'pnl'})}
+                        className="text-xs font-semibold bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md p-1 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                    >
+                        <option value="distance">Distance to TP</option>
+                        <option value="pnl">PNL %</option>
+                    </select>
+                </div>
                 <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
                     <label htmlFor={`invalidation-sensitivity-${bot.id}`} className="font-medium text-slate-700 dark:text-slate-300 text-sm">Invalidation Sensitivity</label>
                     <select 

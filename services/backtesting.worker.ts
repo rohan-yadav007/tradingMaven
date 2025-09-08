@@ -313,21 +313,43 @@ async function runBacktest(
                 if (validateTradeProfitability(entryPrice, stopLossPrice, finalTp, isLong ? 'LONG' : 'SHORT', config).isValid) {
                     const posVal = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
                     const size = posVal / entryPrice;
+
+                    // --- Initial Risk Veto Logic for Backtesting ---
+                    if (config.isInitialRiskVetoEnabled) {
+                        const initialRiskInDollars = Math.abs(entryPrice - agentStopLoss) * size;
+                        const maxAllowedRiskInDollars = config.investmentAmount * (config.maxMarginLossPercent / 100);
+                        if (initialRiskInDollars > maxAllowedRiskInDollars) {
+                            // Vetoed. Skip to the next candle.
+                            equityCurve.push(equity);
+                            continue;
+                        }
+                    }
+
                     if (size > 0) {
                         const risk = Math.abs(entryPrice - agentStopLoss);
                         const reward = Math.abs(finalTp - entryPrice);
                         const initialRiskRewardRatio = risk > 0 ? reward / risk : 0;
                         const botConfigSnapshot = {
                             isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
-                            htfTimeFrame: config.htfTimeFrame,
                             isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
                             isMinRrEnabled: config.isMinRrEnabled,
                             invalidationSensitivity: config.invalidationSensitivity,
                             isAgentTrailEnabled: config.isAgentTrailEnabled,
                             isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
+                            isMarketCohesionEnabled: config.isMarketCohesionEnabled,
+                            isVwapConfirmationEnabled: config.isVwapConfirmationEnabled,
+                            isBtcConfirmationEnabled: config.isBtcConfirmationEnabled,
+                            btcConfirmationThreshold: config.btcConfirmationThreshold,
+                            isVolumeFilterEnabled: config.isVolumeFilterEnabled,
+                            isAdxFilterEnabled: config.isAdxFilterEnabled,
                             isExhaustionFilterEnabled: config.isExhaustionFilterEnabled,
+                            isSmcVetoEnabled: config.isSmcVetoEnabled,
+                            htfTimeFrame: config.htfTimeFrame,
+                            entryTiming: config.entryTiming,
                             isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,
                             aggressiveTrailMode: config.aggressiveTrailMode,
+                            isTakeProfitLocked: config.isTakeProfitLocked,
+                            isInitialRiskVetoEnabled: config.isInitialRiskVetoEnabled
                         };
                         const entryContext = captureMarketContext(historySlice, htfHistorySlice);
 

@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -38,7 +36,8 @@ const AppContent: React.FC = () => {
         entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
-        isExhaustionFilterEnabled, isAdaptiveTpEnabled, aggressiveTrailMode
+        isExhaustionFilterEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, isInitialRiskVetoEnabled,
+        isSmcVetoEnabled
     } = configState;
 
     const {
@@ -122,6 +121,7 @@ const AppContent: React.FC = () => {
                     timeFrame: chartTimeFrame,
                     investmentAmount,
                     maxMarginLossPercent,
+                    isInitialRiskVetoEnabled,
                     isHtfConfirmationEnabled,
                     htfTimeFrame,
                     isUniversalProfitTrailEnabled,
@@ -136,6 +136,7 @@ const AppContent: React.FC = () => {
                     isVolumeFilterEnabled,
                     isAdxFilterEnabled,
                     isExhaustionFilterEnabled,
+                    isSmcVetoEnabled,
                     isAdaptiveTpEnabled,
                     aggressiveTrailMode,
                     agentParams,
@@ -158,13 +159,13 @@ const AppContent: React.FC = () => {
 
     }, [
         botsToCreate, tradingMode, executionMode, leverage, marginType,
-        selectedAgent, chartTimeFrame, investmentAmount, maxMarginLossPercent,
+        selectedAgent, chartTimeFrame, investmentAmount, maxMarginLossPercent, isInitialRiskVetoEnabled,
         isHtfConfirmationEnabled, htfTimeFrame, agentParams, htfAgentParams,
         isUniversalProfitTrailEnabled, isMinRrEnabled, invalidationSensitivity,
         currentFeeRate, entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
-        isExhaustionFilterEnabled, isAdaptiveTpEnabled, aggressiveTrailMode
+        isExhaustionFilterEnabled, isSmcVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode
     ]);
 
     const handleClosePosition = useCallback(async (posToClose: Position, exitReason: string = "Manual Close", exitPriceOverride?: number) => {
@@ -365,6 +366,27 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
         let finalEntryPrice: number;
         let finalLiquidationPrice: number | undefined = undefined;
 
+        // Calculate trade size first to perform risk checks before placing live orders.
+        const tempEntryPrice = execSignal.entryPrice || 0;
+        if (tempEntryPrice === 0) {
+            botManagerService.notifyTradeExecutionFailed(botId, "No live price was provided by the bot for trade.");
+            return;
+        }
+        const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
+        const preliminaryTradeSize = positionValue / tempEntryPrice;
+        
+        // --- Initial Risk Veto Logic ---
+        if (config.isInitialRiskVetoEnabled) {
+            const initialRiskInDollars = Math.abs(tempEntryPrice - executionDetails.agentStopLoss) * preliminaryTradeSize;
+            const maxAllowedRiskInDollars = config.investmentAmount * (config.maxMarginLossPercent / 100);
+            if (initialRiskInDollars > maxAllowedRiskInDollars) {
+                const reason = `❌ VETO: Initial risk ($${initialRiskInDollars.toFixed(2)}) exceeds max allowed ($${maxAllowedRiskInDollars.toFixed(2)}).`;
+                botManagerService.notifyTradeExecutionFailed(botId, reason);
+                return;
+            }
+        }
+
+
         if (config.executionMode === 'live') {
             if (!accountInfo) {
                 botManagerService.notifyTradeExecutionFailed(botId, "Live account information is not yet available.");
@@ -419,13 +441,8 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 return;
             }
         } else {
-            finalEntryPrice = execSignal.entryPrice || 0;
-            if(finalEntryPrice === 0) {
-                 botManagerService.notifyTradeExecutionFailed(botId, "No live price was provided by the bot for paper trade.");
-                 return;
-            }
-            const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
-            tradeSize = positionValue / finalEntryPrice;
+            finalEntryPrice = tempEntryPrice;
+            tradeSize = preliminaryTradeSize;
         }
         
         const risk = Math.abs(finalEntryPrice - executionDetails.agentStopLoss);
@@ -447,7 +464,29 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             profitLockTier: 0, profitSpikeTier: 0, aggressiveTrailTier: 0,
             peakPrice: finalEntryPrice, troughPrice: finalEntryPrice, candlesSinceEntry: 0, hasBeenProfitable: false,
             takerFeeRate: config.takerFeeRate, initialRiskRewardRatio, agentParamsSnapshot: config.agentParams,
-            botConfigSnapshot: { ...config }, entryContext: executionDetails.entryContext,
+            botConfigSnapshot: {
+                isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
+                isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
+                isMinRrEnabled: config.isMinRrEnabled,
+                invalidationSensitivity: config.invalidationSensitivity,
+                isAgentTrailEnabled: config.isAgentTrailEnabled,
+                isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
+                isMarketCohesionEnabled: config.isMarketCohesionEnabled,
+                isVwapConfirmationEnabled: config.isVwapConfirmationEnabled,
+                isBtcConfirmationEnabled: config.isBtcConfirmationEnabled,
+                btcConfirmationThreshold: config.btcConfirmationThreshold,
+                isVolumeFilterEnabled: config.isVolumeFilterEnabled,
+                isAdxFilterEnabled: config.isAdxFilterEnabled,
+                isExhaustionFilterEnabled: config.isExhaustionFilterEnabled,
+                isSmcVetoEnabled: config.isSmcVetoEnabled,
+                htfTimeFrame: config.htfTimeFrame,
+                entryTiming: config.entryTiming,
+                isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,
+                aggressiveTrailMode: config.aggressiveTrailMode,
+                isTakeProfitLocked: config.isTakeProfitLocked,
+                isInitialRiskVetoEnabled: config.isInitialRiskVetoEnabled
+            },
+            entryContext: executionDetails.entryContext,
         };
 
         const chatId = config.telegramChatId;

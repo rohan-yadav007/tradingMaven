@@ -157,12 +157,12 @@ ID: \`${bot.id}\``;
                     executionMode: executionMode as 'paper' | 'live',
                     timeFrame: '5m',
                     maxMarginLossPercent: constants.MAX_MARGIN_LOSS_PERCENT,
+                    isInitialRiskVetoEnabled: true,
                     marginType: 'ISOLATED',
                     isHtfConfirmationEnabled: false,
                     htfTimeFrame: 'auto',
                     isUniversalProfitTrailEnabled: true,
                     isMinRrEnabled: true,
-// FIX: Replaced deprecated/incorrect properties with current ones from the BotConfig type.
                     invalidationSensitivity: 'medium',
                     isAgentTrailEnabled: true,
                     isBreakevenTrailEnabled: true,
@@ -185,7 +185,6 @@ ID: \`${bot.id}\``;
                     takeProfitMode: RiskMode.Percent,
                     takeProfitValue: 0,
                     isTakeProfitLocked: false,
-// FIX: Add missing properties to align with the BotConfig type.
                     isAdaptiveTpEnabled: true,
                     aggressiveTrailMode: 'distance',
                 };

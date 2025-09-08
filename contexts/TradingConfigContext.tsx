@@ -18,6 +18,7 @@ interface TradingConfigState {
     investmentAmount: number;
     availableBalance: number;
     maxMarginLossPercent: number;
+    isInitialRiskVetoEnabled: boolean;
     // Legacy TP properties for type compatibility
     takeProfitMode: RiskMode;
     takeProfitValue: number;
@@ -66,6 +67,7 @@ interface TradingConfigActions {
     setInvestmentAmount: (amount: number) => void;
     setAvailableBalance: (balance: number) => void;
     setMaxMarginLossPercent: (percent: number) => void;
+    setIsInitialRiskVetoEnabled: (isEnabled: boolean) => void;
     setIsHtfConfirmationEnabled: (isEnabled: boolean) => void;
     setIsUniversalProfitTrailEnabled: (isEnabled: boolean) => void;
     setIsMinRrEnabled: (isEnabled: boolean) => void;
@@ -118,6 +120,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [investmentAmount, setInvestmentAmount] = useState<number>(100);
     const [availableBalance, setAvailableBalance] = useState<number>(Infinity);
     const [maxMarginLossPercent, setMaxMarginLossPercent] = useState<number>(constants.MAX_MARGIN_LOSS_PERCENT);
+    const [isInitialRiskVetoEnabled, setIsInitialRiskVetoEnabled] = useState<boolean>(true);
     const [isHtfConfirmationEnabled, setIsHtfConfirmationEnabled] = useState<boolean>(false);
     const [isUniversalProfitTrailEnabled, setIsUniversalProfitTrailEnabled] = useState<boolean>(true);
     const [isMinRrEnabled, setIsMinRrEnabled] = useState<boolean>(true);
@@ -325,6 +328,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         setLeverage, setMarginType, setTimeFrame, setSelectedAgent: setSelectedAgentWithReset,
         setInvestmentAmount, setAvailableBalance,
         setMaxMarginLossPercent,
+        setIsInitialRiskVetoEnabled,
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setAgentParams, setHtfAgentParams, setIsApiConnected, setWalletViewMode,
         setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError, setIsUniversalProfitTrailEnabled,
         setIsMinRrEnabled, setInvalidationSensitivity, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setEntryTiming,
@@ -338,6 +342,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         executionMode, tradingMode, selectedPairs, allPairs, isPairsLoading, leverage, marginType, chartTimeFrame,
         selectedAgent, agentParams, htfAgentParams, investmentAmount, availableBalance,
         maxMarginLossPercent,
+        isInitialRiskVetoEnabled,
         // Provide default values for legacy TP properties for internal type compatibility
         takeProfitMode: RiskMode.Percent,
         takeProfitValue: 0,

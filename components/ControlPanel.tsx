@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig, Agent, MarketDataContext } from '../types';
 import * as constants from '../constants';
@@ -175,7 +173,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
-        isExhaustionFilterEnabled
+        isExhaustionFilterEnabled, isInitialRiskVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode,
+        isSmcVetoEnabled
     } = config;
 
     const {
@@ -186,7 +185,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setIsMinRrEnabled, setInvalidationSensitivity,
         setEntryTiming, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setIsMarketCohesionEnabled,
         setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
-        setIsExhaustionFilterEnabled
+        setIsExhaustionFilterEnabled, setIsInitialRiskVetoEnabled, setIsAdaptiveTpEnabled, setAggressiveTrailMode,
+        setIsSmcVetoEnabled
     } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -261,6 +261,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         timeFrame: timeFrame,
                         investmentAmount: config.investmentAmount,
                         maxMarginLossPercent: config.maxMarginLossPercent,
+                        isInitialRiskVetoEnabled: config.isInitialRiskVetoEnabled,
                         isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
                         isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
                         isMinRrEnabled: config.isMinRrEnabled,
@@ -284,9 +285,9 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         takeProfitMode: takeProfitMode,
                         takeProfitValue: takeProfitValue,
                         isTakeProfitLocked: isTakeProfitLocked,
-// FIX: Add missing properties to align with BotConfig type for analysis preview.
                         isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,
                         aggressiveTrailMode: config.aggressiveTrailMode,
+                        isSmcVetoEnabled: config.isSmcVetoEnabled,
                     };
 
                     const signal = await getTradingSignal(selectedAgent, previewKlines, previewConfig, htfKlines);
@@ -397,8 +398,28 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 step={0.5}
                 valueDisplay={v => `${v.toFixed(1)}%`}
             />
+            
+            <div className={`${formGroupClass} -mt-2`}>
+                <div className="flex items-center justify-between">
+                     <div className="flex items-center gap-1.5">
+                        <label htmlFor="initial-risk-veto-toggle" className={formLabelClass}>
+                            Initial Risk Veto
+                        </label>
+                         <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                Vetoes trades if the initial stop loss risk (in dollars) is greater than the 'Max Margin Loss %' of the investment amount.
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch
+                        checked={isInitialRiskVetoEnabled}
+                        onChange={setIsInitialRiskVetoEnabled}
+                    />
+                </div>
+            </div>
 
-             <p className="text-xs text-slate-500 dark:text-slate-400 -mt-2">
+             <p className="text-xs text-slate-500 dark:text-slate-400">
                 Stop Loss & Take Profit are fully automated by the agent's logic and the universal profit-locking system.
             </p>
             
@@ -672,6 +693,25 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                    Prevents entries on over-extended moves using StochRSI.
                 </p>
             </div>
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                        <label htmlFor="smc-veto-toggle" className={formLabelClass}>
+                            SMC Reversal Veto
+                        </label>
+                         <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                Prevents entries into potential Smart Money Concept reversal patterns (divergence + liquidity sweep + market structure break).
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch
+                        checked={isSmcVetoEnabled}
+                        onChange={setIsSmcVetoEnabled}
+                    />
+                </div>
+            </div>
              <div className={formGroupClass}>
                 <div className="flex items-center justify-between">
                     <label htmlFor="agent-trail-toggle" className={formLabelClass}>
@@ -712,6 +752,40 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 </div>
                  <p className="text-xs text-slate-500 dark:text-slate-400">
                     A fee-based profit-locking system. Disabling allows agent-specific exit logic.
+                </p>
+            </div>
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                        <label htmlFor="adaptive-tp-toggle" className={formLabelClass}>
+                            Adaptive Take Profit
+                        </label>
+                        <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                Automatically tightens the Take Profit target if momentum fades near the objective, securing profits earlier.
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch
+                        checked={isAdaptiveTpEnabled}
+                        onChange={setIsAdaptiveTpEnabled}
+                    />
+                </div>
+            </div>
+            <div className={formGroupClass}>
+                <label htmlFor="aggressive-trail-mode" className={formLabelClass}>Aggressive Trail Mode</label>
+                <select
+                    id="aggressive-trail-mode"
+                    value={aggressiveTrailMode}
+                    onChange={e => setAggressiveTrailMode(e.target.value as 'distance' | 'pnl')}
+                    className={formInputClass}
+                >
+                    <option value="distance">Distance to TP</option>
+                    <option value="pnl">PNL %</option>
+                </select>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Controls the logic for the hyper-reactive profit-locking trail.
                 </p>
             </div>
              <div className={formGroupClass}>

@@ -4,7 +4,7 @@ import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, Kline, Risk
 import * as constants from '../constants';
 import * as binanceService from './../services/binanceService';
 import { runBacktest, runOptimization } from '../services/backtestingService';
-import { FlaskIcon, ChevronUp, ChevronDown, LockIcon, UnlockIcon, SparklesIcon } from './icons';
+import { FlaskIcon, ChevronUp, ChevronDown, LockIcon, UnlockIcon, SparklesIcon, InfoIcon } from './icons';
 import { useTradingConfigState, useTradingConfigActions } from '../contexts/TradingConfigContext';
 import { SearchableDropdown } from './SearchableDropdown';
 import { BacktestResultDisplay } from './BacktestResultDisplay';
@@ -135,13 +135,14 @@ interface BacktestingPanelProps {
 
 export type BacktestConfig = {
     tradingMode: TradingMode; selectedPair: string; chartTimeFrame: string; selectedAgent: Agent;
-    investmentAmount: number; maxMarginLossPercent: number;
+    investmentAmount: number; maxMarginLossPercent: number; isInitialRiskVetoEnabled: boolean;
     isHtfConfirmationEnabled: boolean; isUniversalProfitTrailEnabled: boolean;
     isMinRrEnabled: boolean; htfTimeFrame: 'auto' | string; invalidationSensitivity: 'low' | 'medium' | 'high';
     isAgentTrailEnabled: boolean;
     isBreakevenTrailEnabled: boolean;
     isMarketCohesionEnabled?: boolean;
     isExhaustionFilterEnabled?: boolean;
+    isSmcVetoEnabled?: boolean;
     agentParams: AgentParams; leverage: number;
     entryTiming: 'immediate' | 'onNextCandle';
     takeProfitMode: RiskMode;
@@ -174,6 +175,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         selectedPair: globalConfig.selectedPairs[0] || constants.TRADING_PAIRS[0], chartTimeFrame: '5m',
         selectedAgent: globalConfig.selectedAgent, investmentAmount: globalConfig.investmentAmount,
         maxMarginLossPercent: globalConfig.maxMarginLossPercent,
+        isInitialRiskVetoEnabled: globalConfig.isInitialRiskVetoEnabled,
         isHtfConfirmationEnabled: globalConfig.isHtfConfirmationEnabled,
         isUniversalProfitTrailEnabled: globalConfig.isUniversalProfitTrailEnabled, htfTimeFrame: globalConfig.htfTimeFrame,
         agentParams: globalConfig.agentParams, leverage: globalConfig.leverage,
@@ -182,6 +184,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         isBreakevenTrailEnabled: globalConfig.isBreakevenTrailEnabled,
         isMarketCohesionEnabled: globalConfig.isMarketCohesionEnabled,
         isExhaustionFilterEnabled: globalConfig.isExhaustionFilterEnabled,
+        isSmcVetoEnabled: globalConfig.isSmcVetoEnabled,
         entryTiming: globalConfig.entryTiming,
         takeProfitMode: globalConfig.takeProfitMode,
         takeProfitValue: globalConfig.takeProfitValue,
@@ -255,6 +258,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
                 isMarketCohesionEnabled: config.isMarketCohesionEnabled,
                 isExhaustionFilterEnabled: config.isExhaustionFilterEnabled,
+                isSmcVetoEnabled: config.isSmcVetoEnabled,
                 htfTimeFrame: config.htfTimeFrame, agentParams: config.agentParams,
                 pricePrecision: binanceService.getPricePrecision(symbolInfo), quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
@@ -305,6 +309,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
                 isMarketCohesionEnabled: config.isMarketCohesionEnabled,
                 isExhaustionFilterEnabled: config.isExhaustionFilterEnabled,
+                isSmcVetoEnabled: config.isSmcVetoEnabled,
                 htfTimeFrame: config.htfTimeFrame, agentParams: config.agentParams,
                 pricePrecision: binanceService.getPricePrecision(symbolInfo), quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
@@ -327,6 +332,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         globalActions.setInvestmentAmount(config.investmentAmount);
         globalActions.setLeverage(config.leverage);
         globalActions.setMaxMarginLossPercent(config.maxMarginLossPercent);
+        globalActions.setIsInitialRiskVetoEnabled(config.isInitialRiskVetoEnabled);
         globalActions.setIsHtfConfirmationEnabled(config.isHtfConfirmationEnabled);
         globalActions.setIsUniversalProfitTrailEnabled(config.isUniversalProfitTrailEnabled);
         globalActions.setIsMinRrEnabled(config.isMinRrEnabled);
@@ -365,6 +371,25 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                         step={0.5}
                         valueDisplay={v => `${v.toFixed(1)}%`}
                     />
+                     <div className={`${formGroupClass} -mt-2`}>
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                                <label htmlFor="initial-risk-veto-toggle-bt" className={formLabelClass}>
+                                    Initial Risk Veto
+                                </label>
+                                <div className="relative group">
+                                    <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                                    <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                        Vetoes trades if the initial stop loss risk (in dollars) is greater than the 'Max Margin Loss %' of the investment amount.
+                                    </div>
+                                </div>
+                            </div>
+                            <ToggleSwitch
+                                checked={config.isInitialRiskVetoEnabled}
+                                onChange={v => updateConfig('isInitialRiskVetoEnabled', v)}
+                            />
+                        </div>
+                    </div>
                      <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
                     <div className="space-y-3 pt-2">
                         <div className="flex items-center justify-between"><label className={formLabelClass}>Fixed Take Profit</label>
@@ -395,6 +420,23 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                             </select>
                         </div>
                         <div className="flex items-center justify-between"><label className={formLabelClass}>Exhaustion Filter</label><ToggleSwitch checked={config.isExhaustionFilterEnabled ?? true} onChange={v => updateConfig('isExhaustionFilterEnabled', v)} /></div>
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                                <label className={formLabelClass}>
+                                    SMC Reversal Veto
+                                </label>
+                                 <div className="relative group">
+                                    <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                                    <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                        Prevents entries into potential Smart Money Concept reversal patterns.
+                                    </div>
+                                </div>
+                            </div>
+                            <ToggleSwitch
+                                checked={config.isSmcVetoEnabled ?? true}
+                                onChange={v => updateConfig('isSmcVetoEnabled', v)}
+                            />
+                        </div>
                         <div>
                             <div className="flex items-center justify-between">
                                 <label className={formLabelClass}>Higher Timeframe Confirmation</label>

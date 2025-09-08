@@ -186,8 +186,8 @@ export interface Position {
         entryTiming?: 'immediate' | 'onNextCandle';
         isAdaptiveTpEnabled?: boolean;
         aggressiveTrailMode?: 'distance' | 'pnl';
-// FIX: Add missing optional property to align with BotConfig and fix type error.
         isTakeProfitLocked?: boolean;
+        isInitialRiskVetoEnabled?: boolean;
     };
     entryContext?: Partial<MarketDataContext>;
 }
@@ -336,6 +336,7 @@ export interface BotConfig {
     timeFrame: string;
     investmentAmount: number;
     maxMarginLossPercent: number;
+    isInitialRiskVetoEnabled: boolean;
     // Legacy TP properties - no longer set by UI but required for back-compat
     takeProfitMode: RiskMode;
     takeProfitValue: number;

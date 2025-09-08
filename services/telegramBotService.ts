@@ -162,6 +162,7 @@ ID: \`${bot.id}\``;
                     htfTimeFrame: 'auto',
                     isUniversalProfitTrailEnabled: true,
                     isMinRrEnabled: true,
+// FIX: Replaced deprecated/incorrect properties with current ones from the BotConfig type.
                     invalidationSensitivity: 'medium',
                     isAgentTrailEnabled: true,
                     isBreakevenTrailEnabled: true,
@@ -171,6 +172,8 @@ ID: \`${bot.id}\``;
                     btcConfirmationThreshold: 60,
                     isVolumeFilterEnabled: true,
                     isAdxFilterEnabled: true,
+                    isExhaustionFilterEnabled: true,
+                    isSmcVetoEnabled: true,
                     agentParams: {},
                     htfAgentParams: {},
                     pricePrecision: binanceService.getPricePrecision(symbolInfo),

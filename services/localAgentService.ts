@@ -1,3 +1,4 @@
+
 import { TradingMode, type Agent, type TradeSignal, type Kline, type AgentParams, type Position, type ADXOutput, type MACDOutput, type BollingerBandsOutput, type StochasticRSIOutput, type TradeManagementSignal, type BotConfig, VortexIndicatorOutput, SentinelAnalysis, KSTOutput, type IchimokuCloudOutput, MarketDataContext } from '../types';
 import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, IchimokuCloud, KST, abandonedbaby, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, downsidetasukigap, dragonflydoji, gravestonedoji, bullishharami, bearishharami, bullishharamicross, bearishharamicross, hammerpattern, hangingman, morningdojistar, morningstar, piercingline, shootingstar, threeblackcrows, threewhitesoldiers, eveningdojistar, eveningstar } from 'technicalindicators';
 import * as constants from '../constants';
@@ -578,8 +579,19 @@ export const getInitialAgentTargets = (
         stopLossAfterInitialChecks = minSafeStopLoss;
     }
 
+    // --- Step 3: Calculate Take Profit based on the intended, pre-cap risk ---
+    const stopLossDistance = Math.abs(entryPrice - stopLossAfterInitialChecks);
+    let suggestedTakeProfit: number;
+    
+    const timeframeConfig = TIMEFRAME_ATR_CONFIG[timeFrame] || TIMEFRAME_ATR_CONFIG['5m'];
+    let riskRewardRatio = timeframeConfig.riskRewardRatio;
 
-    // --- Step 3: Apply Hard Cap as the FINAL, non-negotiable limit ---
+    if (agent.id === 13) {
+        riskRewardRatio = 4;
+    }
+    suggestedTakeProfit = isLong ? entryPrice + (stopLossDistance * riskRewardRatio) : entryPrice - (stopLossDistance * riskRewardRatio);
+
+    // --- Step 4: Apply Hard Cap as the FINAL, non-negotiable limit ---
     let finalStopLoss = stopLossAfterInitialChecks;
     let slReason: 'Agent Logic' | 'Hard Cap' = 'Agent Logic';
 
@@ -603,19 +615,6 @@ export const getInitialAgentTargets = (
             slReason = 'Hard Cap';
         }
     }
-
-
-    // --- Step 4: Calculate Take Profit based on R:R ---
-    const stopLossDistance = Math.abs(entryPrice - finalStopLoss);
-    let suggestedTakeProfit: number;
-    
-    const timeframeConfig = TIMEFRAME_ATR_CONFIG[timeFrame] || TIMEFRAME_ATR_CONFIG['5m'];
-    let riskRewardRatio = timeframeConfig.riskRewardRatio;
-
-    if (agent.id === 13) {
-        riskRewardRatio = 4;
-    }
-    suggestedTakeProfit = isLong ? entryPrice + (stopLossDistance * riskRewardRatio) : entryPrice - (stopLossDistance * riskRewardRatio);
 
 
     // --- Step 5: CRITICAL FINAL SAFETY CHECKS ---
@@ -651,7 +650,7 @@ export const getInitialAgentTargets = (
         stopLossPrice: finalStopLoss,
         takeProfitPrice: finalTakeProfit,
         slReason,
-        agentStopLoss: agentStopLoss // Return original agent SL for transparency
+        agentStopLoss: stopLossAfterInitialChecks // Return the intended SL for validation and record-keeping
     };
 };
 
@@ -1605,7 +1604,7 @@ const getMomentumSwingTraderSignal = (klines: Kline[], config: BotConfig, htfCon
 
 export const validateTradeProfitability = (
     entryPrice: number,
-    finalStopLossPrice: number,
+    agentStopLossPrice: number,
     takeProfitPrice: number,
     direction: 'LONG' | 'SHORT',
     config: BotConfig
@@ -1613,8 +1612,8 @@ export const validateTradeProfitability = (
     const isLong = direction === 'LONG';
 
     // Check 1: Stop Loss and Take Profit are on the correct side of the entry price
-    if ((isLong && (finalStopLossPrice >= entryPrice || takeProfitPrice <= entryPrice)) ||
-        (!isLong && (finalStopLossPrice <= entryPrice || takeProfitPrice >= entryPrice))) {
+    if ((isLong && (agentStopLossPrice >= entryPrice || takeProfitPrice <= entryPrice)) ||
+        (!isLong && (agentStopLossPrice <= entryPrice || takeProfitPrice >= entryPrice))) {
         return { isValid: false, reason: "❌ VETO: SL/TP targets are on the wrong side of the entry price." };
     }
 
@@ -1633,8 +1632,8 @@ export const validateTradeProfitability = (
 
     // Check 3: Enforce Minimum Risk/Reward if enabled.
     if (config.isMinRrEnabled) {
-        // CRITICAL FIX: Use the final, actual stop loss for R:R calculation.
-        const risk = Math.abs(entryPrice - finalStopLossPrice);
+        // Use the intended agent stop loss (post-safety-checks) for R:R calculation.
+        const risk = Math.abs(entryPrice - agentStopLossPrice);
         const reward = Math.abs(takeProfitPrice - entryPrice);
         const rrRatio = risk > 0 ? reward / risk : 0;
 

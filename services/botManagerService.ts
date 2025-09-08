@@ -1,5 +1,4 @@
 
-
 import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, RiskMode, TradingMode, BinanceOrderResponse, TradeManagementSignal, AgentParams, MarketDataContext } from '../types';
 import * as binanceService from './binanceService';
 import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext } from './localAgentService';
@@ -376,7 +375,7 @@ class BotInstance {
         const { config } = this.bot;
         const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(klinesForAnalysis, currentPrice, isLong ? 'LONG' : 'SHORT', config);
         
-        const validation = validateTradeProfitability(currentPrice, stopLossPrice, takeProfitPrice, isLong ? 'LONG' : 'SHORT', this.bot.config);
+        const validation = validateTradeProfitability(currentPrice, agentStopLoss, takeProfitPrice, isLong ? 'LONG' : 'SHORT', this.bot.config);
         if (!validation.isValid) {
             this.notifyTradeExecutionFailed(validation.reason);
             return;

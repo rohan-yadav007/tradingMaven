@@ -1,246 +1,39 @@
-// Manually define indicator output types as they are not exported by 'technicalindicators'
-export interface ADXOutput {
-  adx: number;
-  pdi: number;
-  mdi: number;
-}
+// types.ts
 
-export interface MACDOutput {
-  MACD?: number;
-  signal?: number;
-  histogram?: number;
-}
-
-export interface BollingerBandsOutput {
-  upper: number;
-  middle: number;
-  lower: number;
-  pb: number;
-}
-
-export interface StochasticRSIOutput {
-  stochRSI: number;
-  k: number;
-  d: number;
-}
-
-export interface KSTOutput {
-  kst: number;
-  signal: number;
-}
-
-export interface IchimokuCloudOutput {
-  conversion: number;
-  base: number;
-  spanA: number;
-  spanB: number;
-}
-
-export interface MarketDataContext {
-    // Current Timeframe Indicators
-    rsi14?: number;
-    stochRsi?: StochasticRSIOutput;
-    ema9?: number;
-    ema21?: number;
-    ema50?: number;
-    ema200?: number;
-    sma50?: number;
-    sma200?: number;
-    macd?: MACDOutput;
-    adx14?: ADXOutput;
-    atr14?: number;
-    bb20_2?: BollingerBandsOutput;
-    volumeSma20?: number;
-    obvTrend?: 'bullish' | 'bearish' | 'neutral';
-    vi14?: { pdi: number; ndi: number };
-    ichiCloud?: IchimokuCloudOutput;
-    lastCandlePattern?: { name: string; type: 'bullish' | 'bearish' } | null;
-    vwap?: number;
-    lastVolume?: number;
-    lastClose?: number;
-
-    // Higher Timeframe Context
-    htf_rsi14?: number;
-    htf_stochRsi?: StochasticRSIOutput;
-    htf_ema9?: number;
-    htf_ema21?: number;
-    htf_ema50?: number;
-    htf_ema200?: number;
-    htf_macd?: MACDOutput;
-    htf_adx14?: ADXOutput;
-    htf_obvTrend?: 'bullish' | 'bearish' | 'neutral';
-    htf_vi14?: { pdi: number; ndi: number };
-    htf_trend?: 'bullish' | 'bearish' | 'neutral';
-    htf_vwap?: number;
-}
-
+// --- Enums ---
 
 export enum TradingMode {
     Spot = 'Spot',
-    USDSM_Futures = 'USDS-M Futures',
+    USDSM_Futures = 'USDⓈ-M Futures',
 }
 
-export interface Agent {
-    id: number;
-    name: string;
-    description: string;
-    indicators: string[];
+export enum BotStatus {
+    Starting = 'Starting',
+    Monitoring = 'Monitoring',
+    ExecutingTrade = 'Executing Trade',
+    PositionOpen = 'Position Open',
+    FlipPending = 'Flip Pending',
+    Paused = 'Paused',
+    Stopping = 'Stopping',
+    Stopped = 'Stopped',
+    Error = 'Error',
 }
 
-export interface SentinelAnalysis {
-    bullish: {
-        total: number;
-        trend: number;
-        momentum: number;
-        confirmation: number;
-    };
-    bearish: {
-        total: number;
-        trend: number;
-        momentum: number;
-        confirmation: number;
-    };
+export enum LogType {
+    Info = 'Info',
+    Success = 'Success',
+    Error = 'Error',
+    Action = 'Action',
+    Status = 'Status',
 }
 
-
-export interface TradeSignal {
-    signal: 'BUY' | 'SELL' | 'HOLD';
-    reasons: string[];
-    // These are added so the bot's tick method can pass the final calculated
-    // targets and the execution price to the handler.
-    stopLossPrice?: number;
-    takeProfitPrice?: number;
-    entryPrice?: number;
-    sentinelAnalysis?: SentinelAnalysis;
-}
-
-// For proactive trade management
-export interface TradeManagementSignal {
-    newStopLoss?: number;
-    newTakeProfit?: number;
-    action?: 'hold' | 'close' | 'flip';
-    reasons: string[];
-    newState?: any; // Generic state update object
-    activeStopLossReason?: Position['activeStopLossReason'];
+export enum RiskMode {
+    Percent = 'Percent',
+    ATR = 'ATR',
 }
 
 
-export interface Position {
-    id: number;
-    pair: string;
-    mode: TradingMode;
-    executionMode: 'live' | 'paper';
-    direction: 'LONG' | 'SHORT';
-    entryPrice: number;
-    size: number;
-    investmentAmount: number; // The initial margin used for the trade
-    leverage: number;
-    marginType?: 'ISOLATED' | 'CROSSED';
-    entryTime: string;
-    entryReason: string;
-    agentName: string;
-    takeProfitPrice: number;
-    stopLossPrice: number;
-    pricePrecision: number;
-    timeFrame: string;
-    botId?: string; // Link back to the bot that opened this position
-    orderId: number | null; // Store the real order ID from Binance
-    liquidationPrice?: number; // For futures positions
-    // For R:R based trailing
-    initialTakeProfitPrice: number;
-    initialStopLossPrice: number;
-    initialRiskInPrice: number;
-    // For SL transparency
-    initialStopLossReason: 'Agent Logic' | 'Hard Cap';
-    activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Profit Secure' | 'Breakeven' | 'Agent Trail';
-    isBreakevenSet?: boolean;
-    proactiveLossCheckTriggered: boolean;
-    profitLockTier: number; // 0 for none, or the fee-multiple trigger (e.g., 3, 4, 5)
-    profitSpikeTier?: number; // Tracks the new Profit Spike Protector state
-    aggressiveTrailTier?: number; // Tracks the new Aggressive Range Trail state
-    peakPrice?: number; // Highest price for LONG, lowest for SHORT since entry (for MFE)
-    troughPrice?: number; // Lowest price for LONG, highest for SHORT since entry (for MAE)
-    candlesSinceEntry?: number; // For state-based management (Chameleon V2)
-    hasBeenProfitable?: boolean; // For trade invalidation check
-    takerFeeRate: number;
-    invalidationScore?: number; // Score for trade thesis health
-    adaptiveTpTriggered?: boolean;
-    // --- Analytics Snapshots ---
-    initialRiskRewardRatio?: number;
-    agentParamsSnapshot?: AgentParams;
-    botConfigSnapshot?: {
-        isHtfConfirmationEnabled: boolean;
-        isUniversalProfitTrailEnabled: boolean;
-        isMinRrEnabled: boolean;
-        invalidationSensitivity: 'low' | 'medium' | 'high';
-        isAgentTrailEnabled: boolean;
-        isBreakevenTrailEnabled: boolean;
-        isMarketCohesionEnabled?: boolean;
-        isVwapConfirmationEnabled?: boolean;
-        isBtcConfirmationEnabled?: boolean;
-        btcConfirmationThreshold?: number;
-        isVolumeFilterEnabled?: boolean;
-        isAdxFilterEnabled?: boolean;
-        isExhaustionFilterEnabled?: boolean;
-        isSmcVetoEnabled?: boolean;
-        htfTimeFrame?: 'auto' | string;
-        entryTiming?: 'immediate' | 'onNextCandle';
-        isAdaptiveTpEnabled?: boolean;
-        aggressiveTrailMode?: 'distance' | 'pnl';
-        isInitialRiskVetoEnabled?: boolean;
-    };
-    entryContext?: Partial<MarketDataContext>;
-}
-
-export interface Trade extends Position {
-    exitPrice: number;
-    exitTime: string;
-    pnl: number; // Net PNL (after fees)
-    exitReason: string;
-    mfe?: number; // Max Favorable Excursion in dollars
-    mae?: number; // Max Adverse Excursion in dollars
-    exitContext?: Partial<MarketDataContext>;
-}
-
-export interface RawWalletBalance {
-    asset: string;
-    free: number;
-    locked: number;
-    total: number;
-}
-export interface WalletBalance extends RawWalletBalance {
-    usdValue: number;
-}
-
-
-// --- Margin Account Types ---
-// Removed as Margin trading is no longer supported.
-
-export interface AccountInfo {
-  canTrade: boolean;
-  canWithdraw: boolean;
-  canDeposit: boolean;
-  updateTime: number;
-  accountType: string;
-  balances: WalletBalance[];
-
-  // Spot-specific
-  makerCommission?: number;
-  takerCommission?: number;
-  buyerCommission?: number;
-  sellerCommission?: number;
-  permissions?: string[];
-
-  // Futures-specific
-  feeTier?: number;
-  totalInitialMargin?: string;
-  totalMaintMargin?: string;
-  totalUnrealizedProfit?: string;
-  totalMarginBalance?: string;
-  totalWalletBalance?: string;
-  positions?: any[]; // For futures, to check for open positions
-}
-
+// --- Core Data Structures ---
 
 export interface Kline {
     time: number;
@@ -249,8 +42,89 @@ export interface Kline {
     low: number;
     close: number;
     volume?: number;
-    isFinal?: boolean; // From websocket stream
+    isFinal: boolean;
 }
+
+export interface LiveTicker {
+    pair: string;
+    closePrice: number;
+    highPrice: number;
+    lowPrice: number;
+    volume: number;
+    quoteVolume: number;
+}
+
+
+// --- Binance API Specific ---
+
+export interface SymbolFilter {
+    filterType: 'PRICE_FILTER' | 'LOT_SIZE' | 'MARKET_LOT_SIZE' | 'MAX_NUM_ORDERS' | 'MAX_NUM_ALGO_ORDERS' | 'ICEBERG_PARTS' | 'MIN_NOTIONAL';
+    [key: string]: any;
+}
+
+export interface SymbolInfo {
+    symbol: string;
+    status: string;
+    baseAsset: string;
+    quoteAsset: string;
+    isSpotTradingAllowed: boolean;
+    filters: SymbolFilter[];
+    pricePrecision: number;
+    quantityPrecision: number;
+}
+
+export interface RawWalletBalance {
+    asset: string;
+    free: number;
+    locked: number;
+}
+
+export interface WalletBalance extends RawWalletBalance {
+    total: number;
+    usdValue: number;
+}
+
+export interface AccountInfo {
+    makerCommission: number;
+    takerCommission: number;
+    balances: WalletBalance[];
+    canTrade: boolean;
+    canWithdraw: boolean;
+    canDeposit: boolean;
+    updateTime: number;
+    accountType: string;
+    totalMarginBalance?: string;
+    totalUnrealizedProfit?: string;
+    positions?: any[];
+}
+
+export interface LeverageBracket {
+    bracket: number;
+    initialLeverage: number;
+    notionalCap: number;
+    notionalFloor: number;
+    maintMarginRatio: number;
+    cum: number;
+}
+
+export interface BinanceOrderResponse {
+    symbol: string;
+    orderId: number;
+    clientOrderId: string;
+    transactTime: number;
+    price: string;
+    origQty: string;
+    executedQty: string;
+    cummulativeQuoteQty: string;
+    status: string;
+    timeInForce: string;
+    type: string;
+    side: string;
+    avgPrice?: string;
+    cumQuote?: string;
+}
+
+// --- Order Book ---
 
 export interface OrderBookEntry {
     price: number;
@@ -265,79 +139,157 @@ export interface OrderBook {
     spreadPercentage: number;
 }
 
-export enum LogType {
-    Info = 'Info',
-    Status = 'Status',
-    Success = 'Success',
-    Error = 'Error',
-    Action = 'Action',
+
+// --- Agent & Trading Logic ---
+
+export interface Agent {
+    id: number;
+    name: string;
+    description: string;
+    indicators: string[];
 }
 
-export interface BotLogEntry {
-    timestamp: Date;
-    message: string;
-    type: LogType;
+export interface AgentParams {
+    rsiPeriod?: number;
+    atrPeriod?: number;
+    adxPeriod?: number;
+    viPeriod?: number;
+    obvPeriod?: number;
+    macdFastPeriod?: number;
+    macdSlowPeriod?: number;
+    macdSignalPeriod?: number;
+    invalidationCandleLimit?: number;
+    
+    // Agent 9: Quantum Scalper
+    qsc_adxPeriod?: number;
+    qsc_adxThreshold?: number;
+    qsc_adxChopBuffer?: number;
+    qsc_bbPeriod?: number;
+    qsc_bbStdDev?: number;
+    qsc_bbwSqueezeThreshold?: number;
+    qsc_stochRsiPeriod?: number;
+    qsc_stochRsiOversold?: number;
+    qsc_stochRsiOverbought?: number;
+    qsc_superTrendPeriod?: number;
+    qsc_superTrendMultiplier?: number;
+    qsc_psarStep?: number;
+    qsc_psarMax?: number;
+    qsc_atrPeriod?: number;
+    qsc_atrMultiplier?: number;
+    qsc_trendScoreThreshold?: number;
+    qsc_rangeScoreThreshold?: number;
+    qsc_ichi_conversionPeriod?: number;
+    qsc_ichi_basePeriod?: number;
+    qsc_ichi_laggingSpanPeriod?: number;
+    qsc_ichi_displacement?: number;
+    qsc_rsiOverextendedLong?: number;
+    qsc_rsiOverextendedShort?: number;
+    qsc_entryMode?: 'breakout' | 'pullback';
+    qsc_rsiMomentumThreshold?: number;
+    qsc_rsiPullbackThreshold?: number;
+    qsc_rsiBuyThreshold?: number;
+    qsc_rsiSellThreshold?: number;
+    qsc_volumeExhaustionMultiplier?: number;
+    qsc_marketCohesionCandles?: number;
+
+    // Agent 16: Ichimoku Trend Rider
+    ichi_conversionPeriod?: number;
+    ichi_basePeriod?: number;
+    ichi_laggingSpanPeriod?: number;
+    ichi_displacement?: number;
+
+    // Agent 11: Historic Expert
+    he_trendSmaPeriod?: number;
+    he_fastEmaPeriod?: number;
+    he_slowEmaPeriod?: number;
+    he_rsiPeriod?: number;
+    he_rsiMidline?: number;
+    he_adxTrendThreshold?: number;
+    
+    // Agent 13: The Chameleon
+    ch_fastEmaPeriod?: number;
+    ch_slowEmaPeriod?: number;
+    ch_trendEmaPeriod?: number;
+    ch_adxThreshold?: number;
+    
+    // Agent 14: The Sentinel
+    sentinel_scoreThreshold?: number;
+    sentinel_rsiOverextendedLong?: number;
+    sentinel_rsiOverextendedShort?: number;
+    
+    // Agent 17: Momentum Swing Trader
+    mst_emaFastPeriod?: number;
+    mst_emaSlowPeriod?: number;
+    mst_macdFastPeriod?: number;
+    mst_macdSlowPeriod?: number;
+    mst_macdSignalPeriod?: number;
+    
+    // SMC Reversal Veto
+    smc_divergenceLookback?: number;
+    smc_volumeMultiplier?: number;
 }
 
-export interface LiveTicker {
-    pair: string;
-    closePrice: number;
-    highPrice: number;
-
-    lowPrice: number;
-    volume: number;
-    quoteVolume: number;
+export interface MarketDataContext {
+    rsi14?: number;
+    adx14?: ADXOutput;
+    atr14?: number;
+    stochRsi?: StochasticRSIOutput;
+    vi14?: { pdi: number, ndi: number };
+    bb20_2?: BollingerBandsOutput;
+    volumeSma20?: number;
+    obvTrend?: 'bullish' | 'bearish' | 'neutral';
+    macd?: MACDOutput;
+    ema9?: number;
+    ema21?: number;
+    ema50?: number;
+    ema200?: number;
+    sma50?: number;
+    sma200?: number;
+    ichiCloud?: IchimokuCloudOutput;
+    lastCandlePattern?: { name: string; type: 'bullish' | 'bearish' };
+    vwap?: number;
+    lastVolume?: number;
+    lastClose?: number;
+    // HTF prefixed properties
+    htf_rsi14?: number;
+    htf_adx14?: ADXOutput;
+    htf_stochRsi?: StochasticRSIOutput;
+    htf_trend?: 'bullish' | 'bearish' | 'neutral';
 }
 
-export interface SymbolFilter {
-    filterType: 'PRICE_FILTER' | 'LOT_SIZE' | 'MARKET_LOT_SIZE' | string;
-    minPrice?: string;
-    maxPrice?: string;
-    tickSize?: string;
-    minQty?: string;
-    maxQty?: string;
-    stepSize?: string;
+export interface TradeSignal {
+    signal: 'BUY' | 'SELL' | 'HOLD';
+    reasons: string[];
+    entryPrice?: number;
+    takeProfitPrice?: number;
+    stopLossPrice?: number;
+    sentinelAnalysis?: SentinelAnalysis;
 }
 
-export interface SymbolInfo {
-    symbol: string;
-    status: string;
-    baseAsset: string;
-    baseAssetPrecision: number;
-    quoteAsset: string;
-    quotePrecision: number;
-    quoteAssetPrecision: number;
-    orderTypes: string[];
-    icebergAllowed: boolean;
-    ocoAllowed: boolean;
-    quoteOrderQtyMarketAllowed: boolean;
-    allowTrailingStop: boolean;
-    cancelReplaceAllowed: boolean;
-    isSpotTradingAllowed: boolean;
-    isMarginTradingAllowed: boolean;
-    filters: SymbolFilter[];
-    permissions: string[];
-    defaultSelfTradePreventionMode: string;
-    allowedSelfTradePreventionModes: string[];
+export interface TradeManagementSignal {
+    newStopLoss?: number;
+    newTakeProfit?: number;
+    action?: 'hold' | 'close';
+    reasons: string[];
+    newState?: Partial<Position>;
+    activeStopLossReason?: Position['activeStopLossReason'];
 }
 
-export enum RiskMode {
-    Percent = 'percent',
-    Amount = 'amount',
-}
+// --- Bot & Position Management ---
 
 export interface BotConfig {
     pair: string;
     mode: TradingMode;
-    executionMode: 'live' | 'paper';
+    executionMode: 'paper' | 'live';
     leverage: number;
-    marginType?: 'ISOLATED' | 'CROSSED';
+    marginType: 'ISOLATED' | 'CROSSED';
     agent: Agent;
     timeFrame: string;
     investmentAmount: number;
     maxMarginLossPercent: number;
     isInitialRiskVetoEnabled: boolean;
     isHtfConfirmationEnabled: boolean;
+    htfTimeFrame: 'auto' | string;
     isUniversalProfitTrailEnabled: boolean;
     isMinRrEnabled: boolean;
     invalidationSensitivity: 'low' | 'medium' | 'high';
@@ -351,19 +303,105 @@ export interface BotConfig {
     isAdxFilterEnabled?: boolean;
     isExhaustionFilterEnabled?: boolean;
     isSmcVetoEnabled?: boolean;
-    htfTimeFrame?: 'auto' | string;
-    agentParams?: AgentParams;
+    isSrAnalysisEnabled?: boolean;
+    isCandlestickConfirmationEnabled?: boolean;
+    isAdaptiveTpEnabled: boolean;
+    aggressiveTrailMode: 'distance' | 'pnl';
+    agentParams: AgentParams;
     htfAgentParams?: AgentParams;
     pricePrecision: number;
     quantityPrecision: number;
     stepSize: number;
     takerFeeRate: number;
-    refreshInterval?: number;
     entryTiming: 'immediate' | 'onNextCandle';
     telegramChatId?: string;
-    isAdaptiveTpEnabled: boolean;
-    aggressiveTrailMode: 'distance' | 'pnl';
+    refreshInterval?: number;
 }
+
+export interface BotConfigSnapshot {
+    isHtfConfirmationEnabled?: boolean;
+    isUniversalProfitTrailEnabled?: boolean;
+    isMinRrEnabled?: boolean;
+    invalidationSensitivity?: 'low' | 'medium' | 'high';
+    isAgentTrailEnabled?: boolean;
+    isBreakevenTrailEnabled?: boolean;
+    isMarketCohesionEnabled?: boolean;
+    isVwapConfirmationEnabled?: boolean;
+    isBtcConfirmationEnabled?: boolean;
+    btcConfirmationThreshold?: number;
+    isVolumeFilterEnabled?: boolean;
+    isAdxFilterEnabled?: boolean;
+    isExhaustionFilterEnabled?: boolean;
+    isSmcVetoEnabled?: boolean;
+    isSrAnalysisEnabled?: boolean;
+    isCandlestickConfirmationEnabled?: boolean;
+    htfTimeFrame?: 'auto' | string;
+    entryTiming?: 'immediate' | 'onNextCandle';
+    isAdaptiveTpEnabled?: boolean;
+    aggressiveTrailMode?: 'distance' | 'pnl';
+    isInitialRiskVetoEnabled?: boolean;
+}
+
+export interface Position {
+    id: number;
+    botId: string | null;
+    orderId: number | null;
+    pair: string;
+    mode: TradingMode;
+    executionMode: 'paper' | 'live';
+    direction: 'LONG' | 'SHORT';
+    entryPrice: number;
+    size: number;
+    investmentAmount: number;
+    leverage: number;
+    marginType: 'ISOLATED' | 'CROSSED';
+    entryTime: string;
+    entryReason: string;
+    agentName: string;
+    takeProfitPrice: number;
+    stopLossPrice: number;
+    initialTakeProfitPrice: number;
+    initialStopLossPrice: number;
+    initialRiskInPrice: number;
+    initialStopLossReason: 'Agent Logic' | 'Hard Cap';
+    activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Profit Secure' | 'Breakeven' | 'Agent Trail';
+    pricePrecision: number;
+    timeFrame: string;
+    liquidationPrice?: number;
+    isBreakevenSet: boolean;
+    profitLockTier: number;
+    profitSpikeTier: number;
+    aggressiveTrailTier: number;
+    peakPrice: number;
+    troughPrice: number;
+    candlesSinceEntry: number;
+    hasBeenProfitable: boolean;
+    takerFeeRate: number;
+    initialRiskRewardRatio?: number;
+    agentParamsSnapshot?: AgentParams;
+    botConfigSnapshot?: BotConfigSnapshot;
+    invalidationScore?: number;
+    proactiveLossCheckTriggered: boolean;
+    adaptiveTpTriggered?: boolean;
+    entryContext?: Partial<MarketDataContext>;
+    exitContext?: Partial<MarketDataContext>;
+}
+
+export interface Trade extends Position {
+    exitPrice: number;
+    exitTime: string;
+    pnl: number;
+    exitReason: string;
+    mfe?: number;
+    mae?: number;
+}
+
+export interface BotLogEntry {
+    timestamp: Date;
+    message: string;
+    type: LogType;
+}
+
 export interface RunningBot {
     id: string;
     config: BotConfig;
@@ -382,48 +420,13 @@ export interface RunningBot {
     accumulatedActiveMs: number;
     lastResumeTimestamp: number | null;
     klinesLoaded: number;
-    lastAnalysisTimestamp: number | null;
-    lastPriceUpdateTimestamp: number | null;
     livePrice?: number;
     liveTicker?: LiveTicker;
+    lastAnalysisTimestamp: number | null;
+    lastPriceUpdateTimestamp: number | null;
 }
 
-export enum BotStatus {
-    Starting = 'Starting',
-    Monitoring = 'Monitoring',
-    ExecutingTrade = 'ExecutingTrade',
-    PositionOpen = 'PositionOpen',
-    Paused = 'Paused',
-    Stopped = 'Stopped',
-    Error = 'Error',
-    Stopping = 'Stopping',
-    FlipPending = 'FlipPending',
-}
-export interface LeverageBracket {
-    bracket: number;
-    initialLeverage: number;
-    notionalCap: number;
-    notionalFloor: number;
-    maintMarginRatio: number;
-    cum: number;
-}
-
-export type BinanceOrderResponse = {
-    symbol: string;
-    orderId: number;
-    clientOrderId: string;
-    transactTime: number;
-    price: string;
-    origQty: string;
-    executedQty: string;
-    cummulativeQuoteQty: string;
-    status: string;
-    timeInForce: string;
-    type: string;
-    side: string;
-    avgPrice?: string; 
-    cumQuote?: string;
-};
+// --- Backtesting & Optimization ---
 
 export interface BacktestResult {
     trades: Trade[];
@@ -444,91 +447,55 @@ export interface OptimizationResultItem {
     result: BacktestResult;
 }
 
+
+// --- Technical Indicator Outputs ---
+
+export interface MACDOutput {
+    MACD?: number;
+    signal?: number;
+    histogram?: number;
+}
+
+export interface BollingerBandsOutput {
+    middle: number;
+    upper: number;
+    lower: number;
+    pb: number;
+}
+
+export interface ADXOutput {
+    adx: number;
+    pdi: number;
+    mdi: number;
+}
+
+export interface StochasticRSIOutput {
+    k: number;
+    d: number;
+}
+
 export interface VortexIndicatorOutput {
     pdi: number[];
     ndi: number[];
 }
-export type AgentParams = Partial<{
-    // General
-    rsiPeriod: number;
-    atrPeriod: number;
-    adxPeriod: number;
-    viPeriod: number;
-    obvPeriod: number;
-    macdFastPeriod: number;
-    macdSlowPeriod: number;
-    macdSignalPeriod: number;
-    invalidationCandleLimit: number;
-    
-    // Quantum Scalper (9)
-    qsc_adxPeriod: number;
-    qsc_adxThreshold: number;
-    qsc_adxChopBuffer: number;
-    qsc_bbPeriod: number;
-    qsc_bbStdDev: number;
-    qsc_bbwSqueezeThreshold: number;
-    qsc_stochRsiPeriod: number;
-    qsc_stochRsiOversold: number;
-    qsc_stochRsiOverbought: number;
-    qsc_superTrendPeriod: number;
-    qsc_superTrendMultiplier: number;
-    qsc_psarStep: number;
-    qsc_psarMax: number;
-    qsc_atrPeriod: number;
-    qsc_atrMultiplier: number;
-    qsc_trendScoreThreshold: number;
-    qsc_rangeScoreThreshold: number;
-    qsc_ichi_conversionPeriod: number;
-    qsc_ichi_basePeriod: number;
-    qsc_ichi_laggingSpanPeriod: number;
-    qsc_ichi_displacement: number;
-    qsc_rsiOverextendedLong: number;
-    qsc_rsiOverextendedShort: number;
-    qsc_entryMode: 'breakout' | 'pullback';
-    qsc_rsiMomentumThreshold: number;
-    qsc_rsiPullbackThreshold: number;
-    qsc_rsiBuyThreshold: number;
-    qsc_rsiSellThreshold: number;
-    qsc_volumeExhaustionMultiplier?: number;
-    qsc_marketCohesionCandles?: number;
 
-    // Ichimoku Trend Rider (16)
-    ichi_conversionPeriod: number;
-    ichi_basePeriod: number;
-    ichi_laggingSpanPeriod: number;
-    ichi_displacement: number;
+export interface KSTOutput {
+    kst: number;
+    signal: number;
+}
 
-    // Historic Expert (11)
-    he_trendSmaPeriod: number;
-    he_fastEmaPeriod: number;
-    he_slowEmaPeriod: number;
-    he_rsiPeriod: number;
-    he_rsiMidline: number;
-    he_adxTrendThreshold: number;
-    
-    // The Chameleon (13)
-    ch_fastEmaPeriod: number;
-    ch_slowEmaPeriod: number;
-    ch_trendEmaPeriod: number;
-    ch_adxThreshold: number;
-    
-    // The Sentinel (14)
-    sentinel_scoreThreshold: number;
-    sentinel_rsiOverextendedLong?: number;
-    sentinel_rsiOverextendedShort?: number;
-    
-    // Momentum Swing Trader (17)
-    mst_emaFastPeriod?: number;
-    mst_emaSlowPeriod?: number;
-    mst_macdFastPeriod?: number;
-    mst_macdSlowPeriod?: number;
-    mst_macdSignalPeriod?: number;
+export interface IchimokuCloudOutput {
+    conversion: number;
+    base: number;
+    spanA: number;
+    spanB: number;
+    span: number;
+}
 
-    // SMC Reversal Veto
-    smc_divergenceLookback: number;
-    smc_volumeMultiplier: number;
-    smc_chochLookback: number;
-}>;
+export interface SentinelAnalysis {
+    bullish: { total: number; trend: number; momentum: number; confirmation: number; };
+    bearish: { total: number; trend: number; momentum: number; confirmation: number; };
+}
 
 // --- User Preferences ---
 export interface TradingPairList {

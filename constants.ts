@@ -142,21 +142,20 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     // SMC Reversal Veto
     smc_divergenceLookback: 12,
     smc_volumeMultiplier: 2.0,
-    smc_chochLookback: 5,
 };
 
 
 // --- TIMEFRAME-SPECIFIC PARAMETER OVERRIDES ---
 
 export const SMC_VETO_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '1m':  { smc_divergenceLookback: 5, smc_volumeMultiplier: 1.5, smc_chochLookback: 3 },
-    '3m':  { smc_divergenceLookback: 8, smc_volumeMultiplier: 2.0, smc_chochLookback: 4 },
-    '5m':  { smc_divergenceLookback: 12, smc_volumeMultiplier: 2.0, smc_chochLookback: 5 },
-    '15m': { smc_divergenceLookback: 20, smc_volumeMultiplier: 2.5, smc_chochLookback: 8 },
-    '30m': { smc_divergenceLookback: 20, smc_volumeMultiplier: 2.5, smc_chochLookback: 8 },
-    '1h':  { smc_divergenceLookback: 20, smc_volumeMultiplier: 2.5, smc_chochLookback: 8 },
-    '4h':  { smc_divergenceLookback: 20, smc_volumeMultiplier: 2.5, smc_chochLookback: 8 },
-    '1d':  { smc_divergenceLookback: 20, smc_volumeMultiplier: 2.5, smc_chochLookback: 8 },
+    '1m':  { smc_divergenceLookback: 5, smc_volumeMultiplier: 1.5 },
+    '3m':  { smc_divergenceLookback: 8, smc_volumeMultiplier: 2.0 },
+    '5m':  { smc_divergenceLookback: 12, smc_volumeMultiplier: 2.0 },
+    '15m': { smc_divergenceLookback: 20, smc_volumeMultiplier: 2.5 },
+    '30m': { smc_divergenceLookback: 20, smc_volumeMultiplier: 2.5 },
+    '1h':  { smc_divergenceLookback: 20, smc_volumeMultiplier: 2.5 },
+    '4h':  { smc_divergenceLookback: 20, smc_volumeMultiplier: 2.5 },
+    '1d':  { smc_divergenceLookback: 20, smc_volumeMultiplier: 2.5 },
 };
 
 export const QUANTUM_SCALPER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {

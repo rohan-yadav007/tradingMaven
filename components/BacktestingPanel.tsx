@@ -144,6 +144,8 @@ export type BacktestConfig = {
     isExhaustionFilterEnabled?: boolean;
     isSmcVetoEnabled?: boolean;
     agentParams: AgentParams; leverage: number;
+    // FIX: Add marginType to satisfy BotConfig requirements.
+    marginType: 'ISOLATED' | 'CROSSED';
     entryTiming: 'immediate' | 'onNextCandle';
     isAdaptiveTpEnabled: boolean;
     aggressiveTrailMode: 'distance' | 'pnl';
@@ -176,6 +178,8 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         isHtfConfirmationEnabled: globalConfig.isHtfConfirmationEnabled,
         isUniversalProfitTrailEnabled: globalConfig.isUniversalProfitTrailEnabled, htfTimeFrame: globalConfig.htfTimeFrame,
         agentParams: globalConfig.agentParams, leverage: globalConfig.leverage,
+        // FIX: Initialize marginType from global config.
+        marginType: globalConfig.marginType,
         isMinRrEnabled: globalConfig.isMinRrEnabled, invalidationSensitivity: globalConfig.invalidationSensitivity,
         isAgentTrailEnabled: globalConfig.isAgentTrailEnabled,
         isBreakevenTrailEnabled: globalConfig.isBreakevenTrailEnabled,

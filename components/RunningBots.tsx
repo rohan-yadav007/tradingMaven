@@ -360,6 +360,50 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
     );
 };
 
+const ThesisHealthIndicator: React.FC<{ score: number | undefined; sensitivity: 'low' | 'medium' | 'high' }> = ({ score, sensitivity }) => {
+    const scoreValue = score ?? 0;
+    const threshold = {
+        low: 80,
+        medium: 65,
+        high: 50
+    }[sensitivity];
+
+    const healthPercent = Math.max(0, 100 - scoreValue);
+    
+    let colorClass = 'bg-emerald-500'; // Healthy
+    let textColorClass = 'text-emerald-700 dark:text-emerald-300';
+    let label = 'Healthy';
+    if (scoreValue > threshold * 0.5) {
+        colorClass = 'bg-amber-500'; // Weakening
+        textColorClass = 'text-amber-700 dark:text-amber-300';
+        label = 'Weakening';
+    }
+    if (scoreValue > threshold * 0.8) {
+        colorClass = 'bg-rose-500'; // Critical
+        textColorClass = 'text-rose-700 dark:text-rose-300';
+        label = 'Critical';
+    }
+
+    return (
+        <div className="flex-1">
+            <div className="flex justify-between items-baseline mb-1">
+                <div className="flex items-center gap-1.5">
+                    <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Thesis Health</label>
+                    <div className="relative group">
+                        <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                        <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                            Measures how strongly the original entry reasons still hold. A high score indicates a weakening thesis, risking an automated exit.
+                        </div>
+                    </div>
+                </div>
+                <span className={`text-xs font-bold ${textColorClass}`}>{label} ({scoreValue}/100)</span>
+            </div>
+            <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2.5">
+                <div className={`h-2.5 rounded-full transition-all duration-300 ${colorClass}`} style={{ width: `${healthPercent}%` }}></div>
+            </div>
+        </div>
+    );
+};
 
 const BotLog: React.FC<{ log: BotLogEntry[] }> = ({ log }) => {
     const logContainerRef = useRef<HTMLDivElement>(null);
@@ -519,6 +563,9 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
                             </div>
                         </div>
                         <PositionPnlProgress position={position} livePrice={bot.livePrice || position.entryPrice} />
+                        <div className="mt-3 flex items-center gap-4">
+                            <ThesisHealthIndicator score={position.invalidationScore} sensitivity={position.botConfigSnapshot?.invalidationSensitivity || 'medium'} />
+                        </div>
                     </div>
                 )}
             </div>

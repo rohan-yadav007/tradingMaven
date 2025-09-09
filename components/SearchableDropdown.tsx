@@ -1,19 +1,24 @@
+
 import React, { useMemo } from 'react';
 import Select, { StylesConfig, GroupBase, OnChangeValue } from 'react-select';
 
+type SelectOptionType = {
+    value: string;
+    label: string;
+};
+type GroupedOptionType = {
+    label: string;
+    options: readonly SelectOptionType[];
+};
+
 interface SearchableDropdownProps {
-    options: string[];
+    options: readonly string[] | readonly GroupedOptionType[];
     value: string | string[];
     onChange: (value: string | string[]) => void;
     disabled?: boolean;
     theme: 'light' | 'dark';
     isMulti?: boolean;
 }
-
-type SelectOptionType = {
-    value: string;
-    label: string;
-};
 
 const getCustomStyles = (isDark: boolean): StylesConfig<SelectOptionType, boolean, GroupBase<SelectOptionType>> => ({
     control: (provided, state) => ({
@@ -79,7 +84,12 @@ const getCustomStyles = (isDark: boolean): StylesConfig<SelectOptionType, boolea
 
 export const SearchableDropdown: React.FC<SearchableDropdownProps> = ({ options, value, onChange, disabled, theme, isMulti = false }) => {
     
-    const selectOptions = useMemo(() => options.map(opt => ({ value: opt, label: opt })), [options]);
+    const selectOptions = useMemo(() => {
+        if (options && options.length > 0 && typeof options[0] === 'string') {
+            return (options as string[]).map(opt => ({ value: opt, label: opt }));
+        }
+        return options as readonly GroupedOptionType[];
+    }, [options]);
 
     const handleChange = (selectedOption: OnChangeValue<SelectOptionType, boolean>) => {
         if (isMulti) {
@@ -94,11 +104,28 @@ export const SearchableDropdown: React.FC<SearchableDropdownProps> = ({ options,
     const customStyles = useMemo(() => getCustomStyles(theme === 'dark'), [theme]);
 
     const selectValue = useMemo(() => {
-        if (isMulti) {
-            return selectOptions.filter(o => (value as string[]).includes(o.value));
+        if (!options || options.length === 0) {
+            return isMulti ? [] : null;
         }
-        return selectOptions.find(o => o.value === value) || null;
-    }, [value, selectOptions, isMulti]);
+
+        let allOptionsFlat: SelectOptionType[] = [];
+        const firstOpt = options[0];
+
+        if (typeof firstOpt === 'string') {
+            allOptionsFlat = (options as string[]).map(opt => ({ value: opt, label: opt }));
+        } else if (firstOpt && 'options' in firstOpt) {
+            (options as readonly GroupedOptionType[]).forEach(group => {
+                allOptionsFlat.push(...group.options);
+            });
+        }
+
+        if (isMulti) {
+            if (!Array.isArray(value)) return [];
+            return allOptionsFlat.filter(o => value.includes(o.value));
+        }
+        if (typeof value !== 'string') return null;
+        return allOptionsFlat.find(o => o.value === value) || null;
+    }, [value, options, isMulti]);
 
     return (
         <Select<SelectOptionType, boolean, GroupBase<SelectOptionType>>
@@ -108,7 +135,7 @@ export const SearchableDropdown: React.FC<SearchableDropdownProps> = ({ options,
             styles={customStyles}
             isDisabled={disabled}
             isMulti={isMulti}
-            aria-label="Searchable dropdown for trading pairs"
+            aria-label="Searchable dropdown"
         />
     );
 };

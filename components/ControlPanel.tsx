@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig, Agent, MarketDataContext } from '../types';
 import * as constants from '../constants';
@@ -174,7 +175,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isInitialRiskVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode,
-        isSmcVetoEnabled
+        isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled
     } = config;
 
     const {
@@ -186,7 +187,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setEntryTiming, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setIsMarketCohesionEnabled,
         setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
         setIsExhaustionFilterEnabled, setIsInitialRiskVetoEnabled, setIsAdaptiveTpEnabled, setAggressiveTrailMode,
-        setIsSmcVetoEnabled
+        setIsSmcVetoEnabled, setIsSrAnalysisEnabled, setIsCandlestickConfirmationEnabled
     } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -196,14 +197,37 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
     const [isAnalysisOpen, setIsAnalysisOpen] = useState(true);
     const [selectedList, setSelectedList] = useState<string | null>(null);
 
-    const pairListOptions = useMemo(() => tradingPairLists.map(list => list.name), [tradingPairLists]);
+    const pairListOptions = useMemo(() => {
+        const spotLists = tradingPairLists
+            .filter(list => list.tradingMode === TradingMode.Spot)
+            .map(list => ({ value: list.name, label: list.name }));
+
+        const futuresLists = tradingPairLists
+            .filter(list => list.tradingMode === TradingMode.USDSM_Futures)
+            .map(list => ({ value: list.name, label: list.name }));
+        
+        const groups = [];
+        if (futuresLists.length > 0) {
+            groups.push({
+                label: 'USDⓈ-M Futures Lists',
+                options: futuresLists
+            });
+        }
+        if (spotLists.length > 0) {
+            groups.push({
+                label: 'Spot Lists',
+                options: spotLists
+            });
+        }
+        return groups;
+    }, [tradingPairLists]);
+
 
     const handleLoadList = (listName: string | string[]) => {
         if (typeof listName === 'string') {
             const list = tradingPairLists.find(l => l.name === listName);
             if (list) {
                 setSelectedPairs(list.pairs);
-                setTradingMode(list.tradingMode);
             }
             setSelectedList(null); 
         }
@@ -285,6 +309,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,
                         aggressiveTrailMode: config.aggressiveTrailMode,
                         isSmcVetoEnabled: config.isSmcVetoEnabled,
+                        isSrAnalysisEnabled: config.isSrAnalysisEnabled,
+                        isCandlestickConfirmationEnabled: config.isCandlestickConfirmationEnabled,
                     };
 
                     const signal = await getTradingSignal(selectedAgent, previewKlines, previewConfig, htfKlines);
@@ -706,6 +732,44 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     <ToggleSwitch
                         checked={isSmcVetoEnabled}
                         onChange={setIsSmcVetoEnabled}
+                    />
+                </div>
+            </div>
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                        <label htmlFor="sr-analysis-toggle" className={formLabelClass}>
+                            S/R Zone Analysis
+                        </label>
+                        <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                Vetoes trades that would enter directly into a significant support or resistance zone.
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch
+                        checked={isSrAnalysisEnabled}
+                        onChange={setIsSrAnalysisEnabled}
+                    />
+                </div>
+            </div>
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                        <label htmlFor="candlestick-veto-toggle" className={formLabelClass}>
+                            Candlestick Veto
+                        </label>
+                        <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                Vetoes trades if the most recent candle is a strong, contradictory reversal pattern.
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch
+                        checked={isCandlestickConfirmationEnabled}
+                        onChange={setIsCandlestickConfirmationEnabled}
                     />
                 </div>
             </div>

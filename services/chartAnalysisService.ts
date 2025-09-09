@@ -1,8 +1,8 @@
 import type { Kline } from '../types';
 
 export interface SupportResistance {
-    supports: number[];
-    resistances: number[];
+    supports: { price: number; score: number }[];
+    resistances: { price: number; score: number }[];
 }
 
 /**
@@ -56,7 +56,7 @@ export const calculateSupportResistance = (klines: Kline[], lookback: number = 1
                 const volumeScore = Math.log(pivotVolume + 1);
 
                 // Average the price and increment the score for the cluster
-                level.price = (level.price * level.score + pivot.price) / (level.score + 1);
+                level.price = (level.price * level.score + pivot.price * (1 + volumeScore)) / (level.score + 1 + volumeScore);
                 level.score += 1 + volumeScore;
                 foundLevel = true;
                 break;
@@ -71,13 +71,13 @@ export const calculateSupportResistance = (klines: Kline[], lookback: number = 1
 
     const supports = levels
         .filter(l => l.type === 'support')
-        .sort((a, b) => b.score - a.score) // Sort by significance
-        .map(l => l.price);
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 4); // Limit to top 4 significant levels
 
     const resistances = levels
         .filter(l => l.type === 'resistance')
-        .sort((a, b) => b.score - a.score) // Sort by significance
-        .map(l => l.price);
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 4); // Limit to top 4 significant levels
         
     return { supports, resistances };
 };

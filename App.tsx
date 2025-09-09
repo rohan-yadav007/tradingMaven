@@ -37,7 +37,7 @@ const AppContent: React.FC = () => {
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, isInitialRiskVetoEnabled,
-        isSmcVetoEnabled
+        isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled
     } = configState;
 
     const {
@@ -137,6 +137,8 @@ const AppContent: React.FC = () => {
                     isAdxFilterEnabled,
                     isExhaustionFilterEnabled,
                     isSmcVetoEnabled,
+                    isSrAnalysisEnabled,
+                    isCandlestickConfirmationEnabled,
                     isAdaptiveTpEnabled,
                     aggressiveTrailMode,
                     agentParams,
@@ -162,7 +164,8 @@ const AppContent: React.FC = () => {
         currentFeeRate, entryTiming,
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
-        isExhaustionFilterEnabled, isSmcVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode
+        isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, 
+        isAdaptiveTpEnabled, aggressiveTrailMode
     ]);
 
     const handleClosePosition = useCallback(async (posToClose: Position, exitReason: string = "Manual Close", exitPriceOverride?: number) => {
@@ -477,6 +480,8 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 isAdxFilterEnabled: config.isAdxFilterEnabled,
                 isExhaustionFilterEnabled: config.isExhaustionFilterEnabled,
                 isSmcVetoEnabled: config.isSmcVetoEnabled,
+                isSrAnalysisEnabled: config.isSrAnalysisEnabled,
+                isCandlestickConfirmationEnabled: config.isCandlestickConfirmationEnabled,
                 htfTimeFrame: config.htfTimeFrame,
                 entryTiming: config.entryTiming,
                 isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,

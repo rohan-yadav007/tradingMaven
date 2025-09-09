@@ -1,8 +1,10 @@
-import { TradingMode, type Agent, type TradeSignal, type Kline, type AgentParams, type Position, type ADXOutput, type MACDOutput, type BollingerBandsOutput, type StochasticRSIOutput, type TradeManagementSignal, type BotConfig, VortexIndicatorOutput, SentinelAnalysis, KSTOutput, type IchimokuCloudOutput, MarketDataContext } from '../types';
-import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, IchimokuCloud, KST, abandonedbaby, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, downsidetasukigap, dragonflydoji, gravestonedoji, bullishharami, bearishharami, bullishharamicross, bearishharamicross, hammerpattern, hangingman, morningdojistar, morningstar, piercingline, shootingstar, threeblackcrows, threewhitesoldiers, eveningdojistar, eveningstar } from 'technicalindicators';
+// FIX: Corrected import to reference the new types.ts file, resolving circular dependency.
+import { TradingMode, Agent, TradeSignal, Kline, AgentParams, Position, ADXOutput, MACDOutput, BollingerBandsOutput, StochasticRSIOutput, TradeManagementSignal, BotConfig, VortexIndicatorOutput, SentinelAnalysis, IchimokuCloudOutput, MarketDataContext } from '../types';
+import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, IchimokuCloud, KST, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, dragonflydoji, gravestonedoji, hammerpattern, hangingman, morningstar, piercingline, shootingstar, eveningstar } from 'technicalindicators';
 import * as constants from '../constants';
 import * as binanceService from './binanceService';
 import { btcConfirmationService } from './btcConfirmationService';
+import { calculateSupportResistance } from './chartAnalysisService';
 
 class Supertrend {
     static calculate(options: { high: number[]; low: number[]; close: number[]; period: number; multiplier: number; }): (number | undefined)[] {
@@ -113,7 +115,6 @@ const isObvTrending = (obvValues: number[], direction: 'bullish' | 'bearish', pe
     const lastObv = getLast(obvValues);
     const lastSma = getLast(obvSma);
     if (lastObv === undefined || lastSma === undefined) return false;
-    // @ts-ignore
     return direction === 'bullish' ? lastObv > lastSma : lastObv < lastSma;
 };
 
@@ -328,6 +329,7 @@ function isMarketCohesive(
 
 /**
  * Detects classic bullish or bearish divergence between price and RSI.
+ * This version is robust and correctly handles the index offset from the RSI calculation.
  * @param klines - The kline data to analyze.
  * @param rsiValues - Pre-calculated RSI values corresponding to the klines.
  * @param positionDirection - The direction of the current trade ('LONG' or 'SHORT').
@@ -335,13 +337,17 @@ function isMarketCohesive(
  * @returns `true` if divergence is detected, `false` otherwise.
  */
 function detectRsiDivergence(klines: Kline[], rsiValues: number[], positionDirection: 'LONG' | 'SHORT', lookback: number): boolean {
-    if (klines.length < (lookback * 2) + 2 || klines.length !== rsiValues.length) {
+    const rsiPeriod = 14; // Assume standard RSI period
+    if (klines.length < (lookback * 2) + 2 || klines.length < rsiPeriod) {
         return false;
     }
+    const rsiStartIndex = klines.length - rsiValues.length;
+    if (rsiStartIndex < 0) return false;
 
     const pivots: { index: number; price: number, type: 'high' | 'low' }[] = [];
-    // A simplified pivot finder for this purpose
-    for (let i = lookback; i < klines.length - lookback; i++) {
+    
+    // Find pivots, but only where RSI data exists
+    for (let i = Math.max(lookback, rsiStartIndex); i < klines.length - lookback; i++) {
         const window = klines.slice(i - lookback, i + 1 + lookback);
         const currentHigh = klines[i].high;
         const currentLow = klines[i].low;
@@ -349,15 +355,21 @@ function detectRsiDivergence(klines: Kline[], rsiValues: number[], positionDirec
         if (currentLow === Math.min(...window.map(k => k.low))) pivots.push({ index: i, price: currentLow, type: 'low'});
     }
 
+    const getRsiForKlineIndex = (klineIndex: number): number | undefined => rsiValues[klineIndex - rsiStartIndex];
+
     // Looking for bearish divergence to exit a LONG
     if (positionDirection === 'LONG') {
         const recentHighs = pivots.filter(p => p.type === 'high').slice(-2);
         if (recentHighs.length === 2) {
             const [prevHigh, lastHigh] = recentHighs;
+            const prevRsi = getRsiForKlineIndex(prevHigh.index);
+            const lastRsi = getRsiForKlineIndex(lastHigh.index);
+            if(prevRsi === undefined || lastRsi === undefined) return false;
+
             const priceMakesHigherHigh = lastHigh.price > prevHigh.price;
-            const rsiMakesLowerHigh = rsiValues[lastHigh.index] < rsiValues[prevHigh.index];
+            const rsiMakesLowerHigh = lastRsi < prevRsi;
             if (priceMakesHigherHigh && rsiMakesLowerHigh) {
-                return true; // Bearish divergence found
+                return true;
             }
         }
     }
@@ -367,10 +379,14 @@ function detectRsiDivergence(klines: Kline[], rsiValues: number[], positionDirec
         const recentLows = pivots.filter(p => p.type === 'low').slice(-2);
         if (recentLows.length === 2) {
             const [prevLow, lastLow] = recentLows;
+            const prevRsi = getRsiForKlineIndex(prevLow.index);
+            const lastRsi = getRsiForKlineIndex(lastLow.index);
+            if(prevRsi === undefined || lastRsi === undefined) return false;
+
             const priceMakesLowerLow = lastLow.price < prevLow.price;
-            const rsiMakesHigherLow = rsiValues[lastLow.index] > rsiValues[prevLow.index];
+            const rsiMakesHigherLow = lastRsi > prevRsi;
             if (priceMakesLowerLow && rsiMakesHigherLow) {
-                return true; // Bullish divergence found
+                return true;
             }
         }
     }
@@ -1095,7 +1111,6 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
     const highs = klines.map(k => k.high);
     const lows = klines.map(k => k.low);
     const closes = klines.map(k => k.close);
-    const volumes = klines.map(k => k.volume || 0);
     const lastKline = klines[klines.length - 1];
     let reasons: string[] = [];
 
@@ -1173,7 +1188,7 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
         if (bullScore >= params.qsc_trendScoreThreshold && bullScore > bearScore) {
             return { signal: 'BUY', reasons };
         }
-        if (bearScore >= params.qsc_trendScoreThreshold && bearScore > bearScore) {
+        if (bearScore >= params.qsc_trendScoreThreshold && bearScore > bullScore) {
             return { signal: 'SELL', reasons };
         }
         
@@ -1737,67 +1752,80 @@ export function getAdaptiveTakeProfit(
     klines: Kline[],
     currentPrice: number,
 ): { newTakeProfit?: number; reason?: string; newState?: Partial<Position> } {
-    const { direction, entryPrice, initialTakeProfitPrice, botConfigSnapshot, adaptiveTpTriggered } = position;
+    const { direction, entryPrice, initialTakeProfitPrice, takeProfitPrice, botConfigSnapshot, adaptiveTpTriggered } = position;
 
     // --- VETO CHECKS ---
-    // 1. Feature disabled or already triggered once.
     if (!botConfigSnapshot?.isAdaptiveTpEnabled || adaptiveTpTriggered) {
         return {};
     }
-
-    // 2. Not enough data.
-    if (klines.length < 16) return {};
+    if (klines.length < 30) return {};
 
     const isLong = direction === 'LONG';
-
-    // 3. Activation Check: Must have covered 70% of the distance to the initial TP.
     const totalTpDistance = Math.abs(initialTakeProfitPrice - entryPrice);
     const currentProgress = Math.abs(currentPrice - entryPrice);
     if (totalTpDistance === 0 || (currentProgress / totalTpDistance) < 0.70) {
         return {};
     }
+
+    // --- BUG FIX: Create a preview dataset including the current live price for accurate, real-time analysis ---
+    if (klines.length === 0) return {};
+    const lastKline = klines[klines.length - 1];
+    const previewKline: Kline = {
+        ...lastKline,
+        high: Math.max(lastKline.high, currentPrice),
+        low: Math.min(lastKline.low, currentPrice),
+        close: currentPrice,
+        isFinal: false,
+    };
+    const klinesForAnalysis = [...klines.slice(0, -1), previewKline];
     
-    // --- TRIGGER LOGIC ---
-    const closes = klines.map(k => k.close);
+    // --- ANALYSIS (now uses klinesForAnalysis) ---
+    const closes = klinesForAnalysis.map(k => k.close);
+    const highs = klinesForAnalysis.map(k => k.high);
+    const lows = klinesForAnalysis.map(k => k.low);
     const rsiValues = RSI.calculate({ period: 14, values: closes });
-    const lastRsi = rsiValues[rsiValues.length - 1];
-    const prevRsi = rsiValues[rsiValues.length - 2];
-    const prevPrevRsi = rsiValues[rsiValues.length - 3];
+    const lastRsi = getLast(rsiValues);
+    const stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
+    const macd = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false })) as MACDOutput | undefined;
+    const atr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: 14 }));
 
-    if (lastRsi === undefined || prevRsi === undefined || prevPrevRsi === undefined) return {};
+    if (lastRsi === undefined || !stochRsi || !macd?.histogram || !atr) return {};
 
-    let momentumFading = false;
-    let reason = '';
+    // --- DECISION LOGIC ---
 
-    // Trigger 1: Strong RSI Crossover (original logic)
-    if ((isLong && prevRsi > 70 && lastRsi < 70) || (!isLong && prevRsi < 30 && lastRsi > 30)) {
-        momentumFading = true;
-        reason = `Adaptive TP: Momentum fading detected (RSI Crossover).`;
-    }
-    // Trigger 2: Waning Momentum (new, more sensitive logic)
-    else if ((isLong && lastRsi < prevRsi && prevRsi < prevPrevRsi && lastRsi > 50) || 
-             (!isLong && lastRsi > prevRsi && prevRsi > prevPrevRsi && lastRsi < 50)) {
-        momentumFading = true;
-        reason = `Adaptive TP: Waning momentum detected (Falling/Rising RSI).`;
-    }
-
-    if (momentumFading) {
-        // --- CALCULATION LOGIC ---
-        // New TP is current profit + a 10% buffer.
-        const currentProfitInPrice = Math.abs(currentPrice - entryPrice);
-        const newTakeProfit = isLong 
-            ? entryPrice + (currentProfitInPrice * 1.1) 
-            : entryPrice - (currentProfitInPrice * 1.1);
-
-        // --- SAFETY CHECKS ---
-        // 1. Ensure new TP is still profitable and tighter than the current one.
-        const isStillProfitable = (isLong && newTakeProfit > entryPrice) || (!isLong && newTakeProfit < entryPrice);
-        const isTighter = (isLong && newTakeProfit < position.takeProfitPrice) || (!isLong && newTakeProfit > position.takeProfitPrice);
+    // 1. Check for Exhaustion & Fading Momentum (to TIGHTEN TP)
+    const hasDivergence = detectRsiDivergence(klinesForAnalysis, rsiValues, isLong ? 'LONG' : 'SHORT', 14);
+    const isStochExhausted = (isLong && stochRsi.k > 85 && stochRsi.k < stochRsi.d) || (!isLong && stochRsi.k < 15 && stochRsi.k > stochRsi.d);
+    
+    if (hasDivergence || isStochExhausted) {
+        const reason = hasDivergence ? `Adaptive TP: Tightening due to RSI divergence.` : `Adaptive TP: Tightening due to StochRSI exhaustion.`;
+        // Set new TP very close to current price to secure profits
+        const newTakeProfit = isLong ? currentPrice * 1.0005 : currentPrice * 0.9995;
         
+        const isStillProfitable = (isLong && newTakeProfit > entryPrice) || (!isLong && newTakeProfit < entryPrice);
+        const isTighter = (isLong && newTakeProfit < takeProfitPrice) || (!isLong && newTakeProfit > takeProfitPrice);
+
         if (isStillProfitable && isTighter) {
             return {
                 newTakeProfit,
                 reason,
+                newState: { adaptiveTpTriggered: true }
+            };
+        }
+    }
+
+    // 2. Check for Strong Momentum (to EXTEND TP)
+    const isMomentumStrong = (isLong && lastRsi > 65 && macd.histogram > 0) || (!isLong && lastRsi < 35 && macd.histogram < 0);
+    
+    if (isMomentumStrong) {
+        // Calculate a new target based on volatility (ATR)
+        const newTakeProfit = isLong ? takeProfitPrice + (atr * 1.5) : takeProfitPrice - (atr * 1.5);
+        const isExtension = (isLong && newTakeProfit > takeProfitPrice) || (!isLong && newTakeProfit < takeProfitPrice);
+        
+        if (isExtension) {
+            return {
+                newTakeProfit,
+                reason: `Adaptive TP: Extending target due to strong momentum.`,
                 newState: { adaptiveTpTriggered: true }
             };
         }
@@ -1957,9 +1985,20 @@ function getSmcVeto(
     const isLongSignal = direction === 'BUY';
     const lookback = params.smc_divergenceLookback;
     
-    // Find recent swing highs/lows
+    // --- BUG FIX: Correctly handle RSI index offset ---
+    const rsiStartIndex = klines.length - rsiValues.length;
+    if (rsiStartIndex < 0) return { veto: false, reason: '' };
+    const getRsiForKlineIndex = (klineIndex: number): number | undefined => {
+        const rsiIndex = klineIndex - rsiStartIndex;
+        if (rsiIndex >= 0 && rsiIndex < rsiValues.length) {
+            return rsiValues[rsiIndex];
+        }
+        return undefined;
+    };
+
+    // Find recent swing highs/lows for divergence detection
     const pivots: { index: number; price: number, type: 'high' | 'low' }[] = [];
-    for (let i = lookback; i < klines.length - lookback; i++) {
+    for (let i = Math.max(lookback, rsiStartIndex); i < klines.length - lookback; i++) {
         const window = klines.slice(i - lookback, i + 1 + lookback);
         const currentHigh = klines[i].high;
         const currentLow = klines[i].low;
@@ -1970,57 +2009,47 @@ function getSmcVeto(
     const recentHighs = pivots.filter(p => p.type === 'high').slice(-2);
     const recentLows = pivots.filter(p => p.type === 'low').slice(-2);
 
-    // --- Check for BEARISH Reversal (to VETO a BUY signal) ---
+    // --- Check for BEARISH Reversal Setup (to VETO a BUY signal) ---
     if (isLongSignal && recentHighs.length === 2) {
         const [prevHigh, lastHigh] = recentHighs;
-        const priceMakesHigherHigh = lastHigh.price > prevHigh.price;
-        const rsiMakesLowerHigh = rsiValues[lastHigh.index] < rsiValues[prevHigh.index];
-        
-        if (priceMakesHigherHigh && rsiMakesLowerHigh) {
-            // 1. Divergence confirmed. Now check for liquidity sweep.
-            const sweepCandle = klines[lastHigh.index];
-            const hasHighVolume = sweepCandle.volume! > (volumeSma || 0) * params.smc_volumeMultiplier;
+        const prevRsi = getRsiForKlineIndex(prevHigh.index);
+        const lastRsi = getRsiForKlineIndex(lastHigh.index);
+
+        if (prevRsi !== undefined && lastRsi !== undefined) {
+            const priceMakesHigherHigh = lastHigh.price > prevHigh.price;
+            const rsiMakesLowerHigh = lastRsi < prevRsi;
             
-            if (hasHighVolume) {
-                 // 2. Liquidity sweep confirmed. Now check for CHoCH (Change of Character).
-                 const internalStructureWindow = klines.slice(prevHigh.index + 1, lastHigh.index);
-                 if (internalStructureWindow.length > 0) {
-                     // Find the lowest low between the two divergence highs.
-                     const structuralLowPoint = Math.min(...internalStructureWindow.map(k => k.low));
-                     // Check if price has closed below that low since the last high was made.
-                     const candlesSinceHigh = klines.slice(lastHigh.index + 1);
-                     const hasBrokenStructure = candlesSinceHigh.some(k => k.close < structuralLowPoint);
-                     if (hasBrokenStructure) {
-                         return { veto: true, reason: `❌ VETO: Bearish SMC reversal pattern detected (Divergence + Sweep + CHoCH).` };
-                     }
-                 }
+            if (priceMakesHigherHigh && rsiMakesLowerHigh) {
+                // 1. Divergence confirmed.
+                const sweepCandle = klines[lastHigh.index];
+                const hasHighVolume = sweepCandle.volume! > (volumeSma || 0) * params.smc_volumeMultiplier;
+                
+                if (hasHighVolume) {
+                    // 2. Liquidity sweep confirmed. Veto the trade.
+                    return { veto: true, reason: `❌ VETO: Bearish SMC setup detected (Divergence + Liquidity Sweep).` };
+                }
             }
         }
     }
 
-    // --- Check for BULLISH Reversal (to VETO a SELL signal) ---
+    // --- Check for BULLISH Reversal Setup (to VETO a SELL signal) ---
     if (!isLongSignal && recentLows.length === 2) {
         const [prevLow, lastLow] = recentLows;
-        const priceMakesLowerLow = lastLow.price < prevLow.price;
-        const rsiMakesHigherLow = rsiValues[lastLow.index] > rsiValues[prevLow.index];
+        const prevRsi = getRsiForKlineIndex(prevLow.index);
+        const lastRsi = getRsiForKlineIndex(lastLow.index);
 
-        if (priceMakesLowerLow && rsiMakesHigherLow) {
-            // 1. Divergence confirmed.
-            const sweepCandle = klines[lastLow.index];
-            const hasHighVolume = sweepCandle.volume! > (volumeSma || 0) * params.smc_volumeMultiplier;
+        if (prevRsi !== undefined && lastRsi !== undefined) {
+            const priceMakesLowerLow = lastLow.price < prevLow.price;
+            const rsiMakesHigherLow = lastRsi > prevRsi;
 
-            if (hasHighVolume) {
-                // 2. Liquidity sweep confirmed. Now check for CHoCH.
-                const internalStructureWindow = klines.slice(prevLow.index + 1, lastLow.index);
-                if (internalStructureWindow.length > 0) {
-                    // Find the highest high between the two divergence lows.
-                    const structuralHighPoint = Math.max(...internalStructureWindow.map(k => k.high));
-                    // Check if price has closed above that high since the last low was made.
-                    const candlesSinceLow = klines.slice(lastLow.index + 1);
-                    const hasBrokenStructure = candlesSinceLow.some(k => k.close > structuralHighPoint);
-                    if (hasBrokenStructure) {
-                        return { veto: true, reason: `❌ VETO: Bullish SMC reversal pattern detected (Divergence + Sweep + CHoCH).` };
-                    }
+            if (priceMakesLowerLow && rsiMakesHigherLow) {
+                // 1. Divergence confirmed.
+                const sweepCandle = klines[lastLow.index];
+                const hasHighVolume = sweepCandle.volume! > (volumeSma || 0) * params.smc_volumeMultiplier;
+
+                if (hasHighVolume) {
+                    // 2. Liquidity sweep confirmed. Veto the trade.
+                    return { veto: true, reason: `❌ VETO: Bullish SMC setup detected (Divergence + Liquidity Sweep).` };
                 }
             }
         }
@@ -2057,6 +2086,29 @@ export const getTradingSignal = async (
 
     if (signal.signal === 'HOLD') {
         return signal;
+    }
+
+    // --- S/R Analysis Gatekeeper ---
+    if (config.isSrAnalysisEnabled) {
+        const srLevels = calculateSupportResistance(klines);
+        const atr = getLast(ATR.calculate({ high: klines.map(k => k.high), low: klines.map(k => k.low), close: klines.map(k => k.close), period: 14 })) || 0;
+        const entryPrice = klines[klines.length - 1].close;
+
+        if (signal.signal === 'BUY') {
+            const closestResistance = srLevels.resistances.find(r => r.price > entryPrice);
+            if (closestResistance && (closestResistance.price - entryPrice) < atr * 0.5) {
+                signal.reasons.push(`❌ VETO: Entry is too close to S/R resistance at ${closestResistance.price.toFixed(config.pricePrecision)}.`);
+                return { ...signal, signal: 'HOLD' };
+            }
+        }
+        if (signal.signal === 'SELL') {
+            const closestSupport = srLevels.supports.find(s => s.price < entryPrice);
+            if (closestSupport && (entryPrice - closestSupport.price) < atr * 0.5) {
+                signal.reasons.push(`❌ VETO: Entry is too close to S/R support at ${closestSupport.price.toFixed(config.pricePrecision)}.`);
+                return { ...signal, signal: 'HOLD' };
+            }
+        }
+        signal.reasons.push(`✅ S/R Analysis: Passed.`);
     }
     
     // --- SMC Reversal Veto Gatekeeper ---
@@ -2174,11 +2226,16 @@ export const getTradingSignal = async (
     }
      if(config.isMarketCohesionEnabled) signal.reasons.push(cohesionCheck.reason);
 
-    const candleVeto = isLastCandleContradictory(klines, signal.signal);
-    if (candleVeto.veto) {
-        signal.reasons.push(candleVeto.reason);
-        return { ...signal, signal: 'HOLD' };
+    // --- Candlestick Confirmation Gatekeeper ---
+    if (config.isCandlestickConfirmationEnabled) {
+        const candleVeto = isLastCandleContradictory(klines, signal.signal);
+        if (candleVeto.veto) {
+            signal.reasons.push(candleVeto.reason);
+            return { ...signal, signal: 'HOLD' };
+        }
+        signal.reasons.push(`✅ Candlestick Veto: Passed.`);
     }
+
 
     return signal;
 };

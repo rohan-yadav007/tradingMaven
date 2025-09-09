@@ -182,9 +182,6 @@ ID: \`${bot.id}\``;
                     takerFeeRate: constants.TAKER_FEE_RATE,
                     entryTiming: 'onNextCandle',
                     telegramChatId: chatId,
-                    takeProfitMode: RiskMode.Percent,
-                    takeProfitValue: 0,
-                    isTakeProfitLocked: false,
                     isAdaptiveTpEnabled: true,
                     aggressiveTrailMode: 'distance',
                 };
@@ -320,14 +317,23 @@ function start() {
             console.log(`- Listening for commands on bot with token ...${bot.token.slice(-6)}`);
         }
     } else {
-        console.warn("Telegram bot credentials not found in environment variables. Service will not start.");
+        console.warn("Telegram bot service started, but no bot tokens are configured.");
     }
+}
+
+function stop() {
+    if (!isStarted) return;
+    isStarted = false;
+    console.log("Telegram bot service stopped.");
+}
+
+function register(botManager: any) {
+    _botManagerService = botManager;
 }
 
 export const telegramBotService = {
     start,
+    stop,
     sendMessage,
-    register(instance: any) {
-        _botManagerService = instance;
-    },
+    register,
 };

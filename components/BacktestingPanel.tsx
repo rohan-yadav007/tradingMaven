@@ -145,9 +145,6 @@ export type BacktestConfig = {
     isSmcVetoEnabled?: boolean;
     agentParams: AgentParams; leverage: number;
     entryTiming: 'immediate' | 'onNextCandle';
-    takeProfitMode: RiskMode;
-    takeProfitValue: number;
-    isTakeProfitLocked: boolean;
     isAdaptiveTpEnabled: boolean;
     aggressiveTrailMode: 'distance' | 'pnl';
 };
@@ -186,9 +183,6 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         isExhaustionFilterEnabled: globalConfig.isExhaustionFilterEnabled,
         isSmcVetoEnabled: globalConfig.isSmcVetoEnabled,
         entryTiming: globalConfig.entryTiming,
-        takeProfitMode: globalConfig.takeProfitMode,
-        takeProfitValue: globalConfig.takeProfitValue,
-        isTakeProfitLocked: globalConfig.isTakeProfitLocked,
         isAdaptiveTpEnabled: globalConfig.isAdaptiveTpEnabled,
         aggressiveTrailMode: globalConfig.aggressiveTrailMode,
     });
@@ -392,20 +386,6 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                     </div>
                      <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
                     <div className="space-y-3 pt-2">
-                        <div className="flex items-center justify-between"><label className={formLabelClass}>Fixed Take Profit</label>
-                            <button onClick={() => updateConfig('isTakeProfitLocked', !config.isTakeProfitLocked)} className="text-slate-500 dark:text-slate-400">
-                                {config.isTakeProfitLocked ? <UnlockIcon className="w-5 h-5"/> : <LockIcon className="w-5 h-5"/>}
-                            </button>
-                        </div>
-                        {config.isTakeProfitLocked && (
-                            <div className="flex gap-2 items-center">
-                                <select value={config.takeProfitMode} onChange={e => updateConfig('takeProfitMode', e.target.value as RiskMode)} className={`${formInputClass} w-1/3`}>
-                                    <option value={RiskMode.Percent}>%</option>
-                                    <option value={RiskMode.Amount}>$</option>
-                                </select>
-                                <input type="number" value={config.takeProfitValue} onChange={e => updateConfig('takeProfitValue', Number(e.target.value))} className={`${formInputClass} w-2/3`} min="0.1" step="0.1" />
-                            </div>
-                        )}
                          <div className="flex items-center justify-between"><label className={formLabelClass}>Adaptive Take Profit</label><ToggleSwitch checked={config.isAdaptiveTpEnabled} onChange={v => updateConfig('isAdaptiveTpEnabled', v)} /></div>
                          <div className={formGroupClass}>
                             <label htmlFor="aggressive-trail-mode-bt" className={formLabelClass}>Aggressive Trail Mode</label>

@@ -170,7 +170,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         marginType, futuresSettingsError, isMultiAssetMode, multiAssetModeError,
         maxLeverage, isLeverageLoading, isHtfConfirmationEnabled, htfTimeFrame,
         isUniversalProfitTrailEnabled, isMinRrEnabled, invalidationSensitivity,
-        entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
+        entryTiming,
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isInitialRiskVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode,
@@ -282,9 +282,6 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         stepSize: 0.00000001,
                         takerFeeRate: constants.TAKER_FEE_RATE,
                         entryTiming: config.entryTiming,
-                        takeProfitMode: takeProfitMode,
-                        takeProfitValue: takeProfitValue,
-                        isTakeProfitLocked: isTakeProfitLocked,
                         isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,
                         aggressiveTrailMode: config.aggressiveTrailMode,
                         isSmcVetoEnabled: config.isSmcVetoEnabled,
@@ -303,7 +300,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             }
         };
         fetchAnalysis();
-    }, [selectedAgent, klines, timeFrame, agentParams, config, livePrice, selectedPairs, takeProfitMode, takeProfitValue, isTakeProfitLocked]);
+    }, [selectedAgent, klines, timeFrame, agentParams, config, livePrice, selectedPairs]);
     
     const getButtonText = () => {
         if (selectedPairsCount === 0) return 'Select One or More Markets';

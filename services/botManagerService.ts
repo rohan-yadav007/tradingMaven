@@ -1,7 +1,6 @@
-
 import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, RiskMode, TradingMode, BinanceOrderResponse, TradeManagementSignal, AgentParams, MarketDataContext } from '../types';
 import * as binanceService from './binanceService';
-import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext } from './localAgentService';
+import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext, getAdaptiveTakeProfit } from './localAgentService';
 import { DEFAULT_AGENT_PARAMS, TIME_FRAMES, TAKER_FEE_RATE, CHAMELEON_TIMEFRAME_SETTINGS, MIN_PROFIT_BUFFER_MULTIPLIER } from '../constants';
 import { telegramBotService } from './telegramBotService';
 
@@ -420,10 +419,21 @@ class BotInstance {
         if ((isLong && currentPrice > peak) || (!isLong && currentPrice < peak)) changes.peakPrice = currentPrice;
         const trough = positionState.troughPrice ?? positionState.entryPrice;
         if ((isLong && currentPrice < trough) || (!isLong && currentPrice > trough)) changes.troughPrice = currentPrice;
+
+        // --- Step 1: Check for Adaptive Take Profit update ---
+        const adaptiveTpSignal = getAdaptiveTakeProfit(positionState, this.klines, currentPrice);
+        if (adaptiveTpSignal.newTakeProfit) {
+            // isTighter check is handled inside getAdaptiveTakeProfit now
+            changes.takeProfitPrice = adaptiveTpSignal.newTakeProfit;
+            if (adaptiveTpSignal.newState) {
+                changes = { ...changes, ...(adaptiveTpSignal.newState as Partial<Position>) };
+            }
+            this.addLog(`${adaptiveTpSignal.reason} New TP: ${adaptiveTpSignal.newTakeProfit.toFixed(this.bot.config.pricePrecision)}`, LogType.Info);
+            // Apply all changes to the local state so subsequent logic uses the updated values
+            positionState = { ...positionState, ...changes };
+        }
     
-        // --- LOGIC REFACTOR: Correctly prioritize Agent Trail ---
-    
-        // 1. Establish the baseline Stop Loss from the Agent Trail if enabled
+        // --- Step 2: Establish the baseline Stop Loss from the Agent Trail if enabled ---
         let baselineStop = positionState.stopLossPrice;
         let baselineReason = positionState.activeStopLossReason;
         let baselineNewState: Partial<Position> | undefined = undefined;
@@ -440,7 +450,6 @@ class BotInstance {
                     const isValid = isLong ? newAgentSL < currentPrice : newAgentSL > currentPrice;
                     const isImprovement = isLong ? newAgentSL > baselineStop : newAgentSL < baselineStop;
                     
-                    // The Agent Trail can move the SL, even wider, as long as it's an improvement over the last known value
                     if (isValid && isImprovement) {
                         baselineStop = newAgentSL;
                         baselineReason = 'Agent Trail';
@@ -450,7 +459,7 @@ class BotInstance {
             }
         }
     
-        // 2. Now, check if profit-locking mechanisms can provide an even TIGHTER stop loss
+        // --- Step 3: Now, check if profit-locking mechanisms can provide an even TIGHTER stop loss ---
         const profitLockCandidates: { price: number; reason: Position['activeStopLossReason']; newState?: Partial<Position> }[] = [
             { price: baselineStop, reason: baselineReason, newState: baselineNewState }
         ];
@@ -460,10 +469,12 @@ class BotInstance {
         if (this.bot.config.invalidationSensitivity !== 'low') {
             const spikeSignal = getProfitSpikeSignal(positionState, currentPrice);
             if (spikeSignal.newStopLoss) profitLockCandidates.push({ price: spikeSignal.newStopLoss, reason: 'Profit Secure', newState: spikeSignal.newState });
-            
-            const aggressiveTrailSignal = getAggressiveRangeTrailSignal(positionState, currentPrice);
-            if (aggressiveTrailSignal.newStopLoss) profitLockCandidates.push({ price: aggressiveTrailSignal.newStopLoss, reason: 'Profit Secure', newState: aggressiveTrailSignal.newState });
         }
+        
+        // This now uses the dual-mode logic.
+        const aggressiveTrailSignal = getAggressiveRangeTrailSignal(positionState, currentPrice);
+        if (aggressiveTrailSignal.newStopLoss) profitLockCandidates.push({ price: aggressiveTrailSignal.newStopLoss, reason: 'Profit Secure', newState: aggressiveTrailSignal.newState });
+        
         if (this.bot.config.isBreakevenTrailEnabled) {
             const breakevenSignal = getMandatoryBreakevenSignal(positionState, currentPrice);
             if (breakevenSignal.newStopLoss) profitLockCandidates.push({ price: breakevenSignal.newStopLoss, reason: 'Breakeven', newState: breakevenSignal.newState });
@@ -473,7 +484,7 @@ class BotInstance {
             if (profitSecureSignal.newStopLoss) profitLockCandidates.push({ price: profitSecureSignal.newStopLoss, reason: 'Profit Secure', newState: profitSecureSignal.newState });
         }
     
-        // 3. Find the best (tightest) valid stop loss among all candidates
+        // --- Step 4: Find the best (tightest) valid stop loss among all candidates ---
         let bestCandidate = profitLockCandidates[0];
         for (const candidate of profitLockCandidates) {
             const isValid = isLong ? candidate.price < currentPrice : candidate.price > currentPrice;
@@ -483,7 +494,7 @@ class BotInstance {
             }
         }
     
-        // 4. Apply the final, best stop loss if it's different from the original
+        // --- Step 5: Apply the final, best stop loss if it's different from the original ---
         if (bestCandidate.price !== positionState.stopLossPrice) {
             const previousSL = positionState.stopLossPrice;
             if (bestCandidate.newState) changes = { ...changes, ...(bestCandidate.newState as Partial<Position>) };
@@ -492,7 +503,7 @@ class BotInstance {
             this.addLog(`SL updated from ${previousSL.toFixed(this.bot.config.pricePrecision)} to ${bestCandidate.price.toFixed(this.bot.config.pricePrecision)}. Reason: ${bestCandidate.reason}.`, LogType.Info);
         }
         
-        // 5. Update the bot's state with all accumulated changes
+        // --- Step 6: Update the bot's state with all accumulated changes from TP and SL logic ---
         if (Object.keys(changes).length > 0) {
             this.updateState({ openPosition: { ...this.bot.openPosition!, ...changes } });
         }

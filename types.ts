@@ -164,6 +164,7 @@ export interface Position {
     hasBeenProfitable?: boolean; // For trade invalidation check
     takerFeeRate: number;
     invalidationScore?: number; // Score for trade thesis health
+    adaptiveTpTriggered?: boolean;
     // --- Analytics Snapshots ---
     initialRiskRewardRatio?: number;
     agentParamsSnapshot?: AgentParams;
@@ -186,7 +187,6 @@ export interface Position {
         entryTiming?: 'immediate' | 'onNextCandle';
         isAdaptiveTpEnabled?: boolean;
         aggressiveTrailMode?: 'distance' | 'pnl';
-        isTakeProfitLocked?: boolean;
         isInitialRiskVetoEnabled?: boolean;
     };
     entryContext?: Partial<MarketDataContext>;
@@ -337,10 +337,6 @@ export interface BotConfig {
     investmentAmount: number;
     maxMarginLossPercent: number;
     isInitialRiskVetoEnabled: boolean;
-    // Legacy TP properties - no longer set by UI but required for back-compat
-    takeProfitMode: RiskMode;
-    takeProfitValue: number;
-    isTakeProfitLocked: boolean;
     isHtfConfirmationEnabled: boolean;
     isUniversalProfitTrailEnabled: boolean;
     isMinRrEnabled: boolean;

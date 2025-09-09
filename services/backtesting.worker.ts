@@ -297,20 +297,8 @@ async function runBacktest(
                 const isLong = signal.signal === 'BUY';
                 
                 const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(historySlice, entryPrice, isLong ? 'LONG' : 'SHORT', config);
-                let finalTp = takeProfitPrice;
-
-                if (config.isTakeProfitLocked && config.agent.id !== 13) {
-                    const posVal = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
-                    const size = posVal / entryPrice;
-                    if(config.takeProfitMode === RiskMode.Percent) {
-                        const pnl = config.investmentAmount * (config.takeProfitValue / 100);
-                        finalTp = isLong ? entryPrice + (pnl / size) : entryPrice - (pnl / size);
-                    } else {
-                        finalTp = isLong ? entryPrice + (config.takeProfitValue / size) : entryPrice - (config.takeProfitValue / size);
-                    }
-                }
                 
-                if (validateTradeProfitability(entryPrice, stopLossPrice, finalTp, isLong ? 'LONG' : 'SHORT', config).isValid) {
+                if (validateTradeProfitability(entryPrice, stopLossPrice, takeProfitPrice, isLong ? 'LONG' : 'SHORT', config).isValid) {
                     const posVal = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
                     const size = posVal / entryPrice;
 
@@ -327,7 +315,7 @@ async function runBacktest(
 
                     if (size > 0) {
                         const risk = Math.abs(entryPrice - agentStopLoss);
-                        const reward = Math.abs(finalTp - entryPrice);
+                        const reward = Math.abs(takeProfitPrice - entryPrice);
                         const initialRiskRewardRatio = risk > 0 ? reward / risk : 0;
                         const botConfigSnapshot = {
                             isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
@@ -348,7 +336,6 @@ async function runBacktest(
                             entryTiming: config.entryTiming,
                             isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,
                             aggressiveTrailMode: config.aggressiveTrailMode,
-                            isTakeProfitLocked: config.isTakeProfitLocked,
                             isInitialRiskVetoEnabled: config.isInitialRiskVetoEnabled
                         };
                         const entryContext = captureMarketContext(historySlice, htfHistorySlice);
@@ -359,7 +346,7 @@ async function runBacktest(
                             botId: 'backtest',
                             pair: config.pair, mode: config.mode, executionMode: 'paper', direction: isLong ? 'LONG' : 'SHORT',
                             entryPrice, size, investmentAmount: config.investmentAmount, leverage: config.leverage, entryTime: new Date(currentCandle.time).toISOString(),
-                            entryReason: signal.reasons.join(' '), agentName: config.agent.name, takeProfitPrice: finalTp,
+                            entryReason: signal.reasons.join(' '), agentName: config.agent.name, takeProfitPrice: takeProfitPrice,
                             stopLossPrice, initialStopLossPrice: agentStopLoss, initialTakeProfitPrice: takeProfitPrice,
                             pricePrecision: config.pricePrecision, timeFrame: config.timeFrame, marginType: config.marginType,
                             initialStopLossReason: slReason,

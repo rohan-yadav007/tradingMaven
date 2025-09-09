@@ -1736,50 +1736,69 @@ export function getAdaptiveTakeProfit(
     position: Position,
     klines: Kline[],
     currentPrice: number,
-): { newTakeProfit?: number; reason?: string } {
-    const { direction, entryPrice, initialRiskInPrice, size, botConfigSnapshot } = position;
-    
-    if (!botConfigSnapshot?.isAdaptiveTpEnabled || botConfigSnapshot?.isTakeProfitLocked) {
+): { newTakeProfit?: number; reason?: string; newState?: Partial<Position> } {
+    const { direction, entryPrice, initialTakeProfitPrice, botConfigSnapshot, adaptiveTpTriggered } = position;
+
+    // --- VETO CHECKS ---
+    // 1. Feature disabled or already triggered once.
+    if (!botConfigSnapshot?.isAdaptiveTpEnabled || adaptiveTpTriggered) {
         return {};
     }
 
-    // Activation Check: Only adapt TP if unrealized PNL is at least 2R.
+    // 2. Not enough data.
+    if (klines.length < 16) return {};
+
     const isLong = direction === 'LONG';
-    const unrealizedPnl = (currentPrice - entryPrice) * size * (isLong ? 1 : -1);
-    const initialRisk = initialRiskInPrice * size;
-    if (unrealizedPnl < (initialRisk * 2)) {
+
+    // 3. Activation Check: Must have covered 70% of the distance to the initial TP.
+    const totalTpDistance = Math.abs(initialTakeProfitPrice - entryPrice);
+    const currentProgress = Math.abs(currentPrice - entryPrice);
+    if (totalTpDistance === 0 || (currentProgress / totalTpDistance) < 0.70) {
         return {};
     }
-
-    if (klines.length < 15) return {};
-
+    
+    // --- TRIGGER LOGIC ---
     const closes = klines.map(k => k.close);
     const rsiValues = RSI.calculate({ period: 14, values: closes });
-    const lastRsi = getLast(rsiValues);
-    const prevRsi = getPenultimate(rsiValues);
+    const lastRsi = rsiValues[rsiValues.length - 1];
+    const prevRsi = rsiValues[rsiValues.length - 2];
+    const prevPrevRsi = rsiValues[rsiValues.length - 3];
 
-    if (lastRsi === undefined || prevRsi === undefined) return {};
+    if (lastRsi === undefined || prevRsi === undefined || prevPrevRsi === undefined) return {};
 
     let momentumFading = false;
-    if (isLong && prevRsi > 70 && lastRsi < 70) {
-        momentumFading = true; // Bearish crossover from overbought
-    } else if (!isLong && prevRsi < 30 && lastRsi > 30) {
-        momentumFading = true; // Bullish crossover from oversold
+    let reason = '';
+
+    // Trigger 1: Strong RSI Crossover (original logic)
+    if ((isLong && prevRsi > 70 && lastRsi < 70) || (!isLong && prevRsi < 30 && lastRsi > 30)) {
+        momentumFading = true;
+        reason = `Adaptive TP: Momentum fading detected (RSI Crossover).`;
+    }
+    // Trigger 2: Waning Momentum (new, more sensitive logic)
+    else if ((isLong && lastRsi < prevRsi && prevRsi < prevPrevRsi && lastRsi > 50) || 
+             (!isLong && lastRsi > prevRsi && prevRsi > prevPrevRsi && lastRsi < 50)) {
+        momentumFading = true;
+        reason = `Adaptive TP: Waning momentum detected (Falling/Rising RSI).`;
     }
 
     if (momentumFading) {
-        const highs = klines.map(k => k.high);
-        const lows = klines.map(k => k.low);
-        const lastAtr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: 14 })) || 0;
-        
-        // Set a new, tighter TP based on current price + 1.5 * ATR
-        const newTakeProfit = isLong ? currentPrice + (lastAtr * 1.5) : currentPrice - (lastAtr * 1.5);
+        // --- CALCULATION LOGIC ---
+        // New TP is current profit + a 10% buffer.
+        const currentProfitInPrice = Math.abs(currentPrice - entryPrice);
+        const newTakeProfit = isLong 
+            ? entryPrice + (currentProfitInPrice * 1.1) 
+            : entryPrice - (currentProfitInPrice * 1.1);
 
-        // Safety check: ensure new TP is still profitable
-        if ((isLong && newTakeProfit > entryPrice) || (!isLong && newTakeProfit < entryPrice)) {
+        // --- SAFETY CHECKS ---
+        // 1. Ensure new TP is still profitable and tighter than the current one.
+        const isStillProfitable = (isLong && newTakeProfit > entryPrice) || (!isLong && newTakeProfit < entryPrice);
+        const isTighter = (isLong && newTakeProfit < position.takeProfitPrice) || (!isLong && newTakeProfit > position.takeProfitPrice);
+        
+        if (isStillProfitable && isTighter) {
             return {
                 newTakeProfit,
-                reason: `Adaptive TP: Momentum fading detected (RSI crossover).`,
+                reason,
+                newState: { adaptiveTpTriggered: true }
             };
         }
     }
@@ -1963,13 +1982,14 @@ function getSmcVeto(
             const hasHighVolume = sweepCandle.volume! > (volumeSma || 0) * params.smc_volumeMultiplier;
             
             if (hasHighVolume) {
-                 // 2. Liquidity sweep confirmed. Now check for CHoCH.
-                 const minorLows = pivots.filter(p => p.type === 'low' && p.index > prevHigh.index && p.index < lastHigh.index);
-                 if (minorLows.length > 0) {
-                     const lastMinorLow = minorLows[minorLows.length - 1];
-                     // Check if price has closed below that minor low since the last high
+                 // 2. Liquidity sweep confirmed. Now check for CHoCH (Change of Character).
+                 const internalStructureWindow = klines.slice(prevHigh.index + 1, lastHigh.index);
+                 if (internalStructureWindow.length > 0) {
+                     // Find the lowest low between the two divergence highs.
+                     const structuralLowPoint = Math.min(...internalStructureWindow.map(k => k.low));
+                     // Check if price has closed below that low since the last high was made.
                      const candlesSinceHigh = klines.slice(lastHigh.index + 1);
-                     const hasBrokenStructure = candlesSinceHigh.some(k => k.close < lastMinorLow.price);
+                     const hasBrokenStructure = candlesSinceHigh.some(k => k.close < structuralLowPoint);
                      if (hasBrokenStructure) {
                          return { veto: true, reason: `❌ VETO: Bearish SMC reversal pattern detected (Divergence + Sweep + CHoCH).` };
                      }
@@ -1990,12 +2010,14 @@ function getSmcVeto(
             const hasHighVolume = sweepCandle.volume! > (volumeSma || 0) * params.smc_volumeMultiplier;
 
             if (hasHighVolume) {
-                // 2. Liquidity sweep confirmed.
-                const minorHighs = pivots.filter(p => p.type === 'high' && p.index > prevLow.index && p.index < lastLow.index);
-                if (minorHighs.length > 0) {
-                    const lastMinorHigh = minorHighs[minorHighs.length - 1];
+                // 2. Liquidity sweep confirmed. Now check for CHoCH.
+                const internalStructureWindow = klines.slice(prevLow.index + 1, lastLow.index);
+                if (internalStructureWindow.length > 0) {
+                    // Find the highest high between the two divergence lows.
+                    const structuralHighPoint = Math.max(...internalStructureWindow.map(k => k.high));
+                    // Check if price has closed above that high since the last low was made.
                     const candlesSinceLow = klines.slice(lastLow.index + 1);
-                    const hasBrokenStructure = candlesSinceLow.some(k => k.close > lastMinorHigh.price);
+                    const hasBrokenStructure = candlesSinceLow.some(k => k.close > structuralHighPoint);
                     if (hasBrokenStructure) {
                         return { veto: true, reason: `❌ VETO: Bullish SMC reversal pattern detected (Divergence + Sweep + CHoCH).` };
                     }

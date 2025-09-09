@@ -33,7 +33,7 @@ const AppContent: React.FC = () => {
         agentParams, maxMarginLossPercent,
         leverage, marginType, isHtfConfirmationEnabled, htfTimeFrame, isUniversalProfitTrailEnabled,
         isMinRrEnabled, invalidationSensitivity, htfAgentParams,
-        entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
+        entryTiming,
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, isInitialRiskVetoEnabled,
@@ -146,9 +146,6 @@ const AppContent: React.FC = () => {
                     stepSize: stepSizeForBot,
                     takerFeeRate: currentFeeRate,
                     entryTiming,
-                    takeProfitMode,
-                    takeProfitValue,
-                    isTakeProfitLocked,
                 };
 
                 botManagerService.startBot(botConfig);
@@ -162,7 +159,7 @@ const AppContent: React.FC = () => {
         selectedAgent, chartTimeFrame, investmentAmount, maxMarginLossPercent, isInitialRiskVetoEnabled,
         isHtfConfirmationEnabled, htfTimeFrame, agentParams, htfAgentParams,
         isUniversalProfitTrailEnabled, isMinRrEnabled, invalidationSensitivity,
-        currentFeeRate, entryTiming, takeProfitMode, takeProfitValue, isTakeProfitLocked,
+        currentFeeRate, entryTiming,
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isSmcVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode
@@ -311,7 +308,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
 
 *Pair:* ${posToClose.pair}
 *Direction:* ${posToClose.direction}
-*Entry Price:* ${posToClose.pricePrecision.toFixed(posToClose.pricePrecision)}
+*Entry Price:* ${posToClose.entryPrice.toFixed(posToClose.pricePrecision)}
 *Size:* ${posToClose.size}
 
 *Reason for Failure:* ${errorMessage}`,
@@ -464,6 +461,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             profitLockTier: 0, profitSpikeTier: 0, aggressiveTrailTier: 0,
             peakPrice: finalEntryPrice, troughPrice: finalEntryPrice, candlesSinceEntry: 0, hasBeenProfitable: false,
             takerFeeRate: config.takerFeeRate, initialRiskRewardRatio, agentParamsSnapshot: config.agentParams,
+            adaptiveTpTriggered: false,
             botConfigSnapshot: {
                 isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
                 isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
@@ -483,7 +481,6 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 entryTiming: config.entryTiming,
                 isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,
                 aggressiveTrailMode: config.aggressiveTrailMode,
-                isTakeProfitLocked: config.isTakeProfitLocked,
                 isInitialRiskVetoEnabled: config.isInitialRiskVetoEnabled
             },
             entryContext: executionDetails.entryContext,

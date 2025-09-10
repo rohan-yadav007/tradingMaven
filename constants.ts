@@ -23,6 +23,20 @@ export const MIN_RISK_REWARD_RATIO = 1.5;
  */
 export const MIN_PROFIT_BUFFER_MULTIPLIER = 1.5;
 
+// FIX: Add and export getHigherTimeframe function.
+/**
+ * Finds the next higher timeframe from the standard list.
+ * @param timeframe The current timeframe (e.g., '5m').
+ * @returns The next higher timeframe string (e.g., '15m') or undefined if it's the highest.
+ */
+export const getHigherTimeframe = (timeframe: string): string | undefined => {
+    const currentIndex = TIME_FRAMES.indexOf(timeframe);
+    if (currentIndex === -1 || currentIndex >= TIME_FRAMES.length - 1) {
+        return undefined;
+    }
+    return TIME_FRAMES[currentIndex + 1];
+};
+
 
 export const AGENTS: Agent[] = [
     {
@@ -46,8 +60,8 @@ export const AGENTS: Agent[] = [
     {
         id: 14,
         name: 'The Sentinel',
-        description: 'A comprehensive scoring engine. Analyzes Trend, Momentum, and Confirmation factors, using On-Balance Volume and HTF alignment to weigh momentum and confirm entries. Signals are filtered to avoid high-risk, low-conviction setups.',
-        indicators: ['Weighted Scoring', 'Vortex Indicator', 'OBV', 'Multi-Indicator Analysis'],
+        description: 'A comprehensive, adaptive scoring engine. Analyzes market regime (trend/volatility), then dynamically weighs Trend, Momentum, Confirmation, and market Structure (S/R zones, candlestick patterns) to generate high-conviction signals. Features adaptive score thresholds based on trend strength.',
+        indicators: ['Adaptive Scoring', 'S/R Analysis', 'Volatility Filters', 'Multi-Indicator Analysis'],
     },
     {
         id: 16,
@@ -131,6 +145,24 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     sentinel_scoreThreshold: 70,
     sentinel_rsiOverextendedLong: 80,
     sentinel_rsiOverextendedShort: 20,
+    sentinel_bbwSqueezeThreshold: 0.008,
+    sentinel_atrChaosThreshold: 3.5,
+    sentinel_strongTrendAdx: 30,
+    sentinel_strongTrendThreshold: 65,
+    sentinel_choppyTrendAdx: 23,
+    sentinel_choppyTrendThreshold: 80,
+    sentinel_trendingWeightMultiplier: 1.5,
+    sentinel_transitioningWeightMultiplier: 1.5,
+    sentinel_emaFastPeriod: 50,
+    sentinel_emaSlowPeriod: 200,
+    sentinel_adxPeriod: 14,
+    sentinel_rsiPeriod: 14,
+    sentinel_macdFastPeriod: 12,
+    sentinel_macdSlowPeriod: 26,
+    sentinel_macdSignalPeriod: 9,
+    sentinel_useSrLevelsForTp: true,
+    sentinel_stPeriod: 10,
+    sentinel_stMultiplier: 3,
 
     // Agent 17: Momentum Swing Trader
     mst_emaFastPeriod: 50,
@@ -146,6 +178,17 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
 
 
 // --- TIMEFRAME-SPECIFIC PARAMETER OVERRIDES ---
+
+export const EXHAUSTION_FILTER_TIMEFRAME_SETTINGS: Record<string, { overbought: number, oversold: number }> = {
+    '1m':  { overbought: 95, oversold: 5 },
+    '3m':  { overbought: 90, oversold: 10 },
+    '5m':  { overbought: 88, oversold: 12 },
+    '15m': { overbought: 85, oversold: 15 },
+    '30m': { overbought: 82, oversold: 18 },
+    '1h':  { overbought: 80, oversold: 20 },
+    '4h':  { overbought: 80, oversold: 20 },
+    '1d':  { overbought: 80, oversold: 20 },
+};
 
 export const SMC_VETO_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
     '1m':  { smc_divergenceLookback: 5, smc_volumeMultiplier: 1.5 },
@@ -191,14 +234,17 @@ export const CHAMELEON_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> 
 };
 
 export const SENTINEL_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '1m':  { sentinel_scoreThreshold: 85, viPeriod: 10, sentinel_rsiOverextendedLong: 80, sentinel_rsiOverextendedShort: 20 },
-    '3m':  { sentinel_scoreThreshold: 85, viPeriod: 10, sentinel_rsiOverextendedLong: 80, sentinel_rsiOverextendedShort: 20 },
-    '5m':  { sentinel_scoreThreshold: 80, viPeriod: 12, sentinel_rsiOverextendedLong: 78, sentinel_rsiOverextendedShort: 22 },
-    '15m': { sentinel_scoreThreshold: 75, viPeriod: 14, sentinel_rsiOverextendedLong: 75, sentinel_rsiOverextendedShort: 25 },
-    '30m': { sentinel_scoreThreshold: 75, viPeriod: 16, sentinel_rsiOverextendedLong: 75, sentinel_rsiOverextendedShort: 25 },
-    '1h':  { sentinel_scoreThreshold: 70, viPeriod: 18, sentinel_rsiOverextendedLong: 70, sentinel_rsiOverextendedShort: 30 },
-    '4h':  { sentinel_scoreThreshold: 70, viPeriod: 20, sentinel_rsiOverextendedLong: 70, sentinel_rsiOverextendedShort: 30 },
-    '1d':  { sentinel_scoreThreshold: 65, viPeriod: 20, sentinel_rsiOverextendedLong: 70, sentinel_rsiOverextendedShort: 30 },
+    // Scalping (1m, 3m, 5m): Faster indicators, higher thresholds for noise filtering
+    '1m':  { sentinel_scoreThreshold: 85, sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_adxPeriod: 10, sentinel_rsiPeriod: 10, sentinel_strongTrendAdx: 35, sentinel_strongTrendThreshold: 75, sentinel_choppyTrendAdx: 25, sentinel_choppyTrendThreshold: 88, viPeriod: 10, sentinel_rsiOverextendedLong: 82, sentinel_rsiOverextendedShort: 18, sentinel_stPeriod: 8, sentinel_stMultiplier: 2.5 },
+    '3m':  { sentinel_scoreThreshold: 85, sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_adxPeriod: 10, sentinel_rsiPeriod: 10, sentinel_strongTrendAdx: 32, sentinel_strongTrendThreshold: 75, sentinel_choppyTrendAdx: 25, sentinel_choppyTrendThreshold: 88, viPeriod: 10, sentinel_rsiOverextendedLong: 82, sentinel_rsiOverextendedShort: 18, sentinel_stPeriod: 8, sentinel_stMultiplier: 2.5 },
+    '5m':  { sentinel_scoreThreshold: 80, sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_adxPeriod: 12, sentinel_rsiPeriod: 12, sentinel_strongTrendAdx: 30, sentinel_strongTrendThreshold: 70, sentinel_choppyTrendAdx: 23, sentinel_choppyTrendThreshold: 85, viPeriod: 12, sentinel_rsiOverextendedLong: 80, sentinel_rsiOverextendedShort: 20, sentinel_stPeriod: 10, sentinel_stMultiplier: 3 },
+    // Day Trading (15m, 30m, 1h): Standard, balanced parameters
+    '15m': { sentinel_scoreThreshold: 75, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 100, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14, sentinel_strongTrendAdx: 28, sentinel_strongTrendThreshold: 68, sentinel_choppyTrendAdx: 22, sentinel_choppyTrendThreshold: 82, viPeriod: 14, sentinel_rsiOverextendedLong: 78, sentinel_rsiOverextendedShort: 22, sentinel_stPeriod: 10, sentinel_stMultiplier: 3 },
+    '30m': { sentinel_scoreThreshold: 75, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14, sentinel_strongTrendAdx: 25, sentinel_strongTrendThreshold: 65, sentinel_choppyTrendAdx: 20, sentinel_choppyTrendThreshold: 80, viPeriod: 16, sentinel_rsiOverextendedLong: 75, sentinel_rsiOverextendedShort: 25, sentinel_stPeriod: 10, sentinel_stMultiplier: 3 },
+    '1h':  { sentinel_scoreThreshold: 70, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14, sentinel_strongTrendAdx: 25, sentinel_strongTrendThreshold: 65, sentinel_choppyTrendAdx: 20, sentinel_choppyTrendThreshold: 80, viPeriod: 18, sentinel_rsiOverextendedLong: 72, sentinel_rsiOverextendedShort: 28, sentinel_stPeriod: 12, sentinel_stMultiplier: 3 },
+    // Swing Trading (4h, 1d): Slower indicators, lower thresholds to catch major trends
+    '4h':  { sentinel_scoreThreshold: 70, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_adxPeriod: 18, sentinel_rsiPeriod: 18, sentinel_strongTrendAdx: 22, sentinel_strongTrendThreshold: 60, sentinel_choppyTrendAdx: 18, sentinel_choppyTrendThreshold: 75, viPeriod: 20, sentinel_rsiOverextendedLong: 70, sentinel_rsiOverextendedShort: 30, sentinel_stPeriod: 12, sentinel_stMultiplier: 3.5 },
+    '1d':  { sentinel_scoreThreshold: 65, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_adxPeriod: 20, sentinel_rsiPeriod: 20, sentinel_strongTrendAdx: 20, sentinel_strongTrendThreshold: 60, sentinel_choppyTrendAdx: 18, sentinel_choppyTrendThreshold: 75, viPeriod: 20, sentinel_rsiOverextendedLong: 70, sentinel_rsiOverextendedShort: 30, sentinel_stPeriod: 12, sentinel_stMultiplier: 3.5 },
 };
 
 export const ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {

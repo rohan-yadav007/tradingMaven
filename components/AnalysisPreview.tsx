@@ -83,10 +83,11 @@ const SentinelAnalysisDisplay: React.FC<{ analysis: SentinelAnalysis }> = ({ ana
                     <span className="font-bold text-lg text-emerald-600 dark:text-emerald-400">{bullish.total.toFixed(0)}</span>
                 </div>
                 <ProgressBar value={bullish.total} colorClass="bg-emerald-500" />
-                <div className="grid grid-cols-3 gap-2 text-xs text-center mt-1.5 text-slate-500 dark:text-slate-400">
-                    <span>Trend: {bullish.trend.toFixed(0)}%</span>
-                    <span>Momentum: {bullish.momentum.toFixed(0)}%</span>
-                    <span>Confirm: {bullish.confirmation.toFixed(0)}%</span>
+                <div className="grid grid-cols-4 gap-2 text-xs text-center mt-1.5 text-slate-500 dark:text-slate-400">
+                    <span>Trend: {bullish.trend.toFixed(0)}</span>
+                    <span>Momentum: {bullish.momentum.toFixed(0)}</span>
+                    <span>Confirm: {bullish.confirmation.toFixed(0)}</span>
+                    <span>Structure: {bullish.structure.toFixed(0)}</span>
                 </div>
             </div>
              <div>
@@ -95,10 +96,11 @@ const SentinelAnalysisDisplay: React.FC<{ analysis: SentinelAnalysis }> = ({ ana
                     <span className="font-bold text-lg text-rose-600 dark:text-rose-400">{bearish.total.toFixed(0)}</span>
                 </div>
                 <ProgressBar value={bearish.total} colorClass="bg-rose-500" />
-                <div className="grid grid-cols-3 gap-2 text-xs text-center mt-1.5 text-slate-500 dark:text-slate-400">
-                    <span>Trend: {bearish.trend.toFixed(0)}%</span>
-                    <span>Momentum: {bearish.momentum.toFixed(0)}%</span>
-                    <span>Confirm: {bearish.confirmation.toFixed(0)}%</span>
+                <div className="grid grid-cols-4 gap-2 text-xs text-center mt-1.5 text-slate-500 dark:text-slate-400">
+                    <span>Trend: {bearish.trend.toFixed(0)}</span>
+                    <span>Momentum: {bearish.momentum.toFixed(0)}</span>
+                    <span>Confirm: {bearish.confirmation.toFixed(0)}</span>
+                    <span>Structure: {bearish.structure.toFixed(0)}</span>
                 </div>
             </div>
         </div>

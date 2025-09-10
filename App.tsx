@@ -198,7 +198,7 @@ const AppContent: React.FC = () => {
             let htfKlines: Kline[] | undefined;
             if (posToClose.botConfigSnapshot?.isHtfConfirmationEnabled) {
                 const htf = posToClose.botConfigSnapshot.htfTimeFrame === 'auto'
-                    ? constants.TIME_FRAMES[constants.TIME_FRAMES.indexOf(posToClose.timeFrame) + 1]
+                    ? constants.getHigherTimeframe(posToClose.timeFrame)
                     : posToClose.botConfigSnapshot.htfTimeFrame;
                 if(htf) {
                     htfKlines = await binanceService.fetchKlines(posToClose.pair.replace('/',''), htf, { limit: 205, mode: posToClose.mode });

@@ -216,6 +216,24 @@ export interface AgentParams {
     sentinel_scoreThreshold?: number;
     sentinel_rsiOverextendedLong?: number;
     sentinel_rsiOverextendedShort?: number;
+    sentinel_bbwSqueezeThreshold?: number;
+    sentinel_atrChaosThreshold?: number;
+    sentinel_strongTrendAdx?: number;
+    sentinel_strongTrendThreshold?: number;
+    sentinel_choppyTrendAdx?: number;
+    sentinel_choppyTrendThreshold?: number;
+    sentinel_trendingWeightMultiplier?: number;
+    sentinel_transitioningWeightMultiplier?: number;
+    sentinel_emaFastPeriod?: number;
+    sentinel_emaSlowPeriod?: number;
+    sentinel_adxPeriod?: number;
+    sentinel_rsiPeriod?: number;
+    sentinel_macdFastPeriod?: number;
+    sentinel_macdSlowPeriod?: number;
+    sentinel_macdSignalPeriod?: number;
+    sentinel_useSrLevelsForTp?: boolean;
+    sentinel_stPeriod?: number;
+    sentinel_stMultiplier?: number;
     
     // Agent 17: Momentum Swing Trader
     mst_emaFastPeriod?: number;
@@ -493,8 +511,8 @@ export interface IchimokuCloudOutput {
 }
 
 export interface SentinelAnalysis {
-    bullish: { total: number; trend: number; momentum: number; confirmation: number; };
-    bearish: { total: number; trend: number; momentum: number; confirmation: number; };
+    bullish: { total: number; trend: number; momentum: number; confirmation: number; structure: number; };
+    bearish: { total: number; trend: number; momentum: number; confirmation: number; structure: number; };
 }
 
 // --- User Preferences ---

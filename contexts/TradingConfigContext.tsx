@@ -345,25 +345,33 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         addTradingPairList, updateTradingPairList, deleteTradingPairList,
     }), [onSetMultiAssetMode, setSelectedAgentWithReset]);
     
-    const state = {
+    const state = useMemo(() => ({
         executionMode, tradingMode, selectedPairs, allPairs, isPairsLoading, leverage, marginType, chartTimeFrame,
         selectedAgent, agentParams, htfAgentParams, investmentAmount, availableBalance,
         maxMarginLossPercent,
         isInitialRiskVetoEnabled,
-        // Provide default values for legacy TP properties for internal type compatibility
         takeProfitMode: RiskMode.Percent,
         takeProfitValue: 0,
         isTakeProfitLocked: false,
-        isHtfConfirmationEnabled, isUniversalProfitTrailEnabled, 
+        isHtfConfirmationEnabled, isUniversalProfitTrailEnabled,
         isMinRrEnabled, invalidationSensitivity, isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled, isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, htfTimeFrame, tradingPairLists,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
         futuresSettingsError, multiAssetModeError, entryTiming, isAdaptiveTpEnabled, aggressiveTrailMode
-    };
+    }), [
+        executionMode, tradingMode, selectedPairs, allPairs, isPairsLoading, leverage, marginType, chartTimeFrame,
+        selectedAgent, agentParams, htfAgentParams, investmentAmount, availableBalance,
+        maxMarginLossPercent, isInitialRiskVetoEnabled,
+        isHtfConfirmationEnabled, isUniversalProfitTrailEnabled,
+        isMinRrEnabled, invalidationSensitivity, isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled, isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
+        isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, htfTimeFrame, tradingPairLists,
+        isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
+        futuresSettingsError, multiAssetModeError, entryTiming, isAdaptiveTpEnabled, aggressiveTrailMode
+    ]);
 
     return (
-        <TradingConfigStateContext.Provider value={state as TradingConfigState}>
-            <TradingConfigActionsContext.Provider value={actions as any}>
+        <TradingConfigStateContext.Provider value={state}>
+            <TradingConfigActionsContext.Provider value={actions}>
                 {children}
             </TradingConfigActionsContext.Provider>
         </TradingConfigStateContext.Provider>

@@ -128,6 +128,7 @@ const EntryFilterConfiguration: React.FC<{ bot: RunningBot; onUpdate: (change: P
                 <ConfigToggle label="Universal Volume Filter" checked={config.isVolumeFilterEnabled ?? false} onChange={v => onUpdate({ isVolumeFilterEnabled: v })} />
                 <ConfigToggle label="Market Cohesion Filter" checked={config.isMarketCohesionEnabled ?? false} onChange={v => onUpdate({ isMarketCohesionEnabled: v })} />
                 <ConfigToggle label="Exhaustion Filter" checked={config.isExhaustionFilterEnabled ?? true} onChange={v => onUpdate({ isExhaustionFilterEnabled: v })} />
+                <ConfigToggle label="Market Structure Veto" checked={config.isMarketStructureVetoEnabled ?? true} onChange={v => onUpdate({ isMarketStructureVetoEnabled: v })} />
                 <ConfigToggle label="Minimum R:R Veto" checked={config.isMinRrEnabled} onChange={v => onUpdate({ isMinRrEnabled: v })} />
                 <ConfigToggle label="Immediate Entry" checked={config.entryTiming === 'immediate'} onChange={v => onUpdate({ entryTiming: v ? 'immediate' : 'onNextCandle' })} />
              </div>

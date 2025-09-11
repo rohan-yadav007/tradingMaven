@@ -1,10 +1,11 @@
-// FIX: Corrected import to reference the new types.ts file, resolving circular dependency.
+// services/localAgentService.ts
+
 import { TradingMode, Agent, TradeSignal, Kline, AgentParams, Position, ADXOutput, MACDOutput, BollingerBandsOutput, StochasticRSIOutput, TradeManagementSignal, BotConfig, VortexIndicatorOutput, SentinelAnalysis, IchimokuCloudOutput, MarketDataContext } from '../types';
 import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, IchimokuCloud, KST, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, dragonflydoji, gravestonedoji, hammerpattern, hangingman, morningstar, piercingline, shootingstar, eveningstar } from 'technicalindicators';
 import * as constants from '../constants';
 import * as binanceService from './binanceService';
 import { btcConfirmationService } from './btcConfirmationService';
-import { calculateSupportResistance } from './chartAnalysisService';
+import { calculateSupportResistance, findSwingPoints, analyzeMarketStructure } from './chartAnalysisService';
 
 class Supertrend {
     static calculate(options: { high: number[]; low: number[]; close: number[]; period: number; multiplier: number; }): (number | undefined)[] {
@@ -475,12 +476,12 @@ export function captureMarketContext(klines: Kline[], htfKlines?: Kline[]): Part
 // --- #1: INITIAL TARGET CALCULATION (SL/TP) - THE CORE RISK FIX ---
 // This is the single source of truth for setting initial trade targets.
 // ----------------------------------------------------------------------------------
-export const getInitialAgentTargets = (
+export function getInitialAgentTargets(
     klines: Kline[],
     entryPrice: number,
     direction: 'LONG' | 'SHORT',
     originalConfig: BotConfig
-): { stopLossPrice: number; takeProfitPrice: number; slReason: 'Agent Logic' | 'Hard Cap'; agentStopLoss: number; } => {
+): { stopLossPrice: number; takeProfitPrice: number; slReason: 'Agent Logic' | 'Hard Cap'; agentStopLoss: number; } {
     const config = applyTimeframeSettings(originalConfig);
     const { timeFrame, agent, investmentAmount, mode, leverage } = config;
     const params = config.agentParams as Required<AgentParams>;
@@ -994,9 +995,6 @@ export function getAgentExitSignal(
     const lows = klines.map(k => k.low);
 
     // --- Profit Velocity Engine ---
-    // REFACTORED LOGIC: Base velocity on progress towards the current Take Profit target,
-    // not just raw R:R. This allows the trail to relax if the TP is extended, giving
-    // the trade room to reach its new goal.
     const { entryPrice, takeProfitPrice, timeFrame } = position;
     
     const totalTargetDistance = Math.abs(takeProfitPrice - entryPrice);
@@ -1004,11 +1002,10 @@ export function getAgentExitSignal(
     
     const progressToTarget = totalTargetDistance > 1e-9 ? currentProgressDistance / totalTargetDistance : 0;
     
-    // Thresholds for what percentage of the journey to TP is complete
     const isLowTimeframe = ['1m', '3m', '5m'].includes(timeFrame);
     const progressThresholds = isLowTimeframe
-        ? { high: 0.50, hyper: 0.70, max: 0.85 } // Becomes aggressive faster on low TFs
-        : { high: 0.60, hyper: 0.80, max: 0.90 }; // More patient on higher TFs
+        ? { high: 0.50, hyper: 0.70, max: 0.85 }
+        : { high: 0.60, hyper: 0.80, max: 0.90 };
     
     let profitVelocity = 1;
     if (progressToTarget > progressThresholds.max) profitVelocity = 4;
@@ -1033,10 +1030,9 @@ export function getAgentExitSignal(
             if (psarInput.high.length >= 2) {
                 const psar = getLast(PSAR.calculate(psarInput)) as number | undefined;
                 if (psar) {
-                    // Add a small ATR buffer to prevent overly tight stops
                     const atrValues = ATR.calculate({ high: highs, low: lows, close: closes, period: 14 });
                     const lastAtr = (getLast(atrValues) as number | undefined) || 0;
-                    const buffer = lastAtr * 0.1; // 10% of ATR as a buffer
+                    const buffer = lastAtr * 0.1;
                     newStopLoss = isLong ? psar - buffer : psar + buffer;
                 }
             }
@@ -1076,7 +1072,6 @@ export function getAgentExitSignal(
     
     if (position.isBreakevenSet && newStopLoss !== undefined) {
         const feeRate = position.takerFeeRate;
-        // FIX: Corrected breakeven calculation logic
         const breakevenPrice = isLong
             ? position.entryPrice * (1 + feeRate) / (1 - feeRate)
             : position.entryPrice * (1 - feeRate) / (1 + feeRate);
@@ -1143,7 +1138,6 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
     const highs = klines.map(k => k.high);
     const lows = klines.map(k => k.low);
     const closes = klines.map(k => k.close);
-    const lastKline = klines[klines.length - 1];
     let reasons: string[] = [];
 
     const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.adxPeriod })) as ADXOutput | undefined;
@@ -1202,14 +1196,12 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
         const macd = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false })) as MACDOutput | undefined;
         if (!macd || macd.histogram === undefined) return { signal: 'HOLD', reasons: ['ℹ️ Cannot calculate MACD for confirmation.'] };
 
-        
-        // LOGIC FIX: Penalize contradictory signals
-        if (macd.histogram > 0) { // Bullish histogram
+        if (macd.histogram > 0) {
             bullScore += 10; reasons.push(`✅ Confirmation: MACD Bullish`);
-            bearScore -= 10; // PENALTY for shorting a bullish MACD
-        } else if (macd.histogram < 0) { // Bearish histogram
+            bearScore -= 10;
+        } else if (macd.histogram < 0) {
             bearScore += 10; reasons.push(`✅ Confirmation: MACD Bearish`);
-            bullScore -= 10; // PENALTY for longing a bearish MACD
+            bullScore -= 10;
         }
 
         if (bb.pb > 0.55) { bullScore += 10; reasons.push(`✅ Confirmation: Price in Upper BB`); }
@@ -1237,8 +1229,8 @@ const getQuantumScalperSignal = (klines: Kline[], config: BotConfig, htfContext?
     } else { // Ranging / Mean Reversion Logic
         reasons.push(`ℹ️ Regime: Ranging (ADX ${adx.adx.toFixed(1)})`);
 
-        const isAtLowerBB = lastKline.low <= bb.lower;
-        const isAtUpperBB = lastKline.high >= bb.upper;
+        const isAtLowerBB = closes[closes.length-1] <= bb.lower;
+        const isAtUpperBB = closes[closes.length-1] >= bb.upper;
         const isStochOversoldBullish = stochRsi.k < params.qsc_stochRsiOversold && stochRsi.k > stochRsi.d;
         const isStochOverboughtBearish = stochRsi.k > params.qsc_stochRsiOverbought && stochRsi.k < stochRsi.d;
 
@@ -1458,7 +1450,7 @@ const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfContext?: M
     const isAdxRising = adx.adx > prevAdx.adx;
 
     if (adx.adx > 25) { // Strongly trending market: Boost Trend weight
-        const boost = 0.15; // Increase trend importance by 15 percentage points
+        const boost = 0.15;
         const remainingWeight = 1.0 - BASE_WEIGHTS.trend - boost;
         finalWeights.trend = BASE_WEIGHTS.trend + boost;
         const denominator = BASE_WEIGHTS.momentum + BASE_WEIGHTS.confirmation + BASE_WEIGHTS.structure;
@@ -1467,7 +1459,7 @@ const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfContext?: M
         finalWeights.structure = BASE_WEIGHTS.structure * (remainingWeight / denominator);
         reasons.push(`ℹ️ Weights: Trend Boosted`);
     } else if (adx.adx > 20 && isAdxRising) { // Transitioning market: Boost Momentum weight
-        const boost = 0.15; // Increase momentum importance by 15 percentage points
+        const boost = 0.15;
         const remainingWeight = 1.0 - BASE_WEIGHTS.momentum - boost;
         finalWeights.momentum = BASE_WEIGHTS.momentum + boost;
         const denominator = BASE_WEIGHTS.trend + BASE_WEIGHTS.confirmation + BASE_WEIGHTS.structure;
@@ -1721,13 +1713,13 @@ const getMomentumSwingTraderSignal = (klines: Kline[], config: BotConfig, htfCon
     return { signal: 'HOLD', reasons: ['ℹ️ No clear directional bias. Waiting for conditions to align.'] };
 };
 
-export const validateTradeProfitability = (
+export function validateTradeProfitability(
     entryPrice: number,
     agentStopLossPrice: number,
     takeProfitPrice: number,
     direction: 'LONG' | 'SHORT',
     config: BotConfig
-): { isValid: boolean, reason: string } => {
+): { isValid: boolean, reason: string } {
     const isLong = direction === 'LONG';
 
     // Check 1: Stop Loss and Take Profit are on the correct side of the entry price
@@ -1823,14 +1815,17 @@ export async function getSupervisorSignal(
         }
     }
     
-    // 4. Time-Based Decay (Max 30 points)
+    // 4. Time-Based & PNL Decay (Max 30 points)
     const candlesSinceEntry = position.candlesSinceEntry || 0;
     const invalidationCandleLimit = params.invalidationCandleLimit || 10;
-    if (!position.hasBeenProfitable && candlesSinceEntry > invalidationCandleLimit) {
+    const currentPnlInPrice = (lastClose - position.entryPrice) * (isLong ? 1 : -1);
+
+    if (currentPnlInPrice < 0 && candlesSinceEntry > invalidationCandleLimit) {
+        // Penalty increases the longer the trade is in a loss.
         const decayScore = Math.min(30, Math.floor((candlesSinceEntry - invalidationCandleLimit) / (invalidationCandleLimit / 2)) * 10);
         if (decayScore > 0) {
             score += decayScore;
-            reasons.push(`Time Decay (${candlesSinceEntry} candles w/ no profit)`);
+            reasons.push(`Negative PnL Decay (${candlesSinceEntry} candles in loss)`);
         }
     }
 
@@ -1844,7 +1839,6 @@ export function getAdaptiveTakeProfit(
 ): { newTakeProfit?: number; reason?: string; newState?: Partial<Position> } {
     const { direction, entryPrice, takeProfitPrice, botConfigSnapshot, adaptiveTpTriggered } = position;
 
-    // --- VETO CHECKS ---
     if (!botConfigSnapshot?.isAdaptiveTpEnabled || adaptiveTpTriggered) {
         return {};
     }
@@ -1852,17 +1846,13 @@ export function getAdaptiveTakeProfit(
 
     const isLong = direction === 'LONG';
     
-    // CRITICAL FIX: The progress calculation must be based on the CURRENT takeProfitPrice, not the initial one.
-    // This makes the system truly adaptive if the TP target is moved by another system.
     const totalTpDistance = Math.abs(takeProfitPrice - entryPrice);
     const currentProgress = Math.abs(currentPrice - entryPrice);
     
-    // Only consider adapting TP when we are at least 70% of the way to the current target.
     if (totalTpDistance === 0 || (currentProgress / totalTpDistance) < 0.70) {
         return {};
     }
 
-    // --- BUG FIX: Create a preview dataset including the current live price for accurate, real-time analysis ---
     if (klines.length === 0) return {};
     const lastKline = klines[klines.length - 1];
     const previewKline: Kline = {
@@ -1874,7 +1864,6 @@ export function getAdaptiveTakeProfit(
     };
     const klinesForAnalysis = [...klines.slice(0, -1), previewKline];
     
-    // --- ANALYSIS (now uses klinesForAnalysis) ---
     const closes = klinesForAnalysis.map(k => k.close);
     const highs = klinesForAnalysis.map(k => k.high);
     const lows = klinesForAnalysis.map(k => k.low);
@@ -1886,15 +1875,11 @@ export function getAdaptiveTakeProfit(
 
     if (lastRsi === undefined || !stochRsi || !macd?.histogram || !atr) return {};
 
-    // --- DECISION LOGIC ---
-
-    // 1. Check for Exhaustion & Fading Momentum (to TIGHTEN TP)
     const hasDivergence = detectRsiDivergence(klinesForAnalysis, rsiValues, isLong ? 'LONG' : 'SHORT', 14);
     const isStochExhausted = (isLong && stochRsi.k > 85 && stochRsi.k < stochRsi.d) || (!isLong && stochRsi.k < 15 && stochRsi.k > stochRsi.d);
     
     if (hasDivergence || isStochExhausted) {
         const reason = hasDivergence ? `Adaptive TP: Tightening due to RSI divergence.` : `Adaptive TP: Tightening due to StochRSI exhaustion.`;
-        // Set new TP very close to current price to secure profits
         const newTakeProfit = isLong ? currentPrice * 1.0005 : currentPrice * 0.9995;
         
         const isStillProfitable = (isLong && newTakeProfit > entryPrice) || (!isLong && newTakeProfit < entryPrice);
@@ -1909,11 +1894,9 @@ export function getAdaptiveTakeProfit(
         }
     }
 
-    // 2. Check for Strong Momentum (to EXTEND TP)
     const isMomentumStrong = (isLong && lastRsi > 65 && macd.histogram > 0) || (!isLong && lastRsi < 35 && macd.histogram < 0);
     
     if (isMomentumStrong) {
-        // Calculate a new target based on volatility (ATR)
         const newTakeProfit = isLong ? takeProfitPrice + (atr * 1.5) : takeProfitPrice - (atr * 1.5);
         const isExtension = (isLong && newTakeProfit > takeProfitPrice) || (!isLong && newTakeProfit < takeProfitPrice);
         
@@ -1973,7 +1956,6 @@ function getMeanReversionVeto(
     
     const isLong = direction === 'BUY';
 
-    // Only apply this veto if the agent is Quantum Scalper, as it's tuned for it.
     if (config.agent.id === 9) {
         const isOverextended = isLong
             ? lastRsi > params.qsc_rsiOverextendedLong
@@ -2019,7 +2001,7 @@ function getBtcTrendScore(
     btcKlines: Kline[]
 ): { bullScore: number; bearScore: number } {
     if (btcKlines.length < 50) {
-        return { bullScore: 50, bearScore: 50 }; // Neutral if not enough data
+        return { bullScore: 50, bearScore: 50 };
     }
 
     const closes = btcKlines.map(k => k.close);
@@ -2030,7 +2012,6 @@ function getBtcTrendScore(
     let bullScore = 0;
     let bearScore = 0;
 
-    // 1. Trend Component (50 points) - EMA Alignment
     const ema21 = getLast(EMA.calculate({ period: 21, values: closes }))! as number;
     const ema50 = getLast(EMA.calculate({ period: 50, values: closes }))! as number;
     if (currentPrice > ema21 && ema21 > ema50) {
@@ -2039,7 +2020,6 @@ function getBtcTrendScore(
         bearScore += 50;
     }
 
-    // 2. Momentum Component (30 points) - MACD
     const macdValues = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
     const macd = getLast(macdValues)! as MACDOutput;
     const prevMacd = getPenultimate(macdValues)! as MACDOutput;
@@ -2049,9 +2029,8 @@ function getBtcTrendScore(
         bearScore += 30;
     }
     
-    // 3. Strength Component (20 points) - ADX
     const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: 14 }))! as ADXOutput;
-    if (adx.adx > 20) { // Only score if trend has strength
+    if (adx.adx > 20) {
         if (adx.pdi > adx.mdi) {
             bullScore += 20;
         } else if (adx.mdi > adx.pdi) {
@@ -2080,7 +2059,6 @@ function getSmcVeto(
     const isLongSignal = direction === 'BUY';
     const lookback = params.smc_divergenceLookback;
     
-    // --- BUG FIX: Correctly handle RSI index offset ---
     const rsiStartIndex = klines.length - rsiValues.length;
     if (rsiStartIndex < 0) return { veto: false, reason: '' };
     const getRsiForKlineIndex = (klineIndex: number): number | undefined => {
@@ -2091,7 +2069,6 @@ function getSmcVeto(
         return undefined;
     };
 
-    // Find recent swing highs/lows for divergence detection
     const pivots: { index: number; price: number, type: 'high' | 'low' }[] = [];
     for (let i = Math.max(lookback, rsiStartIndex); i < klines.length - lookback; i++) {
         const window = klines.slice(i - lookback, i + 1 + lookback);
@@ -2104,7 +2081,6 @@ function getSmcVeto(
     const recentHighs = pivots.filter(p => p.type === 'high').slice(-2);
     const recentLows = pivots.filter(p => p.type === 'low').slice(-2);
 
-    // --- Check for BEARISH Reversal Setup (to VETO a BUY signal) ---
     if (isLongSignal && recentHighs.length === 2) {
         const [prevHigh, lastHigh] = recentHighs;
         const prevRsi = getRsiForKlineIndex(prevHigh.index);
@@ -2115,19 +2091,16 @@ function getSmcVeto(
             const rsiMakesLowerHigh = lastRsi < prevRsi;
             
             if (priceMakesHigherHigh && rsiMakesLowerHigh) {
-                // 1. Divergence confirmed.
                 const sweepCandle = klines[lastHigh.index];
                 const hasHighVolume = sweepCandle.volume! > (volumeSma || 0) * params.smc_volumeMultiplier;
                 
                 if (hasHighVolume) {
-                    // 2. Liquidity sweep confirmed. Veto the trade.
                     return { veto: true, reason: `❌ VETO: Bearish SMC setup detected (Divergence + Liquidity Sweep).` };
                 }
             }
         }
     }
 
-    // --- Check for BULLISH Reversal Setup (to VETO a SELL signal) ---
     if (!isLongSignal && recentLows.length === 2) {
         const [prevLow, lastLow] = recentLows;
         const prevRsi = getRsiForKlineIndex(prevLow.index);
@@ -2138,12 +2111,10 @@ function getSmcVeto(
             const rsiMakesHigherLow = lastRsi > prevRsi;
 
             if (priceMakesLowerLow && rsiMakesHigherLow) {
-                // 1. Divergence confirmed.
                 const sweepCandle = klines[lastLow.index];
                 const hasHighVolume = sweepCandle.volume! > (volumeSma || 0) * params.smc_volumeMultiplier;
 
                 if (hasHighVolume) {
-                    // 2. Liquidity sweep confirmed. Veto the trade.
                     return { veto: true, reason: `❌ VETO: Bullish SMC setup detected (Divergence + Liquidity Sweep).` };
                 }
             }
@@ -2152,8 +2123,35 @@ function getSmcVeto(
     return { veto: false, reason: '' };
 }
 
+function getMarketStructureVeto(
+    klines: Kline[],
+    direction: 'BUY' | 'SELL',
+): { veto: boolean; reason: string } {
+    if (klines.length < 50) {
+        return { veto: false, reason: '' };
+    }
 
-// FIX: Removed duplicate getTradingSignal functions. This is the single, correct implementation.
+    const swingPoints = findSwingPoints(klines, 5);
+    if (swingPoints.length < 4) {
+        return { veto: false, reason: 'ℹ️ Insufficient swing points for structure analysis.' };
+    }
+    
+    const analysis = analyzeMarketStructure(swingPoints);
+    const isLongSignal = direction === 'BUY';
+
+    if (isLongSignal) {
+        if (analysis.structure === 'Downtrend' || analysis.lastSignal === 'ChoCH_Bearish') {
+            return { veto: true, reason: `❌ VETO: Market structure is bearish. ${analysis.reason}` };
+        }
+    } else { // SELL signal
+        if (analysis.structure === 'Uptrend' || analysis.lastSignal === 'ChoCH_Bullish') {
+            return { veto: true, reason: `❌ VETO: Market structure is bullish. ${analysis.reason}` };
+        }
+    }
+
+    return { veto: false, reason: `✅ MS Veto: ${analysis.reason}` };
+}
+
 export async function getTradingSignal(
     agent: Agent,
     klines: Kline[],
@@ -2163,7 +2161,6 @@ export async function getTradingSignal(
     const config = applyTimeframeSettings(originalConfig);
     const reasons: string[] = [];
 
-    // FIX: Correctly call captureMarketContext for HTF klines to get `htf_` prefixed indicators.
     const htfContext = htfKlines && htfKlines.length > 0 ? captureMarketContext([], htfKlines) : undefined;
 
     let agentSignal: TradeSignal;
@@ -2192,7 +2189,6 @@ export async function getTradingSignal(
     const lastKline = getLast(klines);
     if (!lastKline) return { signal: 'HOLD', reasons: ['No kline data for filters.'] };
 
-    // 1. Volume Filter
     if (config.isVolumeFilterEnabled) {
         const volumes = klines.map(k => k.volume || 0);
         const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes }));
@@ -2202,22 +2198,18 @@ export async function getTradingSignal(
         reasons.push('✅ Volume Filter: Passed');
     }
 
-    // 2. Exhaustion Filter
     if (config.isExhaustionFilterEnabled) {
         const exhaustionVeto = getExhaustionFilterVeto(klines, agentSignal.signal, config);
         if (exhaustionVeto.veto) return { signal: 'HOLD', reasons: [...reasons, exhaustionVeto.reason] };
         reasons.push('✅ Exhaustion Filter: Passed');
     }
 
-    // 3. Mean Reversion Veto (Agent 9 specific)
     const meanReversionVeto = getMeanReversionVeto(klines, agentSignal.signal, config);
     if (meanReversionVeto.veto) return { signal: 'HOLD', reasons: [...reasons, meanReversionVeto.reason] };
 
-    // 4. HTF Momentum Sync Veto (Agent 9 specific)
     const htfMomentumVeto = getHtfMomentumSyncVeto(agentSignal.signal, htfContext, config);
     if (htfMomentumVeto.veto) return { signal: 'HOLD', reasons: [...reasons, htfMomentumVeto.reason] };
     
-    // 5. Market Cohesion Filter
     if (config.isMarketCohesionEnabled) {
          const haKlines = calculateHeikinAshi(klines);
          const cohesionCheck = isMarketCohesive(haKlines, agentSignal.signal, config.timeFrame, config.agentParams.qsc_marketCohesionCandles || 2);
@@ -2227,7 +2219,6 @@ export async function getTradingSignal(
          reasons.push(cohesionCheck.reason);
     }
 
-    // 6. BTC Trend Confirmation
     if (config.isBtcConfirmationEnabled) {
         const btcKlines = await btcConfirmationService.getDataForTimeframe(config.timeFrame);
         if(btcKlines && btcKlines.length > 0) {
@@ -2245,7 +2236,6 @@ export async function getTradingSignal(
         }
     }
 
-    // 7. VWAP Confirmation
     if (config.isVwapConfirmationEnabled) {
         const vwap = getLast(calculateVwap(klines));
         if (vwap) {
@@ -2259,7 +2249,6 @@ export async function getTradingSignal(
         }
     }
 
-    // 8. SMC Reversal Veto
     if (config.isSmcVetoEnabled) {
         const rsiValues = RSI.calculate({ period: 14, values: klines.map(k => k.close) });
         const volumes = klines.map(k => k.volume || 0);
@@ -2271,7 +2260,6 @@ export async function getTradingSignal(
         reasons.push('✅ SMC Veto: Passed');
     }
     
-    // 9. S/R Zone Veto
     if (config.isSrAnalysisEnabled) {
         const srLevels = calculateSupportResistance(klines);
         const atr = getLast(ATR.calculate({ period: 14, high: klines.map(k=>k.high), low: klines.map(k=>k.low), close: klines.map(k=>k.close) }));
@@ -2293,7 +2281,6 @@ export async function getTradingSignal(
         reasons.push('✅ S/R Zone: Passed');
     }
 
-    // 10. Candlestick Veto
     if (config.isCandlestickConfirmationEnabled) {
         const candleVeto = isLastCandleContradictory(klines, agentSignal.signal);
         if (candleVeto.veto) {
@@ -2302,7 +2289,14 @@ export async function getTradingSignal(
         reasons.push('✅ Candlestick Veto: Passed');
     }
 
-    // --- Post-Signal Validation ---
+    if (config.isMarketStructureVetoEnabled) {
+        const structureVeto = getMarketStructureVeto(klines, agentSignal.signal);
+        if (structureVeto.veto) {
+            return { signal: 'HOLD', reasons: [...reasons, structureVeto.reason] };
+        }
+        reasons.push(structureVeto.reason);
+    }
+
     const { stopLossPrice, takeProfitPrice } = getInitialAgentTargets(klines, currentPrice, agentSignal.signal === 'BUY' ? 'LONG' : 'SHORT', config);
     const profitabilityValidation = validateTradeProfitability(currentPrice, stopLossPrice, takeProfitPrice, agentSignal.signal === 'BUY' ? 'LONG' : 'SHORT', config);
     if (!profitabilityValidation.isValid) {

@@ -39,6 +39,7 @@ interface TradingConfigState {
     isSmcVetoEnabled: boolean;
     isSrAnalysisEnabled: boolean;
     isCandlestickConfirmationEnabled: boolean;
+    isMarketStructureVetoEnabled: boolean;
     htfTimeFrame: 'auto' | string;
     agentParams: AgentParams;
     htfAgentParams: AgentParams;
@@ -86,6 +87,7 @@ interface TradingConfigActions {
     setIsSmcVetoEnabled: (isEnabled: boolean) => void;
     setIsSrAnalysisEnabled: (isEnabled: boolean) => void;
     setIsCandlestickConfirmationEnabled: (isEnabled: boolean) => void;
+    setIsMarketStructureVetoEnabled: (isEnabled: boolean) => void;
     setHtfTimeFrame: (tf: 'auto' | string) => void;
     setAgentParams: (params: AgentParams) => void;
     setHtfAgentParams: (params: AgentParams) => void;
@@ -141,6 +143,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [isSmcVetoEnabled, setIsSmcVetoEnabled] = useState<boolean>(true);
     const [isSrAnalysisEnabled, setIsSrAnalysisEnabled] = useState<boolean>(true);
     const [isCandlestickConfirmationEnabled, setIsCandlestickConfirmationEnabled] = useState<boolean>(true);
+    const [isMarketStructureVetoEnabled, setIsMarketStructureVetoEnabled] = useState<boolean>(true);
     const [htfTimeFrame, setHtfTimeFrame] = useState<'auto' | string>('auto');
     const [isApiConnected, setIsApiConnected] = useState(false);
     const [walletViewMode, setWalletViewMode] = useState<TradingMode>(TradingMode.Spot);
@@ -286,15 +289,6 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         }
     }, [selectedPairs, tradingMode]);
 
-    // Reset agent parameters when the agent or timeframe changes.
-    useEffect(() => {
-        const timeframeDefaults = constants.getAgentTimeframeSettings(selectedAgent.id, chartTimeFrame);
-        // When timeframe or agent changes, reset the params to the new defaults.
-        // This ensures the UI always reflects the correct base parameters for the selected context.
-        // User customizations are initiated from this new baseline.
-        setAgentParams(timeframeDefaults);
-    }, [selectedAgent, chartTimeFrame]);
-
     // --- Action Definitions ---
     const addTradingPairList = (list: Omit<TradingPairList, 'id'>) => {
         const updatedLists = userPreferencesService.addTradingPairList(list);
@@ -311,7 +305,8 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     
     const setSelectedAgentWithReset = useCallback((agent: Agent) => {
         setSelectedAgent(agent);
-        // The useEffect above will handle resetting the agent parameters.
+        // Reset params on agent change to avoid carrying over incompatible settings
+        setAgentParams({});
     }, []);
 
 
@@ -340,38 +335,30 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         setIsMinRrEnabled, setInvalidationSensitivity, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setEntryTiming,
         setIsMarketCohesionEnabled, setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
         setIsExhaustionFilterEnabled, setIsSmcVetoEnabled,
-        setIsSrAnalysisEnabled, setIsCandlestickConfirmationEnabled,
+        setIsSrAnalysisEnabled, setIsCandlestickConfirmationEnabled, setIsMarketStructureVetoEnabled,
         setIsAdaptiveTpEnabled, setAggressiveTrailMode,
         addTradingPairList, updateTradingPairList, deleteTradingPairList,
     }), [onSetMultiAssetMode, setSelectedAgentWithReset]);
     
-    const state = useMemo(() => ({
+    const state = {
         executionMode, tradingMode, selectedPairs, allPairs, isPairsLoading, leverage, marginType, chartTimeFrame,
         selectedAgent, agentParams, htfAgentParams, investmentAmount, availableBalance,
         maxMarginLossPercent,
         isInitialRiskVetoEnabled,
+        // Provide default values for legacy TP properties for internal type compatibility
         takeProfitMode: RiskMode.Percent,
         takeProfitValue: 0,
         isTakeProfitLocked: false,
-        isHtfConfirmationEnabled, isUniversalProfitTrailEnabled,
+        isHtfConfirmationEnabled, isUniversalProfitTrailEnabled, 
         isMinRrEnabled, invalidationSensitivity, isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled, isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
-        isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, htfTimeFrame, tradingPairLists,
+        isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled, htfTimeFrame, tradingPairLists,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
         futuresSettingsError, multiAssetModeError, entryTiming, isAdaptiveTpEnabled, aggressiveTrailMode
-    }), [
-        executionMode, tradingMode, selectedPairs, allPairs, isPairsLoading, leverage, marginType, chartTimeFrame,
-        selectedAgent, agentParams, htfAgentParams, investmentAmount, availableBalance,
-        maxMarginLossPercent, isInitialRiskVetoEnabled,
-        isHtfConfirmationEnabled, isUniversalProfitTrailEnabled,
-        isMinRrEnabled, invalidationSensitivity, isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled, isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
-        isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, htfTimeFrame, tradingPairLists,
-        isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
-        futuresSettingsError, multiAssetModeError, entryTiming, isAdaptiveTpEnabled, aggressiveTrailMode
-    ]);
+    };
 
     return (
-        <TradingConfigStateContext.Provider value={state}>
-            <TradingConfigActionsContext.Provider value={actions}>
+        <TradingConfigStateContext.Provider value={state as TradingConfigState}>
+            <TradingConfigActionsContext.Provider value={actions as any}>
                 {children}
             </TradingConfigActionsContext.Provider>
         </TradingConfigStateContext.Provider>

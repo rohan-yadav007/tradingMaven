@@ -1,4 +1,5 @@
 
+
 import React from 'react';
 import { useState, useEffect, useMemo } from 'react';
 import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, Kline, RiskMode, OptimizationResultItem } from '../types';
@@ -46,8 +47,12 @@ const ParamSlider: React.FC<{label: string, value: number, onChange: (val: numbe
     </div>
 );
 
-const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParamsChange: (p: AgentParams) => void, isAdxFilterEnabled: boolean}> = ({ agent, params, onParamsChange, isAdxFilterEnabled }) => {
-    const allParams: Required<AgentParams> = {...constants.DEFAULT_AGENT_PARAMS, ...params};
+const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParamsChange: (p: AgentParams) => void, isAdxFilterEnabled: boolean, timeFrame: string}> = ({ agent, params, onParamsChange, isAdxFilterEnabled, timeFrame }) => {
+    const allParams = useMemo(() => {
+        const timeframeDefaults = constants.getAgentTimeframeSettings(agent.id, timeFrame);
+        return { ...constants.DEFAULT_AGENT_PARAMS, ...timeframeDefaults, ...params };
+    }, [agent.id, timeFrame, params]);
+
     const updateParam = (key: keyof AgentParams, value: number | boolean | string) => { onParamsChange({ ...params, [key]: value }); };
     switch (agent.id) {
         case 9: return (<div className="space-y-4">
@@ -262,6 +267,7 @@ export type BacktestConfig = {
     isAdxFilterEnabled: boolean;
     isSrAnalysisEnabled: boolean;
     isCandlestickConfirmationEnabled: boolean;
+    isMarketStructureVetoEnabled: boolean;
 };
 
 const getTimeframeDuration = (timeframe: string): number => {
@@ -313,6 +319,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         isAdxFilterEnabled: globalConfig.isAdxFilterEnabled,
         isSrAnalysisEnabled: globalConfig.isSrAnalysisEnabled,
         isCandlestickConfirmationEnabled: globalConfig.isCandlestickConfirmationEnabled,
+        isMarketStructureVetoEnabled: globalConfig.isMarketStructureVetoEnabled,
     });
 
     const [backtestDays, setBacktestDays] = useState(3);
@@ -334,13 +341,11 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         return constants.TIME_FRAMES.slice(currentIndex + 1);
     }, [config.chartTimeFrame]);
 
-    // FIX: Add useEffect to update agent parameters when agent or timeframe changes.
     useEffect(() => {
-        // When agent or timeframe changes, apply the new default settings from constants
-        const timeframeDefaults = constants.getAgentTimeframeSettings(config.selectedAgent.id, config.chartTimeFrame);
-        // This ensures the local agentParams state reflects the correct defaults for the new context.
-        updateConfig('agentParams', timeframeDefaults);
-    }, [config.selectedAgent.id, config.chartTimeFrame]);
+        // When the agent changes, clear out any old custom parameters
+        // to ensure the new agent's defaults are used.
+        updateConfig('agentParams', {});
+    }, [config.selectedAgent.id]);
 
     useEffect(() => {
         if (config.htfTimeFrame !== 'auto' && !higherTimeFrames.includes(config.htfTimeFrame)) {
@@ -530,9 +535,27 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                         </button>
                         {isParamsOpen && (
                             <div className="p-3 border-t border-slate-200 dark:border-slate-600">
-                                <AgentParameterEditor agent={config.selectedAgent} params={config.agentParams} onParamsChange={(p) => updateConfig('agentParams', p)} isAdxFilterEnabled={config.isAdxFilterEnabled} />
+                                <AgentParameterEditor agent={config.selectedAgent} params={config.agentParams} onParamsChange={(p) => updateConfig('agentParams', p)} isAdxFilterEnabled={config.isAdxFilterEnabled} timeFrame={config.chartTimeFrame} />
                             </div>
                         )}
+                    </div>
+                    
+                    <div className={formGroupClass}>
+                        <div className="flex items-center justify-between">
+                            <label htmlFor="market-structure-veto-toggle-bt" className={formLabelClass}>
+                                Market Structure Veto
+                            </label>
+                             <div className="relative group">
+                                <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                                <div className="absolute bottom-full mb-2 w-52 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                    Analyzes swing points to identify the market trend and will veto trades that go against a confirmed structure or a recent Change of Character (ChoCH).
+                                </div>
+                            </div>
+                        </div>
+                        <ToggleSwitch
+                            checked={config.isMarketStructureVetoEnabled}
+                            onChange={v => updateConfig('isMarketStructureVetoEnabled', v)}
+                        />
                     </div>
                     
                     <div className="flex gap-2 pt-2">

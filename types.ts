@@ -323,6 +323,7 @@ export interface BotConfig {
     isSmcVetoEnabled?: boolean;
     isSrAnalysisEnabled?: boolean;
     isCandlestickConfirmationEnabled?: boolean;
+    isMarketStructureVetoEnabled?: boolean;
     isAdaptiveTpEnabled: boolean;
     aggressiveTrailMode: 'distance' | 'pnl';
     agentParams: AgentParams;
@@ -353,6 +354,7 @@ export interface BotConfigSnapshot {
     isSmcVetoEnabled?: boolean;
     isSrAnalysisEnabled?: boolean;
     isCandlestickConfirmationEnabled?: boolean;
+    isMarketStructureVetoEnabled?: boolean;
     htfTimeFrame?: 'auto' | string;
     entryTiming?: 'immediate' | 'onNextCandle';
     isAdaptiveTpEnabled?: boolean;

@@ -60,8 +60,12 @@ const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) =>
     </button>
 );
 
-const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParamsChange: (p: AgentParams) => void, isAdxFilterEnabled: boolean}> = ({ agent, params, onParamsChange, isAdxFilterEnabled }) => {
-    const allParams: Required<AgentParams> = {...constants.DEFAULT_AGENT_PARAMS, ...params};
+const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParamsChange: (p: AgentParams) => void, isAdxFilterEnabled: boolean, timeFrame: string}> = ({ agent, params, onParamsChange, isAdxFilterEnabled, timeFrame }) => {
+    const allParams = useMemo(() => {
+        const timeframeDefaults = constants.getAgentTimeframeSettings(agent.id, timeFrame);
+        return { ...constants.DEFAULT_AGENT_PARAMS, ...timeframeDefaults, ...params };
+    }, [agent.id, timeFrame, params]);
+
     const updateParam = (key: keyof AgentParams, value: number | boolean | string) => { onParamsChange({ ...params, [key]: value }); };
     switch (agent.id) {
         case 9: return (<div className="space-y-4">
@@ -253,7 +257,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isInitialRiskVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode,
-        isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled
+        isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled
     } = config;
 
     const {
@@ -265,7 +269,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setEntryTiming, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setIsMarketCohesionEnabled,
         setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
         setIsExhaustionFilterEnabled, setIsInitialRiskVetoEnabled, setIsAdaptiveTpEnabled, setAggressiveTrailMode,
-        setIsSmcVetoEnabled, setIsSrAnalysisEnabled, setIsCandlestickConfirmationEnabled
+        setIsSmcVetoEnabled, setIsSrAnalysisEnabled, setIsCandlestickConfirmationEnabled, setIsMarketStructureVetoEnabled
     } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -389,6 +393,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         isSmcVetoEnabled: config.isSmcVetoEnabled,
                         isSrAnalysisEnabled: config.isSrAnalysisEnabled,
                         isCandlestickConfirmationEnabled: config.isCandlestickConfirmationEnabled,
+                        isMarketStructureVetoEnabled: config.isMarketStructureVetoEnabled,
                     };
 
                     const signal = await getTradingSignal(selectedAgent, previewKlines, previewConfig, htfKlines);
@@ -608,27 +613,27 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 <p className="text-xs text-slate-500 dark:text-slate-400">{selectedAgent.description}</p>
                  {selectedAgent.id === 9 && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-4">
-                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} />
+                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
                     </div>
                 )}
                  {selectedAgent.id === 13 && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
-                         <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} />
+                         <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
                     </div>
                 )}
                  {selectedAgent.id === 14 && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700">
-                         <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} />
+                         <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
                     </div>
                 )}
                 {selectedAgent.id === 11 && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
-                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} />
+                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
                     </div>
                 )}
                 {selectedAgent.id === 17 && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
-                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} />
+                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
                     </div>
                 )}
             </div>
@@ -829,6 +834,25 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     <ToggleSwitch
                         checked={isSrAnalysisEnabled}
                         onChange={setIsSrAnalysisEnabled}
+                    />
+                </div>
+            </div>
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                        <label htmlFor="market-structure-veto-toggle" className={formLabelClass}>
+                            Market Structure Veto
+                        </label>
+                        <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-52 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                Analyzes swing points to identify the market trend and will veto trades that go against a confirmed structure or a recent Change of Character (ChoCH).
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch
+                        checked={isMarketStructureVetoEnabled}
+                        onChange={setIsMarketStructureVetoEnabled}
                     />
                 </div>
             </div>

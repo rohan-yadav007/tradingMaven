@@ -254,6 +254,21 @@ class BotInstance {
         try {
             this.bot.lastAnalysisTimestamp = Date.now();
             
+            // Create a real-time "preview" kline array for analysis, identical to the UI's approach.
+            // This ensures the data used for analysis and execution is perfectly synchronized.
+            let klinesForAnalysis = this.klines;
+            if (this.bot.livePrice && this.klines.length > 0) {
+                const lastKline = this.klines[this.klines.length - 1];
+                const previewKline: Kline = {
+                    ...lastKline,
+                    high: Math.max(lastKline.high, this.bot.livePrice),
+                    low: Math.min(lastKline.low, this.bot.livePrice),
+                    close: this.bot.livePrice,
+                    isFinal: false,
+                };
+                klinesForAnalysis = [...this.klines.slice(0, -1), previewKline];
+            }
+            
             let htfKlines: Kline[] | undefined;
             if (this.bot.config.isHtfConfirmationEnabled) {
                 try {
@@ -264,7 +279,7 @@ class BotInstance {
                 } catch(e) { this.addLog(`Warning: could not fetch HTF klines: ${e}`, LogType.Error); }
             }
             
-            const signal = await getTradingSignal(this.bot.config.agent, this.klines, this.bot.config, htfKlines);
+            const signal = await getTradingSignal(this.bot.config.agent, klinesForAnalysis, this.bot.config, htfKlines);
             this.updateState({ analysis: signal });
 
             const isForEntry = !this.bot.openPosition && this.bot.status === BotStatus.Monitoring;
@@ -273,13 +288,13 @@ class BotInstance {
             if (isForEntry && options.execute) {
                 if (signal.signal !== 'HOLD') {
                     this.updateState({ status: BotStatus.ExecutingTrade });
-                    await this.executeTrade(signal, this.klines, htfKlines);
+                    await this.executeTrade(signal, klinesForAnalysis, htfKlines);
                 } else {
                     const primaryReason = signal.reasons.find(r => r.startsWith('❌') || r.startsWith('ℹ️')) || "Conditions not met.";
                     this.addLog(`Analysis: HOLD. ${primaryReason.substring(2)}`, LogType.Info);
                 }
             } else if (isForManagement) {
-                const { score, reasons } = await getSupervisorSignal(this.bot.openPosition!, this.klines, this.bot.config, htfKlines);
+                const { score, reasons } = await getSupervisorSignal(this.bot.openPosition!, klinesForAnalysis, this.bot.config, htfKlines);
 
                 this.updateState({
                     openPosition: { ...this.bot.openPosition!, invalidationScore: score }

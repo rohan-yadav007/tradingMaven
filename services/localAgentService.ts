@@ -19,7 +19,7 @@ export { captureMarketContext } from './agents/agentUtils';
 import { Agent, Kline, TradeSignal, BotConfig, MarketDataContext } from '../types';
 import { btcConfirmationService } from './btcConfirmationService';
 // FIX: Import `captureMarketContext` with an alias for local use and import `isLastCandleContradictory`.
-import { applyTimeframeSettings, calculateHeikinAshi, isMarketCohesive, getLast, captureMarketContext as _captureMarketContext, isLastCandleContradictory } from './agents/agentUtils';
+import { applyTimeframeSettings, calculateHeikinAshi, isMarketCohesive, getLast, captureMarketContext as _captureMarketContext, isLastCandleContradictory, calculateVwap } from './agents/agentUtils';
 import { SMA, RSI, ATR } from 'technicalindicators';
 
 // Import all agent signal generators
@@ -42,6 +42,7 @@ import {
 import { validateTradeProfitability, getInitialAgentTargets } from './riskManagementService';
 import { calculateSupportResistance } from './chartAnalysisService';
 import { marketBreadthService } from './marketBreadthService';
+import { liquidationAnalysisService } from './liquidationAnalysisService';
 
 
 /**
@@ -124,6 +125,14 @@ export async function getTradingSignal(
         reasons.push(breadthVeto.reason);
     }
 
+    if (config.isLiquidationFilterEnabled) {
+        const liquidationVeto = liquidationAnalysisService.getLiquidationVeto(agentSignal.signal, config.pair);
+        if (liquidationVeto.veto) {
+            return { signal: 'HOLD', reasons: [...reasons, liquidationVeto.reason] };
+        }
+        reasons.push(liquidationVeto.reason);
+    }
+
     if (config.isBtcConfirmationEnabled) {
         const btcKlines = await btcConfirmationService.getDataForTimeframe(config.timeFrame);
         if(btcKlines && btcKlines.length > 0) {
@@ -142,12 +151,12 @@ export async function getTradingSignal(
     }
 
     if (config.isVwapConfirmationEnabled) {
-        const vwap = getLast(calculateHeikinAshi(klines)); // This should be calculateVwap
-        if (vwap) {
-             if (agentSignal.signal === 'BUY' && currentPrice < vwap.close) { // This should be vwap, not vwap.close
+        const vwapValue = getLast(calculateVwap(klines));
+        if (vwapValue) {
+             if (agentSignal.signal === 'BUY' && currentPrice < vwapValue) {
                 return { signal: 'HOLD', reasons: [...reasons, `❌ VETO: Price is below daily VWAP.`] };
             }
-             if (agentSignal.signal === 'SELL' && currentPrice > vwap.close) { // This should be vwap, not vwap.close
+             if (agentSignal.signal === 'SELL' && currentPrice > vwapValue) {
                 return { signal: 'HOLD', reasons: [...reasons, `❌ VETO: Price is above daily VWAP.`] };
             }
             reasons.push('✅ VWAP Filter: Passed');
@@ -203,12 +212,17 @@ export async function getTradingSignal(
         reasons.push(structureVeto.reason);
     }
 
-    const { stopLossPrice, takeProfitPrice } = getInitialAgentTargets(klines, currentPrice, agentSignal.signal === 'BUY' ? 'LONG' : 'SHORT', config);
-    const profitabilityValidation = validateTradeProfitability(currentPrice, stopLossPrice, takeProfitPrice, agentSignal.signal === 'BUY' ? 'LONG' : 'SHORT', config);
+    const { stopLossPrice, takeProfitPrice, agentStopLoss } = getInitialAgentTargets(klines, currentPrice, agentSignal.signal === 'BUY' ? 'LONG' : 'SHORT', config);
+    const profitabilityValidation = validateTradeProfitability(currentPrice, agentStopLoss, takeProfitPrice, agentSignal.signal === 'BUY' ? 'LONG' : 'SHORT', config);
     if (!profitabilityValidation.isValid) {
         return { signal: 'HOLD', reasons: [...reasons, profitabilityValidation.reason] };
     }
     reasons.push(profitabilityValidation.reason);
 
-    return { ...agentSignal, reasons };
+    return { 
+        ...agentSignal, 
+        reasons,
+        stopLossPrice: stopLossPrice,
+        takeProfitPrice: takeProfitPrice
+    };
 }

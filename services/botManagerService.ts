@@ -1,7 +1,7 @@
 import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, TradingMode, MarketDataContext } from '../types';
 import * as binanceService from './binanceService';
 import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext, getAdaptiveTakeProfit } from './localAgentService';
-import { TIME_FRAMES, getHigherTimeframe } from '../constants';
+import { TIME_FRAMES } from '../constants';
 import { telegramBotService } from './telegramBotService';
 
 const MAX_LOG_ENTRIES = 100;
@@ -258,7 +258,7 @@ class BotInstance {
             if (this.bot.config.isHtfConfirmationEnabled) {
                 try {
                     const htf = this.bot.config.htfTimeFrame === 'auto' 
-                        ? getHigherTimeframe(this.bot.config.timeFrame) 
+                        ? TIME_FRAMES[TIME_FRAMES.indexOf(this.bot.config.timeFrame) + 1] 
                         : this.bot.config.htfTimeFrame;
                     if (htf) htfKlines = await binanceService.fetchKlines(this.bot.config.pair.replace('/', ''), htf, { limit: 205, mode: this.bot.config.mode });
                 } catch(e) { this.addLog(`Warning: could not fetch HTF klines: ${e}`, LogType.Error); }

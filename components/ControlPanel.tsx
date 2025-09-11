@@ -257,7 +257,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isInitialRiskVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode,
-        isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled
+        isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
+        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled
     } = config;
 
     const {
@@ -269,7 +270,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setEntryTiming, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setIsMarketCohesionEnabled,
         setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
         setIsExhaustionFilterEnabled, setIsInitialRiskVetoEnabled, setIsAdaptiveTpEnabled, setAggressiveTrailMode,
-        setIsSmcVetoEnabled, setIsSrAnalysisEnabled, setIsCandlestickConfirmationEnabled, setIsMarketStructureVetoEnabled
+        setIsSmcVetoEnabled, setIsSrAnalysisEnabled, setIsCandlestickConfirmationEnabled, setIsMarketStructureVetoEnabled,
+        setIsMarketBreadthFilterEnabled, setIsLiquidationFilterEnabled
     } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -394,6 +396,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         isSrAnalysisEnabled: config.isSrAnalysisEnabled,
                         isCandlestickConfirmationEnabled: config.isCandlestickConfirmationEnabled,
                         isMarketStructureVetoEnabled: config.isMarketStructureVetoEnabled,
+                        isMarketBreadthFilterEnabled: config.isMarketBreadthFilterEnabled,
+                        isLiquidationFilterEnabled: config.isLiquidationFilterEnabled,
                     };
 
                     const signal = await getTradingSignal(selectedAgent, previewKlines, previewConfig, htfKlines);
@@ -663,6 +667,26 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
 
             <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
             
+             <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                     <div className="flex items-center gap-1.5">
+                        <label htmlFor="liquidation-filter-toggle" className={formLabelClass}>
+                            Liquidation Cascade Veto
+                        </label>
+                         <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                Prevents entering a trade directly into a large, ongoing liquidation event. A key safety feature for volatile markets. (Futures only)
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch
+                        checked={isLiquidationFilterEnabled}
+                        onChange={setIsLiquidationFilterEnabled}
+                    />
+                </div>
+            </div>
+
             <div className={formGroupClass}>
                 <div className="flex items-center justify-between">
                      <div className="flex items-center gap-1.5">
@@ -679,6 +703,26 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     <ToggleSwitch
                         checked={isAdxFilterEnabled}
                         onChange={setIsAdxFilterEnabled}
+                    />
+                </div>
+            </div>
+            
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                     <div className="flex items-center gap-1.5">
+                        <label htmlFor="breadth-filter-toggle" className={formLabelClass}>
+                            Market Breadth Filter
+                        </label>
+                         <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                Ensures trades align with the immediate trend of market leaders (BTC & ETH). Vetoes trades that go against the overall market tide.
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch
+                        checked={isMarketBreadthFilterEnabled}
+                        onChange={setIsMarketBreadthFilterEnabled}
                     />
                 </div>
             </div>

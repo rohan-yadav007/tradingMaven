@@ -41,6 +41,7 @@ import {
 } from './vetoService';
 import { validateTradeProfitability, getInitialAgentTargets } from './riskManagementService';
 import { calculateSupportResistance } from './chartAnalysisService';
+import { marketBreadthService } from './marketBreadthService';
 
 
 /**
@@ -113,6 +114,14 @@ export async function getTradingSignal(
              return { signal: 'HOLD', reasons: [...reasons, cohesionCheck.reason] };
          }
          reasons.push(cohesionCheck.reason);
+    }
+
+    if (config.isMarketBreadthFilterEnabled) {
+        const breadthVeto = marketBreadthService.getMarketBreadthVeto(agentSignal.signal);
+        if (breadthVeto.veto) {
+            return { signal: 'HOLD', reasons: [...reasons, breadthVeto.reason] };
+        }
+        reasons.push(breadthVeto.reason);
     }
 
     if (config.isBtcConfirmationEnabled) {

@@ -268,6 +268,8 @@ export type BacktestConfig = {
     isSrAnalysisEnabled: boolean;
     isCandlestickConfirmationEnabled: boolean;
     isMarketStructureVetoEnabled: boolean;
+    isMarketBreadthFilterEnabled: boolean;
+    isLiquidationFilterEnabled: boolean;
 };
 
 const getTimeframeDuration = (timeframe: string): number => {
@@ -320,6 +322,8 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         isSrAnalysisEnabled: globalConfig.isSrAnalysisEnabled,
         isCandlestickConfirmationEnabled: globalConfig.isCandlestickConfirmationEnabled,
         isMarketStructureVetoEnabled: globalConfig.isMarketStructureVetoEnabled,
+        isMarketBreadthFilterEnabled: globalConfig.isMarketBreadthFilterEnabled,
+        isLiquidationFilterEnabled: globalConfig.isLiquidationFilterEnabled,
     });
 
     const [backtestDays, setBacktestDays] = useState(3);
@@ -558,6 +562,32 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                         />
                     </div>
                     
+                    <div className={formGroupClass}>
+                        <div className="flex items-center justify-between">
+                            <label className={formLabelClass}>
+                                Market Breadth Filter
+                            </label>
+                        </div>
+                        <ToggleSwitch
+                            checked={config.isMarketBreadthFilterEnabled}
+                            onChange={v => updateConfig('isMarketBreadthFilterEnabled', v)}
+                        />
+                        <p className="text-xs text-slate-400 dark:text-slate-500">Note: This filter uses live data and will be gracefully disabled during backtesting simulations.</p>
+                    </div>
+                    
+                     <div className={formGroupClass}>
+                        <div className="flex items-center justify-between">
+                            <label className={formLabelClass}>
+                                Liquidation Cascade Veto
+                            </label>
+                        </div>
+                        <ToggleSwitch
+                            checked={config.isLiquidationFilterEnabled}
+                            onChange={v => updateConfig('isLiquidationFilterEnabled', v)}
+                        />
+                        <p className="text-xs text-slate-400 dark:text-slate-500">Note: This filter uses live data and will be gracefully disabled during backtesting simulations.</p>
+                    </div>
+
                     <div className="flex gap-2 pt-2">
                         <button onClick={handleRunBacktest} disabled={isLoading} className={`${buttonClass} bg-sky-600 hover:bg-sky-700 disabled:bg-slate-400 dark:disabled:bg-slate-600`}>
                             <FlaskIcon className="w-4 h-4" /> Run Backtest

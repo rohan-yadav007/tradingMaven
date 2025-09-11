@@ -335,6 +335,7 @@ export interface BotConfig {
     entryTiming: 'immediate' | 'onNextCandle';
     telegramChatId?: string;
     refreshInterval?: number;
+    isMarketBreadthFilterEnabled?: boolean;
 }
 
 export interface BotConfigSnapshot {
@@ -360,6 +361,7 @@ export interface BotConfigSnapshot {
     isAdaptiveTpEnabled?: boolean;
     aggressiveTrailMode?: 'distance' | 'pnl';
     isInitialRiskVetoEnabled?: boolean;
+    isMarketBreadthFilterEnabled?: boolean;
 }
 
 export interface Position {

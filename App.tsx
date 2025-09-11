@@ -37,7 +37,8 @@ const AppContent: React.FC = () => {
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, isInitialRiskVetoEnabled,
-        isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled
+        isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
+        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled
     } = configState;
 
     const {
@@ -149,6 +150,8 @@ const AppContent: React.FC = () => {
                     stepSize: stepSizeForBot,
                     takerFeeRate: currentFeeRate,
                     entryTiming,
+                    isMarketBreadthFilterEnabled,
+                    isLiquidationFilterEnabled,
                 };
 
                 botManagerService.startBot(botConfig);
@@ -166,7 +169,8 @@ const AppContent: React.FC = () => {
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, 
-        isMarketStructureVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode
+        isMarketStructureVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, isMarketBreadthFilterEnabled,
+        isLiquidationFilterEnabled,
     ]);
 
     const handleClosePosition = useCallback(async (posToClose: Position, exitReason: string = "Manual Close", exitPriceOverride?: number) => {
@@ -254,7 +258,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 const formattedPair = posToClose.pair.replace('/', '');
                 
                 const liveSymbolInfo = posToClose.mode === TradingMode.USDSM_Futures 
-                    ? await binanceService.getFuturesSymbolInfo(formattedPair)
+                    ? await binanceService.getFuturesSymbolInfo(formattedPair) 
                     : await binanceService.getSymbolInfo(formattedPair);
 
                 if (!liveSymbolInfo) throw new Error(`Could not fetch symbol info for ${formattedPair} to close position.`);
@@ -488,7 +492,9 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 entryTiming: config.entryTiming,
                 isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,
                 aggressiveTrailMode: config.aggressiveTrailMode,
-                isInitialRiskVetoEnabled: config.isInitialRiskVetoEnabled
+                isInitialRiskVetoEnabled: config.isInitialRiskVetoEnabled,
+                isMarketBreadthFilterEnabled: config.isMarketBreadthFilterEnabled,
+                isLiquidationFilterEnabled: config.isLiquidationFilterEnabled,
             },
             entryContext: executionDetails.entryContext,
         };

@@ -121,7 +121,9 @@ const EntryFilterConfiguration: React.FC<{ bot: RunningBot; onUpdate: (change: P
             <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Entry Filter Configuration</h4>
              <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg space-y-2 text-sm">
                 <p className="text-xs text-slate-500 dark:text-slate-400">Toggle entry filters for the next trade. These changes apply immediately.</p>
+                <ConfigToggle label="Liquidation Cascade Veto" checked={config.isLiquidationFilterEnabled ?? false} onChange={v => onUpdate({ isLiquidationFilterEnabled: v })} />
                 <ConfigToggle label="ADX Trend Filter" checked={config.isAdxFilterEnabled ?? false} onChange={v => onUpdate({ isAdxFilterEnabled: v })} />
+                <ConfigToggle label="Market Breadth Filter" checked={config.isMarketBreadthFilterEnabled ?? false} onChange={v => onUpdate({ isMarketBreadthFilterEnabled: v })} />
                 <ConfigToggle label="BTC Trend Confirmation" checked={config.isBtcConfirmationEnabled ?? false} onChange={v => onUpdate({ isBtcConfirmationEnabled: v })} />
                 <ConfigToggle label="VWAP Confirmation" checked={config.isVwapConfirmationEnabled ?? false} onChange={v => onUpdate({ isVwapConfirmationEnabled: v })} />
                 <ConfigToggle label="Higher TF Confirmation" checked={config.isHtfConfirmationEnabled} onChange={v => onUpdate({ isHtfConfirmationEnabled: v })} />

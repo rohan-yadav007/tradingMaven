@@ -235,17 +235,20 @@ class BotInstance {
     }
     
     public async runPeriodicManagement() {
+        // FIX: Ensure analysis preview runs even when paused or in a trade
         if ([BotStatus.Paused, BotStatus.Stopped, BotStatus.Error, BotStatus.ExecutingTrade].includes(this.bot.status)) {
-            // FIX: Ensure analysis preview runs even when paused or in a trade
-            await this.runAnalysis({ execute: false });
-            return;
+            // Still run analysis for preview purposes, but don't execute trades.
+        } else {
+            if (this.klines.length < 50) return;
+
+            const isLookingForEntry = !this.bot.openPosition && this.bot.status === BotStatus.Monitoring;
+            const shouldExecute = isLookingForEntry && this.bot.config.entryTiming === 'immediate';
+    
+            await this.runAnalysis({ execute: shouldExecute });
         }
-        if (this.klines.length < 50) return;
-
-        const isLookingForEntry = !this.bot.openPosition && this.bot.status === BotStatus.Monitoring;
-        const shouldExecute = isLookingForEntry && this.bot.config.entryTiming === 'immediate';
-
-        await this.runAnalysis({ execute: shouldExecute });
+        
+        // This runs regardless of status to keep the UI's analysis preview fresh.
+        await this.runAnalysis({ execute: false });
     }
 
     public async runAnalysis(options: { execute: boolean } = { execute: true }) {

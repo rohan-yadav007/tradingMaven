@@ -732,10 +732,12 @@ export function getAdaptiveTakeProfit(
     const highs = klinesForAnalysis.map(k => k.high);
     const lows = klinesForAnalysis.map(k => k.low);
     const rsiValues = RSI.calculate({ period: 14, values: closes });
-    const lastRsi = getLast(rsiValues);
+    // FIX: Cast result of technical indicator to number | undefined to fix 'unknown' type error.
+    const lastRsi = getLast(rsiValues) as number | undefined;
     const stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
     const macd = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false })) as MACDOutput | undefined;
-    const atr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: 14 }));
+    // FIX: Cast result of technical indicator to number | undefined to fix 'unknown' type error.
+    const atr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: 14 })) as number | undefined;
 
     if (lastRsi === undefined || !stochRsi || !macd?.histogram || !atr) return {};
 

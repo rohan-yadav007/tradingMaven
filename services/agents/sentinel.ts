@@ -1,6 +1,6 @@
 // services/agents/sentinel.ts
 
-import { Kline, BotConfig, MarketDataContext, TradeSignal, SentinelAnalysis } from '../../types';
+import { Kline, BotConfig, MarketDataContext, TradeSignal, SentinelAnalysis, MACDOutput, ADXOutput, BollingerBandsOutput } from '../../types';
 import { EMA, MACD, RSI, ADX, BollingerBands, ATR, OBV } from 'technicalindicators';
 import { getLast, getPenultimate, isObvTrending, recognizeCandlestickPattern, VortexIndicator } from './agentUtils';
 import { calculateSupportResistance } from '../chartAnalysisService';
@@ -20,22 +20,31 @@ export const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfCont
     const reasons: string[] = [];
 
     // --- 1. INDICATOR CALCULATIONS ---
-    const emaFast = getLast(EMA.calculate({ period: params.sentinel_emaFastPeriod!, values: closes }))!;
-    const emaSlow = getLast(EMA.calculate({ period: params.sentinel_emaSlowPeriod!, values: closes }))!;
+    // FIX: Cast result of technical indicator to number to fix 'unknown' type error.
+    const emaFast = getLast(EMA.calculate({ period: params.sentinel_emaFastPeriod!, values: closes }))! as number;
+    // FIX: Cast result of technical indicator to number to fix 'unknown' type error.
+    const emaSlow = getLast(EMA.calculate({ period: params.sentinel_emaSlowPeriod!, values: closes }))! as number;
     const macdValues = MACD.calculate({ values: closes, fastPeriod: params.sentinel_macdFastPeriod!, slowPeriod: params.sentinel_macdSlowPeriod!, signalPeriod: params.sentinel_macdSignalPeriod!, SimpleMAOscillator: false, SimpleMASignal: false });
-    const macd = getLast(macdValues)!;
-    const prevMacd = getPenultimate(macdValues)!;
-    const rsi = getLast(RSI.calculate({ values: closes, period: params.sentinel_rsiPeriod! }))!;
+    // FIX: Cast result of technical indicator to MACDOutput to fix 'unknown' type error.
+    const macd = getLast(macdValues)! as MACDOutput;
+    // FIX: Cast result of technical indicator to MACDOutput to fix 'unknown' type error.
+    const prevMacd = getPenultimate(macdValues)! as MACDOutput;
+    // FIX: Cast result of technical indicator to number to fix 'unknown' type error.
+    const rsi = getLast(RSI.calculate({ values: closes, period: params.sentinel_rsiPeriod! }))! as number;
     const adxValues = ADX.calculate({ high: highs, low: lows, close: closes, period: params.sentinel_adxPeriod! });
-    const adx = getLast(adxValues)!;
-    const prevAdx = getPenultimate(adxValues)!;
+    // FIX: Cast result of technical indicator to ADXOutput to fix 'unknown' type error.
+    const adx = getLast(adxValues)! as ADXOutput;
+    // FIX: Cast result of technical indicator to ADXOutput to fix 'unknown' type error.
+    const prevAdx = getPenultimate(adxValues)! as ADXOutput;
     const vi = VortexIndicator.calculate({ high: highs, low: lows, close: closes, period: params.viPeriod });
     const last_vi_plus = getLast(vi.pdi)!;
     const last_vi_minus = getLast(vi.ndi)!;
     const obv = OBV.calculate({ close: closes, volume: volumes });
     const bbValues = BollingerBands.calculate({ period: 20, stdDev: 2, values: closes });
-    const bb = getLast(bbValues)!;
-    const atr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: 14 }))!;
+    // FIX: Cast result of technical indicator to BollingerBandsOutput to fix 'unknown' type error.
+    const bb = getLast(bbValues)! as BollingerBandsOutput;
+    // FIX: Cast result of technical indicator to number to fix 'unknown' type error.
+    const atr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: 14 }))! as number;
     const srLevels = calculateSupportResistance(klines, 15, 0.01);
     const candlePattern = recognizeCandlestickPattern(klines[klines.length - 1], klines[klines.length - 2]);
 

@@ -89,7 +89,8 @@ export async function getTradingSignal(
 
     if (config.isVolumeFilterEnabled) {
         const volumes = klines.map(k => k.volume || 0);
-        const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes }));
+        // FIX: Cast result of technical indicator to number | undefined to fix 'unknown' type error.
+        const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes })) as number | undefined;
         if (volumeSma && lastKline.volume && lastKline.volume < volumeSma) {
             return { signal: 'HOLD', reasons: [...reasons, `❌ VETO: Entry candle volume is below the 20-period average.`] };
         }
@@ -176,7 +177,8 @@ export async function getTradingSignal(
     
     if (config.isSrAnalysisEnabled) {
         const srLevels = calculateSupportResistance(klines);
-        const atr = getLast(ATR.calculate({ period: 14, high: klines.map(k=>k.high), low: klines.map(k=>k.low), close: klines.map(k=>k.close) }));
+        // FIX: Cast result of technical indicator to number | undefined to fix 'unknown' type error.
+        const atr = getLast(ATR.calculate({ period: 14, high: klines.map(k=>k.high), low: klines.map(k=>k.low), close: klines.map(k=>k.close) })) as number | undefined;
         if (atr) {
             const buffer = atr * 0.25;
             if (agentSignal.signal === 'BUY') {

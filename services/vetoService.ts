@@ -1,7 +1,7 @@
 // services/vetoService.ts
 
-import { Kline, BotConfig, MarketDataContext, StochasticRSIOutput } from '../types';
-import { RSI, StochasticRSI, ADX, MACD, SMA } from 'technicalindicators';
+import { Kline, BotConfig, MarketDataContext, StochasticRSIOutput, MACDOutput, ADXOutput } from '../types';
+import { RSI, StochasticRSI, ADX, MACD, SMA, EMA } from 'technicalindicators';
 import * as constants from '../constants';
 import { btcConfirmationService } from './btcConfirmationService';
 import { findSwingPoints, analyzeMarketStructure } from './chartAnalysisService';
@@ -106,25 +106,30 @@ export function getBtcTrendScore(
     let bullScore = 0;
     let bearScore = 0;
 
-    const ema21 = getLast(EMA.calculate({ period: 21, values: closes }))! as number;
-    const ema50 = getLast(EMA.calculate({ period: 50, values: closes }))! as number;
-    if (currentPrice > ema21 && ema21 > ema50) {
+    // FIX: Cast result of technical indicator to number | undefined to fix 'unknown' type error.
+    const ema21 = getLast(EMA.calculate({ period: 21, values: closes })) as number | undefined;
+    // FIX: Cast result of technical indicator to number | undefined to fix 'unknown' type error.
+    const ema50 = getLast(EMA.calculate({ period: 50, values: closes })) as number | undefined;
+    if (ema21 && ema50 && currentPrice > ema21 && ema21 > ema50) {
         bullScore += 50;
-    } else if (currentPrice < ema21 && ema21 < ema50) {
+    } else if (ema21 && ema50 && currentPrice < ema21 && ema21 < ema50) {
         bearScore += 50;
     }
 
     const macdValues = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
-    const macd = getLast(macdValues)!;
-    const prevMacd = macdValues[macdValues.length - 2];
-    if (macd.histogram! > 0 && macd.histogram! > (prevMacd.histogram || 0)) {
+    // FIX: Cast result of technical indicator to MACDOutput | undefined to fix 'unknown' type error.
+    const macd = getLast(macdValues) as MACDOutput | undefined;
+    // FIX: Cast result of technical indicator to MACDOutput | undefined to fix 'unknown' type error.
+    const prevMacd = macdValues[macdValues.length - 2] as MACDOutput | undefined;
+    if (macd?.histogram !== undefined && prevMacd?.histogram !== undefined && macd.histogram > 0 && macd.histogram > (prevMacd.histogram || 0)) {
         bullScore += 30;
-    } else if (macd.histogram! < 0 && macd.histogram! < (prevMacd.histogram || 0)) {
+    } else if (macd?.histogram !== undefined && prevMacd?.histogram !== undefined && macd.histogram < 0 && macd.histogram < (prevMacd.histogram || 0)) {
         bearScore += 30;
     }
     
-    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: 14 }))!;
-    if (adx.adx > 20) {
+    // FIX: Cast result of technical indicator to ADXOutput | undefined to fix 'unknown' type error.
+    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: 14 })) as ADXOutput | undefined;
+    if (adx && adx.adx > 20) {
         if (adx.pdi > adx.mdi) {
             bullScore += 20;
         } else if (adx.mdi > adx.pdi) {

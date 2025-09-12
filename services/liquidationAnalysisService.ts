@@ -176,7 +176,6 @@ class LiquidationAnalysisService {
         if (!state) {
             state = this.createInitialState();
             this.symbolStates.set(symbol, state);
-            return { veto: false, reason: 'ℹ️ Liquidation Data: Initializing...' };
         }
 
         if (state.longTermHistory.length < 10) {

@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig, Agent, MarketDataContext } from '../types';
 import * as constants from '../constants';
@@ -258,7 +256,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isInitialRiskVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode,
         isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
-        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled
+        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled
     } = config;
 
     const {
@@ -271,7 +269,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
         setIsExhaustionFilterEnabled, setIsInitialRiskVetoEnabled, setIsAdaptiveTpEnabled, setAggressiveTrailMode,
         setIsSmcVetoEnabled, setIsSrAnalysisEnabled, setIsCandlestickConfirmationEnabled, setIsMarketStructureVetoEnabled,
-        setIsMarketBreadthFilterEnabled, setIsLiquidationFilterEnabled
+        setIsMarketBreadthFilterEnabled, setIsLiquidationFilterEnabled, setIsConfirmationCandleEnabled
     } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -398,6 +396,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         isMarketStructureVetoEnabled: config.isMarketStructureVetoEnabled,
                         isMarketBreadthFilterEnabled: config.isMarketBreadthFilterEnabled,
                         isLiquidationFilterEnabled: config.isLiquidationFilterEnabled,
+                        isConfirmationCandleEnabled: config.isConfirmationCandleEnabled,
                     };
 
                     const signal = await getTradingSignal(selectedAgent, previewKlines, previewConfig, htfKlines);
@@ -1038,6 +1037,25 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                  <p className="text-xs text-slate-500 dark:text-slate-400">
                     Enter on signal tick. If disabled, the bot will wait for the next candle to open.
                 </p>
+            </div>
+             <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                     <div className="flex items-center gap-1.5">
+                        <label htmlFor="confirmation-candle-toggle" className={formLabelClass}>
+                            Confirmation Candle Veto
+                        </label>
+                         <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-52 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                Immediately closes a trade if the first candle after entry is a strong reversal, preventing small losses from growing.
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch
+                        checked={isConfirmationCandleEnabled}
+                        onChange={setIsConfirmationCandleEnabled}
+                    />
+                </div>
             </div>
 
             <button onClick={onStartBot} disabled={botsToCreateCount === 0 || isInvestmentInvalid} className={primaryButtonClass}>

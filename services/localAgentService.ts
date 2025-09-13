@@ -91,8 +91,9 @@ export async function getTradingSignal(
         const volumes = klines.map(k => k.volume || 0);
         // FIX: Cast result of technical indicator to number | undefined to fix 'unknown' type error.
         const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes })) as number | undefined;
-        if (volumeSma && lastKline.volume && lastKline.volume < volumeSma) {
-            return { signal: 'HOLD', reasons: [...reasons, `❌ VETO: Entry candle volume is below the 20-period average.`] };
+        const multiplier = config.agentParams.sentinel_volumeFilterMultiplier || 0.8;
+        if (volumeSma && lastKline.volume && lastKline.volume < (volumeSma * multiplier)) {
+            return { signal: 'HOLD', reasons: [...reasons, `❌ VETO: Entry candle volume is below the required threshold (${(multiplier * 100).toFixed(0)}% of avg).`] };
         }
         reasons.push('✅ Volume Filter: Passed');
     }
@@ -180,7 +181,7 @@ export async function getTradingSignal(
         // FIX: Cast result of technical indicator to number | undefined to fix 'unknown' type error.
         const atr = getLast(ATR.calculate({ period: 14, high: klines.map(k=>k.high), low: klines.map(k=>k.low), close: klines.map(k=>k.close) })) as number | undefined;
         if (atr) {
-            const buffer = atr * 0.25;
+            const buffer = atr * (config.agentParams.sentinel_srZoneAtrBuffer || 0.5);
             if (agentSignal.signal === 'BUY') {
                 const nextResistance = srLevels.resistances.find(r => r.price > currentPrice);
                 if (nextResistance && (nextResistance.price - currentPrice) < buffer) {

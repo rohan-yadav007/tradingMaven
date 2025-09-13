@@ -234,6 +234,13 @@ export interface AgentParams {
     sentinel_useSrLevelsForTp?: boolean;
     sentinel_stPeriod?: number;
     sentinel_stMultiplier?: number;
+    sentinel_emaDistanceVetoThreshold?: number;
+    sentinel_srZoneAtrBuffer?: number;
+    sentinel_invalidationCandleLimit?: number;
+    sentinel_rsiMomentumExitLong?: number;
+    sentinel_rsiMomentumExitShort?: number;
+    sentinel_volumeFilterMultiplier?: number;
+    sentinel_macdCrossoverFreshness?: number;
     
     // Agent 17: Momentum Swing Trader
     mst_emaFastPeriod?: number;
@@ -241,7 +248,7 @@ export interface AgentParams {
     mst_macdFastPeriod?: number;
     mst_macdSlowPeriod?: number;
     mst_macdSignalPeriod?: number;
-    
+
     // SMC Reversal Veto
     smc_divergenceLookback?: number;
     smc_volumeMultiplier?: number;
@@ -337,6 +344,7 @@ export interface BotConfig {
     refreshInterval?: number;
     isMarketBreadthFilterEnabled?: boolean;
     isLiquidationFilterEnabled?: boolean;
+    isConfirmationCandleEnabled?: boolean;
 }
 
 export interface BotConfigSnapshot {
@@ -364,6 +372,7 @@ export interface BotConfigSnapshot {
     isInitialRiskVetoEnabled?: boolean;
     isMarketBreadthFilterEnabled?: boolean;
     isLiquidationFilterEnabled?: boolean;
+    isConfirmationCandleEnabled?: boolean;
 }
 
 export interface Position {

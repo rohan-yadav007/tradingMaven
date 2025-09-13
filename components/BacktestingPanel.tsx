@@ -1,5 +1,3 @@
-
-
 import React from 'react';
 import { useState, useEffect, useMemo } from 'react';
 import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, Kline, RiskMode, OptimizationResultItem } from '../types';
@@ -270,6 +268,7 @@ export type BacktestConfig = {
     isMarketStructureVetoEnabled: boolean;
     isMarketBreadthFilterEnabled: boolean;
     isLiquidationFilterEnabled: boolean;
+    isConfirmationCandleEnabled?: boolean;
 };
 
 const getTimeframeDuration = (timeframe: string): number => {
@@ -324,6 +323,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         isMarketStructureVetoEnabled: globalConfig.isMarketStructureVetoEnabled,
         isMarketBreadthFilterEnabled: globalConfig.isMarketBreadthFilterEnabled,
         isLiquidationFilterEnabled: globalConfig.isLiquidationFilterEnabled,
+        isConfirmationCandleEnabled: globalConfig.isConfirmationCandleEnabled,
     });
 
     const [backtestDays, setBacktestDays] = useState(3);
@@ -586,6 +586,24 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                             onChange={v => updateConfig('isLiquidationFilterEnabled', v)}
                         />
                         <p className="text-xs text-slate-400 dark:text-slate-500">Note: This filter uses live data and will be gracefully disabled during backtesting simulations.</p>
+                    </div>
+
+                     <div className={formGroupClass}>
+                        <div className="flex items-center justify-between">
+                            <label htmlFor="confirmation-candle-toggle-bt" className={formLabelClass}>
+                                Confirmation Candle Veto
+                            </label>
+                             <div className="relative group">
+                                <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                                <div className="absolute bottom-full mb-2 w-52 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                    Immediately closes a trade if the first candle after entry is a strong reversal, preventing small losses from growing.
+                                </div>
+                            </div>
+                        </div>
+                        <ToggleSwitch
+                            checked={config.isConfirmationCandleEnabled ?? false}
+                            onChange={v => updateConfig('isConfirmationCandleEnabled', v)}
+                        />
                     </div>
 
                     <div className="flex gap-2 pt-2">

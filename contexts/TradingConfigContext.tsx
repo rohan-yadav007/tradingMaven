@@ -52,6 +52,7 @@ interface TradingConfigState {
     aggressiveTrailMode: 'distance' | 'pnl';
     isMarketBreadthFilterEnabled: boolean;
     isLiquidationFilterEnabled: boolean;
+    isConfirmationCandleEnabled: boolean;
     // Context-specific state
     maxLeverage: number;
     isLeverageLoading: boolean;
@@ -101,6 +102,7 @@ interface TradingConfigActions {
     setAggressiveTrailMode: (mode: 'distance' | 'pnl') => void;
     setIsMarketBreadthFilterEnabled: (isEnabled: boolean) => void;
     setIsLiquidationFilterEnabled: (isEnabled: boolean) => void;
+    setIsConfirmationCandleEnabled: (isEnabled: boolean) => void;
     // Complex actions
     onSetMultiAssetMode: (isEnabled: boolean) => Promise<void>;
     setFuturesSettingsError: (error: string | null) => void;
@@ -158,6 +160,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [aggressiveTrailMode, setAggressiveTrailMode] = useState<'distance' | 'pnl'>('distance');
     const [isMarketBreadthFilterEnabled, setIsMarketBreadthFilterEnabled] = useState<boolean>(true);
     const [isLiquidationFilterEnabled, setIsLiquidationFilterEnabled] = useState<boolean>(false);
+    const [isConfirmationCandleEnabled, setIsConfirmationCandleEnabled] = useState<boolean>(constants.IS_CONFIRMATION_CANDLE_ENABLED);
 
 
     // Context-internal state
@@ -346,6 +349,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         addTradingPairList, updateTradingPairList, deleteTradingPairList,
         setIsMarketBreadthFilterEnabled,
         setIsLiquidationFilterEnabled,
+        setIsConfirmationCandleEnabled,
     }), [onSetMultiAssetMode, setSelectedAgentWithReset]);
     
     const state = {
@@ -362,7 +366,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled, htfTimeFrame, tradingPairLists,
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
         futuresSettingsError, multiAssetModeError, entryTiming, isAdaptiveTpEnabled, aggressiveTrailMode,
-        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled,
+        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled,
     };
 
     return (

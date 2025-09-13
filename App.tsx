@@ -38,7 +38,7 @@ const AppContent: React.FC = () => {
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, isInitialRiskVetoEnabled,
         isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
-        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled
+        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled
     } = configState;
 
     const {
@@ -152,6 +152,7 @@ const AppContent: React.FC = () => {
                     entryTiming,
                     isMarketBreadthFilterEnabled,
                     isLiquidationFilterEnabled,
+                    isConfirmationCandleEnabled,
                 };
 
                 botManagerService.startBot(botConfig);
@@ -170,7 +171,7 @@ const AppContent: React.FC = () => {
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, 
         isMarketStructureVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, isMarketBreadthFilterEnabled,
-        isLiquidationFilterEnabled,
+        isLiquidationFilterEnabled, isConfirmationCandleEnabled,
     ]);
 
     const handleClosePosition = useCallback(async (posToClose: Position, exitReason: string = "Manual Close", exitPriceOverride?: number) => {
@@ -495,6 +496,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 isInitialRiskVetoEnabled: config.isInitialRiskVetoEnabled,
                 isMarketBreadthFilterEnabled: config.isMarketBreadthFilterEnabled,
                 isLiquidationFilterEnabled: config.isLiquidationFilterEnabled,
+                isConfirmationCandleEnabled: config.isConfirmationCandleEnabled,
             },
             entryContext: executionDetails.entryContext,
         };

@@ -1,9 +1,10 @@
 // services/agents/sentinel.ts
 
 import { Kline, BotConfig, MarketDataContext, TradeSignal, SentinelAnalysis, MACDOutput, ADXOutput, BollingerBandsOutput } from '../../types';
-import { EMA, MACD, RSI, ADX, BollingerBands, ATR, OBV } from 'technicalindicators';
-import { getLast, getPenultimate, isObvTrending, recognizeCandlestickPattern, VortexIndicator } from './agentUtils';
+import { EMA, MACD, RSI, ADX, BollingerBands, ATR, OBV, SMA } from 'technicalindicators';
+import { getLast, getPenultimate, recognizeCandlestickPattern, VortexIndicator, Supertrend } from './agentUtils';
 import { calculateSupportResistance } from '../chartAnalysisService';
+import { getInitialAgentTargets } from '../riskManagementService';
 
 export const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfContext?: MarketDataContext): TradeSignal => {
     const params = config.agentParams as Required<typeof config.agentParams>;
@@ -20,32 +21,21 @@ export const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfCont
     const reasons: string[] = [];
 
     // --- 1. INDICATOR CALCULATIONS ---
-    // FIX: Cast result of technical indicator to number to fix 'unknown' type error.
     const emaFast = getLast(EMA.calculate({ period: params.sentinel_emaFastPeriod!, values: closes }))! as number;
-    // FIX: Cast result of technical indicator to number to fix 'unknown' type error.
     const emaSlow = getLast(EMA.calculate({ period: params.sentinel_emaSlowPeriod!, values: closes }))! as number;
     const macdValues = MACD.calculate({ values: closes, fastPeriod: params.sentinel_macdFastPeriod!, slowPeriod: params.sentinel_macdSlowPeriod!, signalPeriod: params.sentinel_macdSignalPeriod!, SimpleMAOscillator: false, SimpleMASignal: false });
-    // FIX: Cast result of technical indicator to MACDOutput to fix 'unknown' type error.
     const macd = getLast(macdValues)! as MACDOutput;
-    // FIX: Cast result of technical indicator to MACDOutput to fix 'unknown' type error.
-    const prevMacd = getPenultimate(macdValues)! as MACDOutput;
-    // FIX: Cast result of technical indicator to number to fix 'unknown' type error.
     const rsi = getLast(RSI.calculate({ values: closes, period: params.sentinel_rsiPeriod! }))! as number;
     const adxValues = ADX.calculate({ high: highs, low: lows, close: closes, period: params.sentinel_adxPeriod! });
-    // FIX: Cast result of technical indicator to ADXOutput to fix 'unknown' type error.
     const adx = getLast(adxValues)! as ADXOutput;
-    // FIX: Cast result of technical indicator to ADXOutput to fix 'unknown' type error.
     const prevAdx = getPenultimate(adxValues)! as ADXOutput;
     const vi = VortexIndicator.calculate({ high: highs, low: lows, close: closes, period: params.viPeriod });
     const last_vi_plus = getLast(vi.pdi)!;
     const last_vi_minus = getLast(vi.ndi)!;
     const obv = OBV.calculate({ close: closes, volume: volumes });
     const bbValues = BollingerBands.calculate({ period: 20, stdDev: 2, values: closes });
-    // FIX: Cast result of technical indicator to BollingerBandsOutput to fix 'unknown' type error.
     const bb = getLast(bbValues)! as BollingerBandsOutput;
-    // FIX: Cast result of technical indicator to number to fix 'unknown' type error.
     const atr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: 14 }))! as number;
-    const srLevels = calculateSupportResistance(klines, 15, 0.01);
     const candlePattern = recognizeCandlestickPattern(klines[klines.length - 1], klines[klines.length - 2]);
 
     // --- 2. REGIME ANALYSIS & FILTERS ---
@@ -76,22 +66,10 @@ export const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfCont
     const isAdxRising = adx.adx > prevAdx.adx;
 
     if (adx.adx > 25) { // Strongly trending market: Boost Trend weight
-        const boost = 0.15;
-        const remainingWeight = 1.0 - BASE_WEIGHTS.trend - boost;
-        finalWeights.trend = BASE_WEIGHTS.trend + boost;
-        const denominator = BASE_WEIGHTS.momentum + BASE_WEIGHTS.confirmation + BASE_WEIGHTS.structure;
-        finalWeights.momentum = BASE_WEIGHTS.momentum * (remainingWeight / denominator);
-        finalWeights.confirmation = BASE_WEIGHTS.confirmation * (remainingWeight / denominator);
-        finalWeights.structure = BASE_WEIGHTS.structure * (remainingWeight / denominator);
+        finalWeights = { ...finalWeights, trend: BASE_WEIGHTS.trend * params.sentinel_trendingWeightMultiplier, momentum: BASE_WEIGHTS.momentum / params.sentinel_trendingWeightMultiplier };
         reasons.push(`ℹ️ Weights: Trend Boosted`);
     } else if (adx.adx > 20 && isAdxRising) { // Transitioning market: Boost Momentum weight
-        const boost = 0.15;
-        const remainingWeight = 1.0 - BASE_WEIGHTS.momentum - boost;
-        finalWeights.momentum = BASE_WEIGHTS.momentum + boost;
-        const denominator = BASE_WEIGHTS.trend + BASE_WEIGHTS.confirmation + BASE_WEIGHTS.structure;
-        finalWeights.trend = BASE_WEIGHTS.trend * (remainingWeight / denominator);
-        finalWeights.confirmation = BASE_WEIGHTS.confirmation * (remainingWeight / denominator);
-        finalWeights.structure = BASE_WEIGHTS.structure * (remainingWeight / denominator);
+        finalWeights = { ...finalWeights, momentum: BASE_WEIGHTS.momentum * params.sentinel_transitioningWeightMultiplier, trend: BASE_WEIGHTS.trend / params.sentinel_transitioningWeightMultiplier };
         reasons.push(`ℹ️ Weights: Momentum Boosted`);
     }
 
@@ -108,32 +86,77 @@ export const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfCont
         else if (adx.mdi > adx.pdi) bearishPoints.trend += 10;
     }
 
-    // Momentum Score (Max 30)
-    if (macd.histogram! > 0 && macd.histogram! > (prevMacd.histogram || 0)) bullishPoints.momentum += 10;
-    else if (macd.histogram! < 0 && macd.histogram! < (prevMacd.histogram || 0)) bearishPoints.momentum += 10;
-    if (rsi > 55) bullishPoints.momentum += 10;
-    else if (rsi < 45) bearishPoints.momentum += 10;
-    if (last_vi_plus > last_vi_minus) bullishPoints.momentum += 10;
-    else if (last_vi_minus > last_vi_plus) bearishPoints.momentum += 10;
-
-    // Confirmation Score (Max 15)
-    if (isObvTrending(obv, 'bullish')) bullishPoints.confirmation += 15;
-    else if (isObvTrending(obv, 'bearish')) bearishPoints.confirmation += 15;
+    // Momentum Score (Max 30) -> ENHANCED WITH FRESHNESS CHECK
+    let bullishCross = false;
+    let bearishCross = false;
+    const freshnessLookback = params.sentinel_macdCrossoverFreshness!;
+    for (let i = 1; i <= freshnessLookback; i++) {
+        const current = macdValues[macdValues.length - i] as MACDOutput;
+        const prev = macdValues[macdValues.length - i - 1] as MACDOutput;
+        if (!current || !prev) break;
+        if (prev.MACD! < prev.signal! && current.MACD! > current.signal!) bullishCross = true;
+        if (prev.MACD! > prev.signal! && current.MACD! < current.signal!) bearishCross = true;
+    }
+    if (bullishCross) bullishPoints.momentum += 15;
+    else if (macd.histogram! > 0) bullishPoints.momentum += 5; // Reduced points for non-fresh signal
+    if (bearishCross) bearishPoints.momentum += 15;
+    else if (macd.histogram! < 0) bearishPoints.momentum += 5; // Reduced points for non-fresh signal
     
-    // Structure Score (Max 20)
-    const closestSupport = srLevels.supports.length > 0 ? srLevels.supports[0].price : -Infinity;
-    const closestResistance = srLevels.resistances.length > 0 ? srLevels.resistances[0].price : Infinity;
-    const distToSupport = currentPrice - closestSupport;
-    const distToResistance = closestResistance - currentPrice;
-    if (distToSupport > 0 && distToResistance > 0) {
-        const riskRewardStructure = distToResistance / distToSupport;
-        if (riskRewardStructure > 1.5) bullishPoints.structure += 10;
-        if (1 / riskRewardStructure > 1.5) bearishPoints.structure += 10;
+    // RSI: (Max 10)
+    let rsiBuyThreshold = 55; let rsiSellThreshold = 45;
+    if (adx.adx > 30) { rsiBuyThreshold = 60; rsiSellThreshold = 40; } 
+    else if (adx.adx < 20) { rsiBuyThreshold = 52; rsiSellThreshold = 48; }
+    if (rsi > rsiBuyThreshold) bullishPoints.momentum += 10;
+    else if (rsi < rsiSellThreshold) bearishPoints.momentum += 10;
+    
+    // VI: (Max 5)
+    if (last_vi_plus > last_vi_minus) bullishPoints.momentum += 5;
+    else if (last_vi_minus > last_vi_plus) bearishPoints.momentum += 5;
+
+    // Confirmation Score (Max 15) -> OBV Slope
+    const obvLookback = 5;
+    if (obv.length > obvLookback) {
+        const obvSlice = obv.slice(-obvLookback);
+        const firstObv = obvSlice[0];
+        const lastObv = obvSlice[obvSlice.length - 1];
+        const obvSma = getLast(SMA.calculate({ period: 20, values: obv }))!;
+        const obvChange = (lastObv - firstObv) / obvSma;
+        if (obvChange > 0.01) bullishPoints.confirmation += 15 * Math.min(1, obvChange / 0.05); // Cap score contribution
+        if (obvChange < -0.01) bearishPoints.confirmation += 15 * Math.min(1, Math.abs(obvChange) / 0.05);
     }
     
+    // Structure Score (Max 20) -> RE-ENGINEERED FOR DYNAMIC R:R
+    // FIX: Corrected variable names to highs, lows, and closes.
+    const agentSl = getLast(Supertrend.calculate({ high: highs, low: lows, close: closes, period: params.sentinel_stPeriod, multiplier: params.sentinel_stMultiplier })) as number | undefined;
+    if (agentSl) {
+        const srLevels = calculateSupportResistance(klines, 15, 0.01);
+        const nextResistance = srLevels.resistances.find(r => r.price > currentPrice);
+        const nextSupport = srLevels.supports.find(s => s.price < currentPrice);
+        
+        // Bullish case
+        if (nextResistance) {
+            const risk = Math.abs(currentPrice - agentSl);
+            const reward = Math.abs(nextResistance.price - currentPrice);
+            const rr = risk > 0 ? reward / risk : 0;
+            // Scale points based on R:R, maxing out at 2.5 R:R
+            bullishPoints.structure += Math.min(15, (rr / 2.5) * 15);
+        } else {
+            bullishPoints.structure += 15; // No resistance ahead is a good sign
+        }
+
+        // Bearish case
+        if (nextSupport) {
+            const risk = Math.abs(currentPrice - agentSl);
+            const reward = Math.abs(nextSupport.price - currentPrice);
+            const rr = risk > 0 ? reward / risk : 0;
+            bearishPoints.structure += Math.min(15, (rr / 2.5) * 15);
+        } else {
+            bearishPoints.structure += 15; // No support below is a good sign
+        }
+    }
     if (candlePattern) {
-        if (candlePattern.type === 'bullish') bullishPoints.structure += 10;
-        if (candlePattern.type === 'bearish') bearishPoints.structure += 10;
+        if (candlePattern.type === 'bullish') bullishPoints.structure += 5;
+        if (candlePattern.type === 'bearish') bearishPoints.structure += 5;
     }
 
     // --- 5. NORMALIZE, APPLY WEIGHTS & FINALIZE ---
@@ -164,11 +187,23 @@ export const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfCont
         bearish: { total: totalBear, trend: bearScores.trend, momentum: bearScores.momentum, confirmation: bearScores.confirmation, structure: bearScores.structure }
     };
 
+    // --- 6. PULLBACK & EXHAUSTION VETO (POST-SCORING) ---
+    // REMOVED: Contradictory EMA Distance Veto.
+
     if (totalBull >= threshold && totalBull > totalBear) {
+        if (rsi > params.sentinel_rsiOverextendedLong!) {
+            reasons.unshift(`❌ VETO: RSI is overextended (${rsi.toFixed(1)} > ${params.sentinel_rsiOverextendedLong}).`);
+            return { signal: 'HOLD', reasons, sentinelAnalysis };
+        }
         reasons.unshift(`✅ Bullish score meets threshold.`);
         return { signal: 'BUY', reasons, sentinelAnalysis };
     }
+    
     if (totalBear > totalBull && totalBear >= threshold) {
+        if (rsi < params.sentinel_rsiOverextendedShort!) {
+            reasons.unshift(`❌ VETO: RSI is oversold (${rsi.toFixed(1)} < ${params.sentinel_rsiOverextendedShort}).`);
+            return { signal: 'HOLD', reasons, sentinelAnalysis };
+        }
         reasons.unshift(`✅ Bearish score meets threshold.`);
         return { signal: 'SELL', reasons, sentinelAnalysis };
     }

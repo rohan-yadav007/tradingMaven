@@ -5,35 +5,41 @@ import { RSI, StochasticRSI, ADX, MACD, SMA, EMA } from 'technicalindicators';
 import * as constants from '../constants';
 import { btcConfirmationService } from './btcConfirmationService';
 import { findSwingPoints, analyzeMarketStructure } from './chartAnalysisService';
-import { getLast } from './agents/agentUtils';
+import { getLast, detectRsiDivergence as isRsiDivergent } from './agents/agentUtils';
 
 /**
  * A universal gatekeeper to prevent entering trades when the trend is likely exhausted.
- * Uses StochRSI to identify overbought/oversold conditions, with timeframe-adjusted thresholds.
+ * This enhanced version requires both StochRSI overextension AND RSI divergence to veto.
  */
 export function getExhaustionFilterVeto(
     klines: Kline[],
     direction: 'BUY' | 'SELL',
     config: BotConfig,
 ): { veto: boolean; reason: string } {
-    if (klines.length < 14) return { veto: false, reason: '' }; // Need enough data for StochRSI
+    if (klines.length < 30) return { veto: false, reason: '' }; // Need enough data for calculations
     const closes = klines.map(k => k.close);
+    
+    const rsiValues = RSI.calculate({ period: 14, values: closes });
     const stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
+    
     if (!stochRsi) return { veto: false, reason: '' };
     
     const timeframeSettings = constants.EXHAUSTION_FILTER_TIMEFRAME_SETTINGS[config.timeFrame] || constants.EXHAUSTION_FILTER_TIMEFRAME_SETTINGS['15m'];
-
     const isLong = direction === 'BUY';
+    const positionDirection = isLong ? 'LONG' : 'SHORT';
 
-    if (isLong && stochRsi.k > timeframeSettings.overbought) {
-        return { veto: true, reason: `❌ VETO: Exhaustion risk detected (StochRSI K: ${stochRsi.k.toFixed(1)} > ${timeframeSettings.overbought})` };
-    }
-    if (!isLong && stochRsi.k < timeframeSettings.oversold) {
-        return { veto: true, reason: `❌ VETO: Exhaustion risk detected (StochRSI K: ${stochRsi.k.toFixed(1)} < ${timeframeSettings.oversold})` };
+    const isOverextended = isLong ? stochRsi.k > timeframeSettings.overbought : stochRsi.k < timeframeSettings.oversold;
+    
+    if (isOverextended) {
+        const hasDivergence = isRsiDivergent(klines, rsiValues, positionDirection, 14);
+        if (hasDivergence) {
+            return { veto: true, reason: `❌ VETO: Exhaustion risk detected (StochRSI Overextended + RSI Divergence)` };
+        }
     }
 
     return { veto: false, reason: '' };
 }
+
 
 /**
  * A universal gatekeeper to prevent entering trades when the trend is likely exhausted.

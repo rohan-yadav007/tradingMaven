@@ -1,3 +1,4 @@
+
 import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, TradingMode, MarketDataContext } from '../types';
 import * as binanceService from './binanceService';
 import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext, getAdaptiveTakeProfit } from './localAgentService';
@@ -336,6 +337,7 @@ class BotInstance {
 
     public async onMainKlineUpdate(newKline: Kline) {
         const lastKline = this.klines.length > 0 ? this.klines[this.klines.length - 1] : null;
+        const previousLastKline = lastKline ? { ...lastKline } : null;
 
         if (lastKline && newKline.time === lastKline.time) {
             this.klines[this.klines.length - 1] = newKline;
@@ -345,11 +347,30 @@ class BotInstance {
         }
         this.updateState({ klinesLoaded: this.klines.length });
         
-        if (newKline.isFinal) {
+        if (newKline.isFinal && previousLastKline && newKline.time > previousLastKline.time) {
             if (this.bot.openPosition) {
+                const candlesSinceEntry = (this.bot.openPosition.candlesSinceEntry || 0) + 1;
                 this.updateState({
-                    openPosition: { ...this.bot.openPosition, candlesSinceEntry: (this.bot.openPosition.candlesSinceEntry || 0) + 1 }
+                    openPosition: { ...this.bot.openPosition, candlesSinceEntry }
                 });
+
+                // Post-Entry Confirmation Candle Check
+                if (this.bot.config.isConfirmationCandleEnabled && candlesSinceEntry === 1) {
+                    // The "entry candle" is the one that was active when the trade was placed.
+                    // Since `newKline` is the first full candle AFTER entry, the entry candle is the one before it.
+                    const entryCandle = this.klines[this.klines.length - 2];
+                    if (entryCandle) {
+                         const isLong = this.bot.openPosition.direction === 'LONG';
+                         // Check if the confirmation candle is a strong reversal (e.g., closes below the low of the entry candle for a long)
+                         const isContradictory = isLong ? newKline.close < entryCandle.low : newKline.close > entryCandle.high;
+                         if (isContradictory) {
+                             this.addLog('Confirmation candle failed. Closing position.', LogType.Action);
+                             this.handlers.onClosePosition(this.bot.openPosition, 'Confirmation Failed', newKline.close);
+                             return; // Exit early to avoid redundant analysis
+                         }
+                    }
+                }
+                
                 this.addLog(`New candle closed. Running management analysis...`, LogType.Info);
                 await this.runAnalysis({ execute: false });
             }

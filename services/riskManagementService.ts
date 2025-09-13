@@ -644,6 +644,21 @@ export async function getSupervisorSignal(
 
     const isLong = position.direction === 'LONG';
 
+    // Use agent-specific or default parameters for invalidation checks
+    let invalidationCandleLimit: number;
+    let rsiMomentumExitLong: number;
+    let rsiMomentumExitShort: number;
+
+    if (config.agent.id === 14) { // The Sentinel
+        invalidationCandleLimit = params.sentinel_invalidationCandleLimit;
+        rsiMomentumExitLong = params.sentinel_rsiMomentumExitLong;
+        rsiMomentumExitShort = params.sentinel_rsiMomentumExitShort;
+    } else {
+        invalidationCandleLimit = params.invalidationCandleLimit;
+        rsiMomentumExitLong = 48; // Hardcoded default for other agents
+        rsiMomentumExitShort = 52; // Hardcoded default for other agents
+    }
+
     // 0. SMC Reversal check (Max 85 points)
     if (config.isSmcVetoEnabled) {
         const closes = klines.map(k => k.close);
@@ -651,26 +666,24 @@ export async function getSupervisorSignal(
         const volumes = klines.map(k => k.volume || 0);
         const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes })) as number | undefined;
         
-        // If we are LONG, we look for a BEARISH reversal pattern to exit.
         const reversalTypeToDetect = isLong ? 'bearish' : 'bullish';
         const smcResult = detectSmcReversalPattern(klines, reversalTypeToDetect, config, rsiValues, volumeSma);
         
         if (smcResult.detected) {
-            score += 85; // High score to trigger exit across all sensitivity levels.
+            score += 85;
             reasons.push(smcResult.reason);
         }
     }
 
-
     // 1. Momentum Decay (Max 30 points)
     const rsi = currentContext.rsi14;
     if (rsi) {
-        if (isLong && rsi < 48) {
+        if (isLong && rsi < rsiMomentumExitLong) {
             score += 30;
-            reasons.push(`Momentum Faded (RSI < 48)`);
-        } else if (!isLong && rsi > 52) {
+            reasons.push(`Momentum Faded (RSI < ${rsiMomentumExitLong})`);
+        } else if (!isLong && rsi > rsiMomentumExitShort) {
             score += 30;
-            reasons.push(`Momentum Faded (RSI > 52)`);
+            reasons.push(`Momentum Faded (RSI > ${rsiMomentumExitShort})`);
         }
     }
 
@@ -700,11 +713,9 @@ export async function getSupervisorSignal(
     
     // 4. Time-Based & PNL Decay (Max 30 points)
     const candlesSinceEntry = position.candlesSinceEntry || 0;
-    const invalidationCandleLimit = params.invalidationCandleLimit || 10;
     const currentPnlInPrice = (lastClose - position.entryPrice) * (isLong ? 1 : -1);
 
     if (currentPnlInPrice < 0 && candlesSinceEntry > invalidationCandleLimit) {
-        // Penalty increases the longer the trade is in a loss.
         const decayScore = Math.min(30, Math.floor((candlesSinceEntry - invalidationCandleLimit) / (invalidationCandleLimit / 2)) * 10);
         if (decayScore > 0) {
             score += decayScore;

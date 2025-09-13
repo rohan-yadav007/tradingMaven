@@ -5,6 +5,7 @@ import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV
 import * as constants from '../constants';
 import { calculateSupportResistance } from './chartAnalysisService';
 import { Supertrend, applyTimeframeSettings, getLast, getPenultimate, captureMarketContext, detectRsiDivergence } from './agents/agentUtils';
+import { detectSmcReversalPattern } from './vetoService';
 
 const MIN_STOP_LOSS_PERCENT = 0.5; // Minimum 0.5% SL distance from entry price.
 const { TIMEFRAME_ATR_CONFIG, MIN_PROFIT_BUFFER_MULTIPLIER } = constants;
@@ -642,6 +643,24 @@ export async function getSupervisorSignal(
     if (!lastClose) return { score: 0, reasons: ['Could not get last close price.'] };
 
     const isLong = position.direction === 'LONG';
+
+    // 0. SMC Reversal check (Max 85 points)
+    if (config.isSmcVetoEnabled) {
+        const closes = klines.map(k => k.close);
+        const rsiValues = RSI.calculate({ period: 14, values: closes });
+        const volumes = klines.map(k => k.volume || 0);
+        const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes })) as number | undefined;
+        
+        // If we are LONG, we look for a BEARISH reversal pattern to exit.
+        const reversalTypeToDetect = isLong ? 'bearish' : 'bullish';
+        const smcResult = detectSmcReversalPattern(klines, reversalTypeToDetect, config, rsiValues, volumeSma);
+        
+        if (smcResult.detected) {
+            score += 85; // High score to trigger exit across all sensitivity levels.
+            reasons.push(smcResult.reason);
+        }
+    }
+
 
     // 1. Momentum Decay (Max 30 points)
     const rsi = currentContext.rsi14;

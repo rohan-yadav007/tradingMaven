@@ -141,25 +141,21 @@ export function getBtcTrendScore(
 }
 
 /**
- * New Gatekeeper: Implements the Smart Money Concepts (SMC) reversal pattern veto.
+ * The core detection logic for the Smart Money Concepts (SMC) reversal pattern.
+ * Exported for use in both entry veto and trade management.
  */
-export function getSmcVeto(
+export function detectSmcReversalPattern(
     klines: Kline[],
-    direction: 'BUY' | 'SELL',
+    reversalTypeToDetect: 'bullish' | 'bearish', // e.g., 'bearish' to find a reason to exit a LONG or veto a BUY
     config: BotConfig,
     rsiValues: number[],
     volumeSma: number | undefined,
-): { veto: boolean; reason: string } {
-    if (!config.isSmcVetoEnabled || klines.length < 50) {
-        return { veto: false, reason: '' };
-    }
-
+): { detected: boolean; reason: string } {
     const params = config.agentParams as Required<typeof constants.DEFAULT_AGENT_PARAMS>;
-    const isLongSignal = direction === 'BUY';
     const lookback = params.smc_divergenceLookback;
     
     const rsiStartIndex = klines.length - rsiValues.length;
-    if (rsiStartIndex < 0) return { veto: false, reason: '' };
+    if (rsiStartIndex < 0) return { detected: false, reason: '' };
     const getRsiForKlineIndex = (klineIndex: number): number | undefined => {
         const rsiIndex = klineIndex - rsiStartIndex;
         if (rsiIndex >= 0 && rsiIndex < rsiValues.length) {
@@ -177,50 +173,81 @@ export function getSmcVeto(
         if (currentLow === Math.min(...window.map(k => k.low))) pivots.push({ index: i, price: currentLow, type: 'low'});
     }
 
-    const recentHighs = pivots.filter(p => p.type === 'high').slice(-2);
-    const recentLows = pivots.filter(p => p.type === 'low').slice(-2);
+    if (reversalTypeToDetect === 'bearish') {
+        const recentHighs = pivots.filter(p => p.type === 'high').slice(-2);
+        if (recentHighs.length === 2) {
+            const [prevHigh, lastHigh] = recentHighs;
+            const prevRsi = getRsiForKlineIndex(prevHigh.index);
+            const lastRsi = getRsiForKlineIndex(lastHigh.index);
 
-    if (isLongSignal && recentHighs.length === 2) {
-        const [prevHigh, lastHigh] = recentHighs;
-        const prevRsi = getRsiForKlineIndex(prevHigh.index);
-        const lastRsi = getRsiForKlineIndex(lastHigh.index);
-
-        if (prevRsi !== undefined && lastRsi !== undefined) {
-            const priceMakesHigherHigh = lastHigh.price > prevHigh.price;
-            const rsiMakesLowerHigh = lastRsi < prevRsi;
-            
-            if (priceMakesHigherHigh && rsiMakesLowerHigh) {
-                const sweepCandle = klines[lastHigh.index];
-                const hasHighVolume = sweepCandle.volume! > (volumeSma || 0) * params.smc_volumeMultiplier;
+            if (prevRsi !== undefined && lastRsi !== undefined) {
+                const priceMakesHigherHigh = lastHigh.price > prevHigh.price;
+                const rsiMakesLowerHigh = lastRsi < prevRsi;
                 
-                if (hasHighVolume) {
-                    return { veto: true, reason: `❌ VETO: Bearish SMC setup detected (Divergence + Liquidity Sweep).` };
+                if (priceMakesHigherHigh && rsiMakesLowerHigh) {
+                    const sweepCandle = klines[lastHigh.index];
+                    const hasHighVolume = sweepCandle.volume! > (volumeSma || 0) * params.smc_volumeMultiplier;
+                    
+                    if (hasHighVolume) {
+                        return { detected: true, reason: `SMC Reversal: Bearish divergence + liquidity sweep.` };
+                    }
                 }
             }
         }
     }
 
-    if (!isLongSignal && recentLows.length === 2) {
-        const [prevLow, lastLow] = recentLows;
-        const prevRsi = getRsiForKlineIndex(prevLow.index);
-        const lastRsi = getRsiForKlineIndex(lastLow.index);
+    if (reversalTypeToDetect === 'bullish') {
+        const recentLows = pivots.filter(p => p.type === 'low').slice(-2);
+        if (recentLows.length === 2) {
+            const [prevLow, lastLow] = recentLows;
+            const prevRsi = getRsiForKlineIndex(prevLow.index);
+            const lastRsi = getRsiForKlineIndex(lastLow.index);
 
-        if (prevRsi !== undefined && lastRsi !== undefined) {
-            const priceMakesLowerLow = lastLow.price < prevLow.price;
-            const rsiMakesHigherLow = lastRsi > prevRsi;
+            if (prevRsi !== undefined && lastRsi !== undefined) {
+                const priceMakesLowerLow = lastLow.price < prevLow.price;
+                const rsiMakesHigherLow = lastRsi > prevRsi;
 
-            if (priceMakesLowerLow && rsiMakesHigherLow) {
-                const sweepCandle = klines[lastLow.index];
-                const hasHighVolume = sweepCandle.volume! > (volumeSma || 0) * params.smc_volumeMultiplier;
+                if (priceMakesLowerLow && rsiMakesHigherLow) {
+                    const sweepCandle = klines[lastLow.index];
+                    const hasHighVolume = sweepCandle.volume! > (volumeSma || 0) * params.smc_volumeMultiplier;
 
-                if (hasHighVolume) {
-                    return { veto: true, reason: `❌ VETO: Bullish SMC setup detected (Divergence + Liquidity Sweep).` };
+                    if (hasHighVolume) {
+                        return { detected: true, reason: `SMC Reversal: Bullish divergence + liquidity sweep.` };
+                    }
                 }
             }
         }
     }
+    
+    return { detected: false, reason: '' };
+}
+
+
+/**
+ * Gatekeeper: Implements the Smart Money Concepts (SMC) reversal pattern veto for new entries.
+ */
+export function getSmcVeto(
+    klines: Kline[],
+    direction: 'BUY' | 'SELL',
+    config: BotConfig,
+    rsiValues: number[],
+    volumeSma: number | undefined,
+): { veto: boolean; reason: string } {
+    if (!config.isSmcVetoEnabled || klines.length < 50) {
+        return { veto: false, reason: '' };
+    }
+
+    // A BUY signal should be vetoed by a potential BEARISH reversal pattern.
+    const reversalTypeToDetect = direction === 'BUY' ? 'bearish' : 'bullish';
+    const result = detectSmcReversalPattern(klines, reversalTypeToDetect, config, rsiValues, volumeSma);
+    
+    if (result.detected) {
+        return { veto: true, reason: `❌ VETO: ${result.reason}` };
+    }
+
     return { veto: false, reason: '' };
 }
+
 
 export function getMarketStructureVeto(
     klines: Kline[],

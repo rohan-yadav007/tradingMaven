@@ -256,7 +256,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isInitialRiskVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode,
         isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
-        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled
+        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled
     } = config;
 
     const {
@@ -269,7 +269,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
         setIsExhaustionFilterEnabled, setIsInitialRiskVetoEnabled, setIsAdaptiveTpEnabled, setAggressiveTrailMode,
         setIsSmcVetoEnabled, setIsSrAnalysisEnabled, setIsCandlestickConfirmationEnabled, setIsMarketStructureVetoEnabled,
-        setIsMarketBreadthFilterEnabled, setIsLiquidationFilterEnabled, setIsConfirmationCandleEnabled
+        setIsMarketBreadthFilterEnabled, setIsLiquidationFilterEnabled, setIsConfirmationCandleEnabled, setIsMomentumConcordanceEnabled
     } = actions;
     
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
@@ -397,6 +397,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         isMarketBreadthFilterEnabled: config.isMarketBreadthFilterEnabled,
                         isLiquidationFilterEnabled: config.isLiquidationFilterEnabled,
                         isConfirmationCandleEnabled: config.isConfirmationCandleEnabled,
+                        isMomentumConcordanceEnabled: config.isMomentumConcordanceEnabled,
                     };
 
                     const signal = await getTradingSignal(selectedAgent, previewKlines, previewConfig, htfKlines);
@@ -665,6 +666,26 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             </div>
 
             <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
+
+             <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                     <div className="flex items-center gap-1.5">
+                        <label htmlFor="momentum-concordance-toggle" className={formLabelClass}>
+                            Momentum Concordance
+                        </label>
+                         <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                Vetoes trades that go against strong immediate momentum, preventing entries into sharp reversals.
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch
+                        checked={isMomentumConcordanceEnabled}
+                        onChange={setIsMomentumConcordanceEnabled}
+                    />
+                </div>
+            </div>
             
              <div className={formGroupClass}>
                 <div className="flex items-center justify-between">
@@ -880,7 +901,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     />
                 </div>
             </div>
-            <div className={formGroupClass}>
+                        <div className={formGroupClass}>
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
                         <label htmlFor="market-structure-veto-toggle" className={formLabelClass}>

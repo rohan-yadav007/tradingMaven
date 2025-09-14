@@ -269,6 +269,7 @@ export type BacktestConfig = {
     isMarketBreadthFilterEnabled: boolean;
     isLiquidationFilterEnabled: boolean;
     isConfirmationCandleEnabled?: boolean;
+    isMomentumConcordanceEnabled?: boolean;
 };
 
 const getTimeframeDuration = (timeframe: string): number => {
@@ -324,6 +325,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         isMarketBreadthFilterEnabled: globalConfig.isMarketBreadthFilterEnabled,
         isLiquidationFilterEnabled: globalConfig.isLiquidationFilterEnabled,
         isConfirmationCandleEnabled: globalConfig.isConfirmationCandleEnabled,
+        isMomentumConcordanceEnabled: globalConfig.isMomentumConcordanceEnabled,
     });
 
     const [backtestDays, setBacktestDays] = useState(3);
@@ -544,6 +546,24 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                         )}
                     </div>
                     
+                    <div className={formGroupClass}>
+                         <div className="flex items-center justify-between">
+                             <label htmlFor="momentum-concordance-toggle-bt" className={formLabelClass}>
+                                 Momentum Concordance
+                             </label>
+                             <div className="relative group">
+                                 <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                                 <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                     Vetoes trades that go against strong immediate momentum, preventing entries into sharp reversals.
+                                 </div>
+                             </div>
+                         </div>
+                         <ToggleSwitch
+                             checked={config.isMomentumConcordanceEnabled ?? false}
+                             onChange={v => updateConfig('isMomentumConcordanceEnabled', v)}
+                         />
+                     </div>
+
                     <div className={formGroupClass}>
                         <div className="flex items-center justify-between">
                             <label htmlFor="market-structure-veto-toggle-bt" className={formLabelClass}>

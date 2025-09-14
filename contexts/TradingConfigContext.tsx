@@ -53,6 +53,7 @@ interface TradingConfigState {
     isMarketBreadthFilterEnabled: boolean;
     isLiquidationFilterEnabled: boolean;
     isConfirmationCandleEnabled: boolean;
+    isMomentumConcordanceEnabled: boolean;
     // Context-specific state
     maxLeverage: number;
     isLeverageLoading: boolean;
@@ -103,6 +104,7 @@ interface TradingConfigActions {
     setIsMarketBreadthFilterEnabled: (isEnabled: boolean) => void;
     setIsLiquidationFilterEnabled: (isEnabled: boolean) => void;
     setIsConfirmationCandleEnabled: (isEnabled: boolean) => void;
+    setIsMomentumConcordanceEnabled: (isEnabled: boolean) => void;
     // Complex actions
     onSetMultiAssetMode: (isEnabled: boolean) => Promise<void>;
     setFuturesSettingsError: (error: string | null) => void;
@@ -161,6 +163,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [isMarketBreadthFilterEnabled, setIsMarketBreadthFilterEnabled] = useState<boolean>(true);
     const [isLiquidationFilterEnabled, setIsLiquidationFilterEnabled] = useState<boolean>(false);
     const [isConfirmationCandleEnabled, setIsConfirmationCandleEnabled] = useState<boolean>(constants.IS_CONFIRMATION_CANDLE_ENABLED);
+    const [isMomentumConcordanceEnabled, setIsMomentumConcordanceEnabled] = useState<boolean>(constants.IS_MOMENTUM_CONCORDANCE_ENABLED);
 
 
     // Context-internal state
@@ -350,6 +353,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         setIsMarketBreadthFilterEnabled,
         setIsLiquidationFilterEnabled,
         setIsConfirmationCandleEnabled,
+        setIsMomentumConcordanceEnabled,
     }), [onSetMultiAssetMode, setSelectedAgentWithReset]);
     
     const state = {
@@ -367,6 +371,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
         futuresSettingsError, multiAssetModeError, entryTiming, isAdaptiveTpEnabled, aggressiveTrailMode,
         isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled,
+        isMomentumConcordanceEnabled,
     };
 
     return (

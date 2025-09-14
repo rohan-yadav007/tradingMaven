@@ -467,53 +467,82 @@ export function getAggressiveRangeTrailSignal(
     const unrealizedPnlInPrice = (currentPrice - entryPrice) * (isLong ? 1 : -1);
 
     if (unrealizedPnlInPrice <= 0) {
-        return { reasons: [] }; // Only trail when in profit
+        return { reasons: [] };
     }
     
     let applicableTier: { trigger: number; lock: number; tier: number } | undefined;
 
     if (botConfigSnapshot.aggressiveTrailMode === 'distance') {
-        const totalDistance = Math.abs(takeProfitPrice - entryPrice);
+        const isSlBehindEntry = isLong ? stopLossPrice < entryPrice : stopLossPrice > entryPrice;
+
+        const rangeStartPrice = isSlBehindEntry ? entryPrice : stopLossPrice;
+        
+        const totalDistance = Math.abs(takeProfitPrice - rangeStartPrice);
         if (totalDistance <= 1e-9) return { reasons: [] };
 
-        const progressPercent = unrealizedPnlInPrice / totalDistance;
+        const distanceTraveled = Math.abs(currentPrice - rangeStartPrice);
+        const progressPercent = distanceTraveled / totalDistance;
+
         const tiers = [
-            { trigger: 0.9, lock: 0.80, tier: 4 }, // at 90% distance, lock 80% of current profit
-            { trigger: 0.8, lock: 0.60, tier: 3 }, // at 80% distance, lock 60%
-            { trigger: 0.6, lock: 0.40, tier: 2 }, // at 60% distance, lock 40%
-            { trigger: 0.5, lock: 0.25, tier: 1 }, // at 50% distance, lock 25%
+            { trigger: 0.95, lock: 0.90, tier: 9 },
+            { trigger: 0.90, lock: 0.80, tier: 8 },
+            { trigger: 0.80, lock: 0.60, tier: 7 },
+            { trigger: 0.70, lock: 0.50, tier: 6 },
+            { trigger: 0.60, lock: 0.40, tier: 5 },
+            { trigger: 0.50, lock: 0.30, tier: 4 },
+            { trigger: 0.40, lock: 0.20, tier: 3 },
+            { trigger: 0.30, lock: 0.10, tier: 2 },
+            { trigger: 0.20, lock: 0.05, tier: 1 },
         ];
+        
         applicableTier = tiers.find(t => progressPercent >= t.trigger && aggressiveTrailTier < t.tier);
     
+        if (applicableTier) {
+            const distanceToLock = totalDistance * applicableTier.lock;
+            const newStopLoss = isLong 
+                ? rangeStartPrice + distanceToLock 
+                : rangeStartPrice - distanceToLock;
+    
+            if ((isLong && newStopLoss > stopLossPrice) || (!isLong && newStopLoss < stopLossPrice)) {
+                return {
+                    newStopLoss,
+                    reasons: [`Aggressive Trail (Distance): Tier ${applicableTier.tier} activated.`],
+                    newState: { aggressiveTrailTier: applicableTier.tier },
+                    activeStopLossReason: 'Profit Secure'
+                };
+            }
+        }
+
     } else { // PNL mode
         const unrealizedPnl = unrealizedPnlInPrice * size;
         const pnlPercent = unrealizedPnl / investmentAmount;
         const tiers = [
-            { trigger: 1.0, lock: 0.95, tier: 5 }, // at 100% PNL, lock 95%
-            { trigger: 0.9, lock: 0.80, tier: 4 }, // at 90% PNL, lock 80%
+            { trigger: 1.0, lock: 0.95, tier: 5 },
+            { trigger: 0.9, lock: 0.80, tier: 4 },
             { trigger: 0.8, lock: 0.60, tier: 3 },
             { trigger: 0.6, lock: 0.40, tier: 2 },
             { trigger: 0.5, lock: 0.25, tier: 1 },
         ];
         applicableTier = tiers.find(t => pnlPercent >= t.trigger && aggressiveTrailTier < t.tier);
-    }
+        
+        if (applicableTier) {
+            const profitToLockInPrice = unrealizedPnlInPrice * applicableTier.lock;
+            const newStopLoss = entryPrice + (profitToLockInPrice * (isLong ? 1 : -1));
     
-    if (applicableTier) {
-        const profitToLockInPrice = unrealizedPnlInPrice * applicableTier.lock;
-        const newStopLoss = entryPrice + (profitToLockInPrice * (isLong ? 1 : -1));
-
-        if ((isLong && newStopLoss > stopLossPrice) || (!isLong && newStopLoss < stopLossPrice)) {
-            return {
-                newStopLoss,
-                reasons: [`Aggressive Trail (${botConfigSnapshot.aggressiveTrailMode}): Tier ${applicableTier.tier} activated.`],
-                newState: { aggressiveTrailTier: applicableTier.tier },
-                activeStopLossReason: 'Profit Secure'
-            };
+            if ((isLong && newStopLoss > stopLossPrice) || (!isLong && newStopLoss < stopLossPrice)) {
+                return {
+                    newStopLoss,
+                    reasons: [`Aggressive Trail (PNL): Tier ${applicableTier.tier} activated.`],
+                    newState: { aggressiveTrailTier: applicableTier.tier },
+                    activeStopLossReason: 'Profit Secure'
+                };
+            }
         }
     }
-
+    
     return { reasons: [] };
 }
+
 
 export function getAgentExitSignal(
     position: Position,
@@ -523,7 +552,7 @@ export function getAgentExitSignal(
 ): TradeManagementSignal {
     const config = applyTimeframeSettings(originalConfig);
     const { agent } = config;
-    const params = config.agentParams as Required<AgentParams>;
+    const params = config.agentParams as Required<typeof config.agentParams>;
     const reasons: string[] = [];
     let newStopLoss: number | undefined;
     let action: TradeManagementSignal['action'] = 'hold';

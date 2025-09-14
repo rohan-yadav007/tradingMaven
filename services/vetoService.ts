@@ -112,9 +112,7 @@ export function getBtcTrendScore(
     let bullScore = 0;
     let bearScore = 0;
 
-    // FIX: Cast result of technical indicator to number | undefined to fix 'unknown' type error.
     const ema21 = getLast(EMA.calculate({ period: 21, values: closes })) as number | undefined;
-    // FIX: Cast result of technical indicator to number | undefined to fix 'unknown' type error.
     const ema50 = getLast(EMA.calculate({ period: 50, values: closes })) as number | undefined;
     if (ema21 && ema50 && currentPrice > ema21 && ema21 > ema50) {
         bullScore += 50;
@@ -123,9 +121,7 @@ export function getBtcTrendScore(
     }
 
     const macdValues = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
-    // FIX: Cast result of technical indicator to MACDOutput | undefined to fix 'unknown' type error.
     const macd = getLast(macdValues) as MACDOutput | undefined;
-    // FIX: Cast result of technical indicator to MACDOutput | undefined to fix 'unknown' type error.
     const prevMacd = macdValues[macdValues.length - 2] as MACDOutput | undefined;
     if (macd?.histogram !== undefined && prevMacd?.histogram !== undefined && macd.histogram > 0 && macd.histogram > (prevMacd.histogram || 0)) {
         bullScore += 30;
@@ -133,7 +129,6 @@ export function getBtcTrendScore(
         bearScore += 30;
     }
     
-    // FIX: Cast result of technical indicator to ADXOutput | undefined to fix 'unknown' type error.
     const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: 14 })) as ADXOutput | undefined;
     if (adx && adx.adx > 20) {
         if (adx.pdi > adx.mdi) {
@@ -282,4 +277,38 @@ export function getMarketStructureVeto(
     }
 
     return { veto: false, reason: `✅ MS Veto: ${analysis.reason}` };
+}
+
+/**
+ * NEW: A crucial safety filter to prevent entering trades against strong, immediate momentum.
+ * This acts as a "falling knife" or "overheated rocket" detector.
+ */
+export function getImmediateTrendVeto(
+    klines: Kline[],
+    direction: 'BUY' | 'SELL',
+): { veto: boolean; reason: string } {
+    if (klines.length < 10) return { veto: false, reason: '' };
+
+    const closes = klines.map(k => k.close);
+    const lastClose = closes[closes.length - 1];
+    
+    // Use a very short-term EMA to gauge immediate momentum
+    const shortEmaPeriod = 5;
+    const shortEma = getLast(EMA.calculate({ period: shortEmaPeriod, values: closes })) as number | undefined;
+    
+    if (!shortEma) return { veto: false, reason: '' };
+    
+    const isLongSignal = direction === 'BUY';
+
+    // For a BUY signal, if the price is currently trading *below* the immediate trend EMA, it's a high-risk entry.
+    if (isLongSignal && lastClose < shortEma) {
+        return { veto: true, reason: `❌ VETO: Immediate momentum is bearish (Price < ${shortEmaPeriod}-EMA).` };
+    }
+
+    // For a SELL signal, if the price is currently trading *above* the immediate trend EMA, it's a high-risk entry.
+    if (!isLongSignal && lastClose > shortEma) {
+        return { veto: true, reason: `❌ VETO: Immediate momentum is bullish (Price > ${shortEmaPeriod}-EMA).` };
+    }
+
+    return { veto: false, reason: '✅ Momentum Concordance: Passed' };
 }

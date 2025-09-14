@@ -38,6 +38,7 @@ import {
     getBtcTrendScore,
     getSmcVeto,
     getMarketStructureVeto,
+    getImmediateTrendVeto,
 } from './vetoService';
 import { validateTradeProfitability, getInitialAgentTargets } from './riskManagementService';
 import { calculateSupportResistance } from './chartAnalysisService';
@@ -168,7 +169,7 @@ export async function getTradingSignal(
     if (config.isSmcVetoEnabled) {
         const rsiValues = RSI.calculate({ period: 14, values: klines.map(k => k.close) });
         const volumes = klines.map(k => k.volume || 0);
-        const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes }));
+        const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes })) as number | undefined;
         const smcVeto = getSmcVeto(klines, agentSignal.signal, config, rsiValues, volumeSma);
         if (smcVeto.veto) {
             return { signal: 'HOLD', reasons: [...reasons, smcVeto.reason] };
@@ -213,6 +214,14 @@ export async function getTradingSignal(
             return { signal: 'HOLD', reasons: [...reasons, structureVeto.reason] };
         }
         reasons.push(structureVeto.reason);
+    }
+    
+    if (config.isMomentumConcordanceEnabled) {
+        const momentumVeto = getImmediateTrendVeto(klines, agentSignal.signal);
+        if (momentumVeto.veto) {
+            return { signal: 'HOLD', reasons: [...reasons, momentumVeto.reason] };
+        }
+        reasons.push(momentumVeto.reason);
     }
 
     const { stopLossPrice, takeProfitPrice, agentStopLoss } = getInitialAgentTargets(klines, currentPrice, agentSignal.signal === 'BUY' ? 'LONG' : 'SHORT', config);

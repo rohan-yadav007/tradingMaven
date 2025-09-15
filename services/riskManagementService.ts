@@ -3,7 +3,7 @@
 import { TradingMode, Agent, TradeSignal, Kline, AgentParams, Position, ADXOutput, MACDOutput, BollingerBandsOutput, StochasticRSIOutput, TradeManagementSignal, BotConfig, VortexIndicatorOutput, SentinelAnalysis, IchimokuCloudOutput, MarketDataContext } from '../types';
 import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, IchimokuCloud, KST, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, dragonflydoji, gravestonedoji, hammerpattern, hangingman, morningstar, piercingline, shootingstar, eveningstar } from 'technicalindicators';
 import * as constants from '../constants';
-import { calculateSupportResistance } from './chartAnalysisService';
+import { calculateSupportResistance, findSwingPoints } from './chartAnalysisService';
 import { Supertrend, applyTimeframeSettings, getLast, getPenultimate, captureMarketContext, detectRsiDivergence } from './agents/agentUtils';
 import { detectSmcReversalPattern } from './vetoService';
 
@@ -119,6 +119,20 @@ export function getInitialAgentTargets(
             })) as number | undefined;
             if (st && ((isLong && st < entryPrice) || (!isLong && st > entryPrice))) {
                 agentStopLoss = st;
+            } else {
+                agentStopLoss = fallbackStop();
+            }
+            break;
+        
+        case 18: // The Conductor: SL based on last valid swing point.
+            const swingPoints = findSwingPoints(klines, params.conductor_swingLookback);
+            const lastSwing = isLong 
+                ? swingPoints.filter(p => p.type === 'low').pop()
+                : swingPoints.filter(p => p.type === 'high').pop();
+            
+            if (lastSwing) {
+                const atrBuffer = currentAtr * params.conductor_slAtrMultiplier;
+                agentStopLoss = isLong ? lastSwing.price - atrBuffer : lastSwing.price + atrBuffer;
             } else {
                 agentStopLoss = fallbackStop();
             }

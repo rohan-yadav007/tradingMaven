@@ -1,3 +1,5 @@
+
+
 import React from 'react';
 import { useState, useEffect, useMemo } from 'react';
 import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, Kline, RiskMode, OptimizationResultItem } from '../types';
@@ -268,8 +270,8 @@ export type BacktestConfig = {
     isMarketStructureVetoEnabled: boolean;
     isMarketBreadthFilterEnabled: boolean;
     isLiquidationFilterEnabled: boolean;
-    isConfirmationCandleEnabled?: boolean;
-    isMomentumConcordanceEnabled?: boolean;
+    isConfirmationCandleEnabled: boolean;
+    isMomentumConcordanceEnabled: boolean;
 };
 
 const getTimeframeDuration = (timeframe: string): number => {
@@ -559,7 +561,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                              </div>
                          </div>
                          <ToggleSwitch
-                             checked={config.isMomentumConcordanceEnabled ?? false}
+                             checked={config.isMomentumConcordanceEnabled}
                              onChange={v => updateConfig('isMomentumConcordanceEnabled', v)}
                          />
                      </div>
@@ -582,6 +584,24 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                         />
                     </div>
                     
+                    <div className={formGroupClass}>
+                        <div className="flex items-center justify-between">
+                            <label htmlFor="smc-veto-toggle-bt" className={formLabelClass}>
+                                SMC Reversal Veto
+                            </label>
+                             <div className="relative group">
+                                <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                                <div className="absolute bottom-full mb-2 w-52 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                     Prevents entries into potential Smart Money Concept reversal patterns (divergence + liquidity sweep).
+                                </div>
+                            </div>
+                        </div>
+                        <ToggleSwitch
+                            checked={config.isSmcVetoEnabled}
+                            onChange={v => updateConfig('isSmcVetoEnabled', v)}
+                        />
+                    </div>
+
                     <div className={formGroupClass}>
                         <div className="flex items-center justify-between">
                             <label className={formLabelClass}>
@@ -621,7 +641,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                             </div>
                         </div>
                         <ToggleSwitch
-                            checked={config.isConfirmationCandleEnabled ?? false}
+                            checked={config.isConfirmationCandleEnabled}
                             onChange={v => updateConfig('isConfirmationCandleEnabled', v)}
                         />
                     </div>

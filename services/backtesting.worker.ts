@@ -1,8 +1,10 @@
 
 
+
 import { Kline, BotConfig, BacktestResult, Trade, AgentParams, Position, RiskMode, TradingMode, OptimizationResultItem } from '../types';
 import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext, getAdaptiveTakeProfit } from './localAgentService';
 import * as constants from '../constants';
+import { getDynamicEntryVeto } from './vetoService';
 
 // --- Worker-local Helper Functions ---
 
@@ -10,7 +12,7 @@ const getLast = <T>(arr: T[] | undefined): T | undefined => arr && arr.length > 
 
 const getTimeframeDuration = (timeframe: string): number => {
     const unit = timeframe.slice(-1);
-    const value = parseInt(timeframe.slice(0, -1), 10);
+    const value = parseInt(timeframe.slice(-1, 1), 10);
     if (isNaN(value)) return 0;
     switch (unit) {
         case 'm': return value * 60 * 1000;
@@ -295,20 +297,32 @@ async function runBacktest(
             
             if (signal.signal !== 'HOLD') {
                 const entryPrice = currentCandle.close;
-                const isLong = signal.signal === 'BUY';
                 
+                // --- SIMULATE DYNAMIC ENTRY VETO ---
+                if (config.isMomentumConcordanceEnabled) {
+                    const oneMinKlinesIndex = klines.findIndex(k => k.time >= currentCandle.time);
+                    if (oneMinKlinesIndex !== -1) {
+                        const microKlinesSlice = klines.slice(Math.max(0, oneMinKlinesIndex - 20), oneMinKlinesIndex + 1);
+                        const vetoCheck = await getDynamicEntryVeto(historySlice, entryPrice, signal.signal, config, microKlinesSlice);
+                        if (vetoCheck.veto) {
+                            equityCurve.push(equity);
+                            continue; // Vetoed, skip to next candle
+                        }
+                    }
+                }
+                // --- END VETO SIMULATION ---
+
+                const isLong = signal.signal === 'BUY';
                 const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(historySlice, entryPrice, isLong ? 'LONG' : 'SHORT', config);
                 
                 if (validateTradeProfitability(entryPrice, stopLossPrice, takeProfitPrice, isLong ? 'LONG' : 'SHORT', config).isValid) {
                     const posVal = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
                     const size = posVal / entryPrice;
 
-                    // --- Initial Risk Veto Logic for Backtesting ---
                     if (config.isInitialRiskVetoEnabled) {
                         const initialRiskInDollars = Math.abs(entryPrice - agentStopLoss) * size;
                         const maxAllowedRiskInDollars = config.investmentAmount * (config.maxMarginLossPercent / 100);
                         if (initialRiskInDollars > maxAllowedRiskInDollars) {
-                            // Vetoed. Skip to the next candle.
                             equityCurve.push(equity);
                             continue;
                         }
@@ -333,11 +347,19 @@ async function runBacktest(
                             isAdxFilterEnabled: config.isAdxFilterEnabled,
                             isExhaustionFilterEnabled: config.isExhaustionFilterEnabled,
                             isSmcVetoEnabled: config.isSmcVetoEnabled,
+                            isSrAnalysisEnabled: config.isSrAnalysisEnabled,
+                            isCandlestickConfirmationEnabled: config.isCandlestickConfirmationEnabled,
+                            isMarketStructureVetoEnabled: config.isMarketStructureVetoEnabled,
                             htfTimeFrame: config.htfTimeFrame,
                             entryTiming: config.entryTiming,
                             isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,
                             aggressiveTrailMode: config.aggressiveTrailMode,
-                            isInitialRiskVetoEnabled: config.isInitialRiskVetoEnabled
+                            isInitialRiskVetoEnabled: config.isInitialRiskVetoEnabled,
+                            isMarketBreadthFilterEnabled: config.isMarketBreadthFilterEnabled,
+                            isLiquidationFilterEnabled: config.isLiquidationFilterEnabled,
+                            isConfirmationCandleEnabled: config.isConfirmationCandleEnabled,
+// FIX: Property 'isMomentumConcordanceEnabled' is missing in type '{ isHtfConfirmationEnabled: boolean; isUniversalProfitTrailEnabled: boolean; isMinRrEnabled: boolean; invalidationSensitivity: "low" | "medium" | "high"; isAgentTrailEnabled: boolean; ... 13 more ...; isInitialRiskVetoEnabled: boolean; }' but required in type 'BotConfigSnapshot'.
+                            isMomentumConcordanceEnabled: config.isMomentumConcordanceEnabled,
                         };
                         const entryContext = captureMarketContext(historySlice, htfHistorySlice);
 
@@ -377,7 +399,6 @@ async function runBacktest(
     return calculateResults(trades, equityCurve, STARTING_CAPITAL);
 }
 
-// FIX: Add missing implementation for runOptimization and the worker's onmessage handler.
 async function runOptimization(
     klines: Kline[],
     baseConfig: BotConfig,

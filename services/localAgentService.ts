@@ -29,6 +29,7 @@ import { getChameleonSignal } from './agents/chameleon';
 import { getTheSentinelSignal } from './agents/sentinel';
 import { getIchimokuTrendRiderSignal } from './agents/ichimokuTrendRider';
 import { getMomentumSwingTraderSignal } from './agents/momentumSwingTrader';
+import { getTheConductorSignal } from './agents/conductor';
 
 // Import all veto services
 import {
@@ -38,7 +39,6 @@ import {
     getBtcTrendScore,
     getSmcVeto,
     getMarketStructureVeto,
-    getImmediateTrendVeto,
 } from './vetoService';
 import { validateTradeProfitability, getInitialAgentTargets } from './riskManagementService';
 import { calculateSupportResistance } from './chartAnalysisService';
@@ -70,6 +70,7 @@ export async function getTradingSignal(
         case 14: agentSignal = getTheSentinelSignal(klines, config, htfContext); break;
         case 16: agentSignal = getIchimokuTrendRiderSignal(klines, config, htfContext); break;
         case 17: agentSignal = getMomentumSwingTraderSignal(klines, config, htfContext); break;
+        case 18: agentSignal = getTheConductorSignal(klines, config, htfContext); break;
         default: agentSignal = { signal: 'HOLD', reasons: ['Agent not found'] };
     }
     
@@ -216,14 +217,6 @@ export async function getTradingSignal(
         reasons.push(structureVeto.reason);
     }
     
-    if (config.isMomentumConcordanceEnabled) {
-        const momentumVeto = getImmediateTrendVeto(klines, agentSignal.signal);
-        if (momentumVeto.veto) {
-            return { signal: 'HOLD', reasons: [...reasons, momentumVeto.reason] };
-        }
-        reasons.push(momentumVeto.reason);
-    }
-
     const { stopLossPrice, takeProfitPrice, agentStopLoss } = getInitialAgentTargets(klines, currentPrice, agentSignal.signal === 'BUY' ? 'LONG' : 'SHORT', config);
     const profitabilityValidation = validateTradeProfitability(currentPrice, agentStopLoss, takeProfitPrice, agentSignal.signal === 'BUY' ? 'LONG' : 'SHORT', config);
     if (!profitabilityValidation.isValid) {

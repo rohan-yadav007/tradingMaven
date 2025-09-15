@@ -232,6 +232,23 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                    min={100} max={300} step={10}
                />
            </div>);
+        case 18: 
+            return (<div className="space-y-4">
+                 <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">Core Logic</h4>
+                 <ParamSlider label="Base Conviction Threshold" value={allParams.conductor_convictionThreshold!} onChange={v => updateParam('conductor_convictionThreshold', v)} min={50} max={95} step={1} valueDisplay={v => `${v}%`} />
+                 <ParamSlider label="Swing Point Lookback" value={allParams.conductor_swingLookback!} onChange={v => updateParam('conductor_swingLookback', v)} min={3} max={15} step={1} />
+                 <ParamSlider label="Structure Weight" value={allParams.conductor_structureWeight!} onChange={v => updateParam('conductor_structureWeight', v)} min={10} max={60} step={5} valueDisplay={v => `${v}%`} />
+                 <ParamSlider label="Momentum Weight" value={allParams.conductor_momentumWeight!} onChange={v => updateParam('conductor_momentumWeight', v)} min={10} max={60} step={5} valueDisplay={v => `${v}%`} />
+                 <ParamSlider label="Context Weight" value={allParams.conductor_contextWeight!} onChange={v => updateParam('conductor_contextWeight', v)} min={5} max={40} step={5} valueDisplay={v => `${v}%`} />
+                 <ParamSlider label="Confirmation Weight" value={allParams.conductor_confirmationWeight!} onChange={v => updateParam('conductor_confirmationWeight', v)} min={5} max={40} step={5} valueDisplay={v => `${v}%`} />
+
+                 <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">Adaptive Behavior</h4>
+                 <ParamSlider label="Strong Trend ADX" value={allParams.conductor_strongTrendAdx!} onChange={v => updateParam('conductor_strongTrendAdx', v)} min={25} max={40} step={1} />
+                 <ParamSlider label="Strong Trend Threshold" value={allParams.conductor_strongTrendThreshold!} onChange={v => updateParam('conductor_strongTrendThreshold', v)} min={50} max={80} step={1} valueDisplay={v => `${v}%`} />
+                 <ParamSlider label="Choppy Market ADX" value={allParams.conductor_choppyTrendAdx!} onChange={v => updateParam('conductor_choppyTrendAdx', v)} min={15} max={25} step={1} />
+                 <ParamSlider label="Choppy Market Threshold" value={allParams.conductor_choppyTrendThreshold!} onChange={v => updateParam('conductor_choppyTrendThreshold', v)} min={70} max={95} step={1} valueDisplay={v => `${v}%`} />
+                 <ParamSlider label="Structure Weight Multiplier" value={allParams.conductor_structureWeightMultiplier!} onChange={v => updateParam('conductor_structureWeightMultiplier', v)} min={1.0} max={2.0} step={0.05} valueDisplay={v => `${v.toFixed(2)}x`} />
+            </div>);
         default: return <p className="text-sm text-slate-500">This agent does not have any customizable parameters.</p>;
     }
 };
@@ -640,6 +657,11 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
                     </div>
                 )}
+                {selectedAgent.id === 18 && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
+                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
+                    </div>
+                )}
             </div>
             
             <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
@@ -675,8 +697,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         </label>
                          <div className="relative group">
                             <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
-                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
-                                Vetoes trades that go against strong immediate momentum, preventing entries into sharp reversals.
+                            <div className="absolute bottom-full mb-2 w-52 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                Performs a 'just-in-time' analysis before entry. Vetoes trades if immediate 1-min momentum is fading or if the entry point is poor within the current candle's structure (e.g., buying the top of a wick).
                             </div>
                         </div>
                     </div>
@@ -885,25 +907,6 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             <div className={formGroupClass}>
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
-                        <label htmlFor="sr-analysis-toggle" className={formLabelClass}>
-                            S/R Zone Analysis
-                        </label>
-                        <div className="relative group">
-                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
-                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
-                                Vetoes trades that would enter directly into a significant support or resistance zone.
-                            </div>
-                        </div>
-                    </div>
-                    <ToggleSwitch
-                        checked={isSrAnalysisEnabled}
-                        onChange={setIsSrAnalysisEnabled}
-                    />
-                </div>
-            </div>
-                        <div className={formGroupClass}>
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
                         <label htmlFor="market-structure-veto-toggle" className={formLabelClass}>
                             Market Structure Veto
                         </label>
@@ -917,6 +920,25 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     <ToggleSwitch
                         checked={isMarketStructureVetoEnabled}
                         onChange={setIsMarketStructureVetoEnabled}
+                    />
+                </div>
+            </div>
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                        <label htmlFor="sr-analysis-toggle" className={formLabelClass}>
+                            S/R Zone Analysis
+                        </label>
+                        <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                Vetoes trades that would enter directly into a significant support or resistance zone.
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch
+                        checked={isSrAnalysisEnabled}
+                        onChange={setIsSrAnalysisEnabled}
                     />
                 </div>
             </div>

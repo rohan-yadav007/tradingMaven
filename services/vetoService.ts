@@ -3,9 +3,10 @@
 import { Kline, BotConfig, MarketDataContext, StochasticRSIOutput, MACDOutput, ADXOutput } from '../types';
 import { RSI, StochasticRSI, ADX, MACD, SMA, EMA } from 'technicalindicators';
 import * as constants from '../constants';
+import * as binanceService from './binanceService';
 import { btcConfirmationService } from './btcConfirmationService';
 import { findSwingPoints, analyzeMarketStructure } from './chartAnalysisService';
-import { getLast, detectRsiDivergence as isRsiDivergent } from './agents/agentUtils';
+import { getLast, getPenultimate, detectRsiDivergence as isRsiDivergent } from './agents/agentUtils';
 
 /**
  * A universal gatekeeper to prevent entering trades when the trend is likely exhausted.
@@ -276,39 +277,85 @@ export function getMarketStructureVeto(
         }
     }
 
-    return { veto: false, reason: `✅ MS Veto: ${analysis.reason}` };
+    return { veto: false, reason: `✅ MS Veto: Passed` };
 }
 
 /**
- * NEW: A crucial safety filter to prevent entering trades against strong, immediate momentum.
- * This acts as a "falling knife" or "overheated rocket" detector.
+ * NEW: Performs a 'just-in-time' analysis before entry to qualify the trade.
+ * Vetoes trades if immediate 1-min momentum is fading or if the entry
+ * point is poor within the current candle's structure.
  */
-export function getImmediateTrendVeto(
-    klines: Kline[],
-    direction: 'BUY' | 'SELL',
-): { veto: boolean; reason: string } {
-    if (klines.length < 10) return { veto: false, reason: '' };
-
-    const closes = klines.map(k => k.close);
-    const lastClose = closes[closes.length - 1];
-    
-    // Use a very short-term EMA to gauge immediate momentum
-    const shortEmaPeriod = 5;
-    const shortEma = getLast(EMA.calculate({ period: shortEmaPeriod, values: closes })) as number | undefined;
-    
-    if (!shortEma) return { veto: false, reason: '' };
-    
-    const isLongSignal = direction === 'BUY';
-
-    // For a BUY signal, if the price is currently trading *below* the immediate trend EMA, it's a high-risk entry.
-    if (isLongSignal && lastClose < shortEma) {
-        return { veto: true, reason: `❌ VETO: Immediate momentum is bearish (Price < ${shortEmaPeriod}-EMA).` };
+export async function getDynamicEntryVeto(
+    mainTimeframeKlines: Kline[],
+    livePrice: number,
+    signalDirection: 'BUY' | 'SELL',
+    config: BotConfig,
+    microKlines?: Kline[], // Optional parameter for backtesting
+): Promise<{ veto: boolean; reason: string }> {
+    if (mainTimeframeKlines.length === 0 || livePrice <= 0) {
+        return { veto: false, reason: '' };
     }
 
-    // For a SELL signal, if the price is currently trading *above* the immediate trend EMA, it's a high-risk entry.
-    if (!isLongSignal && lastClose > shortEma) {
-        return { veto: true, reason: `❌ VETO: Immediate momentum is bullish (Price > ${shortEmaPeriod}-EMA).` };
+    const isLongSignal = signalDirection === 'BUY';
+
+    // --- 1. Main Timeframe Candle Context ---
+    const lastCandle = mainTimeframeKlines[mainTimeframeKlines.length - 1];
+    const range = lastCandle.high - lastCandle.low;
+    if (range > 0) {
+        const positionInCandle = (livePrice - lastCandle.low) / range;
+        const upperWick = lastCandle.high - Math.max(lastCandle.open, lastCandle.close);
+        const lowerWick = Math.min(lastCandle.open, lastCandle.close) - lastCandle.low;
+
+        if (isLongSignal && positionInCandle > 0.8 && upperWick > range * 0.3) {
+            return { veto: true, reason: `❌ VETO: Entry too high in current candle with rejection wick.` };
+        }
+        if (!isLongSignal && positionInCandle < 0.2 && lowerWick > range * 0.3) {
+            return { veto: true, reason: `❌ VETO: Entry too low in current candle with rejection wick.` };
+        }
     }
 
+    // --- 2. Micro-Momentum Analysis (1-min Timeframe) ---
+    let klinesToAnalyze: Kline[] | undefined = microKlines;
+
+    if (!klinesToAnalyze) {
+        try {
+            klinesToAnalyze = await binanceService.fetchKlines(
+                config.pair.replace('/', ''),
+                '1m',
+                { limit: 20, mode: config.mode }
+            );
+        } catch (e) {
+            const errorMessage = e instanceof Error ? e.message : String(e);
+            console.error("Dynamic entry veto failed to fetch micro-klines:", errorMessage);
+            // Fail open, but provide a reason for the log.
+            return { veto: false, reason: `⚠️ Momentum Concordance: Could not fetch 1m data (${errorMessage}). Trade allowed.` };
+        }
+    }
+    
+    if (klinesToAnalyze && klinesToAnalyze.length >= 15) {
+        const microCloses = klinesToAnalyze.map(k => k.close);
+        
+        // A. EMA Slope Check
+        const microEmaValues = EMA.calculate({ period: 5, values: microCloses });
+        const lastEma = getLast(microEmaValues);
+        const prevEma = getPenultimate(microEmaValues);
+        const isEmaFading = (lastEma && prevEma) 
+            ? (isLongSignal ? lastEma < prevEma : lastEma > prevEma)
+            : false;
+            
+        // B. RSI Check
+        const microRsi = getLast(RSI.calculate({ period: 14, values: microCloses }));
+        const isRsiWeak = microRsi
+            ? (isLongSignal ? microRsi < 48 : microRsi > 52)
+            : false;
+            
+        // C. Confluence Veto
+        if (isEmaFading && isRsiWeak) {
+             return { veto: true, reason: `❌ VETO: Immediate 1m momentum is fading (EMA slope + RSI weakness).` };
+        }
+    } else {
+        return { veto: false, reason: 'ℹ️ Micro-momentum: Insufficient 1m data.' };
+    }
+    
     return { veto: false, reason: '✅ Momentum Concordance: Passed' };
 }

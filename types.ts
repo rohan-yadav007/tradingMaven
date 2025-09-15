@@ -241,6 +241,8 @@ export interface AgentParams {
     sentinel_rsiMomentumExitShort?: number;
     sentinel_volumeFilterMultiplier?: number;
     sentinel_macdCrossoverFreshness?: number;
+    sentinel_rsiDivergenceLookback?: number;
+    sentinel_swingPointLookback?: number;
 
     // Agent 17: Momentum Swing Trader
     mst_emaFastPeriod?: number;
@@ -248,6 +250,22 @@ export interface AgentParams {
     mst_macdFastPeriod?: number;
     mst_macdSlowPeriod?: number;
     mst_macdSignalPeriod?: number;
+
+    // Agent 18: The Conductor
+    conductor_swingLookback?: number;
+    conductor_rsiDivergenceLookback?: number;
+    conductor_convictionThreshold?: number;
+    conductor_structureWeight?: number;
+    conductor_momentumWeight?: number;
+    conductor_contextWeight?: number;
+    conductor_confirmationWeight?: number;
+    conductor_volumeMultiplier?: number;
+    conductor_slAtrMultiplier?: number;
+    conductor_strongTrendAdx?: number;
+    conductor_strongTrendThreshold?: number;
+    conductor_choppyTrendAdx?: number;
+    conductor_choppyTrendThreshold?: number;
+    conductor_structureWeightMultiplier?: number;
 
     // SMC Reversal Veto
     smc_divergenceLookback?: number;
@@ -289,6 +307,7 @@ export interface TradeSignal {
     takeProfitPrice?: number;
     stopLossPrice?: number;
     sentinelAnalysis?: SentinelAnalysis;
+    conductorAnalysis?: ConductorAnalysis;
 }
 
 export interface TradeManagementSignal {
@@ -345,7 +364,7 @@ export interface BotConfig {
     isMarketBreadthFilterEnabled?: boolean;
     isLiquidationFilterEnabled?: boolean;
     isConfirmationCandleEnabled?: boolean;
-    isMomentumConcordanceEnabled?: boolean;
+    isMomentumConcordanceEnabled: boolean;
 }
 
 export interface BotConfigSnapshot {
@@ -374,7 +393,7 @@ export interface BotConfigSnapshot {
     isMarketBreadthFilterEnabled?: boolean;
     isLiquidationFilterEnabled?: boolean;
     isConfirmationCandleEnabled?: boolean;
-    isMomentumConcordanceEnabled?: boolean;
+    isMomentumConcordanceEnabled: boolean;
 }
 
 export interface Position {
@@ -530,6 +549,11 @@ export interface IchimokuCloudOutput {
 export interface SentinelAnalysis {
     bullish: { total: number; trend: number; momentum: number; confirmation: number; structure: number; };
     bearish: { total: number; trend: number; momentum: number; confirmation: number; structure: number; };
+}
+
+export interface ConductorAnalysis {
+    bullish: { total: number; structure: number; momentum: number; context: number; confirmation: number; };
+    bearish: { total: number; structure: number; momentum: number; context: number; confirmation: number; };
 }
 
 // --- User Preferences ---

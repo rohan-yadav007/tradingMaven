@@ -1,3 +1,5 @@
+
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, TradeSignal, TradingMode, RiskMode, LogType } from '../types';
 import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, LockIcon, UnlockIcon, InfoIcon, ZapIcon, RefreshIcon } from './icons';
@@ -121,6 +123,7 @@ const EntryFilterConfiguration: React.FC<{ bot: RunningBot; onUpdate: (change: P
             <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Entry Filter Configuration</h4>
              <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg space-y-2 text-sm">
                 <p className="text-xs text-slate-500 dark:text-slate-400">Toggle entry filters for the next trade. These changes apply immediately.</p>
+                <ConfigToggle label="Momentum Concordance" checked={config.isMomentumConcordanceEnabled} onChange={v => onUpdate({ isMomentumConcordanceEnabled: v })} />
                 <ConfigToggle label="Liquidation Cascade Veto" checked={config.isLiquidationFilterEnabled ?? false} onChange={v => onUpdate({ isLiquidationFilterEnabled: v })} />
                 <ConfigToggle label="ADX Trend Filter" checked={config.isAdxFilterEnabled ?? false} onChange={v => onUpdate({ isAdxFilterEnabled: v })} />
                 <ConfigToggle label="Market Breadth Filter" checked={config.isMarketBreadthFilterEnabled ?? false} onChange={v => onUpdate({ isMarketBreadthFilterEnabled: v })} />
@@ -130,6 +133,7 @@ const EntryFilterConfiguration: React.FC<{ bot: RunningBot; onUpdate: (change: P
                 <ConfigToggle label="Universal Volume Filter" checked={config.isVolumeFilterEnabled ?? false} onChange={v => onUpdate({ isVolumeFilterEnabled: v })} />
                 <ConfigToggle label="Market Cohesion Filter" checked={config.isMarketCohesionEnabled ?? false} onChange={v => onUpdate({ isMarketCohesionEnabled: v })} />
                 <ConfigToggle label="Exhaustion Filter" checked={config.isExhaustionFilterEnabled ?? true} onChange={v => onUpdate({ isExhaustionFilterEnabled: v })} />
+                <ConfigToggle label="SMC Reversal Veto" checked={config.isSmcVetoEnabled ?? true} onChange={v => onUpdate({ isSmcVetoEnabled: v })} />
                 <ConfigToggle label="Market Structure Veto" checked={config.isMarketStructureVetoEnabled ?? true} onChange={v => onUpdate({ isMarketStructureVetoEnabled: v })} />
                 <ConfigToggle label="Minimum R:R Veto" checked={config.isMinRrEnabled} onChange={v => onUpdate({ isMinRrEnabled: v })} />
                 <ConfigToggle label="Immediate Entry" checked={config.entryTiming === 'immediate'} onChange={v => onUpdate({ entryTiming: v ? 'immediate' : 'onNextCandle' })} />
@@ -587,7 +591,7 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
                                     <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-700/50 px-2 py-0.5 rounded-full">
                                         <RefreshIcon className="w-4 h-4 text-slate-500 dark:text-slate-400" />
                                         <select
-                                            value={bot.config.refreshInterval ?? 10}
+                                            value={bot.config.refreshInterval ?? 60}
                                             onChange={(e) => {
                                                 actions.onUpdateBotConfig(bot.id, { refreshInterval: Number(e.target.value) });
                                                 actions.onRefreshBotAnalysis(bot.id);

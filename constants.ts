@@ -40,6 +40,12 @@ export const getHigherTimeframe = (timeframe: string): string | undefined => {
 
 export const AGENTS: Agent[] = [
     {
+        id: 18,
+        name: 'The Conductor',
+        description: "An advanced, context-aware agent that builds a trade thesis based on Market Structure, Momentum Quality, and Liquidity. It prioritizes high-conviction setups by ensuring confluence across multiple factors.",
+        indicators: ["Market Structure Analysis", "RSI Divergence", "S/R Zones"],
+    },
+    {
         id: 9,
         name: 'Quantum Scalper',
         description: "A dynamic, aggressive agent using a weighted scoring system. It filters for volatility and trend regime, then scores signals based on Trend, Momentum, and Confirmation. Now features a 'Mean Reversion Veto' to prevent chasing exhausted moves, and 'HTF Momentum Sync' to ensure entries align with higher timeframe momentum, not just trend direction. Supports 'Breakout' and 'Pullback' entry modes.",
@@ -170,6 +176,8 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     sentinel_rsiMomentumExitShort: 52,
     sentinel_volumeFilterMultiplier: 0.8,
     sentinel_macdCrossoverFreshness: 3,
+    sentinel_rsiDivergenceLookback: 21,
+    sentinel_swingPointLookback: 8,
 
     // Agent 17: Momentum Swing Trader
     mst_emaFastPeriod: 50,
@@ -177,6 +185,22 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     mst_macdFastPeriod: 12,
     mst_macdSlowPeriod: 26,
     mst_macdSignalPeriod: 9,
+
+    // Agent 18: The Conductor
+    conductor_swingLookback: 8,
+    conductor_rsiDivergenceLookback: 14,
+    conductor_convictionThreshold: 75,
+    conductor_structureWeight: 40,
+    conductor_momentumWeight: 30,
+    conductor_contextWeight: 15,
+    conductor_confirmationWeight: 15,
+    conductor_volumeMultiplier: 1.2,
+    conductor_slAtrMultiplier: 1.5,
+    conductor_strongTrendAdx: 28,
+    conductor_strongTrendThreshold: 68,
+    conductor_choppyTrendAdx: 20,
+    conductor_choppyTrendThreshold: 82,
+    conductor_structureWeightMultiplier: 1.25,
 
     // SMC Reversal Veto
     smc_divergenceLookback: 12,
@@ -206,6 +230,17 @@ export const SMC_VETO_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> =
     '1h':  { smc_divergenceLookback: 20, smc_volumeMultiplier: 2.5 },
     '4h':  { smc_divergenceLookback: 20, smc_volumeMultiplier: 2.5 },
     '1d':  { smc_divergenceLookback: 20, smc_volumeMultiplier: 2.5 },
+};
+
+export const CONDUCTOR_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
+    '1m':  { conductor_swingLookback: 5, conductor_convictionThreshold: 80, conductor_slAtrMultiplier: 2.0, conductor_strongTrendAdx: 32, conductor_choppyTrendAdx: 25, conductor_strongTrendThreshold: 75, conductor_choppyTrendThreshold: 85 },
+    '3m':  { conductor_swingLookback: 6, conductor_convictionThreshold: 78, conductor_slAtrMultiplier: 1.9, conductor_strongTrendAdx: 30, conductor_choppyTrendAdx: 23, conductor_strongTrendThreshold: 72, conductor_choppyTrendThreshold: 84 },
+    '5m':  { conductor_swingLookback: 8, conductor_convictionThreshold: 75, conductor_slAtrMultiplier: 1.8, conductor_strongTrendAdx: 28, conductor_choppyTrendAdx: 20, conductor_strongTrendThreshold: 68, conductor_choppyTrendThreshold: 82 },
+    '15m': { conductor_swingLookback: 10, conductor_convictionThreshold: 70, conductor_slAtrMultiplier: 2.0, conductor_strongTrendAdx: 25, conductor_choppyTrendAdx: 18, conductor_strongTrendThreshold: 65, conductor_choppyTrendThreshold: 78 },
+    '30m': { conductor_swingLookback: 10, conductor_convictionThreshold: 68, conductor_slAtrMultiplier: 2.2, conductor_strongTrendAdx: 25, conductor_choppyTrendAdx: 18, conductor_strongTrendThreshold: 62, conductor_choppyTrendThreshold: 75 },
+    '1h':  { conductor_swingLookback: 12, conductor_convictionThreshold: 65, conductor_slAtrMultiplier: 2.5, conductor_strongTrendAdx: 23, conductor_choppyTrendAdx: 17, conductor_strongTrendThreshold: 60, conductor_choppyTrendThreshold: 72 },
+    '4h':  { conductor_swingLookback: 15, conductor_convictionThreshold: 65, conductor_slAtrMultiplier: 3.0, conductor_strongTrendAdx: 22, conductor_choppyTrendAdx: 16, conductor_strongTrendThreshold: 58, conductor_choppyTrendThreshold: 70 },
+    '1d':  { conductor_swingLookback: 15, conductor_convictionThreshold: 60, conductor_slAtrMultiplier: 3.5, conductor_strongTrendAdx: 20, conductor_choppyTrendAdx: 15, conductor_strongTrendThreshold: 55, conductor_choppyTrendThreshold: 68 },
 };
 
 export const QUANTUM_SCALPER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
@@ -242,16 +277,16 @@ export const CHAMELEON_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> 
 
 export const SENTINEL_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
     // Scalping (1m, 3m, 5m): Faster EMAs, more tolerant to volatility, longer candle decay times.
-    '1m':  { sentinel_scoreThreshold: 90, sentinel_adxPeriod: 10, sentinel_rsiPeriod: 10, viPeriod: 10, sentinel_strongTrendAdx: 35, sentinel_strongTrendThreshold: 80, sentinel_choppyTrendAdx: 27, sentinel_choppyTrendThreshold: 90, sentinel_rsiOverextendedLong: 70, sentinel_rsiOverextendedShort: 30, sentinel_stPeriod: 10, sentinel_stMultiplier: 2.5, sentinel_bbwSqueezeThreshold: 0.0045, sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_emaDistanceVetoThreshold: 1.8, sentinel_srZoneAtrBuffer: 1.2, sentinel_invalidationCandleLimit: 30, sentinel_rsiMomentumExitLong: 45, sentinel_rsiMomentumExitShort: 55 },
-    '3m':  { sentinel_scoreThreshold: 85, sentinel_adxPeriod: 10, sentinel_rsiPeriod: 10, viPeriod: 10, sentinel_strongTrendAdx: 32, sentinel_strongTrendThreshold: 78, sentinel_choppyTrendAdx: 25, sentinel_choppyTrendThreshold: 88, sentinel_rsiOverextendedLong: 72, sentinel_rsiOverextendedShort: 28, sentinel_stPeriod: 10, sentinel_stMultiplier: 2.5, sentinel_bbwSqueezeThreshold: 0.0040, sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_emaDistanceVetoThreshold: 1.8, sentinel_srZoneAtrBuffer: 1.1, sentinel_invalidationCandleLimit: 25, sentinel_rsiMomentumExitLong: 46, sentinel_rsiMomentumExitShort: 54 },
-    '5m':  { sentinel_scoreThreshold: 80, sentinel_adxPeriod: 12, sentinel_rsiPeriod: 12, viPeriod: 12, sentinel_strongTrendAdx: 30, sentinel_strongTrendThreshold: 75, sentinel_choppyTrendAdx: 23, sentinel_choppyTrendThreshold: 85, sentinel_rsiOverextendedLong: 74, sentinel_rsiOverextendedShort: 22, sentinel_stPeriod: 12, sentinel_stMultiplier: 3, sentinel_bbwSqueezeThreshold: 0.0035, sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_emaDistanceVetoThreshold: 1.8, sentinel_srZoneAtrBuffer: 1.0, sentinel_invalidationCandleLimit: 20, sentinel_rsiMomentumExitLong: 47, sentinel_rsiMomentumExitShort: 53 },
+    '1m':  { sentinel_scoreThreshold: 90, sentinel_adxPeriod: 10, sentinel_rsiPeriod: 10, viPeriod: 10, sentinel_strongTrendAdx: 35, sentinel_strongTrendThreshold: 80, sentinel_choppyTrendAdx: 27, sentinel_choppyTrendThreshold: 90, sentinel_rsiOverextendedLong: 70, sentinel_rsiOverextendedShort: 30, sentinel_stPeriod: 10, sentinel_stMultiplier: 2.5, sentinel_bbwSqueezeThreshold: 0.0045, sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_emaDistanceVetoThreshold: 1.8, sentinel_srZoneAtrBuffer: 1.2, sentinel_invalidationCandleLimit: 30, sentinel_rsiMomentumExitLong: 45, sentinel_rsiMomentumExitShort: 55, sentinel_rsiDivergenceLookback: 14, sentinel_swingPointLookback: 5 },
+    '3m':  { sentinel_scoreThreshold: 85, sentinel_adxPeriod: 10, sentinel_rsiPeriod: 10, viPeriod: 10, sentinel_strongTrendAdx: 32, sentinel_strongTrendThreshold: 78, sentinel_choppyTrendAdx: 25, sentinel_choppyTrendThreshold: 88, sentinel_rsiOverextendedLong: 72, sentinel_rsiOverextendedShort: 28, sentinel_stPeriod: 10, sentinel_stMultiplier: 2.5, sentinel_bbwSqueezeThreshold: 0.0040, sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_emaDistanceVetoThreshold: 1.8, sentinel_srZoneAtrBuffer: 1.1, sentinel_invalidationCandleLimit: 25, sentinel_rsiMomentumExitLong: 46, sentinel_rsiMomentumExitShort: 54, sentinel_rsiDivergenceLookback: 14, sentinel_swingPointLookback: 5 },
+    '5m':  { sentinel_scoreThreshold: 80, sentinel_adxPeriod: 12, sentinel_rsiPeriod: 12, viPeriod: 12, sentinel_strongTrendAdx: 30, sentinel_strongTrendThreshold: 75, sentinel_choppyTrendAdx: 23, sentinel_choppyTrendThreshold: 85, sentinel_rsiOverextendedLong: 74, sentinel_rsiOverextendedShort: 22, sentinel_stPeriod: 12, sentinel_stMultiplier: 3, sentinel_bbwSqueezeThreshold: 0.0035, sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_emaDistanceVetoThreshold: 1.8, sentinel_srZoneAtrBuffer: 1.0, sentinel_invalidationCandleLimit: 20, sentinel_rsiMomentumExitLong: 47, sentinel_rsiMomentumExitShort: 53, sentinel_rsiDivergenceLookback: 14, sentinel_swingPointLookback: 8 },
     // Day Trading (15m, 30m, 1h): Balanced parameters.
-    '15m': { sentinel_scoreThreshold: 75, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14, viPeriod: 14, sentinel_strongTrendAdx: 28, sentinel_strongTrendThreshold: 70, sentinel_choppyTrendAdx: 22, sentinel_choppyTrendThreshold: 82, sentinel_rsiOverextendedLong: 80, sentinel_rsiOverextendedShort: 20, sentinel_stPeriod: 10, sentinel_stMultiplier: 3, sentinel_bbwSqueezeThreshold: 0.0032, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 100, sentinel_emaDistanceVetoThreshold: 1.5, sentinel_srZoneAtrBuffer: 0.8, sentinel_invalidationCandleLimit: 15, sentinel_rsiMomentumExitLong: 48, sentinel_rsiMomentumExitShort: 52 },
-    '30m': { sentinel_scoreThreshold: 75, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14, viPeriod: 16, sentinel_strongTrendAdx: 25, sentinel_strongTrendThreshold: 68, sentinel_choppyTrendAdx: 20, sentinel_choppyTrendThreshold: 80, sentinel_rsiOverextendedLong: 80, sentinel_rsiOverextendedShort: 20, sentinel_stPeriod: 10, sentinel_stMultiplier: 3, sentinel_bbwSqueezeThreshold: 0.0030, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 120, sentinel_emaDistanceVetoThreshold: 1.5, sentinel_srZoneAtrBuffer: 0.7, sentinel_invalidationCandleLimit: 12, sentinel_rsiMomentumExitLong: 48, sentinel_rsiMomentumExitShort: 52 },
-    '1h':  { sentinel_scoreThreshold: 70, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14, viPeriod: 18, sentinel_strongTrendAdx: 28, sentinel_strongTrendThreshold: 65, sentinel_choppyTrendAdx: 20, sentinel_choppyTrendThreshold: 80, sentinel_rsiOverextendedLong: 82, sentinel_rsiOverextendedShort: 18, sentinel_stPeriod: 12, sentinel_stMultiplier: 3, sentinel_bbwSqueezeThreshold: 0.0028, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 150, sentinel_emaDistanceVetoThreshold: 1.5, sentinel_srZoneAtrBuffer: 0.6, sentinel_invalidationCandleLimit: 10, sentinel_rsiMomentumExitLong: 49, sentinel_rsiMomentumExitShort: 51 },
+    '15m': { sentinel_scoreThreshold: 75, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14, viPeriod: 14, sentinel_strongTrendAdx: 28, sentinel_strongTrendThreshold: 70, sentinel_choppyTrendAdx: 22, sentinel_choppyTrendThreshold: 82, sentinel_rsiOverextendedLong: 80, sentinel_rsiOverextendedShort: 20, sentinel_stPeriod: 10, sentinel_stMultiplier: 3, sentinel_bbwSqueezeThreshold: 0.0032, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 100, sentinel_emaDistanceVetoThreshold: 1.5, sentinel_srZoneAtrBuffer: 0.8, sentinel_invalidationCandleLimit: 15, sentinel_rsiMomentumExitLong: 48, sentinel_rsiMomentumExitShort: 52, sentinel_rsiDivergenceLookback: 21, sentinel_swingPointLookback: 8 },
+    '30m': { sentinel_scoreThreshold: 75, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14, viPeriod: 16, sentinel_strongTrendAdx: 25, sentinel_strongTrendThreshold: 68, sentinel_choppyTrendAdx: 20, sentinel_choppyTrendThreshold: 80, sentinel_rsiOverextendedLong: 80, sentinel_rsiOverextendedShort: 20, sentinel_stPeriod: 10, sentinel_stMultiplier: 3, sentinel_bbwSqueezeThreshold: 0.0030, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 120, sentinel_emaDistanceVetoThreshold: 1.5, sentinel_srZoneAtrBuffer: 0.7, sentinel_invalidationCandleLimit: 12, sentinel_rsiMomentumExitLong: 48, sentinel_rsiMomentumExitShort: 52, sentinel_rsiDivergenceLookback: 21, sentinel_swingPointLookback: 10 },
+    '1h':  { sentinel_scoreThreshold: 70, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14, viPeriod: 18, sentinel_strongTrendAdx: 28, sentinel_strongTrendThreshold: 65, sentinel_choppyTrendAdx: 20, sentinel_choppyTrendThreshold: 80, sentinel_rsiOverextendedLong: 82, sentinel_rsiOverextendedShort: 18, sentinel_stPeriod: 12, sentinel_stMultiplier: 3, sentinel_bbwSqueezeThreshold: 0.0028, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 150, sentinel_emaDistanceVetoThreshold: 1.5, sentinel_srZoneAtrBuffer: 0.6, sentinel_invalidationCandleLimit: 10, sentinel_rsiMomentumExitLong: 49, sentinel_rsiMomentumExitShort: 51, sentinel_rsiDivergenceLookback: 21, sentinel_swingPointLookback: 10 },
     // Swing Trading (4h, 1d): Standard EMAs, shorter candle decay, tighter RSI bands.
-    '4h':  { sentinel_scoreThreshold: 65, sentinel_adxPeriod: 18, sentinel_rsiPeriod: 18, viPeriod: 20, sentinel_strongTrendAdx: 25, sentinel_strongTrendThreshold: 60, sentinel_choppyTrendAdx: 18, sentinel_choppyTrendThreshold: 75, sentinel_rsiOverextendedLong: 85, sentinel_rsiOverextendedShort: 15, sentinel_stPeriod: 14, sentinel_stMultiplier: 3.5, sentinel_bbwSqueezeThreshold: 0.0025, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_emaDistanceVetoThreshold: 1.2, sentinel_srZoneAtrBuffer: 0.5, sentinel_invalidationCandleLimit: 8, sentinel_rsiMomentumExitLong: 49, sentinel_rsiMomentumExitShort: 51 },
-    '1d':  { sentinel_scoreThreshold: 60, sentinel_adxPeriod: 20, sentinel_rsiPeriod: 20, viPeriod: 20, sentinel_strongTrendAdx: 20, sentinel_strongTrendThreshold: 60, sentinel_choppyTrendAdx: 18, sentinel_choppyTrendThreshold: 75, sentinel_rsiOverextendedLong: 85, sentinel_rsiOverextendedShort: 15, sentinel_stPeriod: 14, sentinel_stMultiplier: 3.5, sentinel_bbwSqueezeThreshold: 0.0028, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_emaDistanceVetoThreshold: 1.2, sentinel_srZoneAtrBuffer: 0.5, sentinel_invalidationCandleLimit: 6, sentinel_rsiMomentumExitLong: 49, sentinel_rsiMomentumExitShort: 51 },
+    '4h':  { sentinel_scoreThreshold: 65, sentinel_adxPeriod: 18, sentinel_rsiPeriod: 18, viPeriod: 20, sentinel_strongTrendAdx: 25, sentinel_strongTrendThreshold: 60, sentinel_choppyTrendAdx: 18, sentinel_choppyTrendThreshold: 75, sentinel_rsiOverextendedLong: 85, sentinel_rsiOverextendedShort: 15, sentinel_stPeriod: 14, sentinel_stMultiplier: 3.5, sentinel_bbwSqueezeThreshold: 0.0025, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_emaDistanceVetoThreshold: 1.2, sentinel_srZoneAtrBuffer: 0.5, sentinel_invalidationCandleLimit: 8, sentinel_rsiMomentumExitLong: 49, sentinel_rsiMomentumExitShort: 51, sentinel_rsiDivergenceLookback: 30, sentinel_swingPointLookback: 12 },
+    '1d':  { sentinel_scoreThreshold: 60, sentinel_adxPeriod: 20, sentinel_rsiPeriod: 20, viPeriod: 20, sentinel_strongTrendAdx: 20, sentinel_strongTrendThreshold: 60, sentinel_choppyTrendAdx: 18, sentinel_choppyTrendThreshold: 75, sentinel_rsiOverextendedLong: 85, sentinel_rsiOverextendedShort: 15, sentinel_stPeriod: 14, sentinel_stMultiplier: 3.5, sentinel_bbwSqueezeThreshold: 0.0028, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_emaDistanceVetoThreshold: 1.2, sentinel_srZoneAtrBuffer: 0.5, sentinel_invalidationCandleLimit: 6, sentinel_rsiMomentumExitLong: 49, sentinel_rsiMomentumExitShort: 51, sentinel_rsiDivergenceLookback: 30, sentinel_swingPointLookback: 12 },
 };
 
 export const ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
@@ -290,6 +325,7 @@ export const getAgentTimeframeSettings = (agentId: number, timeFrame: string): P
         case 14: agentSettings = SENTINEL_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 16: agentSettings = ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 17: agentSettings = MOMENTUM_SWING_TRADER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+        case 18: agentSettings = CONDUCTOR_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
     }
 
     return { ...smcSettings, ...agentSettings };
@@ -321,12 +357,12 @@ export const MAX_MARGIN_LOSS_PERCENT = 6; // Increased slightly for more flexibi
 // New, wider ATR multipliers for initial stop loss placement to give trades more "breathing room"
 export const TIMEFRAME_ATR_CONFIG: Record<string, { atrMultiplier: number, riskRewardRatio: number }> = {
     '1m':  { atrMultiplier: 2.0, riskRewardRatio: 1.5 },
-    '3m':  { atrMultiplier: 2.2, riskRewardRatio: 1.5 },
+    '3m':  { atrMultiplier: 2.2, riskRewardRatio: 1.6 },
     '5m':  { atrMultiplier: 2.5, riskRewardRatio: 1.8 },
     '15m': { atrMultiplier: 2.5, riskRewardRatio: 2.0 },
-    '30m': { atrMultiplier: 2.7, riskRewardRatio: 2.1 },
-    '1h':  { atrMultiplier: 2.8, riskRewardRatio: 2.2 },
-    '4h':  { atrMultiplier: 3.2, riskRewardRatio: 2.5 },
+    '30m': { atrMultiplier: 2.7, riskRewardRatio: 2.2 },
+    '1h':  { atrMultiplier: 2.8, riskRewardRatio: 2.5 },
+    '4h':  { atrMultiplier: 3.2, riskRewardRatio: 2.8 },
     '1d':  { atrMultiplier: 3.8, riskRewardRatio: 3.0 },
 };
 

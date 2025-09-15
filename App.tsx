@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -38,7 +39,7 @@ const AppContent: React.FC = () => {
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, isInitialRiskVetoEnabled,
         isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
-        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled
+        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled
     } = configState;
 
     const {
@@ -153,6 +154,8 @@ const AppContent: React.FC = () => {
                     isMarketBreadthFilterEnabled,
                     isLiquidationFilterEnabled,
                     isConfirmationCandleEnabled,
+// FIX: Property 'isMomentumConcordanceEnabled' is missing in type '{ pair: string; mode: TradingMode; executionMode: "live" | "paper"; leverage: number; marginType: "ISOLATED" | "CROSSED"; agent: Agent; timeFrame: string; investmentAmount: number; ... 31 more ...; isConfirmationCandleEnabled: boolean; }' but required in type 'BotConfig'.
+                    isMomentumConcordanceEnabled,
                 };
 
                 botManagerService.startBot(botConfig);
@@ -171,7 +174,7 @@ const AppContent: React.FC = () => {
         isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, 
         isMarketStructureVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, isMarketBreadthFilterEnabled,
-        isLiquidationFilterEnabled, isConfirmationCandleEnabled,
+        isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled,
     ]);
 
     const handleClosePosition = useCallback(async (posToClose: Position, exitReason: string = "Manual Close", exitPriceOverride?: number) => {
@@ -497,6 +500,8 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 isMarketBreadthFilterEnabled: config.isMarketBreadthFilterEnabled,
                 isLiquidationFilterEnabled: config.isLiquidationFilterEnabled,
                 isConfirmationCandleEnabled: config.isConfirmationCandleEnabled,
+// FIX: Property 'isMomentumConcordanceEnabled' is missing in type '{ isHtfConfirmationEnabled: boolean; isUniversalProfitTrailEnabled: boolean; isMinRrEnabled: boolean; invalidationSensitivity: "low" | "medium" | "high"; isAgentTrailEnabled: boolean; ... 19 more ...; isConfirmationCandleEnabled: boolean; }' but required in type 'BotConfigSnapshot'.
+                isMomentumConcordanceEnabled: config.isMomentumConcordanceEnabled,
             },
             entryContext: executionDetails.entryContext,
         };

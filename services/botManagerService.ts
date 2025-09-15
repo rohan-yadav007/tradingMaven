@@ -4,6 +4,7 @@ import * as binanceService from './binanceService';
 import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext, getAdaptiveTakeProfit } from './localAgentService';
 import { TIME_FRAMES } from '../constants';
 import { telegramBotService } from './telegramBotService';
+import { getDynamicEntryVeto } from './vetoService';
 
 const MAX_LOG_ENTRIES = 100;
 const RECONNECT_DELAY = 5000; // 5 seconds
@@ -206,7 +207,7 @@ class BotInstance {
                 return;
             }
     
-            const intervalSeconds = this.bot.config.refreshInterval ?? 10;
+            const intervalSeconds = this.bot.config.refreshInterval ?? 60;
             
             this.managementInterval = setTimeout(async () => {
                 try {
@@ -223,7 +224,7 @@ class BotInstance {
         };
         
         scheduleNextRun();
-        const intervalSeconds = this.bot.config.refreshInterval ?? 10;
+        const intervalSeconds = this.bot.config.refreshInterval ?? 60;
         this.addLog(`Periodic analysis loop started (${intervalSeconds}s interval).`, LogType.Info);
     }
     
@@ -291,6 +292,23 @@ class BotInstance {
             
             if (isForEntry && options.execute) {
                 if (signal.signal !== 'HOLD') {
+                    // --- DYNAMIC ENTRY VETO (PRE-FLIGHT CHECK) ---
+                    if (this.bot.config.isMomentumConcordanceEnabled) {
+                        this.addLog('Performing Momentum Concordance check...', LogType.Info);
+                        const livePriceForVeto = this.bot.livePrice || 0;
+                        const vetoCheck = await getDynamicEntryVeto(klinesForAnalysis, livePriceForVeto, signal.signal, this.bot.config);
+                        
+                        // Always log the result of the check for visibility
+                        this.addLog(vetoCheck.reason, vetoCheck.veto ? LogType.Error : LogType.Success);
+                        
+                        if (vetoCheck.veto) {
+                            // Update analysis for UI feedback and prevent execution
+                            this.updateState({ analysis: { ...signal, signal: 'HOLD', reasons: [vetoCheck.reason, ...signal.reasons] } });
+                            return; 
+                        }
+                    }
+                    // --- END OF VETO BLOCK ---
+
                     this.updateState({ status: BotStatus.ExecutingTrade });
                     await this.executeTrade(signal, klinesForAnalysis, htfKlines);
                 } else {
@@ -674,7 +692,7 @@ class BotManagerService {
         }
     };
     
-    public updateBotConfig(botId: string, partialConfig: Partial<BotConfig>) {
+    public updateBotConfig = (botId: string, partialConfig: Partial<BotConfig>) => {
         const bot = this.bots.get(botId);
         if (bot) {
             const newConfig = { ...bot.bot.config, ...partialConfig };

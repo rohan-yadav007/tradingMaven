@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { Agent, TradeSignal, AgentParams, SentinelAnalysis } from '../types';
+import { Agent, TradeSignal, AgentParams, SentinelAnalysis, ConductorAnalysis } from '../types';
 import { ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, InfoIcon } from './icons';
 
 interface AnalysisPreviewProps {
@@ -107,6 +107,41 @@ const SentinelAnalysisDisplay: React.FC<{ analysis: SentinelAnalysis }> = ({ ana
     );
 };
 
+const ConductorAnalysisDisplay: React.FC<{ analysis: ConductorAnalysis }> = ({ analysis }) => {
+    const { bullish, bearish } = analysis;
+
+    return (
+        <div className="space-y-4 text-sm">
+            <div>
+                <div className="flex justify-between items-baseline mb-1">
+                    <span className="font-bold text-emerald-600 dark:text-emerald-400">Bullish Conviction</span>
+                    <span className="font-bold text-lg text-emerald-600 dark:text-emerald-400">{bullish.total.toFixed(0)}</span>
+                </div>
+                <ProgressBar value={bullish.total} colorClass="bg-emerald-500" />
+                <div className="grid grid-cols-4 gap-2 text-xs text-center mt-1.5 text-slate-500 dark:text-slate-400">
+                    <span>Struct: {bullish.structure.toFixed(0)}</span>
+                    <span>Moment: {bullish.momentum.toFixed(0)}</span>
+                    <span>Context: {bullish.context.toFixed(0)}</span>
+                    <span>Confirm: {bullish.confirmation.toFixed(0)}</span>
+                </div>
+            </div>
+             <div>
+                <div className="flex justify-between items-baseline mb-1">
+                    <span className="font-bold text-rose-600 dark:text-rose-400">Bearish Conviction</span>
+                    <span className="font-bold text-lg text-rose-600 dark:text-rose-400">{bearish.total.toFixed(0)}</span>
+                </div>
+                <ProgressBar value={bearish.total} colorClass="bg-rose-500" />
+                <div className="grid grid-cols-4 gap-2 text-xs text-center mt-1.5 text-slate-500 dark:text-slate-400">
+                    <span>Struct: {bearish.structure.toFixed(0)}</span>
+                    <span>Moment: {bearish.momentum.toFixed(0)}</span>
+                    <span>Context: {bearish.context.toFixed(0)}</span>
+                    <span>Confirm: {bearish.confirmation.toFixed(0)}</span>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 
 export const AnalysisPreview: React.FC<AnalysisPreviewProps> = ({ analysis, isLoading, agent, agentParams = {} }) => {
     const hasCustomParams = Object.keys(agentParams).length > 0;
@@ -120,6 +155,7 @@ export const AnalysisPreview: React.FC<AnalysisPreviewProps> = ({ analysis, isLo
     
     const displayAnalysis = analysis || prevAnalysisRef.current;
     const isSentinelAgent = agent.id === 14;
+    const isConductorAgent = agent.id === 18;
 
     return (
         <div className="relative">
@@ -139,6 +175,9 @@ export const AnalysisPreview: React.FC<AnalysisPreviewProps> = ({ analysis, isLo
                         
                         {isSentinelAgent && displayAnalysis.sentinelAnalysis && (
                             <SentinelAnalysisDisplay analysis={displayAnalysis.sentinelAnalysis} />
+                        )}
+                        {isConductorAgent && displayAnalysis.conductorAnalysis && (
+                            <ConductorAnalysisDisplay analysis={displayAnalysis.conductorAnalysis} />
                         )}
 
                         {displayAnalysis.reasons.length > 0 && (

@@ -2,8 +2,8 @@
 
 import { Kline, BotConfig, MarketDataContext, TradeSignal, SentinelAnalysis, MACDOutput, ADXOutput, BollingerBandsOutput } from '../../types';
 import { EMA, MACD, RSI, ADX, BollingerBands, ATR, OBV, SMA } from 'technicalindicators';
-import { getLast, getPenultimate, recognizeCandlestickPattern, VortexIndicator, Supertrend } from './agentUtils';
-import { calculateSupportResistance } from '../chartAnalysisService';
+import { getLast, getPenultimate, recognizeCandlestickPattern, VortexIndicator, Supertrend, detectRsiDivergence } from './agentUtils';
+import { calculateSupportResistance, findSwingPoints, analyzeMarketStructure } from '../chartAnalysisService';
 import { getInitialAgentTargets } from '../riskManagementService';
 
 export const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfContext?: MarketDataContext): TradeSignal => {
@@ -25,7 +25,8 @@ export const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfCont
     const emaSlow = getLast(EMA.calculate({ period: params.sentinel_emaSlowPeriod!, values: closes }))! as number;
     const macdValues = MACD.calculate({ values: closes, fastPeriod: params.sentinel_macdFastPeriod!, slowPeriod: params.sentinel_macdSlowPeriod!, signalPeriod: params.sentinel_macdSignalPeriod!, SimpleMAOscillator: false, SimpleMASignal: false });
     const macd = getLast(macdValues)! as MACDOutput;
-    const rsi = getLast(RSI.calculate({ values: closes, period: params.sentinel_rsiPeriod! }))! as number;
+    const rsiValues = RSI.calculate({ values: closes, period: params.sentinel_rsiPeriod! });
+    const rsi = getLast(rsiValues)! as number;
     const adxValues = ADX.calculate({ high: highs, low: lows, close: closes, period: params.sentinel_adxPeriod! });
     const adx = getLast(adxValues)! as ADXOutput;
     const prevAdx = getPenultimate(adxValues)! as ADXOutput;
@@ -61,32 +62,46 @@ export const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfCont
     }
     
     // --- 3. DYNAMIC WEIGHTING ---
-    const BASE_WEIGHTS = { trend: 0.35, momentum: 0.30, confirmation: 0.15, structure: 0.20 };
+    const BASE_WEIGHTS = { trend: 0.30, momentum: 0.30, confirmation: 0.15, structure: 0.25 };
     let finalWeights = { ...BASE_WEIGHTS };
     const isAdxRising = adx.adx > prevAdx.adx;
 
-    if (adx.adx > 25) { // Strongly trending market: Boost Trend weight
+    if (adx.adx > params.sentinel_strongTrendAdx) {
         finalWeights = { ...finalWeights, trend: BASE_WEIGHTS.trend * params.sentinel_trendingWeightMultiplier, momentum: BASE_WEIGHTS.momentum / params.sentinel_trendingWeightMultiplier };
         reasons.push(`ℹ️ Weights: Trend Boosted`);
-    } else if (adx.adx > 20 && isAdxRising) { // Transitioning market: Boost Momentum weight
+    } else if (adx.adx > params.sentinel_choppyTrendAdx && isAdxRising) {
         finalWeights = { ...finalWeights, momentum: BASE_WEIGHTS.momentum * params.sentinel_transitioningWeightMultiplier, trend: BASE_WEIGHTS.trend / params.sentinel_transitioningWeightMultiplier };
         reasons.push(`ℹ️ Weights: Momentum Boosted`);
     }
 
     // --- 4. SCORING (Calculate raw points for each category) ---
-    const MAX_POINTS = { trend: 35, momentum: 30, confirmation: 15, structure: 20 };
+    const MAX_POINTS = { trend: 30, momentum: 30, confirmation: 15, structure: 25 };
     let bullishPoints = { trend: 0, momentum: 0, confirmation: 0, structure: 0 };
     let bearishPoints = { trend: 0, momentum: 0, confirmation: 0, structure: 0 };
     
-    // Trend Score (Max 35)
+    // Trend Score (Max 30)
     if (currentPrice > emaSlow) bullishPoints.trend += 15; else bearishPoints.trend += 15;
     if (emaFast > emaSlow) bullishPoints.trend += 10; else bearishPoints.trend += 10;
     if (adx.adx > 22) {
-        if (adx.pdi > adx.mdi) bullishPoints.trend += 10;
-        else if (adx.mdi > adx.pdi) bearishPoints.trend += 10;
+        if (adx.pdi > adx.mdi) bullishPoints.trend += 5;
+        else if (adx.mdi > adx.pdi) bearishPoints.trend += 5;
     }
 
-    // Momentum Score (Max 30) -> ENHANCED WITH FRESHNESS CHECK
+    // Momentum Score (Max 30)
+    // FIX: Corrected divergence scoring to be purely additive, preventing negative scores.
+    const hasBearishDivergence = detectRsiDivergence(klines, rsiValues, 'LONG', params.sentinel_rsiDivergenceLookback!);
+    const hasBullishDivergence = detectRsiDivergence(klines, rsiValues, 'SHORT', params.sentinel_rsiDivergenceLookback!);
+
+    if (hasBearishDivergence) {
+        bearishPoints.momentum += 25; // Add points to bearish score
+        reasons.push(`✅ Momentum: Bearish RSI Divergence detected.`);
+    }
+
+    if (hasBullishDivergence) {
+        bullishPoints.momentum += 25; // Add points to bullish score
+        reasons.push(`✅ Momentum: Bullish RSI Divergence detected.`);
+    }
+    
     let bullishCross = false;
     let bearishCross = false;
     const freshnessLookback = params.sentinel_macdCrossoverFreshness!;
@@ -98,22 +113,20 @@ export const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfCont
         if (prev.MACD! > prev.signal! && current.MACD! < current.signal!) bearishCross = true;
     }
     if (bullishCross) bullishPoints.momentum += 15;
-    else if (macd.histogram! > 0) bullishPoints.momentum += 5; // Reduced points for non-fresh signal
+    else if (macd.histogram! > 0) bullishPoints.momentum += 5;
     if (bearishCross) bearishPoints.momentum += 15;
-    else if (macd.histogram! < 0) bearishPoints.momentum += 5; // Reduced points for non-fresh signal
+    else if (macd.histogram! < 0) bearishPoints.momentum += 5;
     
-    // RSI: (Max 10)
     let rsiBuyThreshold = 55; let rsiSellThreshold = 45;
     if (adx.adx > 30) { rsiBuyThreshold = 60; rsiSellThreshold = 40; } 
     else if (adx.adx < 20) { rsiBuyThreshold = 52; rsiSellThreshold = 48; }
     if (rsi > rsiBuyThreshold) bullishPoints.momentum += 10;
     else if (rsi < rsiSellThreshold) bearishPoints.momentum += 10;
     
-    // VI: (Max 5)
     if (last_vi_plus > last_vi_minus) bullishPoints.momentum += 5;
     else if (last_vi_minus > last_vi_plus) bearishPoints.momentum += 5;
 
-    // Confirmation Score (Max 15) -> OBV Slope
+    // Confirmation Score (Max 15)
     const obvLookback = 5;
     if (obv.length > obvLookback) {
         const obvSlice = obv.slice(-obvLookback);
@@ -121,39 +134,35 @@ export const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfCont
         const lastObv = obvSlice[obvSlice.length - 1];
         const obvSma = getLast(SMA.calculate({ period: 20, values: obv }))!;
         const obvChange = (lastObv - firstObv) / obvSma;
-        if (obvChange > 0.01) bullishPoints.confirmation += 15 * Math.min(1, obvChange / 0.05); // Cap score contribution
+        if (obvChange > 0.01) bullishPoints.confirmation += 15 * Math.min(1, obvChange / 0.05);
         if (obvChange < -0.01) bearishPoints.confirmation += 15 * Math.min(1, Math.abs(obvChange) / 0.05);
     }
     
-    // Structure Score (Max 20) -> RE-ENGINEERED FOR DYNAMIC R:R
-    // FIX: Corrected variable names to highs, lows, and closes.
-    const agentSl = getLast(Supertrend.calculate({ high: highs, low: lows, close: closes, period: params.sentinel_stPeriod, multiplier: params.sentinel_stMultiplier })) as number | undefined;
-    if (agentSl) {
-        const srLevels = calculateSupportResistance(klines, 15, 0.01);
-        const nextResistance = srLevels.resistances.find(r => r.price > currentPrice);
-        const nextSupport = srLevels.supports.find(s => s.price < currentPrice);
-        
-        // Bullish case
-        if (nextResistance) {
-            const risk = Math.abs(currentPrice - agentSl);
-            const reward = Math.abs(nextResistance.price - currentPrice);
-            const rr = risk > 0 ? reward / risk : 0;
-            // Scale points based on R:R, maxing out at 2.5 R:R
-            bullishPoints.structure += Math.min(15, (rr / 2.5) * 15);
-        } else {
-            bullishPoints.structure += 15; // No resistance ahead is a good sign
-        }
+    // Structure Score (Max 25)
+    const swingPoints = findSwingPoints(klines, params.sentinel_swingPointLookback!);
+    const structureAnalysis = analyzeMarketStructure(swingPoints);
+    reasons.push(`ℹ️ Structure: ${structureAnalysis.reason}`);
+    
+    bullishPoints.structure = 0;
+    bearishPoints.structure = 0;
 
-        // Bearish case
-        if (nextSupport) {
-            const risk = Math.abs(currentPrice - agentSl);
-            const reward = Math.abs(nextSupport.price - currentPrice);
-            const rr = risk > 0 ? reward / risk : 0;
-            bearishPoints.structure += Math.min(15, (rr / 2.5) * 15);
-        } else {
-            bearishPoints.structure += 15; // No support below is a good sign
-        }
+    if (structureAnalysis.lastSignal === 'ChoCH_Bullish') {
+        bullishPoints.structure += 20;
+    } else if (structureAnalysis.structure === 'Uptrend') {
+        bullishPoints.structure += 20;
     }
+
+    if (structureAnalysis.lastSignal === 'ChoCH_Bearish') {
+        bearishPoints.structure += 20;
+    } else if (structureAnalysis.structure === 'Downtrend') {
+        bearishPoints.structure += 20;
+    }
+
+    if (structureAnalysis.structure === 'Ranging') {
+        bullishPoints.structure += 5;
+        bearishPoints.structure += 5;
+    }
+
     if (candlePattern) {
         if (candlePattern.type === 'bullish') bullishPoints.structure += 5;
         if (candlePattern.type === 'bearish') bearishPoints.structure += 5;
@@ -188,8 +197,6 @@ export const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfCont
     };
 
     // --- 6. PULLBACK & EXHAUSTION VETO (POST-SCORING) ---
-    // REMOVED: Contradictory EMA Distance Veto.
-
     if (totalBull >= threshold && totalBull > totalBear) {
         if (rsi > params.sentinel_rsiOverextendedLong!) {
             reasons.unshift(`❌ VETO: RSI is overextended (${rsi.toFixed(1)} > ${params.sentinel_rsiOverextendedLong}).`);

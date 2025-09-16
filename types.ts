@@ -214,35 +214,30 @@ export interface AgentParams {
     
     // Agent 14: The Sentinel
     sentinel_scoreThreshold?: number;
-    sentinel_rsiOverextendedLong?: number;
-    sentinel_rsiOverextendedShort?: number;
-    sentinel_bbwSqueezeThreshold?: number;
-    sentinel_atrChaosThreshold?: number;
+    sentinel_emaFastPeriod?: number;
+    sentinel_emaSlowPeriod?: number;
+    sentinel_adxPeriod?: number;
+    sentinel_rsiPeriod?: number;
+    sentinel_stPeriod?: number;
+    sentinel_stMultiplier?: number;
+    sentinel_invalidationCandleLimit?: number;
+    sentinel_rsiMomentumExitLong?: number;
+    sentinel_rsiMomentumExitShort?: number;
+    sentinel_rsiDivergenceLookback?: number;
+    sentinel_bbwAtrFactor?: number; // New: For dynamic BBW threshold
+    sentinel_emaDistanceAtrMultiplier?: number; // New: For EMA distance veto
+    // Fix: Add missing sentinel properties
+    sentinel_useSrLevelsForTp?: boolean;
     sentinel_strongTrendAdx?: number;
     sentinel_strongTrendThreshold?: number;
     sentinel_choppyTrendAdx?: number;
     sentinel_choppyTrendThreshold?: number;
     sentinel_trendingWeightMultiplier?: number;
     sentinel_transitioningWeightMultiplier?: number;
-    sentinel_emaFastPeriod?: number;
-    sentinel_emaSlowPeriod?: number;
-    sentinel_adxPeriod?: number;
-    sentinel_rsiPeriod?: number;
-    sentinel_macdFastPeriod?: number;
-    sentinel_macdSlowPeriod?: number;
-    sentinel_macdSignalPeriod?: number;
-    sentinel_useSrLevelsForTp?: boolean;
-    sentinel_stPeriod?: number;
-    sentinel_stMultiplier?: number;
-    sentinel_emaDistanceVetoThreshold?: number;
-    sentinel_srZoneAtrBuffer?: number;
-    sentinel_invalidationCandleLimit?: number;
-    sentinel_rsiMomentumExitLong?: number;
-    sentinel_rsiMomentumExitShort?: number;
+    sentinel_bbwSqueezeThreshold?: number;
+    sentinel_atrChaosThreshold?: number;
     sentinel_volumeFilterMultiplier?: number;
-    sentinel_macdCrossoverFreshness?: number;
-    sentinel_rsiDivergenceLookback?: number;
-    sentinel_swingPointLookback?: number;
+    sentinel_srZoneAtrBuffer?: number;
 
     // Agent 17: Momentum Swing Trader
     mst_emaFastPeriod?: number;
@@ -365,6 +360,7 @@ export interface BotConfig {
     isLiquidationFilterEnabled?: boolean;
     isConfirmationCandleEnabled?: boolean;
     isMomentumConcordanceEnabled: boolean;
+    finalEntryFailSafe?: 'fail-open' | 'fail-closed';
 }
 
 export interface BotConfigSnapshot {
@@ -394,6 +390,7 @@ export interface BotConfigSnapshot {
     isLiquidationFilterEnabled?: boolean;
     isConfirmationCandleEnabled?: boolean;
     isMomentumConcordanceEnabled: boolean;
+    finalEntryFailSafe?: 'fail-open' | 'fail-closed';
 }
 
 export interface Position {
@@ -547,8 +544,8 @@ export interface IchimokuCloudOutput {
 }
 
 export interface SentinelAnalysis {
-    bullish: { total: number; trend: number; momentum: number; confirmation: number; structure: number; };
-    bearish: { total: number; trend: number; momentum: number; confirmation: number; structure: number; };
+    bullish: { total: number; trend: number; momentum: number; confirmation: number; };
+    bearish: { total: number; trend: number; momentum: number; confirmation: number; };
 }
 
 export interface ConductorAnalysis {

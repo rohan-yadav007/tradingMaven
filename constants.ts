@@ -23,7 +23,6 @@ export const MIN_RISK_REWARD_RATIO = 1.5;
  */
 export const MIN_PROFIT_BUFFER_MULTIPLIER = 1.5;
 
-// FIX: Add and export getHigherTimeframe function.
 /**
  * Finds the next higher timeframe from the standard list.
  * @param timeframe The current timeframe (e.g., '5m').
@@ -147,37 +146,32 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     ch_trendEmaPeriod: 200,
     ch_adxThreshold: 22,
     
-    // Agent 14: The Sentinel
+    // Agent 14: The Sentinel (Refactored for adaptive logic)
     sentinel_scoreThreshold: 70,
-    sentinel_rsiOverextendedLong: 80,
-    sentinel_rsiOverextendedShort: 20,
-    sentinel_bbwSqueezeThreshold: 0.008,
-    sentinel_atrChaosThreshold: 3.5,
-    sentinel_strongTrendAdx: 30,
-    sentinel_strongTrendThreshold: 65,
-    sentinel_choppyTrendAdx: 23,
-    sentinel_choppyTrendThreshold: 80,
-    sentinel_trendingWeightMultiplier: 1.5,
-    sentinel_transitioningWeightMultiplier: 1.5,
     sentinel_emaFastPeriod: 50,
     sentinel_emaSlowPeriod: 200,
     sentinel_adxPeriod: 14,
     sentinel_rsiPeriod: 14,
-    sentinel_macdFastPeriod: 12,
-    sentinel_macdSlowPeriod: 26,
-    sentinel_macdSignalPeriod: 9,
-    sentinel_useSrLevelsForTp: true,
     sentinel_stPeriod: 10,
-    sentinel_stMultiplier: 3,
-    sentinel_emaDistanceVetoThreshold: 1.5,
-    sentinel_srZoneAtrBuffer: 0.5,
+    sentinel_stMultiplier: 3.0,
     sentinel_invalidationCandleLimit: 15,
     sentinel_rsiMomentumExitLong: 48,
     sentinel_rsiMomentumExitShort: 52,
-    sentinel_volumeFilterMultiplier: 0.8,
-    sentinel_macdCrossoverFreshness: 3,
     sentinel_rsiDivergenceLookback: 21,
-    sentinel_swingPointLookback: 8,
+    sentinel_bbwAtrFactor: 0.5,
+    sentinel_emaDistanceAtrMultiplier: 2.5,
+    // Fix: Add default values for missing sentinel properties
+    sentinel_useSrLevelsForTp: false,
+    sentinel_strongTrendAdx: 28,
+    sentinel_strongTrendThreshold: 65,
+    sentinel_choppyTrendAdx: 20,
+    sentinel_choppyTrendThreshold: 85,
+    sentinel_trendingWeightMultiplier: 1.2,
+    sentinel_transitioningWeightMultiplier: 1.5,
+    sentinel_bbwSqueezeThreshold: 0.015,
+    sentinel_atrChaosThreshold: 3.0,
+    sentinel_volumeFilterMultiplier: 0.8,
+    sentinel_srZoneAtrBuffer: 0.5,
 
     // Agent 17: Momentum Swing Trader
     mst_emaFastPeriod: 50,
@@ -276,17 +270,15 @@ export const CHAMELEON_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> 
 };
 
 export const SENTINEL_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    // Scalping (1m, 3m, 5m): Faster EMAs, more tolerant to volatility, longer candle decay times.
-    '1m':  { sentinel_scoreThreshold: 90, sentinel_adxPeriod: 10, sentinel_rsiPeriod: 10, viPeriod: 10, sentinel_strongTrendAdx: 35, sentinel_strongTrendThreshold: 80, sentinel_choppyTrendAdx: 27, sentinel_choppyTrendThreshold: 90, sentinel_rsiOverextendedLong: 70, sentinel_rsiOverextendedShort: 30, sentinel_stPeriod: 10, sentinel_stMultiplier: 2.5, sentinel_bbwSqueezeThreshold: 0.0045, sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_emaDistanceVetoThreshold: 1.8, sentinel_srZoneAtrBuffer: 1.2, sentinel_invalidationCandleLimit: 30, sentinel_rsiMomentumExitLong: 45, sentinel_rsiMomentumExitShort: 55, sentinel_rsiDivergenceLookback: 14, sentinel_swingPointLookback: 5 },
-    '3m':  { sentinel_scoreThreshold: 85, sentinel_adxPeriod: 10, sentinel_rsiPeriod: 10, viPeriod: 10, sentinel_strongTrendAdx: 32, sentinel_strongTrendThreshold: 78, sentinel_choppyTrendAdx: 25, sentinel_choppyTrendThreshold: 88, sentinel_rsiOverextendedLong: 72, sentinel_rsiOverextendedShort: 28, sentinel_stPeriod: 10, sentinel_stMultiplier: 2.5, sentinel_bbwSqueezeThreshold: 0.0040, sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_emaDistanceVetoThreshold: 1.8, sentinel_srZoneAtrBuffer: 1.1, sentinel_invalidationCandleLimit: 25, sentinel_rsiMomentumExitLong: 46, sentinel_rsiMomentumExitShort: 54, sentinel_rsiDivergenceLookback: 14, sentinel_swingPointLookback: 5 },
-    '5m':  { sentinel_scoreThreshold: 80, sentinel_adxPeriod: 12, sentinel_rsiPeriod: 12, viPeriod: 12, sentinel_strongTrendAdx: 30, sentinel_strongTrendThreshold: 75, sentinel_choppyTrendAdx: 23, sentinel_choppyTrendThreshold: 85, sentinel_rsiOverextendedLong: 74, sentinel_rsiOverextendedShort: 22, sentinel_stPeriod: 12, sentinel_stMultiplier: 3, sentinel_bbwSqueezeThreshold: 0.0035, sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_emaDistanceVetoThreshold: 1.8, sentinel_srZoneAtrBuffer: 1.0, sentinel_invalidationCandleLimit: 20, sentinel_rsiMomentumExitLong: 47, sentinel_rsiMomentumExitShort: 53, sentinel_rsiDivergenceLookback: 14, sentinel_swingPointLookback: 8 },
-    // Day Trading (15m, 30m, 1h): Balanced parameters.
-    '15m': { sentinel_scoreThreshold: 75, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14, viPeriod: 14, sentinel_strongTrendAdx: 28, sentinel_strongTrendThreshold: 70, sentinel_choppyTrendAdx: 22, sentinel_choppyTrendThreshold: 82, sentinel_rsiOverextendedLong: 80, sentinel_rsiOverextendedShort: 20, sentinel_stPeriod: 10, sentinel_stMultiplier: 3, sentinel_bbwSqueezeThreshold: 0.0032, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 100, sentinel_emaDistanceVetoThreshold: 1.5, sentinel_srZoneAtrBuffer: 0.8, sentinel_invalidationCandleLimit: 15, sentinel_rsiMomentumExitLong: 48, sentinel_rsiMomentumExitShort: 52, sentinel_rsiDivergenceLookback: 21, sentinel_swingPointLookback: 8 },
-    '30m': { sentinel_scoreThreshold: 75, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14, viPeriod: 16, sentinel_strongTrendAdx: 25, sentinel_strongTrendThreshold: 68, sentinel_choppyTrendAdx: 20, sentinel_choppyTrendThreshold: 80, sentinel_rsiOverextendedLong: 80, sentinel_rsiOverextendedShort: 20, sentinel_stPeriod: 10, sentinel_stMultiplier: 3, sentinel_bbwSqueezeThreshold: 0.0030, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 120, sentinel_emaDistanceVetoThreshold: 1.5, sentinel_srZoneAtrBuffer: 0.7, sentinel_invalidationCandleLimit: 12, sentinel_rsiMomentumExitLong: 48, sentinel_rsiMomentumExitShort: 52, sentinel_rsiDivergenceLookback: 21, sentinel_swingPointLookback: 10 },
-    '1h':  { sentinel_scoreThreshold: 70, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14, viPeriod: 18, sentinel_strongTrendAdx: 28, sentinel_strongTrendThreshold: 65, sentinel_choppyTrendAdx: 20, sentinel_choppyTrendThreshold: 80, sentinel_rsiOverextendedLong: 82, sentinel_rsiOverextendedShort: 18, sentinel_stPeriod: 12, sentinel_stMultiplier: 3, sentinel_bbwSqueezeThreshold: 0.0028, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 150, sentinel_emaDistanceVetoThreshold: 1.5, sentinel_srZoneAtrBuffer: 0.6, sentinel_invalidationCandleLimit: 10, sentinel_rsiMomentumExitLong: 49, sentinel_rsiMomentumExitShort: 51, sentinel_rsiDivergenceLookback: 21, sentinel_swingPointLookback: 10 },
-    // Swing Trading (4h, 1d): Standard EMAs, shorter candle decay, tighter RSI bands.
-    '4h':  { sentinel_scoreThreshold: 65, sentinel_adxPeriod: 18, sentinel_rsiPeriod: 18, viPeriod: 20, sentinel_strongTrendAdx: 25, sentinel_strongTrendThreshold: 60, sentinel_choppyTrendAdx: 18, sentinel_choppyTrendThreshold: 75, sentinel_rsiOverextendedLong: 85, sentinel_rsiOverextendedShort: 15, sentinel_stPeriod: 14, sentinel_stMultiplier: 3.5, sentinel_bbwSqueezeThreshold: 0.0025, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_emaDistanceVetoThreshold: 1.2, sentinel_srZoneAtrBuffer: 0.5, sentinel_invalidationCandleLimit: 8, sentinel_rsiMomentumExitLong: 49, sentinel_rsiMomentumExitShort: 51, sentinel_rsiDivergenceLookback: 30, sentinel_swingPointLookback: 12 },
-    '1d':  { sentinel_scoreThreshold: 60, sentinel_adxPeriod: 20, sentinel_rsiPeriod: 20, viPeriod: 20, sentinel_strongTrendAdx: 20, sentinel_strongTrendThreshold: 60, sentinel_choppyTrendAdx: 18, sentinel_choppyTrendThreshold: 75, sentinel_rsiOverextendedLong: 85, sentinel_rsiOverextendedShort: 15, sentinel_stPeriod: 14, sentinel_stMultiplier: 3.5, sentinel_bbwSqueezeThreshold: 0.0028, sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_emaDistanceVetoThreshold: 1.2, sentinel_srZoneAtrBuffer: 0.5, sentinel_invalidationCandleLimit: 6, sentinel_rsiMomentumExitLong: 49, sentinel_rsiMomentumExitShort: 51, sentinel_rsiDivergenceLookback: 30, sentinel_swingPointLookback: 12 },
+    // Adaptive SuperTrend Multiplier: Higher for low TFs, lower for high TFs.
+    '1m':  { sentinel_stMultiplier: 3.5 },
+    '3m':  { sentinel_stMultiplier: 3.5 },
+    '5m':  { sentinel_stMultiplier: 3.0 },
+    '15m': { sentinel_stMultiplier: 3.0 },
+    '30m': { sentinel_stMultiplier: 3.0 },
+    '1h':  { sentinel_stMultiplier: 3.0 },
+    '4h':  { sentinel_stMultiplier: 2.5 },
+    '1d':  { sentinel_stMultiplier: 2.5 },
 };
 
 export const ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
@@ -375,3 +367,11 @@ export const IS_CONFIRMATION_CANDLE_ENABLED = true;
  * A new universal default for the immediate momentum concordance check.
  */
 export const IS_MOMENTUM_CONCORDANCE_ENABLED = true;
+
+export const MICRO_TIMEFRAME_MAP: Record<string, string> = {
+  '1m': '1m', '3m': '1m', '5m': '1m',
+  '15m': '3m', '30m': '3m',
+  '1h': '5m', '4h':'15m', '1d': '30m'
+};
+
+export const getMicroTimeframe = (tf: string) => MICRO_TIMEFRAME_MAP[tf] || '1m';

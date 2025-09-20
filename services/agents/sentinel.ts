@@ -18,124 +18,119 @@ export const getTheSentinelSignal = (klines: Kline[], config: BotConfig, htfCont
     const reasons: string[] = [];
 
     // --- 1. INDICATOR CALCULATIONS ---
-    const atr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: 14 }))! as number;
     const emaFast = getLast(EMA.calculate({ period: params.sentinel_emaFastPeriod!, values: closes }))! as number;
     const emaSlow = getLast(EMA.calculate({ period: params.sentinel_emaSlowPeriod!, values: closes }))! as number;
+    const rsiValues = RSI.calculate({ values: closes, period: params.sentinel_rsiPeriod! });
+    const rsi = getLast(rsiValues)! as number;
     const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.sentinel_adxPeriod! }))! as ADXOutput;
     const bbValues = BollingerBands.calculate({ period: 20, stdDev: 2, values: closes });
     const bb = getLast(bbValues)! as BollingerBandsOutput;
-    const rsiValues = RSI.calculate({ values: closes, period: params.sentinel_rsiPeriod! });
-    const rsi = getLast(rsiValues)! as number;
+    const atr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: 14 }))! as number;
 
-    // --- 2. DYNAMIC VETO CHECKS ---
-
-    // Veto 1: Price is over-extended from its EMA baseline
-    const emaDistance = Math.abs(currentPrice - emaSlow);
-    const emaDistanceThreshold = atr * params.sentinel_emaDistanceAtrMultiplier!;
-    if (emaDistance > emaDistanceThreshold) {
-        return { signal: 'HOLD', reasons: [`❌ VETO: Price over-extended from baseline EMA (Dist: ${emaDistance.toFixed(2)} > Veto: ${emaDistanceThreshold.toFixed(2)})`] };
+    // --- 2. VETO FILTERS (DYNAMIC & CONTEXT-AWARE) ---
+    // A. EMA Distance Veto: Prevent entering trades too far from the mean.
+    const emaDistance = Math.abs(emaFast - emaSlow);
+    if (emaDistance > atr * params.sentinel_emaDistanceVetoThreshold) {
+        return { signal: 'HOLD', reasons: [`❌ VETO: Price is over-extended from EMAs (Distance > ${params.sentinel_emaDistanceVetoThreshold}x ATR)`] };
     }
-    reasons.push(`✅ EMA Distance: OK`);
 
-    // Veto 2: Volatility is too low (squeeze)
-    const bbWidths = bbValues.map(b => (b.upper - b.lower) / b.middle);
-    const lastBbWidth = getLast(bbWidths)!;
-    const dynamicBbwThreshold = (atr / currentPrice) * params.sentinel_bbwAtrFactor!;
-    if (lastBbWidth < dynamicBbwThreshold) {
-        return { signal: 'HOLD', reasons: [`ℹ️ Standby: Low volatility squeeze (BBW: ${lastBbWidth.toFixed(4)} < Threshold: ${dynamicBbwThreshold.toFixed(4)})`] };
+    // B. Volatility Squeeze Veto: Only trade when volatility is present.
+    const bbWidth = (bb.upper - bb.lower) / bb.middle;
+    const dynamicBbwThreshold = (atr / currentPrice) * 0.5; // Factor of 0.5 is a sensible default
+    if (bbWidth < dynamicBbwThreshold) {
+        return { signal: 'HOLD', reasons: [`ℹ️ Standby: Low volatility squeeze detected (BBW ${bbWidth.toFixed(4)} < Threshold ${dynamicBbwThreshold.toFixed(4)})`] };
     }
-    reasons.push(`✅ Volatility: OK`);
+    reasons.push(`✅ Volatility: OK (BBW: ${bbWidth.toFixed(4)})`);
 
 
-    // --- 3. WEIGHTED SCORING SYSTEM ---
-    let bullishScore = 0;
-    let bearishScore = 0;
-    const analysisBreakdown = {
-        bullish: { trend: 0, momentum: 0, confirmation: 0 },
-        bearish: { trend: 0, momentum: 0, confirmation: 0 }
+    // --- 3. WEIGHTED CHECKLIST SCORING ---
+    const scores = {
+        bullish: { trend: 0, alignment: 0, volatility: 0, momentum: 0 },
+        bearish: { trend: 0, alignment: 0, volatility: 0, momentum: 0 }
     };
-    // Fix: Correctly destructure sentinel_scoreThreshold from params
-    const { sentinel_scoreThreshold: scoreThreshold } = params;
+    const WEIGHTS = { trend: 40, alignment: 30, volatility: 20, momentum: 10 };
 
-    // Pillar A: Trend (Max 70 points = 40 ADX + 30 EMA)
-    const ADX_WEIGHT = 40;
-    const EMA_WEIGHT = 30;
-    if (adx.adx > 22) {
-        if (adx.pdi > adx.mdi) {
-            bullishScore += ADX_WEIGHT;
-            analysisBreakdown.bullish.trend += ADX_WEIGHT;
-        } else {
-            bearishScore += ADX_WEIGHT;
-            analysisBreakdown.bearish.trend += ADX_WEIGHT;
-        }
-    }
-    if (emaFast > emaSlow) {
-        bullishScore += EMA_WEIGHT;
-        analysisBreakdown.bullish.trend += EMA_WEIGHT;
+    // Pillar 1: Trend (ADX) - 40 points
+    if (adx.adx > params.sentinel_strongTrendAdx) {
+        reasons.push(`✅ Trend: Strong (ADX ${adx.adx.toFixed(1)} > ${params.sentinel_strongTrendAdx})`);
+        if (adx.pdi > adx.mdi) scores.bullish.trend = WEIGHTS.trend;
+        else if (adx.mdi > adx.pdi) scores.bearish.trend = WEIGHTS.trend;
     } else {
-        bearishScore += EMA_WEIGHT;
-        analysisBreakdown.bearish.trend += EMA_WEIGHT;
+        reasons.push(`❌ Trend: Weak (ADX ${adx.adx.toFixed(1)} < ${params.sentinel_strongTrendAdx})`);
     }
 
-    // Pillar B: Confirmation (Max 20 points - BBW Squeeze Breakout)
-    const BBW_WEIGHT = 20;
-    const bbwSma = getLast(SMA.calculate({ period: 20, values: bbWidths }))!;
-    if (lastBbWidth > bbwSma * 1.2) { // Is expanding
-        if (currentPrice > bb.upper) {
-            bullishScore += BBW_WEIGHT;
-            analysisBreakdown.bullish.confirmation += BBW_WEIGHT;
-        } else if (currentPrice < bb.lower) {
-            bearishScore += BBW_WEIGHT;
-            analysisBreakdown.bearish.confirmation += BBW_WEIGHT;
-        }
+    // Pillar 2: Alignment (EMA) - 30 points
+    if (emaFast > emaSlow && currentPrice > emaFast) {
+        scores.bullish.alignment = WEIGHTS.alignment;
+        reasons.push(`✅ Alignment: Bullish (Price > EMA${params.sentinel_emaFastPeriod} > EMA${params.sentinel_emaSlowPeriod})`);
+    } else if (emaFast < emaSlow && currentPrice < emaFast) {
+        scores.bearish.alignment = WEIGHTS.alignment;
+        reasons.push(`✅ Alignment: Bearish (Price < EMA${params.sentinel_emaFastPeriod} < EMA${params.sentinel_emaSlowPeriod})`);
+    } else {
+        reasons.push(`❌ Alignment: EMAs are not aligned or price is inside them.`);
     }
 
-    // Pillar C: Momentum (Max 10 points - RSI supportive & not divergent)
-    const RSI_WEIGHT = 10;
+    // Pillar 3: Volatility (BBW Breakout) - 20 points
+    const bbwValues = klines.map((k, i) => {
+        if (i < 20) return 0;
+        const slice = closes.slice(i - 19, i + 1);
+        const bbSlice = BollingerBands.calculate({ period: 20, stdDev: 2, values: slice });
+        const lastBb = getLast(bbSlice)! as BollingerBandsOutput;
+        return (lastBb.upper - lastBb.lower) / lastBb.middle;
+    }).filter(v => v > 0);
+    const bbwSma = getLast(SMA.calculate({ period: 50, values: bbwValues }))! as number;
+
+    if (bbWidth > bbwSma * 1.1) { // 10% above recent average
+        reasons.push(`✅ Volatility: Expanding (BBW > 50-SMA)`);
+        if (currentPrice > bb.middle) scores.bullish.volatility = WEIGHTS.volatility;
+        else scores.bearish.volatility = WEIGHTS.volatility;
+    } else {
+         reasons.push(`❌ Volatility: Not Expanding (BBW < 50-SMA)`);
+    }
+
+    // Pillar 4: Momentum (RSI) - 10 points
     const hasBearishDivergence = detectRsiDivergence(klines, rsiValues, 'LONG', params.sentinel_rsiDivergenceLookback!);
     const hasBullishDivergence = detectRsiDivergence(klines, rsiValues, 'SHORT', params.sentinel_rsiDivergenceLookback!);
 
     if (rsi > 50 && !hasBearishDivergence) {
-        bullishScore += RSI_WEIGHT;
-        analysisBreakdown.bullish.momentum += RSI_WEIGHT;
-    } else if (hasBearishDivergence) {
-        reasons.push('❌ Momentum: Bearish RSI Divergence detected.');
-    }
-    
-    if (rsi < 50 && !hasBullishDivergence) {
-        bearishScore += RSI_WEIGHT;
-        analysisBreakdown.bearish.momentum += RSI_WEIGHT;
-    } else if (hasBullishDivergence) {
-        reasons.push('❌ Momentum: Bullish RSI Divergence detected.');
+        scores.bullish.momentum = WEIGHTS.momentum;
+        reasons.push(`✅ Momentum: RSI > 50 and no bearish divergence.`);
+    } else if (rsi < 50 && !hasBullishDivergence) {
+        scores.bearish.momentum = WEIGHTS.momentum;
+        reasons.push(`✅ Momentum: RSI < 50 and no bullish divergence.`);
+    } else {
+        reasons.push(`❌ Momentum: RSI not supportive or divergence present.`);
     }
 
-    // --- 4. FINAL DECISION ---
-    reasons.push(`ℹ️ Final Score: Bull ${bullishScore.toFixed(0)} vs Bear ${bearishScore.toFixed(0)} (Threshold: ${scoreThreshold})`);
-    
-    const sentinelAnalysis: SentinelAnalysis = {
-        bullish: { total: bullishScore, ...analysisBreakdown.bullish },
-        bearish: { total: bearishScore, ...analysisBreakdown.bearish }
+    // --- 4. FINALIZE & GENERATE SIGNAL ---
+    const bullishScore = scores.bullish.trend + scores.bullish.alignment + scores.bullish.volatility + scores.bullish.momentum;
+    const bearishScore = scores.bearish.trend + scores.bearish.alignment + scores.bearish.volatility + scores.bearish.momentum;
+
+    const analysis: SentinelAnalysis = {
+        bullish: { total: bullishScore, ...scores.bullish },
+        bearish: { total: bearishScore, ...scores.bearish }
     };
 
     if (config.isHtfConfirmationEnabled && htfContext?.htf_trend) {
         reasons.push(`ℹ️ HTF Trend is ${htfContext.htf_trend}.`);
         if (htfContext.htf_trend === 'bearish' && bullishScore > bearishScore) {
-            return { signal: 'HOLD', reasons: [...reasons, `❌ VETO: Signal contradicts bearish HTF trend.`], sentinelAnalysis };
+            return { signal: 'HOLD', reasons: [...reasons, '❌ VETO: HTF trend is bearish.'], sentinelAnalysis: analysis };
         }
         if (htfContext.htf_trend === 'bullish' && bearishScore > bullishScore) {
-            return { signal: 'HOLD', reasons: [...reasons, `❌ VETO: Signal contradicts bullish HTF trend.`], sentinelAnalysis };
+            return { signal: 'HOLD', reasons: [...reasons, '❌ VETO: HTF trend is bullish.'], sentinelAnalysis: analysis };
         }
     }
-
-    if (bullishScore >= scoreThreshold && bullishScore > bearishScore) {
-        reasons.unshift(`✅ Bullish conviction threshold met.`);
-        return { signal: 'BUY', reasons, sentinelAnalysis };
+    
+    if (bullishScore >= params.sentinel_scoreThreshold && bullishScore > bearishScore) {
+        reasons.unshift(`✅ Bullish score of ${bullishScore.toFixed(0)} meets threshold.`);
+        return { signal: 'BUY', reasons, sentinelAnalysis: analysis };
     }
     
-    if (bearishScore >= scoreThreshold && bearishScore > bullishScore) {
-        reasons.unshift(`✅ Bearish conviction threshold met.`);
-        return { signal: 'SELL', reasons, sentinelAnalysis };
+    if (bearishScore >= params.sentinel_scoreThreshold && bearishScore > bullishScore) {
+        reasons.unshift(`✅ Bearish score of ${bearishScore.toFixed(0)} meets threshold.`);
+        return { signal: 'SELL', reasons, sentinelAnalysis: analysis };
     }
     
-    return { signal: 'HOLD', reasons, sentinelAnalysis };
+    reasons.push(`ℹ️ Conviction not met (Score Threshold: ${params.sentinel_scoreThreshold})`);
+    return { signal: 'HOLD', reasons, sentinelAnalysis: analysis };
 };

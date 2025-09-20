@@ -1,12 +1,12 @@
 // services/vetoService.ts
 
 import { Kline, BotConfig, MarketDataContext, StochasticRSIOutput, MACDOutput, ADXOutput } from '../types';
-import { RSI, StochasticRSI, ADX, MACD, SMA, EMA } from 'technicalindicators';
+import { RSI, StochasticRSI, ADX, MACD, SMA, EMA, ATR } from 'technicalindicators';
 import * as constants from '../constants';
 import * as binanceService from './binanceService';
 import { btcConfirmationService } from './btcConfirmationService';
 import { findSwingPoints, analyzeMarketStructure } from './chartAnalysisService';
-import { getLast, getPenultimate, detectRsiDivergence as isRsiDivergent } from './agents/agentUtils';
+import { getLast, getPenultimate, calculateVwap, detectRsiDivergence } from './agents/agentUtils';
 
 /**
  * A universal gatekeeper to prevent entering trades when the trend is likely exhausted.
@@ -32,7 +32,7 @@ export function getExhaustionFilterVeto(
     const isOverextended = isLong ? stochRsi.k > timeframeSettings.overbought : stochRsi.k < timeframeSettings.oversold;
     
     if (isOverextended) {
-        const hasDivergence = isRsiDivergent(klines, rsiValues, positionDirection, 14);
+        const hasDivergence = detectRsiDivergence(klines, rsiValues, positionDirection, 14);
         if (hasDivergence) {
             return { veto: true, reason: `❌ VETO: Exhaustion risk detected (StochRSI Overextended + RSI Divergence)` };
         }
@@ -281,81 +281,110 @@ export function getMarketStructureVeto(
 }
 
 /**
- * NEW: Performs a 'just-in-time' analysis before entry to qualify the trade.
- * Vetoes trades if immediate 1-min momentum is fading or if the entry
- * point is poor within the current candle's structure.
+ * Performs a 'just-in-time' analysis before entry to qualify the trade based on a detailed checklist.
+ * Vetoes trades if immediate LTF momentum is fading or other conditions are not met.
  */
-export async function getDynamicEntryVeto(
+export function getDynamicEntryVeto(
     mainTimeframeKlines: Kline[],
     livePrice: number,
     signalDirection: 'BUY' | 'SELL',
     config: BotConfig,
-    microKlines?: Kline[], // Optional parameter for backtesting
-): Promise<{ veto: boolean; reason: string }> {
-    if (mainTimeframeKlines.length === 0 || livePrice <= 0) {
-        return { veto: false, reason: '' };
+    microKlines: Kline[] | undefined,
+    microTimeframe: string,
+): { veto: boolean; reason: string } {
+    if (mainTimeframeKlines.length < 2 || livePrice <= 0) {
+        return { veto: false, reason: 'ℹ️ Concordance: Insufficient data.' };
     }
 
     const isLongSignal = signalDirection === 'BUY';
 
-    // --- 1. Main Timeframe Candle Context ---
+    // --- 1. Main Timeframe Candle Context (Quick check) ---
     const lastCandle = mainTimeframeKlines[mainTimeframeKlines.length - 1];
     const range = lastCandle.high - lastCandle.low;
     if (range > 0) {
         const positionInCandle = (livePrice - lastCandle.low) / range;
-        const upperWick = lastCandle.high - Math.max(lastCandle.open, lastCandle.close);
-        const lowerWick = Math.min(lastCandle.open, lastCandle.close) - lastCandle.low;
-
-        if (isLongSignal && positionInCandle > 0.8 && upperWick > range * 0.3) {
-            return { veto: true, reason: `❌ VETO: Entry too high in current candle with rejection wick.` };
+        if (isLongSignal && positionInCandle > 0.85) {
+            return { veto: true, reason: `❌ VETO: Entry too high in current ${config.timeFrame} candle.` };
         }
-        if (!isLongSignal && positionInCandle < 0.2 && lowerWick > range * 0.3) {
-            return { veto: true, reason: `❌ VETO: Entry too low in current candle with rejection wick.` };
+        if (!isLongSignal && positionInCandle < 0.15) {
+            return { veto: true, reason: `❌ VETO: Entry too low in current ${config.timeFrame} candle.` };
         }
     }
 
-    // --- 2. Micro-Momentum Analysis (1-min Timeframe) ---
-    let klinesToAnalyze: Kline[] | undefined = microKlines;
+    // --- 2. LTF Selection & Data Handling ---
+    const ltf = microTimeframe;
 
-    if (!klinesToAnalyze) {
-        try {
-            klinesToAnalyze = await binanceService.fetchKlines(
-                config.pair.replace('/', ''),
-                '1m',
-                { limit: 20, mode: config.mode }
-            );
-        } catch (e) {
-            const errorMessage = e instanceof Error ? e.message : String(e);
-            console.error("Dynamic entry veto failed to fetch micro-klines:", errorMessage);
-            // Fail open, but provide a reason for the log.
-            return { veto: false, reason: `⚠️ Momentum Concordance: Could not fetch 1m data (${errorMessage}). Trade allowed.` };
+    if (!microKlines || microKlines.length < 50) {
+        const reason = `Concordance: Insufficient ${ltf} data (${microKlines?.length || 0}/50).`;
+        if (config.finalEntryFailSafe === 'fail-closed') {
+            return { veto: true, reason: `❌ VETO: ${reason} (Fail-safe triggered)` };
         }
+        return { veto: false, reason: `⚠️ ${reason} Trade allowed by fail-open.` };
+    }
+
+    const ltfKlines = microKlines;
+    const ltfCloses = ltfKlines.map(k => k.close);
+    const ltfHighs = ltfKlines.map(k => k.high);
+    const ltfLows = ltfKlines.map(k => k.low);
+    const ltfVolumes = ltfKlines.map(k => k.volume || 0);
+
+    // --- Checklist Item A: RSI Alignment ---
+    const rsi7 = getLast(RSI.calculate({ period: 7, values: ltfCloses }));
+    const rsi14 = getLast(RSI.calculate({ period: 14, values: ltfCloses }));
+    if (!rsi7 || !rsi14) return { veto: false, reason: `ℹ️ Concordance: LTF RSI not ready.` };
+
+    const isRsiAligned = isLongSignal ? (rsi7 > 52 && rsi14 > 52) : (rsi7 < 48 && rsi14 < 48);
+    if (!isRsiAligned) {
+        return { veto: true, reason: `❌ VETO: LTF RSI not aligned (RSI7: ${rsi7.toFixed(1)}, RSI14: ${rsi14.toFixed(1)}).` };
+    }
+
+    // --- Checklist Item B: No Opposite Divergence ---
+    const rsi14Values = RSI.calculate({ period: 14, values: ltfCloses });
+    const hasOppositeDivergence = isLongSignal
+        ? detectRsiDivergence(ltfKlines, rsi14Values, 'LONG', 14)
+        : detectRsiDivergence(ltfKlines, rsi14Values, 'SHORT', 14);
+    
+    if (hasOppositeDivergence) {
+        return { veto: true, reason: `❌ VETO: Opposite ${isLongSignal ? 'bearish' : 'bullish'} divergence on ${ltf}.` };
+    }
+
+    // --- Checklist Item C: No Liquidity Sweep ---
+    const lastLtfCandle = ltfKlines[ltfKlines.length - 1];
+    const prevLtfCandle = ltfKlines[ltfKlines.length - 2];
+    if (prevLtfCandle) {
+        if (isLongSignal && lastLtfCandle.high > prevLtfCandle.high && lastLtfCandle.close < prevLtfCandle.high) {
+            return { veto: true, reason: `❌ VETO: LTF bearish liquidity sweep candle detected.` };
+        }
+        if (!isLongSignal && lastLtfCandle.low < prevLtfCandle.low && lastLtfCandle.close > prevLtfCandle.low) {
+            return { veto: true, reason: `❌ VETO: LTF bullish liquidity sweep candle detected.` };
+        }
+    }
+
+    // --- Checklist Item D: ATR Ratio Not Chaotic ---
+    const mainTfAtr = getLast(ATR.calculate({ high: mainTimeframeKlines.map(k=>k.high), low: mainTimeframeKlines.map(k=>k.low), close: mainTimeframeKlines.map(k=>k.close), period: 14 }));
+    const ltfAtr = getLast(ATR.calculate({ high: ltfHighs, low: ltfLows, close: ltfCloses, period: 14 }));
+    if (mainTfAtr && ltfAtr && ltfAtr > (mainTfAtr * 2)) {
+        return { veto: true, reason: `❌ VETO: LTF volatility chaotic (ATR Ratio > 2x).` };
     }
     
-    if (klinesToAnalyze && klinesToAnalyze.length >= 15) {
-        const microCloses = klinesToAnalyze.map(k => k.close);
-        
-        // A. EMA Slope Check
-        const microEmaValues = EMA.calculate({ period: 5, values: microCloses });
-        const lastEma = getLast(microEmaValues);
-        const prevEma = getPenultimate(microEmaValues);
-        const isEmaFading = (lastEma && prevEma) 
-            ? (isLongSignal ? lastEma < prevEma : lastEma > prevEma)
-            : false;
-            
-        // B. RSI Check
-        const microRsi = getLast(RSI.calculate({ period: 14, values: microCloses }));
-        const isRsiWeak = microRsi
-            ? (isLongSignal ? microRsi < 48 : microRsi > 52)
-            : false;
-            
-        // C. Confluence Veto
-        if (isEmaFading && isRsiWeak) {
-             return { veto: true, reason: `❌ VETO: Immediate 1m momentum is fading (EMA slope + RSI weakness).` };
-        }
-    } else {
-        return { veto: false, reason: 'ℹ️ Micro-momentum: Insufficient 1m data.' };
+    // --- Checklist Item E: Volume Confirmation ---
+    const volumeSma = getLast(SMA.calculate({ period: 20, values: ltfVolumes }));
+    const lastVolume = getLast(ltfVolumes);
+    if (volumeSma && lastVolume && lastVolume < volumeSma) {
+        return { veto: true, reason: `❌ VETO: LTF volume below 20-period average.` };
     }
-    
+
+    // --- Checklist Item F: VWAP + EMA Alignment ---
+    const vwap = getLast(calculateVwap(ltfKlines));
+    const ema9 = getLast(EMA.calculate({ period: 9, values: ltfCloses }));
+    if (vwap && ema9) {
+        if (isLongSignal && (livePrice < vwap || livePrice < ema9)) {
+            return { veto: true, reason: `❌ VETO: LTF price below VWAP or EMA9.` };
+        }
+        if (!isLongSignal && (livePrice > vwap || livePrice > ema9)) {
+            return { veto: true, reason: `❌ VETO: LTF price above VWAP or EMA9.` };
+        }
+    }
+
     return { veto: false, reason: '✅ Momentum Concordance: Passed' };
 }

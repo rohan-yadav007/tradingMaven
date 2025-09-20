@@ -1,8 +1,7 @@
-
 import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, TradingMode, MarketDataContext } from '../types';
 import * as binanceService from './binanceService';
 import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext, getAdaptiveTakeProfit } from './localAgentService';
-import { TIME_FRAMES } from '../constants';
+import { TIME_FRAMES, getMicroTimeframe } from '../constants';
 import { telegramBotService } from './telegramBotService';
 import { getDynamicEntryVeto } from './vetoService';
 
@@ -142,6 +141,7 @@ class BotInstance {
     private handlers: BotHandlers;
     public subscriptions: { type: 'ticker' | 'kline', pair: string, timeFrame?: string, mode: TradingMode, callback: Function }[] = [];
     private managementInterval: ReturnType<typeof setTimeout> | null = null;
+    private executing = false;
 
     constructor(config: BotConfig, onUpdate: () => void, handlers: BotHandlers) {
         this.bot = {
@@ -237,20 +237,18 @@ class BotInstance {
     }
     
     public async runPeriodicManagement() {
-        // FIX: Ensure analysis preview runs even when paused or in a trade
         if ([BotStatus.Paused, BotStatus.Stopped, BotStatus.Error, BotStatus.ExecutingTrade].includes(this.bot.status)) {
-            // Still run analysis for preview purposes, but don't execute trades.
-        } else {
-            if (this.klines.length < 50) return;
-
-            const isLookingForEntry = !this.bot.openPosition && this.bot.status === BotStatus.Monitoring;
-            const shouldExecute = isLookingForEntry && this.bot.config.entryTiming === 'immediate';
-    
-            await this.runAnalysis({ execute: shouldExecute });
+            // Run preview only
+            await this.runAnalysis({ execute: false });
+            return;
         }
-        
-        // This runs regardless of status to keep the UI's analysis preview fresh.
-        await this.runAnalysis({ execute: false });
+    
+        if (this.klines.length < 50) return;
+    
+        const isLookingForEntry = !this.bot.openPosition && this.bot.status === BotStatus.Monitoring;
+        const shouldExecute = isLookingForEntry && this.bot.config.entryTiming === 'immediate';
+    
+        await this.runAnalysis({ execute: shouldExecute });
     }
 
     public async runAnalysis(options: { execute: boolean } = { execute: true }) {
@@ -292,25 +290,38 @@ class BotInstance {
             
             if (isForEntry && options.execute) {
                 if (signal.signal !== 'HOLD') {
-                    // --- DYNAMIC ENTRY VETO (PRE-FLIGHT CHECK) ---
-                    if (this.bot.config.isMomentumConcordanceEnabled) {
-                        this.addLog('Performing Momentum Concordance check...', LogType.Info);
-                        const livePriceForVeto = this.bot.livePrice || 0;
-                        const vetoCheck = await getDynamicEntryVeto(klinesForAnalysis, livePriceForVeto, signal.signal, this.bot.config);
-                        
-                        // Always log the result of the check for visibility
-                        this.addLog(vetoCheck.reason, vetoCheck.veto ? LogType.Error : LogType.Success);
-                        
-                        if (vetoCheck.veto) {
-                            // Update analysis for UI feedback and prevent execution
-                            this.updateState({ analysis: { ...signal, signal: 'HOLD', reasons: [vetoCheck.reason, ...signal.reasons] } });
-                            return; 
+                    if (this.executing) { this.addLog('Execution already in process', LogType.Info); return; }
+                    this.executing = true;
+                    try {
+                        // --- DYNAMIC ENTRY VETO (PRE-FLIGHT CHECK) ---
+                        if (this.bot.config.isMomentumConcordanceEnabled) {
+                            this.addLog('Performing Momentum Concordance check...', LogType.Info);
+                            const livePriceForVeto = this.bot.livePrice || 0;
+                            const microTf = getMicroTimeframe(this.bot.config.timeFrame);
+                            let microKlines: Kline[] | undefined;
+                            try {
+                                microKlines = await binanceService.fetchKlines(this.bot.config.pair.replace('/',''), microTf, { limit: 100, mode: this.bot.config.mode });
+                            } catch (e) {
+                                this.addLog(`Could not fetch ${microTf} data for veto check: ${e instanceof Error ? e.message : String(e)}`, LogType.Error);
+                                microKlines = undefined;
+                            }
+                            
+                            const vetoCheck = getDynamicEntryVeto(klinesForAnalysis, livePriceForVeto, signal.signal, this.bot.config, microKlines, microTf);
+                            
+                            this.addLog(vetoCheck.reason, vetoCheck.veto ? LogType.Error : LogType.Success);
+                            
+                            if (vetoCheck.veto) {
+                                this.updateState({ analysis: { ...signal, signal: 'HOLD', reasons: [vetoCheck.reason, ...signal.reasons] } });
+                                return; 
+                            }
                         }
-                    }
-                    // --- END OF VETO BLOCK ---
+                        // --- END OF VETO BLOCK ---
 
-                    this.updateState({ status: BotStatus.ExecutingTrade });
-                    await this.executeTrade(signal, klinesForAnalysis, htfKlines);
+                        this.updateState({ status: BotStatus.ExecutingTrade });
+                        await this.executeTrade(signal, klinesForAnalysis, htfKlines);
+                    } finally {
+                        this.executing = false;
+                    }
                 } else {
                     const primaryReason = signal.reasons.find(r => r.startsWith('❌') || r.startsWith('ℹ️')) || "Conditions not met.";
                     this.addLog(`Analysis: HOLD. ${primaryReason.substring(2)}`, LogType.Info);
@@ -499,7 +510,6 @@ class BotInstance {
     
         // Candidate from Agent Trail
         if (this.bot.config.isAgentTrailEnabled) {
-            // FIX: Replaced 'findLast' with a compatible alternative.
             const lastFinalKline = [...this.klines].reverse().find(k => k.isFinal);
             if (lastFinalKline) {
                 const previewKline: Kline = { ...lastFinalKline, high: Math.max(lastFinalKline.high, currentPrice), low: Math.min(lastFinalKline.low, currentPrice), close: currentPrice, isFinal: false };
@@ -532,7 +542,6 @@ class BotInstance {
         }
     
         // --- Step 3: Evaluate candidates to find the best valid one ---
-        // FIX: Explicitly typed `bestCandidate` to allow an optional `newState` property, resolving an assignment issue.
         let bestCandidate: { price: number; reason: Position['activeStopLossReason']; newState?: Partial<Position> } = { 
             price: positionState.stopLossPrice, 
             reason: positionState.activeStopLossReason, 

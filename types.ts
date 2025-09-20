@@ -212,23 +212,23 @@ export interface AgentParams {
     ch_trendEmaPeriod?: number;
     ch_adxThreshold?: number;
     
-    // Agent 14: The Sentinel
+    // Agent 14: The Sentinel (Refactored for weighted checklist model)
     sentinel_scoreThreshold?: number;
+    sentinel_strongTrendAdx?: number;
     sentinel_emaFastPeriod?: number;
     sentinel_emaSlowPeriod?: number;
     sentinel_adxPeriod?: number;
     sentinel_rsiPeriod?: number;
     sentinel_stPeriod?: number;
     sentinel_stMultiplier?: number;
+    sentinel_emaDistanceVetoThreshold?: number;
+    sentinel_rsiDivergenceLookback?: number;
+    sentinel_useSrLevelsForTp?: boolean;
+    // Invalidation parameters used by the universal supervisor
     sentinel_invalidationCandleLimit?: number;
     sentinel_rsiMomentumExitLong?: number;
     sentinel_rsiMomentumExitShort?: number;
-    sentinel_rsiDivergenceLookback?: number;
-    sentinel_bbwAtrFactor?: number; // New: For dynamic BBW threshold
-    sentinel_emaDistanceAtrMultiplier?: number; // New: For EMA distance veto
-    // Fix: Add missing sentinel properties
-    sentinel_useSrLevelsForTp?: boolean;
-    sentinel_strongTrendAdx?: number;
+    // FIX: Add missing Sentinel parameters
     sentinel_strongTrendThreshold?: number;
     sentinel_choppyTrendAdx?: number;
     sentinel_choppyTrendThreshold?: number;
@@ -544,8 +544,20 @@ export interface IchimokuCloudOutput {
 }
 
 export interface SentinelAnalysis {
-    bullish: { total: number; trend: number; momentum: number; confirmation: number; };
-    bearish: { total: number; trend: number; momentum: number; confirmation: number; };
+    bullish: {
+        total: number;
+        trend: number;
+        alignment: number;
+        volatility: number;
+        momentum: number;
+    };
+    bearish: {
+        total: number;
+        trend: number;
+        alignment: number;
+        volatility: number;
+        momentum: number;
+    };
 }
 
 export interface ConductorAnalysis {

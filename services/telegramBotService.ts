@@ -191,7 +191,6 @@ ID: \`${bot.id}\``;
                     isMarketBreadthFilterEnabled: true,
                     isLiquidationFilterEnabled: false,
                     isConfirmationCandleEnabled: constants.IS_CONFIRMATION_CANDLE_ENABLED,
-// FIX: Property 'isMomentumConcordanceEnabled' is missing in type '{ pair: string; agent: Agent; investmentAmount: number; leverage: number; mode: TradingMode; executionMode: "live" | "paper"; timeFrame: string; maxMarginLossPercent: number; ... 26 more ...; aggressiveTrailMode: "distance"; }' but required in type 'BotConfig'.
                     isMomentumConcordanceEnabled: constants.IS_MOMENTUM_CONCORDANCE_ENABLED,
                 };
                 

@@ -1,5 +1,6 @@
 
 
+
 import React, { useState, useMemo, useEffect } from 'react';
 import { useTradingConfigState, useTradingConfigActions } from '../contexts/TradingConfigContext';
 import { TradingMode, TradingPairList } from '../types';
@@ -19,7 +20,6 @@ const ListEditor: React.FC<{
     onCancel: () => void;
     theme: 'light' | 'dark';
 }> = ({ listToEdit, onSave, onCancel, theme }) => {
-    // FIX: Removed 'theme' from useTradingConfigState as it will be passed via props.
     const { allPairs, isPairsLoading } = useTradingConfigState();
     const [name, setName] = useState('');
     const [selectedPairs, setSelectedPairs] = useState<string[]>([]);

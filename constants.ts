@@ -146,28 +146,27 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     ch_trendEmaPeriod: 200,
     ch_adxThreshold: 22,
     
-    // Agent 14: The Sentinel (Refactored for adaptive logic)
+    // Agent 14: The Sentinel
     sentinel_scoreThreshold: 70,
+    sentinel_strongTrendAdx: 25,
     sentinel_emaFastPeriod: 50,
     sentinel_emaSlowPeriod: 200,
     sentinel_adxPeriod: 14,
     sentinel_rsiPeriod: 14,
     sentinel_stPeriod: 10,
-    sentinel_stMultiplier: 3.0,
-    sentinel_invalidationCandleLimit: 15,
-    sentinel_rsiMomentumExitLong: 48,
-    sentinel_rsiMomentumExitShort: 52,
+    sentinel_stMultiplier: 3,
+    sentinel_emaDistanceVetoThreshold: 2.5,
     sentinel_rsiDivergenceLookback: 21,
-    sentinel_bbwAtrFactor: 0.5,
-    sentinel_emaDistanceAtrMultiplier: 2.5,
-    // Fix: Add default values for missing sentinel properties
-    sentinel_useSrLevelsForTp: false,
-    sentinel_strongTrendAdx: 28,
+    sentinel_useSrLevelsForTp: true,
+    sentinel_invalidationCandleLimit: 8,
+    sentinel_rsiMomentumExitLong: 45,
+    sentinel_rsiMomentumExitShort: 55,
+    // FIX: Add default values for missing Sentinel parameters
     sentinel_strongTrendThreshold: 65,
     sentinel_choppyTrendAdx: 20,
-    sentinel_choppyTrendThreshold: 85,
+    sentinel_choppyTrendThreshold: 80,
     sentinel_trendingWeightMultiplier: 1.2,
-    sentinel_transitioningWeightMultiplier: 1.5,
+    sentinel_transitioningWeightMultiplier: 1.1,
     sentinel_bbwSqueezeThreshold: 0.015,
     sentinel_atrChaosThreshold: 3.0,
     sentinel_volumeFilterMultiplier: 0.8,
@@ -227,13 +226,21 @@ export const SMC_VETO_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> =
 };
 
 export const CONDUCTOR_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
+    // FIX: Corrected typo 'conductor_choppyThreshold' to 'conductor_choppyTrendThreshold'
     '1m':  { conductor_swingLookback: 5, conductor_convictionThreshold: 80, conductor_slAtrMultiplier: 2.0, conductor_strongTrendAdx: 32, conductor_choppyTrendAdx: 25, conductor_strongTrendThreshold: 75, conductor_choppyTrendThreshold: 85 },
+    // FIX: Corrected typo 'conductor_choppyThreshold' to 'conductor_choppyTrendThreshold'
     '3m':  { conductor_swingLookback: 6, conductor_convictionThreshold: 78, conductor_slAtrMultiplier: 1.9, conductor_strongTrendAdx: 30, conductor_choppyTrendAdx: 23, conductor_strongTrendThreshold: 72, conductor_choppyTrendThreshold: 84 },
+    // FIX: Corrected typo 'conductor_choppyThreshold' to 'conductor_choppyTrendThreshold'
     '5m':  { conductor_swingLookback: 8, conductor_convictionThreshold: 75, conductor_slAtrMultiplier: 1.8, conductor_strongTrendAdx: 28, conductor_choppyTrendAdx: 20, conductor_strongTrendThreshold: 68, conductor_choppyTrendThreshold: 82 },
+    // FIX: Corrected typo 'conductor_choppyThreshold' to 'conductor_choppyTrendThreshold'
     '15m': { conductor_swingLookback: 10, conductor_convictionThreshold: 70, conductor_slAtrMultiplier: 2.0, conductor_strongTrendAdx: 25, conductor_choppyTrendAdx: 18, conductor_strongTrendThreshold: 65, conductor_choppyTrendThreshold: 78 },
+    // FIX: Corrected typo 'conductor_choppyThreshold' to 'conductor_choppyTrendThreshold'
     '30m': { conductor_swingLookback: 10, conductor_convictionThreshold: 68, conductor_slAtrMultiplier: 2.2, conductor_strongTrendAdx: 25, conductor_choppyTrendAdx: 18, conductor_strongTrendThreshold: 62, conductor_choppyTrendThreshold: 75 },
+    // FIX: Corrected typo 'conductor_choppyThreshold' to 'conductor_choppyTrendThreshold'
     '1h':  { conductor_swingLookback: 12, conductor_convictionThreshold: 65, conductor_slAtrMultiplier: 2.5, conductor_strongTrendAdx: 23, conductor_choppyTrendAdx: 17, conductor_strongTrendThreshold: 60, conductor_choppyTrendThreshold: 72 },
+    // FIX: Corrected typo 'conductor_choppyThreshold' to 'conductor_choppyTrendThreshold'
     '4h':  { conductor_swingLookback: 15, conductor_convictionThreshold: 65, conductor_slAtrMultiplier: 3.0, conductor_strongTrendAdx: 22, conductor_choppyTrendAdx: 16, conductor_strongTrendThreshold: 58, conductor_choppyTrendThreshold: 70 },
+    // FIX: Corrected typo 'conductor_choppyThreshold' to 'conductor_choppyTrendThreshold'
     '1d':  { conductor_swingLookback: 15, conductor_convictionThreshold: 60, conductor_slAtrMultiplier: 3.5, conductor_strongTrendAdx: 20, conductor_choppyTrendAdx: 15, conductor_strongTrendThreshold: 55, conductor_choppyTrendThreshold: 68 },
 };
 
@@ -270,15 +277,17 @@ export const CHAMELEON_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> 
 };
 
 export const SENTINEL_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    // Adaptive SuperTrend Multiplier: Higher for low TFs, lower for high TFs.
-    '1m':  { sentinel_stMultiplier: 3.5 },
-    '3m':  { sentinel_stMultiplier: 3.5 },
-    '5m':  { sentinel_stMultiplier: 3.0 },
-    '15m': { sentinel_stMultiplier: 3.0 },
-    '30m': { sentinel_stMultiplier: 3.0 },
-    '1h':  { sentinel_stMultiplier: 3.0 },
-    '4h':  { sentinel_stMultiplier: 2.5 },
-    '1d':  { sentinel_stMultiplier: 2.5 },
+    // Scalping (1m, 3m, 5m): Faster EMAs, wider stop loss multiplier for noise.
+    '1m':  { sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_stMultiplier: 3.5, sentinel_strongTrendAdx: 28 },
+    '3m':  { sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_stMultiplier: 3.5, sentinel_strongTrendAdx: 28 },
+    '5m':  { sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_stMultiplier: 3.2, sentinel_strongTrendAdx: 25 },
+    // Day Trading (15m, 30m, 1h): Balanced parameters.
+    '15m': { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 100, sentinel_stMultiplier: 3.0, sentinel_strongTrendAdx: 25 },
+    '30m': { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 120, sentinel_stMultiplier: 2.8, sentinel_strongTrendAdx: 22 },
+    '1h':  { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 150, sentinel_stMultiplier: 2.8, sentinel_strongTrendAdx: 22 },
+    // Swing Trading (4h, 1d): Slower EMAs, tighter stop loss multiplier.
+    '4h':  { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_stMultiplier: 2.5, sentinel_strongTrendAdx: 20 },
+    '1d':  { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_stMultiplier: 2.5, sentinel_strongTrendAdx: 20 },
 };
 
 export const ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {

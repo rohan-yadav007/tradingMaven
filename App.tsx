@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -154,8 +153,8 @@ const AppContent: React.FC = () => {
                     isMarketBreadthFilterEnabled,
                     isLiquidationFilterEnabled,
                     isConfirmationCandleEnabled,
-// FIX: Property 'isMomentumConcordanceEnabled' is missing in type '{ pair: string; mode: TradingMode; executionMode: "live" | "paper"; leverage: number; marginType: "ISOLATED" | "CROSSED"; agent: Agent; timeFrame: string; investmentAmount: number; ... 31 more ...; isConfirmationCandleEnabled: boolean; }' but required in type 'BotConfig'.
                     isMomentumConcordanceEnabled,
+                    finalEntryFailSafe: executionMode === 'live' ? 'fail-closed' : 'fail-open',
                 };
 
                 botManagerService.startBot(botConfig);
@@ -500,8 +499,8 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 isMarketBreadthFilterEnabled: config.isMarketBreadthFilterEnabled,
                 isLiquidationFilterEnabled: config.isLiquidationFilterEnabled,
                 isConfirmationCandleEnabled: config.isConfirmationCandleEnabled,
-// FIX: Property 'isMomentumConcordanceEnabled' is missing in type '{ isHtfConfirmationEnabled: boolean; isUniversalProfitTrailEnabled: boolean; isMinRrEnabled: boolean; invalidationSensitivity: "low" | "medium" | "high"; isAgentTrailEnabled: boolean; ... 19 more ...; isConfirmationCandleEnabled: boolean; }' but required in type 'BotConfigSnapshot'.
                 isMomentumConcordanceEnabled: config.isMomentumConcordanceEnabled,
+                finalEntryFailSafe: config.finalEntryFailSafe,
             },
             entryContext: executionDetails.entryContext,
         };

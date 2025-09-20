@@ -1,6 +1,3 @@
-
-
-
 import { Kline, BotConfig, BacktestResult, Trade, AgentParams, Position, RiskMode, TradingMode, OptimizationResultItem } from '../types';
 import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext, getAdaptiveTakeProfit } from './localAgentService';
 import * as constants from '../constants';
@@ -12,7 +9,7 @@ const getLast = <T>(arr: T[] | undefined): T | undefined => arr && arr.length > 
 
 const getTimeframeDuration = (timeframe: string): number => {
     const unit = timeframe.slice(-1);
-    const value = parseInt(timeframe.slice(-1, 1), 10);
+    const value = parseInt(timeframe.slice(0, -1), 10);
     if (isNaN(value)) return 0;
     switch (unit) {
         case 'm': return value * 60 * 1000;
@@ -300,14 +297,20 @@ async function runBacktest(
                 
                 // --- SIMULATE DYNAMIC ENTRY VETO ---
                 if (config.isMomentumConcordanceEnabled) {
-                    const oneMinKlinesIndex = klines.findIndex(k => k.time >= currentCandle.time);
-                    if (oneMinKlinesIndex !== -1) {
-                        const microKlinesSlice = klines.slice(Math.max(0, oneMinKlinesIndex - 20), oneMinKlinesIndex + 1);
-                        const vetoCheck = await getDynamicEntryVeto(historySlice, entryPrice, signal.signal, config, microKlinesSlice);
-                        if (vetoCheck.veto) {
-                            equityCurve.push(equity);
-                            continue; // Vetoed, skip to next candle
-                        }
+                    const microTimeframe = constants.getMicroTimeframe(config.timeFrame);
+                    const microKlineEndIndex = klines.findIndex(k => k.time >= currentCandle.time);
+                    let microKlinesForVeto: Kline[] | undefined;
+                    if (microKlineEndIndex !== -1) {
+                        microKlinesForVeto = klines.slice(Math.max(0, microKlineEndIndex - 100), microKlineEndIndex + 1);
+                    }
+                    
+                    const backtestConfig = { ...config, finalEntryFailSafe: config.finalEntryFailSafe || 'fail-open' };
+                    
+                    const vetoCheck = getDynamicEntryVeto(historySlice, entryPrice, signal.signal, backtestConfig, microKlinesForVeto, microTimeframe);
+
+                    if (vetoCheck.veto) {
+                        equityCurve.push(equity);
+                        continue; // Vetoed, skip to next candle
                     }
                 }
                 // --- END VETO SIMULATION ---
@@ -358,8 +361,8 @@ async function runBacktest(
                             isMarketBreadthFilterEnabled: config.isMarketBreadthFilterEnabled,
                             isLiquidationFilterEnabled: config.isLiquidationFilterEnabled,
                             isConfirmationCandleEnabled: config.isConfirmationCandleEnabled,
-// FIX: Property 'isMomentumConcordanceEnabled' is missing in type '{ isHtfConfirmationEnabled: boolean; isUniversalProfitTrailEnabled: boolean; isMinRrEnabled: boolean; invalidationSensitivity: "low" | "medium" | "high"; isAgentTrailEnabled: boolean; ... 13 more ...; isInitialRiskVetoEnabled: boolean; }' but required in type 'BotConfigSnapshot'.
                             isMomentumConcordanceEnabled: config.isMomentumConcordanceEnabled,
+                            finalEntryFailSafe: config.finalEntryFailSafe,
                         };
                         const entryContext = captureMarketContext(historySlice, htfHistorySlice);
 

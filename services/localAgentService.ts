@@ -1,3 +1,4 @@
+
 // services/localAgentService.ts
 
 // Re-export core functionalities to maintain the public API for other services
@@ -18,7 +19,6 @@ export { captureMarketContext } from './agents/agentUtils';
 // Imports for getTradingSignal orchestration
 import { Agent, Kline, TradeSignal, BotConfig, MarketDataContext } from '../types';
 import { btcConfirmationService } from './btcConfirmationService';
-// FIX: Import `captureMarketContext` with an alias for local use and import `isLastCandleContradictory`.
 import { applyTimeframeSettings, calculateHeikinAshi, isMarketCohesive, getLast, captureMarketContext as _captureMarketContext, isLastCandleContradictory, calculateVwap } from './agents/agentUtils';
 import { SMA, RSI, ATR } from 'technicalindicators';
 
@@ -59,7 +59,6 @@ export async function getTradingSignal(
     const config = applyTimeframeSettings(originalConfig);
     const reasons: string[] = [];
 
-    // FIX: Use aliased import `_captureMarketContext` to resolve "Cannot find name" error.
     const htfContext = htfKlines && htfKlines.length > 0 ? _captureMarketContext([], htfKlines) : undefined;
 
     let agentSignal: TradeSignal;
@@ -91,7 +90,6 @@ export async function getTradingSignal(
 
     if (config.isVolumeFilterEnabled) {
         const volumes = klines.map(k => k.volume || 0);
-        // FIX: Cast result of technical indicator to number | undefined to fix 'unknown' type error.
         const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes })) as number | undefined;
         const multiplier = config.agentParams.sentinel_volumeFilterMultiplier || 0.8;
         if (volumeSma && lastKline.volume && lastKline.volume < (volumeSma * multiplier)) {
@@ -180,7 +178,6 @@ export async function getTradingSignal(
     
     if (config.isSrAnalysisEnabled) {
         const srLevels = calculateSupportResistance(klines);
-        // FIX: Cast result of technical indicator to number | undefined to fix 'unknown' type error.
         const atr = getLast(ATR.calculate({ period: 14, high: klines.map(k=>k.high), low: klines.map(k=>k.low), close: klines.map(k=>k.close) })) as number | undefined;
         if (atr) {
             const buffer = atr * (config.agentParams.sentinel_srZoneAtrBuffer || 0.5);
@@ -201,7 +198,6 @@ export async function getTradingSignal(
     }
 
     if (config.isCandlestickConfirmationEnabled) {
-        // FIX: Use imported `isLastCandleContradictory` function to resolve "Cannot find name" error.
         const candleVeto = isLastCandleContradictory(klines, agentSignal.signal);
         if (candleVeto.veto) {
             return { signal: 'HOLD', reasons: [...reasons, candleVeto.reason] };

@@ -948,7 +948,7 @@ export function getTradeGuardianSignal(
         }
     }
 
-    if (strikes.size >= 3) {
+    if (strikes.size >= 5) {
         return { action: 'close', reason: `Trade Guardian Exit: ${[...strikes].join('; ')}` };
     }
 

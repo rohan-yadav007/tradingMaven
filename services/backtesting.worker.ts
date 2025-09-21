@@ -1,5 +1,6 @@
+
 import { Kline, BotConfig, BacktestResult, Trade, AgentParams, Position, TradingMode, OptimizationResultItem } from '../types';
-import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext, getAdaptiveTakeProfit } from './localAgentService';
+import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getTradeGuardianSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext, getAdaptiveTakeProfit } from './localAgentService';
 import * as constants from '../constants';
 import * as binanceService from './binanceService';
 
@@ -186,7 +187,23 @@ async function runBacktest(
         let hasTradedInThisCandle = false;
 
         if (openPosition) {
-            // ... (Position management logic remains the same)
+            // --- Trade Guardian System (Mirrors live logic) ---
+            const microKlineEndIndex = allMicroKlines.findIndex(k => k.time >= currentCandle.time);
+            let microKlinesForGuardian: Kline[] | undefined;
+            if (microKlineEndIndex !== -1) {
+                microKlinesForGuardian = allMicroKlines.slice(0, microKlineEndIndex + 1);
+            }
+
+            const guardianSignal = getTradeGuardianSignal(openPosition, historySlice.slice(0, -1), microKlinesForGuardian, currentCandle.open);
+            if (guardianSignal.action === 'close') {
+                hasTradedInThisCandle = closePosition(currentCandle.open, guardianSignal.reason!, currentCandle.time, historySlice, htfHistorySlice);
+                if (hasTradedInThisCandle) { 
+                    equityCurve.push(equity); 
+                    continue; 
+                }
+            }
+            
+            // --- Standard Position Management Logic ---
             const isLong = openPosition.direction === 'LONG';
             let positionState: SimulatedPosition = { ...openPosition };
             
@@ -262,15 +279,6 @@ async function runBacktest(
             } else {
                 openPosition.peakPrice = Math.min(openPosition.peakPrice!, currentCandle.low);
                 openPosition.troughPrice = Math.max(openPosition.troughPrice!, currentCandle.high);
-            }
-
-            const { score, reasons } = await getSupervisorSignal(openPosition, historySlice, config, htfHistorySlice);
-            openPosition.invalidationScore = score;
-            const sensitivityThreshold = { low: 80, medium: 65, high: 50 }[config.invalidationSensitivity];
-            if (score >= sensitivityThreshold) {
-                const reason = `Supervisor Exit: Thesis Invalidated (Score: ${score}).`;
-                hasTradedInThisCandle = closePosition(currentCandle.close, reason, currentCandle.time, historySlice, htfHistorySlice);
-                if (hasTradedInThisCandle) { equityCurve.push(equity); continue; }
             }
         }
         
@@ -360,7 +368,8 @@ async function runBacktest(
                             initialRiskRewardRatio,
                             agentParamsSnapshot: config.agentParams,
                             botConfigSnapshot,
-                            entryContext
+                            entryContext,
+                            entryAtr: entryContext.atr14,
                         };
                     }
                 }

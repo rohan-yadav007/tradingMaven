@@ -15,6 +15,28 @@ import { BacktestingPanel } from './components/BacktestingPanel';
 import { PreferencesPanel } from './components/PreferencesPanel';
 import { TradingConfigProvider, useTradingConfigState, useTradingConfigActions } from './contexts/TradingConfigContext';
 
+interface BinanceTickerStreamData {
+    s: string; // Symbol
+    c: string; // Close price
+    h: string; // High price
+    l: string; // Low price
+    v: string; // Total traded base asset volume
+    q: string; // Total traded quote asset volume
+}
+
+interface BinanceKlineStreamData {
+    k: {
+        t: number;    // Kline start time
+        o: string;    // Open price
+        h: string;    // High price
+        l: string;    // Low price
+        c: string;    // Close price
+        v: string;    // Base asset volume
+        x: boolean;   // Is this kline closed?
+    };
+}
+
+
 const AppContent: React.FC = () => {
     // ---- State Management ----
     // UI State
@@ -602,11 +624,11 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
         fetchAllData();
 
         const formattedPair = displayPair.replace('/', '');
-        const tickerCallback = (data: any) => {
+        const tickerCallback = (data: BinanceTickerStreamData) => {
              const ticker: LiveTicker = { pair: data.s, closePrice: parseFloat(data.c), highPrice: parseFloat(data.h), lowPrice: parseFloat(data.l), volume: parseFloat(data.v), quoteVolume: parseFloat(data.q) };
              if (ticker.pair.toLowerCase() === formattedPair.toLowerCase()) { setLivePrice(ticker.closePrice); setLiveTicker(ticker); }
         };
-        const klineCallback = (data: any) => {
+        const klineCallback = (data: BinanceKlineStreamData) => {
              const newKline: Kline = { time: data.k.t, open: parseFloat(data.k.o), high: parseFloat(data.k.h), low: parseFloat(data.k.l), close: parseFloat(data.k.c), volume: parseFloat(data.k.v), isFinal: data.k.x };
              setKlines(prev => {
                 const last = prev[prev.length - 1];
@@ -687,7 +709,7 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
                         data={klines} pair={displayPair} allPairs={configState.allPairs}
                         onPairChange={(newPair) => setSelectedPairs([newPair])}
                         isLoading={isChartLoading} pricePrecision={pricePrecision} livePrice={livePrice}
-                        liveTicker={liveTicker} chartTimeFrame={chartTimeFrame} onTimeFrameChange={configActions.setTimeFrame}
+                        chartTimeFrame={chartTimeFrame} onTimeFrameChange={configActions.setTimeFrame}
                         onLoadMoreData={handleLoadMoreData} isFetchingMoreData={isFetchingMoreChartData}
                         theme={theme} fundingInfo={fundingInfo}
                     />
@@ -703,7 +725,7 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
               ) : activeView === 'backtesting' ? (
                 <BacktestingPanel
                   backtestResult={backtestResult} setBacktestResult={setBacktestResult}
-                  setActiveView={setActiveView} klines={klines} theme={theme}
+                  setActiveView={setActiveView} theme={theme}
                 />
               ) : (
                 <PreferencesPanel theme={theme} />

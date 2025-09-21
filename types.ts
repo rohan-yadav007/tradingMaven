@@ -27,11 +27,6 @@ export enum LogType {
     Status = 'Status',
 }
 
-export enum RiskMode {
-    Percent = 'Percent',
-    ATR = 'ATR',
-}
-
 
 // --- Core Data Structures ---
 
@@ -124,8 +119,7 @@ export interface BinanceOrderResponse {
     cumQuote?: string;
 }
 
-// --- Order Book ---
-
+// FIX: Exported OrderBook types for use in the DepthChart component.
 export interface OrderBookEntry {
     price: number;
     amount: number;
@@ -138,7 +132,6 @@ export interface OrderBook {
     spread: number;
     spreadPercentage: number;
 }
-
 
 // --- Agent & Trading Logic ---
 
@@ -269,7 +262,6 @@ export interface AgentParams {
     sentinel_atr_mult_strong?: number;
     sentinel_atr_mult_transition?: number;
     sentinel_atr_mult_chop?: number;
-    // FIX: Add missing property for Sentinel agent.
     sentinel_useSrLevelsForTp?: boolean;
 
 
@@ -479,7 +471,6 @@ export interface Position {
     initialRiskRewardRatio?: number;
     agentParamsSnapshot?: AgentParams;
     botConfigSnapshot?: BotConfigSnapshot;
-    invalidationScore?: number;
     proactiveLossCheckTriggered: boolean;
     adaptiveTpTriggered?: boolean;
     entryContext?: Partial<MarketDataContext>;
@@ -577,11 +568,6 @@ export interface StochasticRSIOutput {
 export interface VortexIndicatorOutput {
     pdi: number[];
     ndi: number[];
-}
-
-export interface KSTOutput {
-    kst: number;
-    signal: number;
 }
 
 export interface IchimokuCloudOutput {

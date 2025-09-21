@@ -1,10 +1,8 @@
-
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, TradeSignal, TradingMode, RiskMode, LogType } from '../types';
-import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, LockIcon, UnlockIcon, InfoIcon, ZapIcon, RefreshIcon } from './icons';
+import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, LogType } from '../types';
+import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, InfoIcon, ZapIcon, RefreshIcon } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
-import { MAX_MARGIN_LOSS_PERCENT, TAKER_FEE_RATE } from '../constants';
+import { TAKER_FEE_RATE } from '../constants';
 
 
 interface RunningBotsProps {
@@ -286,15 +284,25 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
     }, [isUniversalTrailEnabled, isProfitSecureActive, isBreakevenSet, profitLockTier]);
     
     const proactiveExitStatus = useMemo(() => {
-        if (config.invalidationSensitivity === 'low') {
-             return { text: 'Low Sensitivity', className: 'bg-slate-200 dark:bg-slate-600' };
-        }
+        // Highest priority states: Aggressive trail and Spike protection
         if (aggressiveTrailTier && aggressiveTrailTier > 0) {
             return { text: 'Aggressive Trail', className: 'bg-purple-500 text-white' };
         }
         if (profitSpikeTier && profitSpikeTier > 0) {
              return { text: `Spike Protector T${profitSpikeTier}`, className: 'bg-purple-500 text-white' };
         }
+        // Display the sensitivity level if no higher-priority state is active
+        const sensitivity = config.invalidationSensitivity;
+        if (sensitivity === 'low') {
+            return { text: 'Low Sensitivity', className: 'bg-slate-500 dark:bg-slate-400 text-white dark:text-slate-900' };
+        }
+        if (sensitivity === 'medium') {
+            return { text: 'Medium Sensitivity', className: 'bg-amber-500 text-white' };
+        }
+        if (sensitivity === 'high') {
+            return { text: 'High Sensitivity', className: 'bg-rose-500 text-white' };
+        }
+        // Fallback
         return { text: 'Enabled', className: 'bg-slate-500 dark:bg-slate-400 text-white dark:text-slate-900' };
     }, [config.invalidationSensitivity, profitSpikeTier, aggressiveTrailTier]);
 
@@ -362,51 +370,6 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
                 <div className="text-xs text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">
                     Initial SL: {formatPrice(initialStopLossPrice, pricePrecision)} ({position.initialStopLossReason}).
                 </div>
-            </div>
-        </div>
-    );
-};
-
-const ThesisHealthIndicator: React.FC<{ score: number | undefined; sensitivity: 'low' | 'medium' | 'high' }> = ({ score, sensitivity }) => {
-    const scoreValue = score ?? 0;
-    const threshold = {
-        low: 80,
-        medium: 65,
-        high: 50
-    }[sensitivity];
-
-    const healthPercent = Math.max(0, 100 - scoreValue);
-    
-    let colorClass = 'bg-emerald-500'; // Healthy
-    let textColorClass = 'text-emerald-700 dark:text-emerald-300';
-    let label = 'Healthy';
-    if (scoreValue > threshold * 0.5) {
-        colorClass = 'bg-amber-500'; // Weakening
-        textColorClass = 'text-amber-700 dark:text-amber-300';
-        label = 'Weakening';
-    }
-    if (scoreValue > threshold * 0.8) {
-        colorClass = 'bg-rose-500'; // Critical
-        textColorClass = 'text-rose-700 dark:text-rose-300';
-        label = 'Critical';
-    }
-
-    return (
-        <div className="flex-1">
-            <div className="flex justify-between items-baseline mb-1">
-                <div className="flex items-center gap-1.5">
-                    <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Thesis Health</label>
-                    <div className="relative group">
-                        <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
-                        <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
-                            Measures how strongly the original entry reasons still hold. A high score indicates a weakening thesis, risking an automated exit.
-                        </div>
-                    </div>
-                </div>
-                <span className={`text-xs font-bold ${textColorClass}`}>{label} ({scoreValue}/100)</span>
-            </div>
-            <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2.5">
-                <div className={`h-2.5 rounded-full transition-all duration-300 ${colorClass}`} style={{ width: `${healthPercent}%` }}></div>
             </div>
         </div>
     );
@@ -559,7 +522,7 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
                                 </p>
                             </div>
                             <div className="flex items-center gap-4">
-                                {position.mode === TradingMode.USDSM_Futures && position.liquidationPrice && (
+                                {position.liquidationPrice && (
                                     <InfoItem label="Liq. Price" value={formatPrice(position.liquidationPrice, position.pricePrecision)} valueClassName="text-amber-500" />
                                 )}
                                 <InfoItem label="Est. Fee" value={`$${roundTripFee.toFixed(2)}`} />
@@ -570,9 +533,6 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
                             </div>
                         </div>
                         <PositionPnlProgress position={position} livePrice={bot.livePrice || position.entryPrice} />
-                        <div className="mt-3 flex items-center gap-4">
-                            <ThesisHealthIndicator score={position.invalidationScore} sensitivity={position.botConfigSnapshot?.invalidationSensitivity || 'medium'} />
-                        </div>
                     </div>
                 )}
             </div>
@@ -630,45 +590,139 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
 
 
 export const RunningBots: React.FC<RunningBotsProps> = ({ bots, ...actions }) => {
+    const { onClosePosition } = actions;
     const [activeTab, setActiveTab] = useState<'open' | 'monitoring'>('open');
 
     const { openPositionBots, monitoringBots } = useMemo(() => {
-        const openPositionBots: RunningBot[] = [];
-        const monitoringBots: RunningBot[] = [];
+        const open: RunningBot[] = [];
+        const monitoring: RunningBot[] = [];
         bots.forEach(bot => {
             if (bot.status === BotStatus.PositionOpen || bot.status === BotStatus.FlipPending) {
-                openPositionBots.push(bot);
+                open.push(bot);
             } else {
-                monitoringBots.push(bot);
+                monitoring.push(bot);
             }
         });
-        return { openPositionBots, monitoringBots };
+        return { openPositionBots: open, monitoringBots: monitoring };
     }, [bots]);
+
+    const { allOpenPositions, profitablePositions, losingPositions } = useMemo(() => {
+        const allOpen: Position[] = [];
+        const profitable: Position[] = [];
+        const losing: Position[] = [];
+
+        openPositionBots.forEach(bot => {
+            if (bot.openPosition && bot.livePrice) {
+                const isLong = bot.openPosition.direction === 'LONG';
+                const unrealizedPnl = (bot.livePrice - bot.openPosition.entryPrice) * bot.openPosition.size * (isLong ? 1 : -1);
+                
+                allOpen.push(bot.openPosition);
+
+                if (unrealizedPnl > 0) {
+                    profitable.push(bot.openPosition);
+                } else if (unrealizedPnl < 0) {
+                    losing.push(bot.openPosition);
+                }
+            }
+        });
+        return { allOpenPositions: allOpen, profitablePositions: profitable, losingPositions: losing };
+    }, [openPositionBots]);
+
+    const handleCloseAll = () => {
+        if (allOpenPositions.length === 0) return;
+        if (window.confirm(`Are you sure you want to close all ${allOpenPositions.length} open positions immediately?`)) {
+            allOpenPositions.forEach(pos => {
+                const bot = bots.find(b => b.openPositionId === pos.id);
+                if (bot) {
+                    onClosePosition(pos, 'Kill Switch: Close All', bot.livePrice);
+                }
+            });
+        }
+    };
+
+    const handleCloseProfitable = () => {
+        if (profitablePositions.length === 0) return;
+        if (window.confirm(`Are you sure you want to close all ${profitablePositions.length} profitable positions immediately?`)) {
+            profitablePositions.forEach(pos => {
+                const bot = bots.find(b => b.openPositionId === pos.id);
+                if (bot) {
+                    onClosePosition(pos, 'Kill Switch: Close Profitable', bot.livePrice);
+                }
+            });
+        }
+    };
+
+    const handleCloseLosing = () => {
+        if (losingPositions.length === 0) return;
+        if (window.confirm(`Are you sure you want to close all ${losingPositions.length} losing positions immediately?`)) {
+            losingPositions.forEach(pos => {
+                const bot = bots.find(b => b.openPositionId === pos.id);
+                if (bot) {
+                    onClosePosition(pos, 'Kill Switch: Close Losing', bot.livePrice);
+                }
+            });
+        }
+    };
 
     const botsToDisplay = activeTab === 'open' ? openPositionBots : monitoringBots;
     const activeBotsCount = openPositionBots.length + monitoringBots.length;
 
     return (
         <div className="flex flex-col gap-4">
-            <div className="flex justify-between items-center flex-wrap gap-2">
+            <div className="flex justify-between items-center flex-wrap gap-4">
                 <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-2">
                     <CpuIcon className="w-6 h-6 text-sky-500" />
                     <span>Running Bots</span>
                     <span className="text-sm font-normal bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 px-2 py-1 rounded-full">{activeBotsCount}</span>
                 </h2>
-                <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-lg">
-                    <button
-                        onClick={() => setActiveTab('open')}
-                        className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors flex items-center gap-2 ${activeTab === 'open' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
-                    >
-                        Position Open <span className="text-xs bg-sky-500 text-white rounded-full min-w-[20px] px-1.5 py-0.5">{openPositionBots.length}</span>
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('monitoring')}
-                        className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors flex items-center gap-2 ${activeTab === 'monitoring' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
-                    >
-                        Monitoring <span className="text-xs bg-slate-500 text-white rounded-full min-w-[20px] px-1.5 py-0.5">{monitoringBots.length}</span>
-                    </button>
+                
+                <div className="flex items-center gap-4">
+                     {allOpenPositions.length > 0 && (
+                         <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold text-rose-600 dark:text-rose-400 hidden sm:inline">Emergency Close:</span>
+                            <button
+                                onClick={handleCloseAll}
+                                disabled={allOpenPositions.length === 0}
+                                className="px-2.5 py-1 text-xs bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300 font-bold rounded-md hover:bg-rose-200 dark:hover:bg-rose-900 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                                title={`Close all ${allOpenPositions.length} positions`}
+                            >
+                                <ZapIcon className="w-3.5 h-3.5" />
+                                All ({allOpenPositions.length})
+                            </button>
+                            <button
+                                onClick={handleCloseProfitable}
+                                disabled={profitablePositions.length === 0}
+                                className="px-2.5 py-1 text-xs bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300 font-bold rounded-md hover:bg-emerald-200 dark:hover:bg-emerald-900 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                                title={`Close ${profitablePositions.length} profitable positions`}
+                            >
+                                <ZapIcon className="w-3.5 h-3.5" />
+                                Profits ({profitablePositions.length})
+                            </button>
+                            <button
+                                onClick={handleCloseLosing}
+                                disabled={losingPositions.length === 0}
+                                className="px-2.5 py-1 text-xs bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300 font-bold rounded-md hover:bg-rose-200 dark:hover:bg-rose-900 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                                title={`Close ${losingPositions.length} losing positions`}
+                            >
+                                <ZapIcon className="w-3.5 h-3.5" />
+                                Losses ({losingPositions.length})
+                            </button>
+                        </div>
+                    )}
+                    <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-lg">
+                        <button
+                            onClick={() => setActiveTab('open')}
+                            className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors flex items-center gap-2 ${activeTab === 'open' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
+                        >
+                            Position Open <span className="text-xs bg-sky-500 text-white rounded-full min-w-[20px] px-1.5 py-0.5">{openPositionBots.length}</span>
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('monitoring')}
+                            className={`px-3 py-1.5 text-sm font-semibold rounded-md transition-colors flex items-center gap-2 ${activeTab === 'monitoring' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
+                        >
+                            Monitoring <span className="text-xs bg-slate-500 text-white rounded-full min-w-[20px] px-1.5 py-0.5">{monitoringBots.length}</span>
+                        </button>
+                    </div>
                 </div>
             </div>
 

@@ -1,5 +1,7 @@
 
-import { BotConfig, TradingMode, RiskMode } from '../types';
+
+// FIX: Removed unused and non-existent RiskMode from import
+import { BotConfig, TradingMode } from '../types';
 import { historyService } from './historyService';
 import * as constants from '../constants';
 import * as binanceService from './binanceService';

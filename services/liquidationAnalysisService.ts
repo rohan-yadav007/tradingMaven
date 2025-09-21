@@ -1,7 +1,5 @@
 // services/liquidationAnalysisService.ts
 
-import { TradingMode } from '../types';
-
 interface LiquidationEvent {
     symbol: string;
     side: 'BUY' | 'SELL'; // BUY = long liquidation, SELL = short liquidation
@@ -184,7 +182,7 @@ class LiquidationAnalysisService {
         
         // If there's no recent activity, don't veto.
         if (state.recentBuckets.length === 0) {
-            return { veto: false, reason: '✅ Liquidation Filter: Passed' };
+            return { veto: false, reason: `✅ Liquidation Filter: Passed` };
         }
 
         const isLongSignal = signalDirection === 'BUY';

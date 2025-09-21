@@ -1,6 +1,6 @@
 import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, TradingMode, MarketDataContext } from '../types';
 import * as binanceService from './binanceService';
-import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext, getAdaptiveTakeProfit, getTradeGuardianSignal } from './localAgentService';
+import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext, getAdaptiveTakeProfit, getTradeGuardianSignal } from './localAgentService';
 import { TIME_FRAMES, getMicroTimeframe } from '../constants';
 import { telegramBotService } from './telegramBotService';
 import { WebSocketManager } from './webSocketManager';
@@ -196,7 +196,6 @@ class BotInstance {
             this.updateState({ analysis: signal });
 
             const isForEntry = !this.bot.openPosition && this.bot.status === BotStatus.Monitoring;
-            const isForManagement = !!this.bot.openPosition;
             
             if (isForEntry && options.execute) {
                 if (signal.signal !== 'HOLD') {
@@ -211,16 +210,6 @@ class BotInstance {
                 } else {
                     const primaryReason = signal.reasons.find(r => r.startsWith('❌') || r.startsWith('ℹ️') || r.startsWith('⚠️')) || "Conditions not met.";
                     this.addLog(`Analysis: HOLD. ${primaryReason.substring(2)}`, LogType.Info);
-                }
-            } else if (isForManagement) {
-                const { score, reasons } = await getSupervisorSignal(this.bot.openPosition!, klinesForAnalysis, this.bot.config, htfKlines);
-                this.updateState({ openPosition: { ...this.bot.openPosition!, invalidationScore: score } });
-                const sensitivityThreshold = { low: 80, medium: 65, high: 50 }[this.bot.config.invalidationSensitivity];
-                if (score >= sensitivityThreshold) {
-                    const reason = `Supervisor Exit: Thesis Invalidated (Score: ${score} >= ${sensitivityThreshold}). Reasons: ${reasons.join(' ')}`;
-                    this.addLog(reason, LogType.Action);
-                    this.handlers.onClosePosition(this.bot.openPosition!, reason, this.bot.livePrice || 0);
-                    return;
                 }
             }
         } catch (error) {

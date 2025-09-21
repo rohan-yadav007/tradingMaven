@@ -1,10 +1,10 @@
 import React from 'react';
 import { useState, useEffect, useMemo } from 'react';
-import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, Kline, RiskMode, OptimizationResultItem } from '../types';
+import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, OptimizationResultItem } from '../types';
 import * as constants from '../constants';
 import * as binanceService from './../services/binanceService';
 import { runBacktest, runOptimization } from '../services/backtestingService';
-import { FlaskIcon, ChevronUp, ChevronDown, LockIcon, UnlockIcon, SparklesIcon, InfoIcon } from './icons';
+import { FlaskIcon, ChevronUp, ChevronDown, SparklesIcon, InfoIcon } from './icons';
 import { useTradingConfigState, useTradingConfigActions } from '../contexts/TradingConfigContext';
 import { SearchableDropdown } from './SearchableDropdown';
 import { BacktestResultDisplay } from './BacktestResultDisplay';
@@ -146,7 +146,15 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                     {isExitVetoOpen && (
                         <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
                             <div className="flex items-center justify-between">
-                                <label className={formLabelClass}>Use S/R for Take Profit</label>
+                                 <div className="flex items-center gap-1.5">
+                                    <label className={formLabelClass}>Use S/R for Take Profit</label>
+                                     <div className="relative group">
+                                        <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                                        <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                            Sets TP just before the next significant S/R level. Falls back to R:R if no level is found.
+                                        </div>
+                                    </div>
+                                </div>
                                 <ToggleSwitch checked={allParams.sentinel_useSrLevelsForTp!} onChange={v => updateParam('sentinel_useSrLevelsForTp', v)} />
                             </div>
                             <ParamSlider label="SuperTrend Period (SL)" value={allParams.sentinel_stPeriod!} onChange={v => updateParam('sentinel_stPeriod', v)} min={5} max={20} step={1} />
@@ -184,7 +192,6 @@ interface BacktestingPanelProps {
     backtestResult: BacktestResult | null;
     setBacktestResult: (result: BacktestResult | null) => void;
     setActiveView: (view: 'trading' | 'backtesting' | 'preferences') => void;
-    klines: Kline[];
     theme: 'light' | 'dark';
 }
 
@@ -330,7 +337,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
             const backtestKlines = await binanceService.fetchFullKlines(formattedPair, '1m', startTime, Date.now(), config.tradingMode);
             if (backtestKlines.length < 200) { throw new Error("Not enough historical data available for a reliable backtest (min 200 candles)."); }
             
-            let htfKlines: Kline[] | undefined = undefined;
+            let htfKlines: any[] | undefined = undefined;
             if (config.isHtfConfirmationEnabled) {
                 const htf = config.htfTimeFrame === 'auto' ? constants.TIME_FRAMES[constants.TIME_FRAMES.indexOf(config.chartTimeFrame) + 1] : config.htfTimeFrame;
                 if (htf) {
@@ -375,7 +382,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
             const backtestKlines = await binanceService.fetchFullKlines(formattedPair, '1m', startTime, Date.now(), config.tradingMode);
             if (backtestKlines.length < 200) { throw new Error("Not enough historical data for optimization."); }
             
-            let htfKlines: Kline[] | undefined = undefined;
+            let htfKlines: any[] | undefined = undefined;
             if (config.isHtfConfirmationEnabled) {
                  const htf = config.htfTimeFrame === 'auto' ? constants.TIME_FRAMES[constants.TIME_FRAMES.indexOf(config.chartTimeFrame) + 1] : config.htfTimeFrame;
                 if (htf) {

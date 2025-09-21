@@ -1,7 +1,7 @@
 // services/riskManagementService.ts
 
-import { TradingMode, Agent, TradeSignal, Kline, AgentParams, Position, ADXOutput, MACDOutput, BollingerBandsOutput, StochasticRSIOutput, TradeManagementSignal, BotConfig, VortexIndicatorOutput, SentinelAnalysis, IchimokuCloudOutput, MarketDataContext } from '../types';
-import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, IchimokuCloud, KST, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, dragonflydoji, gravestonedoji, hammerpattern, hangingman, morningstar, piercingline, shootingstar, eveningstar } from 'technicalindicators';
+import { TradingMode, Agent, Kline, AgentParams, Position, ADXOutput, MACDOutput, BollingerBandsOutput, StochasticRSIOutput, TradeManagementSignal, BotConfig, IchimokuCloudOutput } from '../types';
+import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, IchimokuCloud, bearishengulfingpattern, bullishengulfingpattern } from 'technicalindicators';
 import * as constants from '../constants';
 import { calculateSupportResistance, findSwingPoints } from './chartAnalysisService';
 import { Supertrend, applyTimeframeSettings, getLast, getPenultimate, captureMarketContext, detectRsiDivergence, calculateVwap } from './agents/agentUtils';
@@ -202,16 +202,42 @@ export function getInitialAgentTargets(
         stopLossAfterInitialChecks = minSafeStopLoss;
     }
 
-    // --- Step 3: Calculate Take Profit based on R:R ---
+    // --- Step 3: Calculate Take Profit ---
     const stopLossDistance = Math.abs(entryPrice - stopLossAfterInitialChecks);
-    let suggestedTakeProfit: number;
     
-    // Default R:R logic for all agents
-    let riskRewardRatio = timeframeConfig.riskRewardRatio;
-    if (agent.id === 13) {
-        riskRewardRatio = 4; // Special R:R for Chameleon
+    const timeframeConfigForRr = TIMEFRAME_ATR_CONFIG[timeFrame] || TIMEFRAME_ATR_CONFIG['5m'];
+    let riskRewardRatio = timeframeConfigForRr.riskRewardRatio;
+    if (agent.id === 13) riskRewardRatio = 4; // Special R:R for Chameleon
+    let suggestedTakeProfit = isLong 
+        ? entryPrice + (stopLossDistance * riskRewardRatio) 
+        : entryPrice - (stopLossDistance * riskRewardRatio);
+
+    // Agent-Specific TP Logic (Sentinel S/R) - conditionally override
+    if (agent.id === 14 && params.sentinel_useSrLevelsForTp) {
+        const srLevels = calculateSupportResistance(klines, 15, 0.005);
+        const buffer = currentAtr * 0.2; // Small buffer before the S/R level
+
+        let targetSrLevel: number | undefined;
+
+        if (isLong) {
+            const nextResistance = srLevels.resistances.filter(r => r.price > entryPrice).sort((a, b) => a.price - b.price)[0];
+            if (nextResistance) targetSrLevel = nextResistance.price - buffer;
+        } else { // SHORT
+            const nextSupport = srLevels.supports.filter(s => s.price < entryPrice).sort((a, b) => b.price - a.price)[0];
+            if (nextSupport) targetSrLevel = nextSupport.price + buffer;
+        }
+
+        if (targetSrLevel) {
+            const risk = stopLossDistance;
+            const reward = Math.abs(targetSrLevel - entryPrice);
+            const rrRatio = risk > 0 ? reward / risk : 0;
+            const minSrRr = Math.max(1.0, constants.MIN_RISK_REWARD_RATIO - 0.5);
+
+            if (rrRatio >= minSrRr) {
+                suggestedTakeProfit = targetSrLevel; // Override default
+            }
+        }
     }
-    suggestedTakeProfit = isLong ? entryPrice + (stopLossDistance * riskRewardRatio) : entryPrice - (stopLossDistance * riskRewardRatio);
 
 
     // --- Step 4: Apply Hard Cap as the FINAL, non-negotiable limit ---
@@ -718,138 +744,6 @@ export function getAgentExitSignal(
     return { newStopLoss, action, reasons, activeStopLossReason: 'Agent Trail' };
 }
 
-export async function getSupervisorSignal(
-    position: Position,
-    klines: Kline[],
-    originalConfig: BotConfig,
-    htfKlines?: Kline[]
-): Promise<{ score: number; reasons: string[] }> {
-    const config = applyTimeframeSettings(originalConfig);
-    const params = config.agentParams as Required<AgentParams>;
-
-    let score = 0;
-    const reasons: string[] = [];
-
-    if ((position.candlesSinceEntry || 0) < 3) {
-        return { score: 0, reasons: ['Initial grace period.'] };
-    }
-
-    const currentContext = captureMarketContext(klines, htfKlines);
-    const lastClose = currentContext.lastClose;
-    if (!lastClose) return { score: 0, reasons: ['Could not get last close price.'] };
-
-    const isLong = position.direction === 'LONG';
-
-    // --- NEW FAILSAFE CHECKS ---
-    // Failsafe 1: Opposite RSI Divergence (Max 90 points)
-    const rsiValues = RSI.calculate({ period: 14, values: klines.map(k => k.close) });
-    const positionDirection = isLong ? 'LONG' : 'SHORT';
-    if (detectRsiDivergence(klines, rsiValues, positionDirection, 14)) {
-        score += 90;
-        reasons.push(`Failsafe: Opposite RSI divergence detected.`);
-    }
-
-    // Failsafe 2: Liquidity Sweep Against Position (Max 80 points)
-    const lastCandle = klines[klines.length - 1];
-    const prevCandle = klines[klines.length - 2];
-    const volumeSma = getLast(SMA.calculate({ period: 20, values: klines.map(k => k.volume || 0)}));
-    if (lastCandle && prevCandle && volumeSma && lastCandle.volume && lastCandle.volume > volumeSma * 1.5) { // High volume
-        const isBullishSweep = lastCandle.low < prevCandle.low && lastCandle.close > prevCandle.low;
-        const isBearishSweep = lastCandle.high > prevCandle.high && lastCandle.close < prevCandle.high;
-        if (isLong && isBearishSweep) {
-            score += 80;
-            reasons.push(`Failsafe: Bearish liquidity sweep detected.`);
-        } else if (!isLong && isBullishSweep) {
-            score += 80;
-            reasons.push(`Failsafe: Bullish liquidity sweep detected.`);
-        }
-    }
-
-    // Failsafe 3: Volume Drying Up (Max 35 points)
-    if (lastCandle && volumeSma && lastCandle.volume && lastCandle.volume < volumeSma * 0.5) {
-        score += 35;
-        reasons.push(`Failsafe: Volume has dried up.`);
-    }
-
-    // Use agent-specific or default parameters for invalidation checks
-    let invalidationCandleLimit: number;
-    let rsiMomentumExitLong: number;
-    let rsiMomentumExitShort: number;
-
-    if (config.agent.id === 14) { // The Sentinel
-        invalidationCandleLimit = params.sentinel_invalidationCandleLimit;
-        rsiMomentumExitLong = params.sentinel_rsiMomentumExitLong;
-        rsiMomentumExitShort = params.sentinel_rsiMomentumExitShort;
-    } else {
-        invalidationCandleLimit = params.invalidationCandleLimit;
-        rsiMomentumExitLong = 48; // Hardcoded default for other agents
-        rsiMomentumExitShort = 52; // Hardcoded default for other agents
-    }
-
-    // 0. SMC Reversal check (Max 85 points)
-    if (config.isSmcVetoEnabled) {
-        const volumes = klines.map(k => k.volume || 0);
-        
-        const reversalTypeToDetect = isLong ? 'bearish' : 'bullish';
-        const smcResult = detectSmcReversalPattern(klines, reversalTypeToDetect, config, rsiValues, volumeSma);
-        
-        if (smcResult.detected) {
-            score += 85;
-            reasons.push(smcResult.reason);
-        }
-    }
-
-    // 1. Momentum Decay (Max 30 points)
-    const rsi = currentContext.rsi14;
-    if (rsi) {
-        if (isLong && rsi < rsiMomentumExitLong) {
-            score += 30;
-            reasons.push(`Momentum Faded (RSI < ${rsiMomentumExitLong})`);
-        } else if (!isLong && rsi > rsiMomentumExitShort) {
-            score += 30;
-            reasons.push(`Momentum Faded (RSI > ${rsiMomentumExitShort})`);
-        }
-    }
-
-    // 2. Market Structure Break (Max 40 points)
-    const ema21 = currentContext.ema21;
-    if (ema21) {
-        if (isLong && lastClose < ema21) {
-            score += 40;
-            reasons.push(`Market Structure Break (Price < EMA21)`);
-        } else if (!isLong && lastClose > ema21) {
-            score += 40;
-            reasons.push(`Market Structure Break (Price > EMA21)`);
-        }
-    }
-    
-    // 3. Contradictory Candlestick Pattern (Max 20 points)
-    const lastPattern = currentContext.lastCandlePattern;
-    if (lastPattern) {
-        if (isLong && lastPattern.type === 'bearish') {
-            score += 20;
-            reasons.push(`Contradictory Pattern (${lastPattern.name})`);
-        } else if (!isLong && lastPattern.type === 'bullish') {
-            score += 20;
-            reasons.push(`Contradictory Pattern (${lastPattern.name})`);
-        }
-    }
-    
-    // 4. Time-Based & PNL Decay (Max 30 points)
-    const candlesSinceEntry = position.candlesSinceEntry || 0;
-    const currentPnlInPrice = (lastClose - position.entryPrice) * (isLong ? 1 : -1);
-
-    if (currentPnlInPrice < 0 && candlesSinceEntry > invalidationCandleLimit) {
-        const decayScore = Math.min(30, Math.floor((candlesSinceEntry - invalidationCandleLimit) / (invalidationCandleLimit / 2)) * 10);
-        if (decayScore > 0) {
-            score += decayScore;
-            reasons.push(`Negative PnL Decay (${candlesSinceEntry} candles in loss)`);
-        }
-    }
-
-    return { score: Math.min(100, score), reasons };
-}
-
 export function getAdaptiveTakeProfit(
     position: Position,
     klines: Kline[],
@@ -886,11 +780,10 @@ export function getAdaptiveTakeProfit(
     const highs = klinesForAnalysis.map(k => k.high);
     const lows = klinesForAnalysis.map(k => k.low);
     const rsiValues = RSI.calculate({ period: 14, values: closes });
-    // FIX: Cast result of technical indicator to number | undefined to fix 'unknown' type error.
+    
     const lastRsi = getLast(rsiValues) as number | undefined;
     const stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
     const macd = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false })) as MACDOutput | undefined;
-    // FIX: Cast result of technical indicator to number | undefined to fix 'unknown' type error.
     const atr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: 14 })) as number | undefined;
 
     if (lastRsi === undefined || !stochRsi || !macd?.histogram || !atr) return {};
@@ -949,7 +842,7 @@ export function getTradeGuardianSignal(
     }
     
     const params = constants.TRADE_GUARDIAN_CONFIG[position.timeFrame] || constants.TRADE_GUARDIAN_CONFIG['15m'];
-    const strikes: string[] = [];
+    const strikes = new Set<string>();
     const isLong = position.direction === 'LONG';
     
     const closes = klines.map(k => k.close);
@@ -970,24 +863,24 @@ export function getTradeGuardianSignal(
         const rsi14_is_weakening_for_short = rsi14 > prev_rsi14 || Math.abs(rsi14 - prev_rsi14) < 1;
         
         if (isLong && params.rsi7_long_threshold && rsi7 < params.rsi7_long_threshold && rsi14_is_weakening_for_long) {
-            strikes.push('Momentum Exhaustion (RSI)');
+            strikes.add('Momentum Exhaustion (RSI)');
         }
         if (!isLong && params.rsi7_short_threshold && rsi7 > params.rsi7_short_threshold && rsi14_is_weakening_for_short) {
-            strikes.push('Momentum Exhaustion (RSI)');
+            strikes.add('Momentum Exhaustion (RSI)');
         }
         if (isLong && params.rsi14_long_threshold && rsi14 < params.rsi14_long_threshold && prev_rsi14 >= params.rsi14_long_threshold) {
-             strikes.push('Momentum Exhaustion (RSI)');
+             strikes.add('Momentum Exhaustion (RSI)');
         }
         if (!isLong && params.rsi14_short_threshold && rsi14 > params.rsi14_short_threshold && prev_rsi14 <= params.rsi14_short_threshold) {
-             strikes.push('Momentum Exhaustion (RSI)');
+             strikes.add('Momentum Exhaustion (RSI)');
         }
     }
     const obv_values = OBV.calculate({ close: closes, volume: volumes });
     if (obv_values.length > 5) {
         const price_slope_positive = (lastKline.close - klines[klines.length - 5].close) > 0;
         const obv_slope_positive = (getLast(obv_values)! - obv_values[obv_values.length - 5]) > 0;
-        if (isLong && price_slope_positive && !obv_slope_positive) strikes.push('Momentum Exhaustion (OBV Divergence)');
-        if (!isLong && !price_slope_positive && obv_slope_positive) strikes.push('Momentum Exhaustion (OBV Divergence)');
+        if (isLong && price_slope_positive && !obv_slope_positive) strikes.add('Momentum Exhaustion (OBV Divergence)');
+        if (!isLong && !price_slope_positive && obv_slope_positive) strikes.add('Momentum Exhaustion (OBV Divergence)');
     }
 
     // --- Check 2: Candle Behavior Shift ---
@@ -996,16 +889,16 @@ export function getTradeGuardianSignal(
     if (klines.length >= 2) {
         const engulfingInput = { open: [klines[klines.length-2].open, lastKline.open], high: [klines[klines.length-2].high, lastKline.high], low: [klines[klines.length-2].low, lastKline.low], close: [klines[klines.length-2].close, lastKline.close]};
         if (isLong && bearishengulfingpattern(engulfingInput) && hasVolumeSpike) {
-            strikes.push('Bearish Engulfing Candle');
+            strikes.add('Bearish Engulfing Candle');
         }
         if (!isLong && bullishengulfingpattern(engulfingInput) && hasVolumeSpike) {
-            strikes.push('Bullish Engulfing Candle');
+            strikes.add('Bullish Engulfing Candle');
         }
     }
     if (microKlines && microKlines.length >= 3) {
         const last3micro = microKlines.slice(-3);
-        if (isLong && last3micro.every(k => k.close < k.open)) strikes.push('3 consecutive micro-bear candles');
-        if (!isLong && last3micro.every(k => k.close > k.open)) strikes.push('3 consecutive micro-bull candles');
+        if (isLong && last3micro.every(k => k.close < k.open)) strikes.add('3 consecutive micro-bear candles');
+        if (!isLong && last3micro.every(k => k.close > k.open)) strikes.add('3 consecutive micro-bull candles');
     }
     
     // --- Check 3: ATR/Volatility Spike ---
@@ -1013,7 +906,7 @@ export function getTradeGuardianSignal(
     if (position.entryAtr && currentAtr && currentAtr > position.entryAtr * params.atrSpikeMultiplier) {
         const isAgainst = isLong ? lastKline.close < lastKline.open : lastKline.close > lastKline.open;
         if (isAgainst) {
-            strikes.push('Volatility Spike Reversal');
+            strikes.add('Volatility Spike Reversal');
         }
     }
 
@@ -1022,10 +915,10 @@ export function getTradeGuardianSignal(
     const ema = getLast(EMA.calculate({ period: params.vwapEmaPeriod, values: closes }));
     if (vwap && ema) {
         if (isLong && currentPrice < vwap && currentPrice < ema) {
-            strikes.push('Broken below VWAP/EMA support');
+            strikes.add('Broken below VWAP/EMA support');
         }
         if (!isLong && currentPrice > vwap && currentPrice > ema) {
-            strikes.push('Broken above VWAP/EMA resistance');
+            strikes.add('Broken above VWAP/EMA resistance');
         }
     }
 
@@ -1033,8 +926,8 @@ export function getTradeGuardianSignal(
     if (microKlines) {
         const microRsi = getLast(RSI.calculate({ period: 14, values: microKlines.map(k => k.close) }));
         if (microRsi) {
-            if (isLong && microRsi < 45) strikes.push('Micro-TF momentum weak');
-            if (!isLong && microRsi > 55) strikes.push('Micro-TF momentum weak');
+            if (isLong && microRsi < 45) strikes.add('Micro-TF momentum weak');
+            if (!isLong && microRsi > 55) strikes.add('Micro-TF momentum weak');
         }
     }
 
@@ -1043,7 +936,7 @@ export function getTradeGuardianSignal(
     if (position.initialRiskInPrice && mfe_in_price > position.initialRiskInPrice * 1.2) {
         const retrace_in_price = isLong ? position.peakPrice - currentPrice : currentPrice - position.peakPrice;
         if (mfe_in_price > 0 && retrace_in_price > 0 && retrace_in_price / mfe_in_price > params.pnlRetracePercent) {
-            strikes.push('PnL Retracement');
+            strikes.add('PnL Retracement');
         }
     }
 
@@ -1051,13 +944,12 @@ export function getTradeGuardianSignal(
     if (position.candlesSinceEntry > params.maxCandles) {
         const currentPnl_in_price = (currentPrice - position.entryPrice) * (isLong ? 1 : -1);
         if (position.initialRiskInPrice && currentPnl_in_price < position.initialRiskInPrice * 0.5) { 
-             strikes.push('Time Decay');
+             strikes.add('Time Decay');
         }
     }
 
-    if (strikes.length >= 5) {
-        // Use Set to remove duplicate strikes for a cleaner reason
-        return { action: 'close', reason: `Trade Guardian Exit: ${[...new Set(strikes)].join('; ')}` };
+    if (strikes.size >= 2) {
+        return { action: 'close', reason: `Trade Guardian Exit: ${[...strikes].join('; ')}` };
     }
 
     return { action: 'hold' };

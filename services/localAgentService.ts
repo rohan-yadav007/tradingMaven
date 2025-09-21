@@ -6,7 +6,6 @@ export {
     getAgentExitSignal, 
     getMultiStageProfitSecureSignal, 
     validateTradeProfitability, 
-    getSupervisorSignal, 
     getMandatoryBreakevenSignal, 
     getProfitSpikeSignal, 
     getAggressiveRangeTrailSignal,

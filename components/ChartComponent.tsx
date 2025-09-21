@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react';
-import { type Kline, type LiveTicker } from '../types';
-import { ChartIcon } from './icons';
+import { type Kline } from '../types';
 import * as constants from '../constants';
 import { SearchableDropdown } from './SearchableDropdown';
 import { createChart, ColorType, type IChartApi, type ISeriesApi, type CandlestickData, type UTCTimestamp, TickMarkType } from 'lightweight-charts';
@@ -13,7 +12,6 @@ interface ChartComponentProps {
     isLoading: boolean;
     pricePrecision: number;
     livePrice: number;
-    liveTicker?: LiveTicker;
     chartTimeFrame: string;
     onTimeFrameChange: (newTimeFrame: string) => void;
     onLoadMoreData: () => void | Promise<void>;
@@ -292,6 +290,12 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
         }
     }, [livePrice, data]);
 
+    const handleDropdownChange = useCallback((newValue: string | string[]) => {
+        if (typeof newValue === 'string') {
+            onPairChange(newValue);
+        }
+    }, [onPairChange]);
+
     return (
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm relative h-96 md:h-[500px] flex flex-col">
             <div className="flex flex-wrap items-center justify-between gap-2 p-3 border-b border-slate-200 dark:border-slate-700">
@@ -300,7 +304,7 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
                          <SearchableDropdown
                             options={allPairs}
                             value={pair}
-                            onChange={onPairChange}
+                            onChange={handleDropdownChange}
                             theme={theme}
                         />
                     </div>

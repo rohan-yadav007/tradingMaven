@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig, Agent, MarketDataContext } from '../types';
+import { TradingMode, Kline, TradeSignal, AgentParams, BotConfig, Agent } from '../types';
 import * as constants from '../constants';
-import { PlayIcon, LockIcon, UnlockIcon, CpuIcon, ChevronDown, ChevronUp, InfoIcon } from './icons';
+import { PlayIcon, CpuIcon, ChevronDown, ChevronUp, InfoIcon } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
 import { getTradingSignal, captureMarketContext } from '../services/localAgentService';
 import * as binanceService from '../services/binanceService';
@@ -158,6 +158,18 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                     </button>
                     {isExitVetoOpen && (
                         <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-1.5">
+                                    <label className={formLabelClass}>Use S/R for Take Profit</label>
+                                    <div className="relative group">
+                                        <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                                        <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                            Sets TP just before the next significant S/R level. Falls back to R:R if no level is found.
+                                        </div>
+                                    </div>
+                                </div>
+                                <ToggleSwitch checked={allParams.sentinel_useSrLevelsForTp!} onChange={v => updateParam('sentinel_useSrLevelsForTp', v)} />
+                            </div>
                             <ParamSlider label="SuperTrend Period (SL)" value={allParams.sentinel_stPeriod!} onChange={v => updateParam('sentinel_stPeriod', v)} min={5} max={20} step={1} />
                             <ParamSlider label="SuperTrend Multiplier (SL)" value={allParams.sentinel_stMultiplier!} onChange={v => updateParam('sentinel_stMultiplier', v)} min={1.0} max={5.0} step={0.1} valueDisplay={v => v.toFixed(1)} />
                             <ParamSlider label="Invalidation Candle Limit" value={allParams.sentinel_invalidationCandleLimit!} onChange={v => updateParam('sentinel_invalidationCandleLimit', v)} min={3} max={20} step={1} />

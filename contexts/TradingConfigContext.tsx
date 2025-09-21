@@ -32,6 +32,7 @@ interface TradingConfigState {
     isMarketCohesionEnabled: boolean;
     isVwapConfirmationEnabled: boolean;
     isBtcConfirmationEnabled: boolean;
+    isBtcCorrelationVetoEnabled: boolean;
     btcConfirmationThreshold: number;
     isVolumeFilterEnabled: boolean;
     isAdxFilterEnabled: boolean;
@@ -84,6 +85,7 @@ interface TradingConfigActions {
     setIsMarketCohesionEnabled: (isEnabled: boolean) => void;
     setIsVwapConfirmationEnabled: (isEnabled: boolean) => void;
     setIsBtcConfirmationEnabled: (isEnabled: boolean) => void;
+    setIsBtcCorrelationVetoEnabled: (isEnabled: boolean) => void;
     setBtcConfirmationThreshold: (threshold: number) => void;
     setIsVolumeFilterEnabled: (isEnabled: boolean) => void;
     setIsAdxFilterEnabled: (isEnabled: boolean) => void;
@@ -144,6 +146,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [isMarketCohesionEnabled, setIsMarketCohesionEnabled] = useState<boolean>(true);
     const [isVwapConfirmationEnabled, setIsVwapConfirmationEnabled] = useState<boolean>(true);
     const [isBtcConfirmationEnabled, setIsBtcConfirmationEnabled] = useState<boolean>(false);
+    const [isBtcCorrelationVetoEnabled, setIsBtcCorrelationVetoEnabled] = useState<boolean>(false);
     const [btcConfirmationThreshold, setBtcConfirmationThreshold] = useState<number>(60);
     const [isVolumeFilterEnabled, setIsVolumeFilterEnabled] = useState<boolean>(true);
     const [isAdxFilterEnabled, setIsAdxFilterEnabled] = useState<boolean>(true);
@@ -354,6 +357,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         setIsLiquidationFilterEnabled,
         setIsConfirmationCandleEnabled,
         setIsMomentumConcordanceEnabled,
+        setIsBtcCorrelationVetoEnabled,
     }), [onSetMultiAssetMode, setSelectedAgentWithReset]);
     
     const state = {
@@ -371,7 +375,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
         isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
         futuresSettingsError, multiAssetModeError, entryTiming, isAdaptiveTpEnabled, aggressiveTrailMode,
         isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled,
-        isMomentumConcordanceEnabled,
+        isMomentumConcordanceEnabled, isBtcCorrelationVetoEnabled,
     };
 
     return (

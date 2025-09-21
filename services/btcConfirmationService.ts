@@ -1,5 +1,7 @@
 import { Kline, TradingMode } from '../types';
 import * as binanceService from './binanceService';
+import { EMA, RSI } from 'technicalindicators';
+import { getLast } from './agents/agentUtils';
 
 class BtcConfirmationService {
     private klinesData = new Map<string, Kline[]>();
@@ -102,6 +104,50 @@ class BtcConfirmationService {
             console.error(`BTC Service: Failed to get initial data for ${timeframe}`, error);
             throw error;
         }
+    }
+
+    public getBtcTrendScore(btcKlines: Kline[]): { bullScore: number; bearScore: number } {
+        if (btcKlines.length < 200) { // FIX: Increased guard from 50 to 200 for EMA200 reliability.
+            return { bullScore: 50, bearScore: 50 }; // Neutral if not enough data
+        }
+
+        const closes = btcKlines.map(k => k.close);
+        let bullScore = 0;
+        let bearScore = 0;
+
+        // EMA alignment (long-term trend) - 40 points
+        const ema50 = getLast(EMA.calculate({ period: 50, values: closes })) as number | undefined;
+        const ema200 = getLast(EMA.calculate({ period: 200, values: closes })) as number | undefined;
+        if (ema50 && ema200) {
+            if (ema50 > ema200) bullScore += 40;
+            else bearScore += 40;
+        }
+
+        // Price position relative to EMAs (short-term trend) - 30 points
+        const lastClose = getLast(closes) as number;
+        if (ema50) {
+            if (lastClose > ema50) bullScore += 30;
+            else bearScore += 30;
+        }
+
+        // RSI (momentum) - 30 points
+        const rsi = getLast(RSI.calculate({ period: 14, values: closes })) as number | undefined;
+        if (rsi) {
+            if (rsi > 55) bullScore += 30;
+            else if (rsi < 45) bearScore += 30;
+            else { // In the middle range, give partial points
+                bullScore += (rsi - 45) * 3; // e.g. at RSI 50, bull gets 15, bear gets 15
+                bearScore += (55 - rsi) * 3;
+            }
+        }
+        
+        const total = bullScore + bearScore;
+        if (total === 0) return { bullScore: 50, bearScore: 50 }; // Avoid division by zero
+        
+        return {
+            bullScore: Math.round((bullScore / total) * 100),
+            bearScore: Math.round((bearScore / total) * 100)
+        };
     }
 }
 

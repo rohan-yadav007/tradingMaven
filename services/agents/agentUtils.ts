@@ -1,9 +1,9 @@
 // services/agents/agentUtils.ts
 
-import { Kline, BotConfig, AgentParams, MarketDataContext, ADXOutput, StochasticRSIOutput, BollingerBandsOutput, MACDOutput, IchimokuCloudOutput, VortexIndicatorOutput } from '../types';
-import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, IchimokuCloud, KST, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, dragonflydoji, gravestonedoji, hammerpattern, hangingman, morningstar, piercingline, shootingstar, eveningstar } from 'technicalindicators';
+import { Kline, BotConfig, AgentParams, MarketDataContext, ADXOutput, StochasticRSIOutput, BollingerBandsOutput, MACDOutput, IchimokuCloudOutput, VortexIndicatorOutput } from '../../types';
+import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, IchimokuCloud, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, dragonflydoji, gravestonedoji, hammerpattern, hangingman, morningstar, piercingline, shootingstar, eveningstar } from 'technicalindicators';
 import * as constants from '../../constants';
-import { analyzeMarketStructure, calculateSupportResistance, findSwingPoints } from '../chartAnalysisService';
+import { findSwingPoints } from '../chartAnalysisService';
 
 // --- Custom Indicator Implementations ---
 
@@ -258,6 +258,32 @@ export function detectRsiDivergence(klines: Kline[], rsiValues: number[], positi
     return false;
 }
 
+/**
+ * Tweak #4: New utility to analyze micro-timeframe market structure.
+ */
+export function analyzeMicroMarketStructure(microKlines: Kline[]): 'ascending' | 'descending' | 'ranging' | null {
+    if (microKlines.length < 20) return null;
+
+    const swingPoints = findSwingPoints(microKlines, 3); // Use a shorter lookback for micro TFs
+    
+    const recentHighs = swingPoints.filter(p => p.type === 'high').slice(-3);
+    if (recentHighs.length === 3) {
+        if (recentHighs[2].price < recentHighs[1].price && recentHighs[1].price < recentHighs[0].price) {
+            return 'descending';
+        }
+    }
+    
+    const recentLows = swingPoints.filter(p => p.type === 'low').slice(-3);
+    if (recentLows.length === 3) {
+        if (recentLows[2].price > recentLows[1].price && recentLows[1].price > recentLows[0].price) {
+            return 'ascending';
+        }
+    }
+    
+    return 'ranging';
+}
+
+
 export function captureMarketContext(klines: Kline[], htfKlines?: Kline[]): Partial<MarketDataContext> {
     const context: Partial<MarketDataContext> = {};
     const calculateIndicators = (k: Kline[]): Partial<Omit<MarketDataContext, 'htf_trend'>> => {
@@ -286,7 +312,7 @@ export function captureMarketContext(klines: Kline[], htfKlines?: Kline[]): Part
         if (k.length >= 50) res.sma50 = getLast(SMA.calculate({ period: 50, values: c }));
         if (k.length >= 200) res.sma200 = getLast(SMA.calculate({ period: 200, values: c }));
         res.ichiCloud = getLast(IchimokuCloud.calculate({ conversionPeriod: 9, basePeriod: 26, spanPeriod: 52, displacement: 26, high: h, low: l })) as IchimokuCloudOutput | undefined;
-        res.lastCandlePattern = recognizeCandlestickPattern(k[k.length - 1], k[k.length - 2]);
+        res.lastCandlePattern = recognizeCandlestickPattern(k[k.length - 1], k[k.length - 2]) ?? undefined;
         res.vwap = getLast(calculateVwap(k));
         res.lastVolume = getLast(v);
         res.lastClose = getLast(c);

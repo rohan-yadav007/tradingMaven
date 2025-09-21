@@ -1,10 +1,7 @@
-
-
-
-import { Kline, BotConfig, BacktestResult, Trade, AgentParams, Position, RiskMode, TradingMode, OptimizationResultItem } from '../types';
+import { Kline, BotConfig, BacktestResult, Trade, AgentParams, Position, TradingMode, OptimizationResultItem } from '../types';
 import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext, getAdaptiveTakeProfit } from './localAgentService';
 import * as constants from '../constants';
-import { getDynamicEntryVeto } from './vetoService';
+import * as binanceService from './binanceService';
 
 // --- Worker-local Helper Functions ---
 
@@ -12,7 +9,7 @@ const getLast = <T>(arr: T[] | undefined): T | undefined => arr && arr.length > 
 
 const getTimeframeDuration = (timeframe: string): number => {
     const unit = timeframe.slice(-1);
-    const value = parseInt(timeframe.slice(-1, 1), 10);
+    const value = parseInt(timeframe.slice(0, -1), 10);
     if (isNaN(value)) return 0;
     switch (unit) {
         case 'm': return value * 60 * 1000;
@@ -132,10 +129,11 @@ function calculateResults(trades: Trade[], equityCurve: number[], startingCapita
 // --- Core Logic (Now accepts pre-fetched HTF klines) ---
 
 async function runBacktest(
-    // klines are always 1m data
-    klines: Kline[],
+    // klines are always 1m data, to be aggregated as needed
+    allMicroKlines: Kline[],
     config: BotConfig,
-    allHtfKlines?: Kline[]
+    allHtfKlines?: Kline[],
+    allEthBtcKlines?: Kline[], // Tweak #5
 ): Promise<BacktestResult> {
     let openPosition: SimulatedPosition | null = null;
     const trades: Trade[] = [];
@@ -144,9 +142,9 @@ async function runBacktest(
     let equity = STARTING_CAPITAL;
     const minCandles = 200;
 
-    const targetTimeframeKlines = aggregateKlines(klines, config.timeFrame);
-
-    if (targetTimeframeKlines.length < minCandles) {
+    const mainTimeframeKlines = aggregateKlines(allMicroKlines, config.timeFrame);
+    
+    if (mainTimeframeKlines.length < minCandles) {
         return calculateResults([], [], STARTING_CAPITAL);
     }
 
@@ -159,18 +157,15 @@ async function runBacktest(
         const fees = (entryValue + exitValue) * openPosition.takerFeeRate;
         const netPnl = grossPnl - fees;
         equity += netPnl;
-
-        // MFE/MAE calculation
         const mfePrice = openPosition.peakPrice ?? openPosition.entryPrice;
         const maePrice = openPosition.troughPrice ?? openPosition.entryPrice;
         const mfe = Math.abs(mfePrice - openPosition.entryPrice) * openPosition.size;
         const mae = Math.abs(maePrice - openPosition.entryPrice) * openPosition.size;
-        
         const exitContext = captureMarketContext(klinesForContext, htfKlinesForContext);
 
         const finalTrade: Trade = {
             ...openPosition,
-            id: trades.length + 1, // Override the ID to be sequential for the backtest
+            id: trades.length + 1,
             exitPrice,
             exitTime: new Date(exitTime).toISOString(),
             pnl: netPnl,
@@ -179,25 +174,22 @@ async function runBacktest(
             mae,
             exitContext,
         };
-        
         trades.push(finalTrade);
         openPosition = null;
-
         return true;
     };
 
-    for (let i = minCandles; i < targetTimeframeKlines.length; i++) {
-        const historySlice = targetTimeframeKlines.slice(0, i + 1);
-        const currentCandle = targetTimeframeKlines[i]; // This is the candle we are simulating
+    for (let i = minCandles; i < mainTimeframeKlines.length; i++) {
+        const historySlice = mainTimeframeKlines.slice(0, i + 1);
+        const currentCandle = mainTimeframeKlines[i];
         const htfHistorySlice = allHtfKlines ? allHtfKlines.filter(k => k.time <= currentCandle.time) : undefined;
         let hasTradedInThisCandle = false;
 
-        // --- MANAGE OPEN POSITION ---
         if (openPosition) {
+            // ... (Position management logic remains the same)
             const isLong = openPosition.direction === 'LONG';
             let positionState: SimulatedPosition = { ...openPosition };
             
-            // 1. Check for Adaptive TP update based on the state BEFORE this candle
             const adaptiveTpSignal = getAdaptiveTakeProfit(positionState, historySlice.slice(0, -1), currentCandle.open);
             if (adaptiveTpSignal.newTakeProfit) {
                 const newTp = adaptiveTpSignal.newTakeProfit;
@@ -207,7 +199,6 @@ async function runBacktest(
                 }
             }
 
-            // 2. Update trailing stops based on the candle's open price
             const candleOpenPrice = currentCandle.open;
             const stopCandidates: { price: number; reason: Position['activeStopLossReason']; newState?: Partial<Position> }[] = [
                 { price: positionState.stopLossPrice, reason: positionState.activeStopLossReason }
@@ -247,9 +238,7 @@ async function runBacktest(
             }
             openPosition = positionState;
             
-            // 3. Simulate candle's price path (low -> high or high -> low)
             const stopReason = openPosition.activeStopLossReason.includes('Trail') || openPosition.activeStopLossReason.includes('Secure') || openPosition.activeStopLossReason === 'Breakeven' ? 'Trailing Stop Hit' : 'Stop Loss Hit';
-            
             const pricePath = isLong 
                 ? [currentCandle.low, currentCandle.high]
                 : [currentCandle.high, currentCandle.low];
@@ -266,7 +255,6 @@ async function runBacktest(
             }
             if (hasTradedInThisCandle) { equityCurve.push(equity); continue; }
             
-            // 4. Update position state at candle close
             openPosition.candlesSinceEntry!++;
             if (isLong) {
                 openPosition.peakPrice = Math.max(openPosition.peakPrice!, currentCandle.high);
@@ -278,40 +266,30 @@ async function runBacktest(
 
             const { score, reasons } = await getSupervisorSignal(openPosition, historySlice, config, htfHistorySlice);
             openPosition.invalidationScore = score;
-            
             const sensitivityThreshold = { low: 80, medium: 65, high: 50 }[config.invalidationSensitivity];
-
             if (score >= sensitivityThreshold) {
                 const reason = `Supervisor Exit: Thesis Invalidated (Score: ${score}).`;
                 hasTradedInThisCandle = closePosition(currentCandle.close, reason, currentCandle.time, historySlice, htfHistorySlice);
-                if (hasTradedInThisCandle) {
-                    equityCurve.push(equity);
-                    continue;
-                }
+                if (hasTradedInThisCandle) { equityCurve.push(equity); continue; }
             }
         }
         
         // --- CHECK FOR NEW ENTRY ---
         if (!openPosition && !hasTradedInThisCandle) {
-            const signal = await getTradingSignal(config.agent, historySlice, config, htfHistorySlice);
+            const microTimeframe = constants.getMicroTimeframe(config.timeFrame);
+            const microKlineEndIndex = allMicroKlines.findIndex(k => k.time >= currentCandle.time);
+            let microKlinesForAgent: Kline[] | undefined;
+            if (microKlineEndIndex !== -1) {
+                microKlinesForAgent = allMicroKlines.slice(Math.max(0, microKlineEndIndex - 100), microKlineEndIndex + 1);
+            }
+            
+            const ethBtcHistorySlice = allEthBtcKlines ? allEthBtcKlines.filter(k => k.time <= currentCandle.time) : undefined;
+
+            const signal = await getTradingSignal(config.agent, historySlice, config, htfHistorySlice, microKlinesForAgent, ethBtcHistorySlice, currentCandle.close);
             
             if (signal.signal !== 'HOLD') {
                 const entryPrice = currentCandle.close;
                 
-                // --- SIMULATE DYNAMIC ENTRY VETO ---
-                if (config.isMomentumConcordanceEnabled) {
-                    const oneMinKlinesIndex = klines.findIndex(k => k.time >= currentCandle.time);
-                    if (oneMinKlinesIndex !== -1) {
-                        const microKlinesSlice = klines.slice(Math.max(0, oneMinKlinesIndex - 20), oneMinKlinesIndex + 1);
-                        const vetoCheck = await getDynamicEntryVeto(historySlice, entryPrice, signal.signal, config, microKlinesSlice);
-                        if (vetoCheck.veto) {
-                            equityCurve.push(equity);
-                            continue; // Vetoed, skip to next candle
-                        }
-                    }
-                }
-                // --- END VETO SIMULATION ---
-
                 const isLong = signal.signal === 'BUY';
                 const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(historySlice, entryPrice, isLong ? 'LONG' : 'SHORT', config);
                 
@@ -342,6 +320,7 @@ async function runBacktest(
                             isMarketCohesionEnabled: config.isMarketCohesionEnabled,
                             isVwapConfirmationEnabled: config.isVwapConfirmationEnabled,
                             isBtcConfirmationEnabled: config.isBtcConfirmationEnabled,
+                            isBtcCorrelationVetoEnabled: config.isBtcCorrelationVetoEnabled,
                             btcConfirmationThreshold: config.btcConfirmationThreshold,
                             isVolumeFilterEnabled: config.isVolumeFilterEnabled,
                             isAdxFilterEnabled: config.isAdxFilterEnabled,
@@ -358,8 +337,8 @@ async function runBacktest(
                             isMarketBreadthFilterEnabled: config.isMarketBreadthFilterEnabled,
                             isLiquidationFilterEnabled: config.isLiquidationFilterEnabled,
                             isConfirmationCandleEnabled: config.isConfirmationCandleEnabled,
-// FIX: Property 'isMomentumConcordanceEnabled' is missing in type '{ isHtfConfirmationEnabled: boolean; isUniversalProfitTrailEnabled: boolean; isMinRrEnabled: boolean; invalidationSensitivity: "low" | "medium" | "high"; isAgentTrailEnabled: boolean; ... 13 more ...; isInitialRiskVetoEnabled: boolean; }' but required in type 'BotConfigSnapshot'.
                             isMomentumConcordanceEnabled: config.isMomentumConcordanceEnabled,
+                            finalEntryFailSafe: config.finalEntryFailSafe,
                         };
                         const entryContext = captureMarketContext(historySlice, htfHistorySlice);
 
@@ -393,7 +372,7 @@ async function runBacktest(
     }
     
     if (openPosition) {
-        closePosition(targetTimeframeKlines[targetTimeframeKlines.length - 1].close, 'End of backtest', targetTimeframeKlines[targetTimeframeKlines.length - 1].time, targetTimeframeKlines, allHtfKlines);
+        closePosition(mainTimeframeKlines[mainTimeframeKlines.length - 1].close, 'End of backtest', mainTimeframeKlines[mainTimeframeKlines.length - 1].time, mainTimeframeKlines, allHtfKlines);
     }
     
     return calculateResults(trades, equityCurve, STARTING_CAPITAL);
@@ -403,7 +382,8 @@ async function runOptimization(
     klines: Kline[],
     baseConfig: BotConfig,
     onProgress: (progress: { percent: number; combinations: number }) => void,
-    htfKlines?: Kline[]
+    htfKlines?: Kline[],
+    ethBtcKlines?: Kline[]
 ): Promise<OptimizationResultItem[]> {
     const agentId = baseConfig.agent.id;
     let paramRanges: Record<string, number[]> = {};
@@ -443,7 +423,7 @@ async function runOptimization(
             ...baseConfig,
             agentParams: { ...baseConfig.agentParams, ...params },
         };
-        const result = await runBacktest(klines, configWithParams, htfKlines);
+        const result = await runBacktest(klines, configWithParams, htfKlines, ethBtcKlines);
         
         // Only include results with positive PNL and a reasonable number of trades
         if (result.totalPnl > 0 && result.totalTrades > 2) {
@@ -472,12 +452,23 @@ self.onmessage = async (event: MessageEvent) => {
     };
 
     try {
-        if (type === 'runBacktest') {
-            const result = await runBacktest(payload.klines, payload.config, payload.htfKlines);
-            self.postMessage({ type: 'result', id, payload: result });
-        } else if (type === 'runOptimization') {
-            const result = await runOptimization(payload.klines, payload.config, onProgress, payload.htfKlines);
-            self.postMessage({ type: 'result', id, payload: result });
+        if (type === 'runBacktest' || type === 'runOptimization') {
+            let allEthBtcKlines: Kline[] | undefined;
+            if (payload.config.isBtcCorrelationVetoEnabled) {
+                const startTime = payload.klines[0].time;
+                const endTime = payload.klines[payload.klines.length - 1].time;
+                // Use 1m for backtesting correlation data, it will be aggregated as needed.
+                // Using Spot as it's the canonical source for ETH/BTC.
+                allEthBtcKlines = await binanceService.fetchFullKlines('ETHBTC', '1m', startTime, endTime, TradingMode.Spot);
+            }
+
+            if (type === 'runBacktest') {
+                const result = await runBacktest(payload.klines, payload.config, payload.htfKlines, allEthBtcKlines);
+                self.postMessage({ type: 'result', id, payload: result });
+            } else { // runOptimization
+                const result = await runOptimization(payload.klines, payload.config, onProgress, payload.htfKlines, allEthBtcKlines);
+                self.postMessage({ type: 'result', id, payload: result });
+            }
         }
     } catch (e: any) {
         self.postMessage({ type: 'error', id, error: e.message });

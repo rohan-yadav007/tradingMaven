@@ -59,6 +59,8 @@ const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) =>
 );
 
 const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParamsChange: (p: AgentParams) => void, isAdxFilterEnabled: boolean, timeFrame: string}> = ({ agent, params, onParamsChange, isAdxFilterEnabled, timeFrame }) => {
+    const [isExitVetoOpen, setIsExitVetoOpen] = useState(false);
+
     const allParams = useMemo(() => {
         const timeframeDefaults = constants.getAgentTimeframeSettings(agent.id, timeFrame);
         return { ...constants.DEFAULT_AGENT_PARAMS, ...timeframeDefaults, ...params };
@@ -132,90 +134,38 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
             </div>);
         case 14: 
             return (<div className="space-y-4">
-                <div className="flex items-center justify-between">
-                     <div className="flex items-center gap-1.5">
-                        <label htmlFor="sentinel-sr-tp-toggle" className={formLabelClass}>
-                            Use S/R for Take Profit
-                        </label>
-                         <div className="relative group">
-                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
-                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
-                                When enabled, sets Take Profit targets to the next significant support or resistance level instead of a fixed R:R ratio.
-                            </div>
-                        </div>
-                    </div>
-                    <ToggleSwitch
-                        checked={allParams.sentinel_useSrLevelsForTp}
-                        onChange={v => updateParam('sentinel_useSrLevelsForTp', v)}
-                    />
-                </div>
-                <ParamSlider label="Supertrend Period (SL)" value={allParams.sentinel_stPeriod} onChange={v => updateParam('sentinel_stPeriod', v)} min={5} max={20} step={1} />
-                <ParamSlider label="Supertrend Multiplier (SL)" value={allParams.sentinel_stMultiplier} onChange={v => updateParam('sentinel_stMultiplier', v)} min={1.0} max={5.0} step={0.5} valueDisplay={v => v.toFixed(1)} />
+                <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400">Entry Logic</h4>
                  <ParamSlider 
-                    label="Base Score Threshold" 
-                    value={allParams.sentinel_scoreThreshold}
+                    label="Score Threshold" 
+                    value={allParams.sentinel_scoreThreshold!}
                     onChange={(v) => updateParam('sentinel_scoreThreshold', v)}
                     min={50} max={95} step={1}
-                    valueDisplay={(v) => `${v}%`}
                  />
-                 <ParamSlider label="Fast EMA Period" value={allParams.sentinel_emaFastPeriod!} onChange={v => updateParam('sentinel_emaFastPeriod', v)} min={10} max={100} step={1} />
-                <ParamSlider label="Slow EMA Period" value={allParams.sentinel_emaSlowPeriod!} onChange={v => updateParam('sentinel_emaSlowPeriod', v)} min={50} max={300} step={5} />
-                <ParamSlider label="ADX Period" value={allParams.sentinel_adxPeriod!} onChange={v => updateParam('sentinel_adxPeriod', v)} min={7} max={21} step={1} />
-                <ParamSlider label="RSI Period" value={allParams.sentinel_rsiPeriod!} onChange={v => updateParam('sentinel_rsiPeriod', v)} min={7} max={21} step={1} />
                  <ParamSlider 
-                    label="Strong Trend ADX" 
-                    value={allParams.sentinel_strongTrendAdx}
+                    label="ADX Trend Minimum" 
+                    value={allParams.sentinel_strongTrendAdx!}
                     onChange={(v) => updateParam('sentinel_strongTrendAdx', v)}
-                    min={25} max={40} step={1}
+                    min={20} max={35} step={1}
                  />
-                 <ParamSlider 
-                    label="Strong Trend Threshold" 
-                    value={allParams.sentinel_strongTrendThreshold}
-                    onChange={(v) => updateParam('sentinel_strongTrendThreshold', v)}
-                    min={50} max={75} step={1}
-                    valueDisplay={(v) => `${v}%`}
-                 />
-                <ParamSlider 
-                    label="Choppy Market ADX" 
-                    value={allParams.sentinel_choppyTrendAdx}
-                    onChange={(v) => updateParam('sentinel_choppyTrendAdx', v)}
-                    min={18} max={25} step={1}
-                 />
-                 <ParamSlider 
-                    label="Choppy Market Threshold" 
-                    value={allParams.sentinel_choppyTrendThreshold}
-                    onChange={(v) => updateParam('sentinel_choppyTrendThreshold', v)}
-                    min={75} max={95} step={1}
-                    valueDisplay={(v) => `${v}%`}
-                 />
-                 <ParamSlider 
-                    label="Trend Weight Multiplier" 
-                    value={allParams.sentinel_trendingWeightMultiplier}
-                    onChange={(v) => updateParam('sentinel_trendingWeightMultiplier', v)}
-                    min={1.0} max={2.0} step={0.1}
-                    valueDisplay={v => `${v.toFixed(1)}x`}
-                 />
-                 <ParamSlider 
-                    label="Momentum Weight Multiplier" 
-                    value={allParams.sentinel_transitioningWeightMultiplier}
-                    onChange={(v) => updateParam('sentinel_transitioningWeightMultiplier', v)}
-                    min={1.0} max={2.0} step={0.1}
-                    valueDisplay={v => `${v.toFixed(1)}x`}
-                 />
-                 <ParamSlider 
-                    label="BBW Squeeze Threshold" 
-                    value={allParams.sentinel_bbwSqueezeThreshold}
-                    onChange={(v) => updateParam('sentinel_bbwSqueezeThreshold', v)}
-                    min={0.005} max={0.05} step={0.001}
-                    valueDisplay={v => v.toFixed(3)}
-                 />
-                 <ParamSlider 
-                    label="ATR Chaos Threshold" 
-                    value={allParams.sentinel_atrChaosThreshold}
-                    onChange={(v) => updateParam('sentinel_atrChaosThreshold', v)}
-                    min={2.0} max={5.0} step={0.1}
-                    valueDisplay={v => `${v.toFixed(1)}x`}
-                 />
+                <ParamSlider label="Fast EMA Period" value={allParams.sentinel_emaFastPeriod!} onChange={v => updateParam('sentinel_emaFastPeriod', v)} min={10} max={100} step={1} />
+                <ParamSlider label="Slow EMA Period" value={allParams.sentinel_emaSlowPeriod!} onChange={v => updateParam('sentinel_emaSlowPeriod', v)} min={50} max={300} step={5} />
+                <ParamSlider label="RSI Divergence Lookback" value={allParams.sentinel_rsiDivergenceLookback!} onChange={v => updateParam('sentinel_rsiDivergenceLookback', v)} min={10} max={40} step={1} />
+                 
+                <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
+                    <button onClick={() => setIsExitVetoOpen(!isExitVetoOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
+                        <span>Exit & Veto Logic</span>
+                        {isExitVetoOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                    </button>
+                    {isExitVetoOpen && (
+                        <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
+                            <ParamSlider label="SuperTrend Period (SL)" value={allParams.sentinel_stPeriod!} onChange={v => updateParam('sentinel_stPeriod', v)} min={5} max={20} step={1} />
+                            <ParamSlider label="SuperTrend Multiplier (SL)" value={allParams.sentinel_stMultiplier!} onChange={v => updateParam('sentinel_stMultiplier', v)} min={1.0} max={5.0} step={0.1} valueDisplay={v => v.toFixed(1)} />
+                            <ParamSlider label="Invalidation Candle Limit" value={allParams.sentinel_invalidationCandleLimit!} onChange={v => updateParam('sentinel_invalidationCandleLimit', v)} min={3} max={20} step={1} />
+                            <ParamSlider label="RSI Exit Long" value={allParams.sentinel_rsiMomentumExitLong!} onChange={v => updateParam('sentinel_rsiMomentumExitLong', v)} min={40} max={50} step={1} />
+                            <ParamSlider label="RSI Exit Short" value={allParams.sentinel_rsiMomentumExitShort!} onChange={v => updateParam('sentinel_rsiMomentumExitShort', v)} min={50} max={60} step={1} />
+                        </div>
+                    )}
+                </div>
             </div>);
         case 17:
             return (<div className="space-y-4">
@@ -270,7 +220,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         isUniversalProfitTrailEnabled, isMinRrEnabled, invalidationSensitivity,
         entryTiming,
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
-        isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
+        isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isInitialRiskVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode,
         isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
         isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled
@@ -283,7 +233,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setIsHtfConfirmationEnabled, setHtfTimeFrame, setIsUniversalProfitTrailEnabled,
         setIsMinRrEnabled, setInvalidationSensitivity,
         setEntryTiming, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setIsMarketCohesionEnabled,
-        setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
+        setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setIsBtcCorrelationVetoEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
         setIsExhaustionFilterEnabled, setIsInitialRiskVetoEnabled, setIsAdaptiveTpEnabled, setAggressiveTrailMode,
         setIsSmcVetoEnabled, setIsSrAnalysisEnabled, setIsCandlestickConfirmationEnabled, setIsMarketStructureVetoEnabled,
         setIsMarketBreadthFilterEnabled, setIsLiquidationFilterEnabled, setIsConfirmationCandleEnabled, setIsMomentumConcordanceEnabled
@@ -394,6 +344,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         isMarketCohesionEnabled: config.isMarketCohesionEnabled,
                         isVwapConfirmationEnabled: config.isVwapConfirmationEnabled,
                         isBtcConfirmationEnabled: config.isBtcConfirmationEnabled,
+                        isBtcCorrelationVetoEnabled: config.isBtcCorrelationVetoEnabled,
                         btcConfirmationThreshold: config.btcConfirmationThreshold,
                         isVolumeFilterEnabled: config.isVolumeFilterEnabled,
                         isAdxFilterEnabled: config.isAdxFilterEnabled,
@@ -799,6 +750,26 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     />
                 )}
             </div>
+
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                     <div className="flex items-center gap-1.5">
+                        <label htmlFor="btc-correlation-veto-toggle" className={formLabelClass}>
+                            Capital Flow Veto
+                        </label>
+                         <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                Vetoes altcoin LONGs if capital is flowing out of alts into BTC (i.e., ETH/BTC is trending down). A powerful risk-off filter.
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch
+                        checked={isBtcCorrelationVetoEnabled}
+                        onChange={setIsBtcCorrelationVetoEnabled}
+                    />
+                </div>
+            </div>
             
             <div className={formGroupClass}>
                 <div className="flex items-center justify-between">
@@ -843,7 +814,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     </div>
                 )}
             </div>
-            <div className={formGroupClass}>
+            <div className={`${formGroupClass} space-y-2`}>
                 <div className="flex items-center justify-between">
                     <label htmlFor="volume-filter-toggle" className={formLabelClass}>
                         Universal Volume Filter
@@ -853,9 +824,18 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         onChange={setIsVolumeFilterEnabled}
                     />
                 </div>
-                 <p className="text-xs text-slate-500 dark:text-slate-400">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
                     Ensures entry candle volume is above the 20-period moving average.
                 </p>
+                {isVolumeFilterEnabled && (
+                    <ParamSlider 
+                        label="Volume Multiplier" 
+                        value={agentParams.veto_volumeFilterMultiplier ?? constants.DEFAULT_AGENT_PARAMS.veto_volumeFilterMultiplier} 
+                        onChange={v => setAgentParams({...agentParams, veto_volumeFilterMultiplier: v})} 
+                        min={0.5} max={2.5} step={0.1} 
+                        valueDisplay={v => `${v.toFixed(1)}x Avg`}
+                    />
+                )}
             </div>
             <div className={formGroupClass}>
                 <div className="flex items-center justify-between">
@@ -923,7 +903,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     />
                 </div>
             </div>
-            <div className={formGroupClass}>
+            <div className={`${formGroupClass} space-y-2`}>
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
                         <label htmlFor="sr-analysis-toggle" className={formLabelClass}>
@@ -941,6 +921,15 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         onChange={setIsSrAnalysisEnabled}
                     />
                 </div>
+                {isSrAnalysisEnabled && (
+                     <ParamSlider 
+                        label="S/R Zone Buffer" 
+                        value={agentParams.veto_srZoneAtrBuffer ?? constants.DEFAULT_AGENT_PARAMS.veto_srZoneAtrBuffer} 
+                        onChange={v => setAgentParams({...agentParams, veto_srZoneAtrBuffer: v})} 
+                        min={0.1} max={2.0} step={0.1} 
+                        valueDisplay={v => `${v.toFixed(1)}x ATR`}
+                    />
+                )}
             </div>
             <div className={formGroupClass}>
                 <div className="flex items-center justify-between">

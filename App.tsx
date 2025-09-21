@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -36,7 +35,7 @@ const AppContent: React.FC = () => {
         isMinRrEnabled, invalidationSensitivity, htfAgentParams,
         entryTiming,
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
-        isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
+        isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, isInitialRiskVetoEnabled,
         isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
         isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled
@@ -134,6 +133,7 @@ const AppContent: React.FC = () => {
                     isMarketCohesionEnabled,
                     isVwapConfirmationEnabled,
                     isBtcConfirmationEnabled,
+                    isBtcCorrelationVetoEnabled,
                     btcConfirmationThreshold,
                     isVolumeFilterEnabled,
                     isAdxFilterEnabled,
@@ -154,8 +154,8 @@ const AppContent: React.FC = () => {
                     isMarketBreadthFilterEnabled,
                     isLiquidationFilterEnabled,
                     isConfirmationCandleEnabled,
-// FIX: Property 'isMomentumConcordanceEnabled' is missing in type '{ pair: string; mode: TradingMode; executionMode: "live" | "paper"; leverage: number; marginType: "ISOLATED" | "CROSSED"; agent: Agent; timeFrame: string; investmentAmount: number; ... 31 more ...; isConfirmationCandleEnabled: boolean; }' but required in type 'BotConfig'.
                     isMomentumConcordanceEnabled,
+                    finalEntryFailSafe: executionMode === 'live' ? 'fail-closed' : 'fail-open',
                 };
 
                 botManagerService.startBot(botConfig);
@@ -171,7 +171,7 @@ const AppContent: React.FC = () => {
         isUniversalProfitTrailEnabled, isMinRrEnabled, invalidationSensitivity,
         currentFeeRate, entryTiming,
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
-        isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
+        isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, 
         isMarketStructureVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, isMarketBreadthFilterEnabled,
         isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled,
@@ -484,6 +484,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 isMarketCohesionEnabled: config.isMarketCohesionEnabled,
                 isVwapConfirmationEnabled: config.isVwapConfirmationEnabled,
                 isBtcConfirmationEnabled: config.isBtcConfirmationEnabled,
+                isBtcCorrelationVetoEnabled: config.isBtcCorrelationVetoEnabled,
                 btcConfirmationThreshold: config.btcConfirmationThreshold,
                 isVolumeFilterEnabled: config.isVolumeFilterEnabled,
                 isAdxFilterEnabled: config.isAdxFilterEnabled,
@@ -500,10 +501,11 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 isMarketBreadthFilterEnabled: config.isMarketBreadthFilterEnabled,
                 isLiquidationFilterEnabled: config.isLiquidationFilterEnabled,
                 isConfirmationCandleEnabled: config.isConfirmationCandleEnabled,
-// FIX: Property 'isMomentumConcordanceEnabled' is missing in type '{ isHtfConfirmationEnabled: boolean; isUniversalProfitTrailEnabled: boolean; isMinRrEnabled: boolean; invalidationSensitivity: "low" | "medium" | "high"; isAgentTrailEnabled: boolean; ... 19 more ...; isConfirmationCandleEnabled: boolean; }' but required in type 'BotConfigSnapshot'.
                 isMomentumConcordanceEnabled: config.isMomentumConcordanceEnabled,
+                finalEntryFailSafe: config.finalEntryFailSafe,
             },
             entryContext: executionDetails.entryContext,
+            entryAtr: executionDetails.entryContext.atr14,
         };
 
         const chatId = config.telegramChatId;

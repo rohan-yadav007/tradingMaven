@@ -94,6 +94,29 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     macdSignalPeriod: 9,
     invalidationCandleLimit: 10,
 
+    // Universal Veto Parameters
+    veto_volumeFilterMultiplier: 2.0, // Day-trading default
+    veto_srZoneAtrBuffer: 0.5,
+    veto_sr_buffer_scalp: 0.3, // Tighter buffer for scalpers
+    veto_sr_buffer_swing: 0.8, // Wider buffer for swing traders
+    veto_rsiAlignmentThreshold_bullish: 52,
+    veto_rsiAlignmentThreshold_bearish: 48,
+    veto_concordanceDivergenceLookback: 15, // Day-trading default
+    veto_atrChaosRatio: 2.5, // Day-trading default
+    veto_normalizeAtrChaos: true, // Tweak #2
+    veto_candlePositionVeto_long: 0.80, // Day-trading default
+    veto_candlePositionVeto_short: 0.20, // Day-trading default
+    veto_concordanceVolumeMinMultiplier: 0.8, // Day-trading default
+    veto_rsiConcordance_strongTrend_bullish: 55,
+    veto_rsiConcordance_strongTrend_bearish: 45,
+    veto_rsiConcordance_chop_bullish: 51,
+    veto_rsiConcordance_chop_bearish: 49,
+    veto_concordance_strongTrendAdx: 30,
+    veto_concordance_chopAdx: 20,
+    veto_atrChaos_graceMultiplier: 1.2,
+    veto_atrChaos_strongTrendAdx: 30,
+    veto_liquiditySweep_maxAdx: 30,
+
     // Agent 9: Quantum Scalper
     qsc_adxPeriod: 10,
     qsc_adxThreshold: 28,
@@ -146,32 +169,39 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     ch_trendEmaPeriod: 200,
     ch_adxThreshold: 22,
     
-    // Agent 14: The Sentinel (Refactored for adaptive logic)
+    // Agent 14: The Sentinel
     sentinel_scoreThreshold: 70,
+    sentinel_strongTrendAdx: 25,
     sentinel_emaFastPeriod: 50,
     sentinel_emaSlowPeriod: 200,
     sentinel_adxPeriod: 14,
     sentinel_rsiPeriod: 14,
     sentinel_stPeriod: 10,
-    sentinel_stMultiplier: 3.0,
-    sentinel_invalidationCandleLimit: 15,
-    sentinel_rsiMomentumExitLong: 48,
-    sentinel_rsiMomentumExitShort: 52,
+    sentinel_stMultiplier: 3,
+    sentinel_emaDistanceVetoThreshold: 2.5,
     sentinel_rsiDivergenceLookback: 21,
-    sentinel_bbwAtrFactor: 0.5,
-    sentinel_emaDistanceAtrMultiplier: 2.5,
-    // Fix: Add default values for missing sentinel properties
+    sentinel_invalidationCandleLimit: 8,
+    sentinel_rsiMomentumExitLong: 45,
+    sentinel_rsiMomentumExitShort: 55,
+    sentinel_volume_vetoMultiplier: 0.8,
+    sentinel_volume_penaltyMultiplier: 1.0,
+    sentinel_volume_bonusMultiplier: 1.5,
+    sentinel_volume_bonusPoints: 10,
+    sentinel_regime_strongTrendAdx: 30,
+    sentinel_regime_chopAdx: 20,
+    // -- Percentage Penalties (Tweak #1 & #4) --
+    sentinel_penalty_ms_percent: 30,
+    sentinel_penalty_obv_percent: 25,
+    sentinel_penalty_concordance_rsi_percent: 15,
+    sentinel_penalty_concordance_volume_percent: 15,
+    sentinel_penalty_concordance_candlePos_percent: 20,
+    sentinel_penalty_concordance_vwap_percent: 25,
+    sentinel_penalty_concordance_microStructure_percent: 30,
+    // -- Hybrid SL --
+    sentinel_atr_mult_strong: 2.0,
+    sentinel_atr_mult_transition: 2.5,
+    sentinel_atr_mult_chop: 3.0,
     sentinel_useSrLevelsForTp: false,
-    sentinel_strongTrendAdx: 28,
-    sentinel_strongTrendThreshold: 65,
-    sentinel_choppyTrendAdx: 20,
-    sentinel_choppyTrendThreshold: 85,
-    sentinel_trendingWeightMultiplier: 1.2,
-    sentinel_transitioningWeightMultiplier: 1.5,
-    sentinel_bbwSqueezeThreshold: 0.015,
-    sentinel_atrChaosThreshold: 3.0,
-    sentinel_volumeFilterMultiplier: 0.8,
-    sentinel_srZoneAtrBuffer: 0.5,
 
     // Agent 17: Momentum Swing Trader
     mst_emaFastPeriod: 50,
@@ -199,10 +229,54 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     // SMC Reversal Veto
     smc_divergenceLookback: 12,
     smc_volumeMultiplier: 2.0,
+    smc_requireConfluenceOnScalp: true, // Tweak #3
+    smc_confluence_bbwSqueezeThreshold: 0.006, // Tweak #3
+
+    // BTC Correlation Veto (Tweak #5)
+    btc_correlation_veto_ema_fast: 8,
+    btc_correlation_veto_ema_slow: 21,
+
+    // Risk Management
+    risk_atrVolatilityPercentile_upper: 80, // Top 20%
+    risk_atrVolatilityPercentile_lower: 20, // Bottom 20%
+    risk_atrVolatilityMultiplier_upper_adj: 0.5,
+    risk_atrVolatilityMultiplier_lower_adj: -0.5,
 };
 
 
 // --- TIMEFRAME-SPECIFIC PARAMETER OVERRIDES ---
+
+export const SENTINEL_WEIGHTS_BY_REGIME_AND_TIMEFRAME = {
+    scalping: {
+        strong: { trend: 40, alignment: 30, volatility: 10, momentum: 20 },
+        transition: { trend: 30, alignment: 20, volatility: 20, momentum: 30 },
+        chop: { trend: 20, alignment: 10, volatility: 30, momentum: 40 },
+    },
+    day: {
+        strong: { trend: 50, alignment: 30, volatility: 10, momentum: 10 },
+        transition: { trend: 25, alignment: 25, volatility: 25, momentum: 25 },
+        chop: { trend: 20, alignment: 15, volatility: 30, momentum: 35 },
+    },
+    swing: {
+        strong: { trend: 55, alignment: 35, volatility: 5, momentum: 5 },
+        transition: { trend: 40, alignment: 30, volatility: 10, momentum: 20 },
+        chop: { trend: 20, alignment: 20, volatility: 30, momentum: 30 },
+    }
+};
+
+export const VETO_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
+    // Scalping (1m, 3m, 5m)
+    '1m':  { veto_volumeFilterMultiplier: 1.5, veto_concordanceDivergenceLookback: 8,  veto_atrChaosRatio: 2.0, veto_candlePositionVeto_long: 0.90, veto_candlePositionVeto_short: 0.10, veto_concordanceVolumeMinMultiplier: 1.0 },
+    '3m':  { veto_volumeFilterMultiplier: 1.8, veto_concordanceDivergenceLookback: 10, veto_atrChaosRatio: 2.0, veto_candlePositionVeto_long: 0.90, veto_candlePositionVeto_short: 0.10, veto_concordanceVolumeMinMultiplier: 0.9 },
+    '5m':  { veto_volumeFilterMultiplier: 2.0, veto_concordanceDivergenceLookback: 12, veto_atrChaosRatio: 2.2, veto_candlePositionVeto_long: 0.85, veto_candlePositionVeto_short: 0.15, veto_concordanceVolumeMinMultiplier: 0.8 },
+    // Day Trading (defaults are mostly here)
+    '15m': { veto_concordanceDivergenceLookback: 15, veto_concordanceVolumeMinMultiplier: 0.7 },
+    '30m': { veto_volumeFilterMultiplier: 2.2, veto_concordanceDivergenceLookback: 18, veto_concordanceVolumeMinMultiplier: 0.7 },
+    '1h':  { veto_volumeFilterMultiplier: 2.2, veto_concordanceDivergenceLookback: 20, veto_atrChaosRatio: 2.8, veto_candlePositionVeto_long: 0.75, veto_candlePositionVeto_short: 0.25, veto_concordanceVolumeMinMultiplier: 0.6 },
+    // Swing Trading (4h, 1d)
+    '4h':  { veto_volumeFilterMultiplier: 2.5, veto_concordanceDivergenceLookback: 20, veto_atrChaosRatio: 3.0, veto_candlePositionVeto_long: 0.70, veto_candlePositionVeto_short: 0.30, veto_concordanceVolumeMinMultiplier: 0.6 },
+    '1d':  { veto_volumeFilterMultiplier: 2.5, veto_concordanceDivergenceLookback: 20, veto_atrChaosRatio: 3.0, veto_candlePositionVeto_long: 0.70, veto_candlePositionVeto_short: 0.30, veto_concordanceVolumeMinMultiplier: 0.5 },
+};
 
 export const EXHAUSTION_FILTER_TIMEFRAME_SETTINGS: Record<string, { overbought: number, oversold: number }> = {
     '1m':  { overbought: 95, oversold: 5 },
@@ -270,15 +344,17 @@ export const CHAMELEON_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> 
 };
 
 export const SENTINEL_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    // Adaptive SuperTrend Multiplier: Higher for low TFs, lower for high TFs.
-    '1m':  { sentinel_stMultiplier: 3.5 },
-    '3m':  { sentinel_stMultiplier: 3.5 },
-    '5m':  { sentinel_stMultiplier: 3.0 },
-    '15m': { sentinel_stMultiplier: 3.0 },
-    '30m': { sentinel_stMultiplier: 3.0 },
-    '1h':  { sentinel_stMultiplier: 3.0 },
-    '4h':  { sentinel_stMultiplier: 2.5 },
-    '1d':  { sentinel_stMultiplier: 2.5 },
+    // Scalping (1m, 3m, 5m): Faster EMAs, wider stop loss multiplier for noise.
+    '1m':  { sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_stMultiplier: 3.5, sentinel_strongTrendAdx: 28 },
+    '3m':  { sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_stMultiplier: 3.5, sentinel_strongTrendAdx: 28 },
+    '5m':  { sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_stMultiplier: 3.2, sentinel_strongTrendAdx: 25 },
+    // Day Trading (15m, 30m, 1h): Balanced parameters.
+    '15m': { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 100, sentinel_stMultiplier: 3.0, sentinel_strongTrendAdx: 25 },
+    '30m': { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 120, sentinel_stMultiplier: 2.8, sentinel_strongTrendAdx: 22 },
+    '1h':  { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 150, sentinel_stMultiplier: 2.8, sentinel_strongTrendAdx: 22 },
+    // Swing Trading (4h, 1d): Slower EMAs, tighter stop loss multiplier.
+    '4h':  { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_stMultiplier: 2.5, sentinel_strongTrendAdx: 20 },
+    '1d':  { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_stMultiplier: 2.5, sentinel_strongTrendAdx: 20 },
 };
 
 export const ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
@@ -307,6 +383,7 @@ export const MOMENTUM_SWING_TRADER_TIMEFRAME_SETTINGS: Record<string, Partial<Ag
  * @returns An object with the agent's parameters for that timeframe.
  */
 export const getAgentTimeframeSettings = (agentId: number, timeFrame: string): Partial<AgentParams> => {
+    const vetoSettings = VETO_TIMEFRAME_SETTINGS[timeFrame] || {};
     const smcSettings = SMC_VETO_TIMEFRAME_SETTINGS[timeFrame] || {};
     let agentSettings: Partial<AgentParams> = {};
 
@@ -320,7 +397,7 @@ export const getAgentTimeframeSettings = (agentId: number, timeFrame: string): P
         case 18: agentSettings = CONDUCTOR_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
     }
 
-    return { ...smcSettings, ...agentSettings };
+    return { ...vetoSettings, ...smcSettings, ...agentSettings };
 };
 
 
@@ -375,3 +452,23 @@ export const MICRO_TIMEFRAME_MAP: Record<string, string> = {
 };
 
 export const getMicroTimeframe = (tf: string) => MICRO_TIMEFRAME_MAP[tf] || '1m';
+
+export const TRADE_GUARDIAN_CONFIG: Record<string, {
+    rsi7_long_threshold?: number;
+    rsi7_short_threshold?: number;
+    rsi14_long_threshold?: number;
+    rsi14_short_threshold?: number;
+    atrSpikeMultiplier: number;
+    pnlRetracePercent: number;
+    maxCandles: number;
+    vwapEmaPeriod: number;
+}> = {
+    '1m':  { rsi7_long_threshold: 48, rsi7_short_threshold: 52, atrSpikeMultiplier: 2.5, pnlRetracePercent: 0.6, maxCandles: 10, vwapEmaPeriod: 9 },
+    '3m':  { rsi7_long_threshold: 48, rsi7_short_threshold: 52, atrSpikeMultiplier: 2.5, pnlRetracePercent: 0.6, maxCandles: 10, vwapEmaPeriod: 9 },
+    '5m':  { rsi7_long_threshold: 48, rsi7_short_threshold: 52, atrSpikeMultiplier: 2.5, pnlRetracePercent: 0.6, maxCandles: 10, vwapEmaPeriod: 9 },
+    '15m': { rsi7_long_threshold: 50, rsi7_short_threshold: 50, atrSpikeMultiplier: 2.0, pnlRetracePercent: 0.5, maxCandles: 8, vwapEmaPeriod: 21 },
+    '30m': { rsi7_long_threshold: 50, rsi7_short_threshold: 50, atrSpikeMultiplier: 2.0, pnlRetracePercent: 0.5, maxCandles: 8, vwapEmaPeriod: 21 },
+    '1h':  { rsi14_long_threshold: 50, rsi14_short_threshold: 50, atrSpikeMultiplier: 1.8, pnlRetracePercent: 0.5, maxCandles: 5, vwapEmaPeriod: 50 },
+    '4h':  { rsi14_long_threshold: 50, rsi14_short_threshold: 50, atrSpikeMultiplier: 1.8, pnlRetracePercent: 0.5, maxCandles: 5, vwapEmaPeriod: 50 },
+    '1d':  { rsi14_long_threshold: 45, rsi14_short_threshold: 55, atrSpikeMultiplier: 1.5, pnlRetracePercent: 0.4, maxCandles: 3, vwapEmaPeriod: 100 }
+};

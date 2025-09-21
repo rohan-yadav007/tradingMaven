@@ -159,6 +159,30 @@ export interface AgentParams {
     macdSlowPeriod?: number;
     macdSignalPeriod?: number;
     invalidationCandleLimit?: number;
+
+    // Universal Veto Parameters
+    veto_volumeFilterMultiplier?: number;
+    veto_srZoneAtrBuffer?: number;
+    veto_rsiAlignmentThreshold_bullish?: number;
+    veto_rsiAlignmentThreshold_bearish?: number;
+    veto_concordanceDivergenceLookback?: number;
+    veto_atrChaosRatio?: number;
+    veto_candlePositionVeto_long?: number;
+    veto_candlePositionVeto_short?: number;
+    veto_concordanceVolumeMinMultiplier?: number;
+    veto_normalizeAtrChaos?: boolean; // Tweak #2
+    // -- Adaptive Concordance --
+    veto_rsiConcordance_strongTrend_bullish?: number;
+    veto_rsiConcordance_strongTrend_bearish?: number;
+    veto_rsiConcordance_chop_bullish?: number;
+    veto_rsiConcordance_chop_bearish?: number;
+    veto_concordance_strongTrendAdx?: number;
+    veto_concordance_chopAdx?: number;
+    veto_atrChaos_graceMultiplier?: number;
+    veto_atrChaos_strongTrendAdx?: number;
+    veto_liquiditySweep_maxAdx?: number;
+    veto_sr_buffer_scalp?: number;
+    veto_sr_buffer_swing?: number;
     
     // Agent 9: Quantum Scalper
     qsc_adxPeriod?: number;
@@ -212,32 +236,42 @@ export interface AgentParams {
     ch_trendEmaPeriod?: number;
     ch_adxThreshold?: number;
     
-    // Agent 14: The Sentinel
+    // Agent 14: The Sentinel (Refactored for weighted checklist model)
     sentinel_scoreThreshold?: number;
+    sentinel_strongTrendAdx?: number;
     sentinel_emaFastPeriod?: number;
     sentinel_emaSlowPeriod?: number;
     sentinel_adxPeriod?: number;
     sentinel_rsiPeriod?: number;
     sentinel_stPeriod?: number;
     sentinel_stMultiplier?: number;
+    sentinel_emaDistanceVetoThreshold?: number;
+    sentinel_rsiDivergenceLookback?: number;
     sentinel_invalidationCandleLimit?: number;
     sentinel_rsiMomentumExitLong?: number;
     sentinel_rsiMomentumExitShort?: number;
-    sentinel_rsiDivergenceLookback?: number;
-    sentinel_bbwAtrFactor?: number; // New: For dynamic BBW threshold
-    sentinel_emaDistanceAtrMultiplier?: number; // New: For EMA distance veto
-    // Fix: Add missing sentinel properties
+    sentinel_volume_vetoMultiplier?: number;
+    sentinel_volume_penaltyMultiplier?: number;
+    sentinel_volume_bonusMultiplier?: number;
+    sentinel_volume_bonusPoints?: number;
+    // -- Regime-Aware Scoring --
+    sentinel_regime_strongTrendAdx?: number;
+    sentinel_regime_chopAdx?: number;
+    // -- Percentage-based Penalty System (Tweak #1) --
+    sentinel_penalty_ms_percent?: number;
+    sentinel_penalty_obv_percent?: number;
+    sentinel_penalty_concordance_rsi_percent?: number;
+    sentinel_penalty_concordance_volume_percent?: number;
+    sentinel_penalty_concordance_candlePos_percent?: number;
+    sentinel_penalty_concordance_vwap_percent?: number; // Tweak #4
+    sentinel_penalty_concordance_microStructure_percent?: number; // Tweak #4
+    // -- Hybrid SL --
+    sentinel_atr_mult_strong?: number;
+    sentinel_atr_mult_transition?: number;
+    sentinel_atr_mult_chop?: number;
+    // FIX: Add missing property for Sentinel agent.
     sentinel_useSrLevelsForTp?: boolean;
-    sentinel_strongTrendAdx?: number;
-    sentinel_strongTrendThreshold?: number;
-    sentinel_choppyTrendAdx?: number;
-    sentinel_choppyTrendThreshold?: number;
-    sentinel_trendingWeightMultiplier?: number;
-    sentinel_transitioningWeightMultiplier?: number;
-    sentinel_bbwSqueezeThreshold?: number;
-    sentinel_atrChaosThreshold?: number;
-    sentinel_volumeFilterMultiplier?: number;
-    sentinel_srZoneAtrBuffer?: number;
+
 
     // Agent 17: Momentum Swing Trader
     mst_emaFastPeriod?: number;
@@ -265,6 +299,18 @@ export interface AgentParams {
     // SMC Reversal Veto
     smc_divergenceLookback?: number;
     smc_volumeMultiplier?: number;
+    smc_requireConfluenceOnScalp?: boolean; // Tweak #3
+    smc_confluence_bbwSqueezeThreshold?: number; // Tweak #3
+
+    // BTC Correlation Veto (Tweak #5)
+    btc_correlation_veto_ema_fast?: number;
+    btc_correlation_veto_ema_slow?: number;
+    
+    // Risk Management
+    risk_atrVolatilityPercentile_upper?: number;
+    risk_atrVolatilityPercentile_lower?: number;
+    risk_atrVolatilityMultiplier_upper_adj?: number;
+    risk_atrVolatilityMultiplier_lower_adj?: number;
 }
 
 export interface MarketDataContext {
@@ -337,6 +383,7 @@ export interface BotConfig {
     isMarketCohesionEnabled?: boolean;
     isVwapConfirmationEnabled?: boolean;
     isBtcConfirmationEnabled?: boolean;
+    isBtcCorrelationVetoEnabled?: boolean; // Tweak #5
     btcConfirmationThreshold?: number;
     isVolumeFilterEnabled?: boolean;
     isAdxFilterEnabled?: boolean;
@@ -373,6 +420,7 @@ export interface BotConfigSnapshot {
     isMarketCohesionEnabled?: boolean;
     isVwapConfirmationEnabled?: boolean;
     isBtcConfirmationEnabled?: boolean;
+    isBtcCorrelationVetoEnabled?: boolean; // Tweak #5
     btcConfirmationThreshold?: number;
     isVolumeFilterEnabled?: boolean;
     isAdxFilterEnabled?: boolean;
@@ -436,6 +484,7 @@ export interface Position {
     adaptiveTpTriggered?: boolean;
     entryContext?: Partial<MarketDataContext>;
     exitContext?: Partial<MarketDataContext>;
+    entryAtr?: number;
 }
 
 export interface Trade extends Position {
@@ -544,8 +593,20 @@ export interface IchimokuCloudOutput {
 }
 
 export interface SentinelAnalysis {
-    bullish: { total: number; trend: number; momentum: number; confirmation: number; };
-    bearish: { total: number; trend: number; momentum: number; confirmation: number; };
+    bullish: {
+        total: number;
+        trend: number;
+        alignment: number;
+        volatility: number;
+        momentum: number;
+    };
+    bearish: {
+        total: number;
+        trend: number;
+        alignment: number;
+        volatility: number;
+        momentum: number;
+    };
 }
 
 export interface ConductorAnalysis {

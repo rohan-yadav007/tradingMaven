@@ -1,145 +1,52 @@
 // services/vetoService.ts
 
-import { Kline, BotConfig, MarketDataContext, StochasticRSIOutput, MACDOutput, ADXOutput } from '../types';
-import { RSI, StochasticRSI, ADX, MACD, SMA, EMA } from 'technicalindicators';
+import { Kline, BotConfig, MarketDataContext, StochasticRSIOutput, AgentParams, ADXOutput, BollingerBandsOutput } from '../types';
+import { RSI, StochasticRSI, ADX, SMA, EMA, ATR, BollingerBands } from 'technicalindicators';
 import * as constants from '../constants';
-import * as binanceService from './binanceService';
 import { btcConfirmationService } from './btcConfirmationService';
-import { findSwingPoints, analyzeMarketStructure } from './chartAnalysisService';
-import { getLast, getPenultimate, detectRsiDivergence as isRsiDivergent } from './agents/agentUtils';
+import { getLast, getPenultimate, detectRsiDivergence } from './agents/agentUtils';
 
 /**
  * A universal gatekeeper to prevent entering trades when the trend is likely exhausted.
- * This enhanced version requires both StochRSI overextension AND RSI divergence to veto.
+ * This enhanced version requires both StochRSI overextension AND RSI divergence to veto, and the condition must persist for 2 candles.
  */
 export function getExhaustionFilterVeto(
     klines: Kline[],
     direction: 'BUY' | 'SELL',
     config: BotConfig,
 ): { veto: boolean; reason: string } {
-    if (klines.length < 30) return { veto: false, reason: '' }; // Need enough data for calculations
-    const closes = klines.map(k => k.close);
-    
-    const rsiValues = RSI.calculate({ period: 14, values: closes });
-    const stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
-    
-    if (!stochRsi) return { veto: false, reason: '' };
-    
+    if (klines.length < 31) return { veto: false, reason: '' };
+
     const timeframeSettings = constants.EXHAUSTION_FILTER_TIMEFRAME_SETTINGS[config.timeFrame] || constants.EXHAUSTION_FILTER_TIMEFRAME_SETTINGS['15m'];
-    const isLong = direction === 'BUY';
-    const positionDirection = isLong ? 'LONG' : 'SHORT';
+    const positionDirection = direction === 'BUY' ? 'LONG' : 'SHORT';
 
-    const isOverextended = isLong ? stochRsi.k > timeframeSettings.overbought : stochRsi.k < timeframeSettings.oversold;
-    
-    if (isOverextended) {
-        const hasDivergence = isRsiDivergent(klines, rsiValues, positionDirection, 14);
-        if (hasDivergence) {
-            return { veto: true, reason: `❌ VETO: Exhaustion risk detected (StochRSI Overextended + RSI Divergence)` };
-        }
-    }
-
-    return { veto: false, reason: '' };
-}
-
-
-/**
- * A universal gatekeeper to prevent entering trades when the trend is likely exhausted.
- */
-export function getMeanReversionVeto(
-    klines: Kline[],
-    direction: 'BUY' | 'SELL',
-    config: BotConfig,
-): { veto: boolean; reason: string } {
-    const params = config.agentParams as Required<typeof constants.DEFAULT_AGENT_PARAMS>;
-    const closes = klines.map(k => k.close);
-    const lastRsi = getLast(RSI.calculate({ period: 14, values: closes })) as number | undefined;
-    if (lastRsi === undefined) return { veto: false, reason: '' };
-    
-    const isLong = direction === 'BUY';
-
-    if (config.agent.id === 9) {
-        const isOverextended = isLong
-            ? lastRsi > params.qsc_rsiOverextendedLong
-            : lastRsi < params.qsc_rsiOverextendedShort;
+    const checkExhaustionForSlice = (slice: Kline[]): boolean => {
+        const closes = slice.map(k => k.close);
+        const rsiValues = RSI.calculate({ period: 14, values: closes });
+        const stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
         
+        if (!stochRsi) return false;
+
+        const isOverextended = direction === 'BUY' ? stochRsi.k > timeframeSettings.overbought : stochRsi.k < timeframeSettings.oversold;
         if (isOverextended) {
-            return { veto: true, reason: `❌ VETO: Mean Reversion risk detected (RSI: ${lastRsi.toFixed(1)})` };
+            const hasDivergence = detectRsiDivergence(slice, rsiValues, positionDirection, 14);
+            return hasDivergence;
         }
-    }
-    return { veto: false, reason: '' };
-}
-
-/**
- * A universal gatekeeper to ensure trade entries align with higher timeframe momentum.
- */
-export function getHtfMomentumSyncVeto(
-    direction: 'BUY' | 'SELL',
-    htfContext: MarketDataContext | undefined,
-    config: BotConfig,
-): { veto: boolean; reason: string } {
-    if (!config.isHtfConfirmationEnabled || !htfContext?.htf_stochRsi) {
-        return { veto: false, reason: '' };
-    }
+        return false;
+    };
     
-    const params = config.agentParams as Required<typeof constants.DEFAULT_AGENT_PARAMS>;
-    const htfStochRsi = htfContext.htf_stochRsi;
-    const isLong = direction === 'BUY';
+    // Check current candle
+    const isExhaustedNow = checkExhaustionForSlice(klines);
+    if (!isExhaustedNow) return { veto: false, reason: '' };
+    
+    // Check previous candle
+    const isExhaustedPreviously = checkExhaustionForSlice(klines.slice(0, -1));
 
-    const isHtfOverbought = htfStochRsi.k > params.qsc_stochRsiOverbought;
-    const isHtfOversold = htfStochRsi.k < params.qsc_stochRsiOversold;
-
-    if (isLong && isHtfOverbought) {
-        return { veto: true, reason: `❌ VETO: HTF Momentum is overbought (StochRSI K: ${htfStochRsi.k.toFixed(1)})` };
-    }
-    if (!isLong && isHtfOversold) {
-        return { veto: true, reason: `❌ VETO: HTF Momentum is oversold (StochRSI K: ${htfStochRsi.k.toFixed(1)})` };
+    if (isExhaustedNow && isExhaustedPreviously) {
+        return { veto: true, reason: `❌ VETO: Exhaustion risk detected (StochRSI Overextended + RSI Divergence for 2 consecutive candles)` };
     }
 
     return { veto: false, reason: '' };
-}
-
-export function getBtcTrendScore(
-    btcKlines: Kline[]
-): { bullScore: number; bearScore: number } {
-    if (btcKlines.length < 50) {
-        return { bullScore: 50, bearScore: 50 };
-    }
-
-    const closes = btcKlines.map(k => k.close);
-    const highs = btcKlines.map(k => k.high);
-    const lows = btcKlines.map(k => k.low);
-    const currentPrice = getLast(closes)! as number;
-
-    let bullScore = 0;
-    let bearScore = 0;
-
-    const ema21 = getLast(EMA.calculate({ period: 21, values: closes })) as number | undefined;
-    const ema50 = getLast(EMA.calculate({ period: 50, values: closes })) as number | undefined;
-    if (ema21 && ema50 && currentPrice > ema21 && ema21 > ema50) {
-        bullScore += 50;
-    } else if (ema21 && ema50 && currentPrice < ema21 && ema21 < ema50) {
-        bearScore += 50;
-    }
-
-    const macdValues = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
-    const macd = getLast(macdValues) as MACDOutput | undefined;
-    const prevMacd = macdValues[macdValues.length - 2] as MACDOutput | undefined;
-    if (macd?.histogram !== undefined && prevMacd?.histogram !== undefined && macd.histogram > 0 && macd.histogram > (prevMacd.histogram || 0)) {
-        bullScore += 30;
-    } else if (macd?.histogram !== undefined && prevMacd?.histogram !== undefined && macd.histogram < 0 && macd.histogram < (prevMacd.histogram || 0)) {
-        bearScore += 30;
-    }
-    
-    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: 14 })) as ADXOutput | undefined;
-    if (adx && adx.adx > 20) {
-        if (adx.pdi > adx.mdi) {
-            bullScore += 20;
-        } else if (adx.mdi > adx.pdi) {
-            bearScore += 20;
-        }
-    }
-
-    return { bullScore, bearScore };
 }
 
 /**
@@ -153,9 +60,25 @@ export function detectSmcReversalPattern(
     rsiValues: number[],
     volumeSma: number | undefined,
 ): { detected: boolean; reason: string } {
-    const params = config.agentParams as Required<typeof constants.DEFAULT_AGENT_PARAMS>;
+    const params = config.agentParams as Required<AgentParams>;
     const lookback = params.smc_divergenceLookback;
     
+    // --- Tweak #3: Timeframe-Sensitive Confluence ---
+    const isScalpingTf = ['1m', '3m', '5m'].includes(config.timeFrame);
+    let requiresConfluence = isScalpingTf && params.smc_requireConfluenceOnScalp;
+    let confluenceMet = !requiresConfluence; // Default to true if not required
+
+    if (requiresConfluence) {
+        const bb = getLast(BollingerBands.calculate({ period: 20, stdDev: 2, values: klines.map(k => k.close) })) as BollingerBandsOutput | undefined;
+        if (bb) {
+            const bbWidth = (bb.upper - bb.lower) / bb.middle;
+            if (bbWidth < params.smc_confluence_bbwSqueezeThreshold) {
+                confluenceMet = true;
+            }
+        }
+    }
+    // --- End Tweak #3 ---
+
     const rsiStartIndex = klines.length - rsiValues.length;
     if (rsiStartIndex < 0) return { detected: false, reason: '' };
     const getRsiForKlineIndex = (klineIndex: number): number | undefined => {
@@ -190,8 +113,9 @@ export function detectSmcReversalPattern(
                     const sweepCandle = klines[lastHigh.index];
                     const hasHighVolume = sweepCandle.volume! > (volumeSma || 0) * params.smc_volumeMultiplier;
                     
-                    if (hasHighVolume) {
-                        return { detected: true, reason: `SMC Reversal: Bearish divergence + liquidity sweep.` };
+                    if (hasHighVolume && confluenceMet) {
+                        const reason = requiresConfluence ? `SMC Reversal: Bearish divergence + liquidity sweep + BBW Squeeze.` : `SMC Reversal: Bearish divergence + liquidity sweep.`;
+                        return { detected: true, reason };
                     }
                 }
             }
@@ -213,8 +137,9 @@ export function detectSmcReversalPattern(
                     const sweepCandle = klines[lastLow.index];
                     const hasHighVolume = sweepCandle.volume! > (volumeSma || 0) * params.smc_volumeMultiplier;
 
-                    if (hasHighVolume) {
-                        return { detected: true, reason: `SMC Reversal: Bullish divergence + liquidity sweep.` };
+                    if (hasHighVolume && confluenceMet) {
+                        const reason = requiresConfluence ? `SMC Reversal: Bullish divergence + liquidity sweep + BBW Squeeze.` : `SMC Reversal: Bullish divergence + liquidity sweep.`;
+                        return { detected: true, reason };
                     }
                 }
             }
@@ -250,112 +175,130 @@ export function getSmcVeto(
     return { veto: false, reason: '' };
 }
 
-
-export function getMarketStructureVeto(
-    klines: Kline[],
-    direction: 'BUY' | 'SELL',
-): { veto: boolean; reason: string } {
-    if (klines.length < 50) {
-        return { veto: false, reason: '' };
-    }
-
-    const swingPoints = findSwingPoints(klines, 5);
-    if (swingPoints.length < 4) {
-        return { veto: false, reason: 'ℹ️ Insufficient swing points for structure analysis.' };
-    }
-    
-    const analysis = analyzeMarketStructure(swingPoints);
-    const isLongSignal = direction === 'BUY';
-
-    if (isLongSignal) {
-        if (analysis.structure === 'Downtrend' || analysis.lastSignal === 'ChoCH_Bearish') {
-            return { veto: true, reason: `❌ VETO: Market structure is bearish. ${analysis.reason}` };
-        }
-    } else { // SELL signal
-        if (analysis.structure === 'Uptrend' || analysis.lastSignal === 'ChoCH_Bullish') {
-            return { veto: true, reason: `❌ VETO: Market structure is bullish. ${analysis.reason}` };
-        }
-    }
-
-    return { veto: false, reason: `✅ MS Veto: Passed` };
-}
-
 /**
- * NEW: Performs a 'just-in-time' analysis before entry to qualify the trade.
- * Vetoes trades if immediate 1-min momentum is fading or if the entry
- * point is poor within the current candle's structure.
+ * Performs a 'just-in-time' analysis before entry using micro-timeframe data to apply non-negotiable "hard" vetos.
+ * This checks for extreme volatility and clear liquidity sweep patterns that pose an immediate high risk.
  */
-export async function getDynamicEntryVeto(
+export function getHardConcordanceVetos(
     mainTimeframeKlines: Kline[],
     livePrice: number,
     signalDirection: 'BUY' | 'SELL',
     config: BotConfig,
-    microKlines?: Kline[], // Optional parameter for backtesting
-): Promise<{ veto: boolean; reason: string }> {
-    if (mainTimeframeKlines.length === 0 || livePrice <= 0) {
-        return { veto: false, reason: '' };
+    microKlines: Kline[] | undefined,
+    microTimeframe: string,
+): { veto: boolean; reason: string } {
+    const params = config.agentParams as Required<AgentParams>;
+
+    if (!microKlines || microKlines.length < 50) {
+        const reason = `Concordance: Insufficient ${microTimeframe} data.`;
+        if (config.finalEntryFailSafe === 'fail-closed') {
+            return { veto: true, reason: `❌ VETO: ${reason} (Fail-safe triggered)` };
+        }
+        return { veto: false, reason: `⚠️ ${reason} Trade allowed by fail-open.` };
     }
 
     const isLongSignal = signalDirection === 'BUY';
+    const mainTfAdx = getLast(ADX.calculate({ high: mainTimeframeKlines.map(k=>k.high), low: mainTimeframeKlines.map(k=>k.low), close: mainTimeframeKlines.map(k=>k.close), period: 14 })) as ADXOutput | undefined;
+    
+    const ltfHighs = microKlines.map(k => k.high);
+    const ltfLows = microKlines.map(k => k.low);
+    const ltfCloses = microKlines.map(k => k.close);
+    const ltfVolumes = microKlines.map(k => k.volume || 0);
 
-    // --- 1. Main Timeframe Candle Context ---
-    const lastCandle = mainTimeframeKlines[mainTimeframeKlines.length - 1];
-    const range = lastCandle.high - lastCandle.low;
-    if (range > 0) {
-        const positionInCandle = (livePrice - lastCandle.low) / range;
-        const upperWick = lastCandle.high - Math.max(lastCandle.open, lastCandle.close);
-        const lowerWick = Math.min(lastCandle.open, lastCandle.close) - lastCandle.low;
+    // --- Hard Veto 1: Directional ATR Chaos Veto with Grace Band & Normalization (Tweak #2) ---
+    const mainTfAtrRaw = getLast(ATR.calculate({ high: mainTimeframeKlines.map(k=>k.high), low: mainTimeframeKlines.map(k=>k.low), close: mainTimeframeKlines.map(k=>k.close), period: 14 })) as number | undefined;
+    const ltfAtrValues = ATR.calculate({ high: ltfHighs, low: ltfLows, close: ltfCloses, period: 5 });
+    const ltfAtrRaw = getLast(ltfAtrValues) as number | undefined;
+    
+    let effectiveAtrRatio = params.veto_atrChaosRatio;
+    if (mainTfAdx && mainTfAdx.adx > params.veto_atrChaos_strongTrendAdx) {
+        effectiveAtrRatio *= params.veto_atrChaos_graceMultiplier;
+    }
 
-        if (isLongSignal && positionInCandle > 0.8 && upperWick > range * 0.3) {
-            return { veto: true, reason: `❌ VETO: Entry too high in current candle with rejection wick.` };
-        }
-        if (!isLongSignal && positionInCandle < 0.2 && lowerWick > range * 0.3) {
-            return { veto: true, reason: `❌ VETO: Entry too low in current candle with rejection wick.` };
+    if (mainTfAtrRaw && ltfAtrRaw) {
+        const mainTfAtr = params.veto_normalizeAtrChaos ? mainTfAtrRaw / livePrice : mainTfAtrRaw;
+        const ltfAtr = params.veto_normalizeAtrChaos ? ltfAtrRaw / livePrice : ltfAtrRaw;
+
+        if (ltfAtr > (mainTfAtr * effectiveAtrRatio)) {
+            const prevLtfAtrRaw = getPenultimate(ltfAtrValues) as number | undefined;
+            if (prevLtfAtrRaw) {
+                const prevLtfAtr = params.veto_normalizeAtrChaos ? prevLtfAtrRaw / livePrice : prevLtfAtrRaw;
+                if (ltfAtr > prevLtfAtr) { // Volatility is expanding
+                    const priceDirectionIsUp = getLast(ltfCloses)! > getPenultimate(ltfCloses)!;
+                    if ((isLongSignal && !priceDirectionIsUp) || (!isLongSignal && priceDirectionIsUp)) {
+                        return { veto: true, reason: `❌ VETO: LTF volatility expanding against signal direction.` };
+                    }
+                }
+            }
+            // If volatility is high but not expanding, or if we can't check expansion, treat as chaotic
+            return { veto: true, reason: `❌ VETO: LTF volatility chaotic (ATR Ratio > ${effectiveAtrRatio.toFixed(1)}x).` };
         }
     }
 
-    // --- 2. Micro-Momentum Analysis (1-min Timeframe) ---
-    let klinesToAnalyze: Kline[] | undefined = microKlines;
+    // --- Hard Veto 2: ADX-Gated Liquidity Sweep Detection ---
+    if (mainTfAdx && mainTfAdx.adx < params.veto_liquiditySweep_maxAdx) {
+        const lastLtfCandle = microKlines[microKlines.length - 1];
+        const prevLtfCandle = microKlines[microKlines.length - 2];
+        if (prevLtfCandle) {
+            const volumeSma = getLast(SMA.calculate({ period: 20, values: ltfVolumes }));
+            const lastVolume = lastLtfCandle.volume || 0;
+            const hasHighVolume = volumeSma && lastVolume > volumeSma;
+            const bodySize = Math.abs(lastLtfCandle.close - lastLtfCandle.open);
 
-    if (!klinesToAnalyze) {
-        try {
-            klinesToAnalyze = await binanceService.fetchKlines(
-                config.pair.replace('/', ''),
-                '1m',
-                { limit: 20, mode: config.mode }
-            );
-        } catch (e) {
-            const errorMessage = e instanceof Error ? e.message : String(e);
-            console.error("Dynamic entry veto failed to fetch micro-klines:", errorMessage);
-            // Fail open, but provide a reason for the log.
-            return { veto: false, reason: `⚠️ Momentum Concordance: Could not fetch 1m data (${errorMessage}). Trade allowed.` };
+            if (signalDirection === 'BUY' && lastLtfCandle.high > prevLtfCandle.high && lastLtfCandle.close < prevLtfCandle.high) {
+                const upperWick = lastLtfCandle.high - Math.max(lastLtfCandle.open, lastLtfCandle.close);
+                if(bodySize > 0 && upperWick >= 0.4 * bodySize && hasHighVolume){ 
+                    return { veto: true, reason: '❌ VETO: High volume bearish liquidity sweep.' }; 
+                }
+            }
+            if (signalDirection === 'SELL' && lastLtfCandle.low < prevLtfCandle.low && lastLtfCandle.close > prevLtfCandle.low) {
+                const lowerWick = Math.min(lastLtfCandle.open, lastLtfCandle.close) - lastLtfCandle.low;
+                if(bodySize > 0 && lowerWick >= 0.4 * bodySize && hasHighVolume){ 
+                    return { veto: true, reason: '❌ VETO: High volume bullish liquidity sweep.' };
+                }
+            }
         }
     }
     
-    if (klinesToAnalyze && klinesToAnalyze.length >= 15) {
-        const microCloses = klinesToAnalyze.map(k => k.close);
-        
-        // A. EMA Slope Check
-        const microEmaValues = EMA.calculate({ period: 5, values: microCloses });
-        const lastEma = getLast(microEmaValues);
-        const prevEma = getPenultimate(microEmaValues);
-        const isEmaFading = (lastEma && prevEma) 
-            ? (isLongSignal ? lastEma < prevEma : lastEma > prevEma)
-            : false;
-            
-        // B. RSI Check
-        const microRsi = getLast(RSI.calculate({ period: 14, values: microCloses }));
-        const isRsiWeak = microRsi
-            ? (isLongSignal ? microRsi < 48 : microRsi > 52)
-            : false;
-            
-        // C. Confluence Veto
-        if (isEmaFading && isRsiWeak) {
-             return { veto: true, reason: `❌ VETO: Immediate 1m momentum is fading (EMA slope + RSI weakness).` };
-        }
-    } else {
-        return { veto: false, reason: 'ℹ️ Micro-momentum: Insufficient 1m data.' };
-    }
+    return { veto: false, reason: '✅ Hard Concordance: Passed' };
+}
+
+export function getBtcTrendScore(btcKlines: Kline[]): { bullScore: number; bearScore: number } {
+    return btcConfirmationService.getBtcTrendScore(btcKlines);
+}
+
+/**
+ * Tweak #5: New Veto based on ETH/BTC capital flow.
+ */
+export function getBtcCorrelationVeto(
+    ethBtcKlines: Kline[],
+    signalDirection: 'BUY' | 'SELL',
+    pair: string,
+    config: BotConfig,
+): { veto: boolean; reason: string } {
+    const params = config.agentParams as Required<AgentParams>;
     
-    return { veto: false, reason: '✅ Momentum Concordance: Passed' };
+    // This veto only applies to altcoin LONGs
+    if (signalDirection !== 'BUY' || pair.startsWith('BTC/') || pair.startsWith('ETH/')) {
+        return { veto: false, reason: '' };
+    }
+
+    if (ethBtcKlines.length < params.btc_correlation_veto_ema_slow) {
+        return { veto: false, reason: 'ℹ️ Correlation: Insufficient ETH/BTC data.' };
+    }
+
+    const closes = ethBtcKlines.map(k => k.close);
+    const emaFast = getLast(EMA.calculate({ period: params.btc_correlation_veto_ema_fast, values: closes }));
+    const emaSlow = getLast(EMA.calculate({ period: params.btc_correlation_veto_ema_slow, values: closes }));
+
+    if (!emaFast || !emaSlow) {
+        return { veto: false, reason: 'ℹ️ Correlation: Could not calculate EMAs.' };
+    }
+
+    // If fast EMA is below slow EMA, it indicates a downtrend in ETH vs BTC (capital flowing to BTC)
+    if (emaFast < emaSlow) {
+        return { veto: true, reason: '❌ VETO: Capital flow favors BTC over ALTS (ETH/BTC is bearish).' };
+    }
+
+    return { veto: false, reason: '✅ Correlation: Capital flow is neutral or favors ALTS.' };
 }

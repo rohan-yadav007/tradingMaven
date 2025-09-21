@@ -1,126 +1,12 @@
-
 import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, TradingMode, MarketDataContext } from '../types';
 import * as binanceService from './binanceService';
-import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext, getAdaptiveTakeProfit } from './localAgentService';
-import { TIME_FRAMES } from '../constants';
+import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getSupervisorSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext, getAdaptiveTakeProfit, getTradeGuardianSignal } from './localAgentService';
+import { TIME_FRAMES, getMicroTimeframe } from '../constants';
 import { telegramBotService } from './telegramBotService';
-import { getDynamicEntryVeto } from './vetoService';
+import { WebSocketManager } from './webSocketManager';
+import { sharedKlineService } from './sharedKlineService';
 
 const MAX_LOG_ENTRIES = 100;
-const RECONNECT_DELAY = 5000; // 5 seconds
-let nextRequestId = 1;
-
-// --- WebSocket Manager (Proxy Version) ---
-class WebSocketManager {
-    private ws: WebSocket | null = null;
-    private subscriptions = new Map<string, Function[]>();
-    private getUrl: () => string;
-    private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
-    private isConnected = false;
-    private isConnecting = false;
-
-    constructor(getUrl: () => string) {
-        this.getUrl = getUrl;
-    }
-
-    private connect() {
-        if (this.isConnecting || this.isConnected) return;
-        this.isConnecting = true;
-
-        const url = `${this.getUrl()}/stream`;
-        this.ws = new WebSocket(url);
-
-        this.ws.onopen = () => {
-            this.isConnected = true;
-            this.isConnecting = false;
-            const streamsToSubscribe = Array.from(this.subscriptions.keys());
-            if (streamsToSubscribe.length > 0) {
-                this.sendSubscriptionMessage('SUBSCRIBE', streamsToSubscribe);
-            }
-        };
-
-        this.ws.onmessage = (event) => {
-            let message;
-            try {
-                message = JSON.parse(event.data);
-            } catch (error) {
-                console.error('[WS Manager] Error parsing JSON message:', error, event.data);
-                return;
-            }
-
-            if (message.stream && message.data) {
-                const callbacks = this.subscriptions.get(message.stream);
-                if (callbacks) {
-                    callbacks.forEach(cb => {
-                        try { cb(message.data); } catch (error) { console.error(`[WS Manager] Error in callback for stream ${message.stream}:`, error); }
-                    });
-                }
-            }
-        };
-
-        this.ws.onerror = (error) => {
-            console.error(`[WS Manager] WebSocket error on connection to ${url}:`, error);
-        };
-
-        this.ws.onclose = () => {
-            this.isConnected = false;
-            this.isConnecting = false;
-            if (this.subscriptions.size > 0) {
-                this.reconnectTimeout = setTimeout(() => this.connect(), RECONNECT_DELAY);
-            }
-        };
-    }
-
-    private sendSubscriptionMessage(method: 'SUBSCRIBE' | 'UNSUBSCRIBE', params: string[]) {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            return;
-        }
-        this.ws.send(JSON.stringify({ method, params, id: nextRequestId++ }));
-    }
-
-    public subscribe(streamName: string, callback: Function) {
-        let callbacks = this.subscriptions.get(streamName);
-        if (!callbacks) {
-            callbacks = [];
-            this.subscriptions.set(streamName, callbacks);
-            if (this.isConnected) {
-                this.sendSubscriptionMessage('SUBSCRIBE', [streamName]);
-            }
-        }
-        if (!callbacks.includes(callback)) {
-            callbacks.push(callback);
-        }
-        if (!this.isConnected && !this.isConnecting) {
-            this.connect();
-        }
-    }
-
-    public unsubscribe(streamName: string, callback: Function) {
-        const callbacks = this.subscriptions.get(streamName);
-        if (callbacks) {
-            const index = callbacks.indexOf(callback);
-            if (index > -1) callbacks.splice(index, 1);
-            if (callbacks.length === 0) {
-                this.subscriptions.delete(streamName);
-                if (this.isConnected) {
-                    this.sendSubscriptionMessage('UNSUBSCRIBE', [streamName]);
-                }
-            }
-        }
-    }
-
-    public disconnect() {
-        if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
-        if (this.ws) {
-            this.ws.onclose = null;
-            this.ws.close();
-        }
-        this.subscriptions.clear();
-        this.isConnected = false;
-        this.isConnecting = false;
-    }
-}
-
 
 export interface BotHandlers {
     onExecuteTrade: (
@@ -142,6 +28,7 @@ class BotInstance {
     private handlers: BotHandlers;
     public subscriptions: { type: 'ticker' | 'kline', pair: string, timeFrame?: string, mode: TradingMode, callback: Function }[] = [];
     private managementInterval: ReturnType<typeof setTimeout> | null = null;
+    private executing = false;
 
     constructor(config: BotConfig, onUpdate: () => void, handlers: BotHandlers) {
         this.bot = {
@@ -162,6 +49,7 @@ class BotInstance {
             accumulatedActiveMs: 0,
             lastResumeTimestamp: null,
             klinesLoaded: 0,
+            livePrice: 0,
             lastAnalysisTimestamp: null,
             lastPriceUpdateTimestamp: null,
         };
@@ -237,20 +125,18 @@ class BotInstance {
     }
     
     public async runPeriodicManagement() {
-        // FIX: Ensure analysis preview runs even when paused or in a trade
         if ([BotStatus.Paused, BotStatus.Stopped, BotStatus.Error, BotStatus.ExecutingTrade].includes(this.bot.status)) {
-            // Still run analysis for preview purposes, but don't execute trades.
-        } else {
-            if (this.klines.length < 50) return;
-
-            const isLookingForEntry = !this.bot.openPosition && this.bot.status === BotStatus.Monitoring;
-            const shouldExecute = isLookingForEntry && this.bot.config.entryTiming === 'immediate';
-    
-            await this.runAnalysis({ execute: shouldExecute });
+            // Run preview only
+            await this.runAnalysis({ execute: false });
+            return;
         }
-        
-        // This runs regardless of status to keep the UI's analysis preview fresh.
-        await this.runAnalysis({ execute: false });
+    
+        if (this.klines.length < 50) return;
+    
+        const isLookingForEntry = !this.bot.openPosition && this.bot.status === BotStatus.Monitoring;
+        const shouldExecute = isLookingForEntry && this.bot.config.entryTiming === 'immediate';
+    
+        await this.runAnalysis({ execute: shouldExecute });
     }
 
     public async runAnalysis(options: { execute: boolean } = { execute: true }) {
@@ -259,8 +145,6 @@ class BotInstance {
         try {
             this.bot.lastAnalysisTimestamp = Date.now();
             
-            // Create a real-time "preview" kline array for analysis, identical to the UI's approach.
-            // This ensures the data used for analysis and execution is perfectly synchronized.
             let klinesForAnalysis = this.klines;
             if (this.bot.livePrice && this.klines.length > 0) {
                 const lastKline = this.klines[this.klines.length - 1];
@@ -274,17 +158,41 @@ class BotInstance {
                 klinesForAnalysis = [...this.klines.slice(0, -1), previewKline];
             }
             
+            // --- DATA FETCHING (Now uses Shared Service) ---
             let htfKlines: Kline[] | undefined;
             if (this.bot.config.isHtfConfirmationEnabled) {
                 try {
                     const htf = this.bot.config.htfTimeFrame === 'auto' 
                         ? TIME_FRAMES[TIME_FRAMES.indexOf(this.bot.config.timeFrame) + 1] 
                         : this.bot.config.htfTimeFrame;
-                    if (htf) htfKlines = await binanceService.fetchKlines(this.bot.config.pair.replace('/', ''), htf, { limit: 205, mode: this.bot.config.mode });
+                    if (htf) {
+                        htfKlines = await sharedKlineService.getData(this.bot.config.pair, htf, this.bot.config.mode);
+                    }
                 } catch(e) { this.addLog(`Warning: could not fetch HTF klines: ${e}`, LogType.Error); }
             }
+
+            let microKlines: Kline[] | undefined;
+            const needsMicroData = this.bot.config.isMomentumConcordanceEnabled || this.bot.config.agent.id === 14;
+            if (needsMicroData) {
+                 try {
+                    const microTf = getMicroTimeframe(this.bot.config.timeFrame);
+                    microKlines = await sharedKlineService.getData(this.bot.config.pair, microTf, this.bot.config.mode);
+                } catch (e) {
+                    this.addLog(`Could not fetch micro data for concordance check: ${e instanceof Error ? e.message : String(e)}`, LogType.Error);
+                }
+            }
             
-            const signal = await getTradingSignal(this.bot.config.agent, klinesForAnalysis, this.bot.config, htfKlines);
+            let ethBtcKlines: Kline[] | undefined;
+            if (this.bot.config.isBtcCorrelationVetoEnabled) {
+                try {
+                    ethBtcKlines = await sharedKlineService.getData('ETH/BTC', this.bot.config.timeFrame, TradingMode.Spot);
+                } catch (e) {
+                    this.addLog(`Could not fetch ETH/BTC data for correlation veto: ${e instanceof Error ? e.message : String(e)}`, LogType.Error);
+                }
+            }
+            
+            // --- SIGNAL GENERATION & VETO (Centralized in localAgentService) ---
+            const signal = await getTradingSignal(this.bot.config.agent, klinesForAnalysis, this.bot.config, htfKlines, microKlines, ethBtcKlines, this.bot.livePrice);
             this.updateState({ analysis: signal });
 
             const isForEntry = !this.bot.openPosition && this.bot.status === BotStatus.Monitoring;
@@ -292,42 +200,22 @@ class BotInstance {
             
             if (isForEntry && options.execute) {
                 if (signal.signal !== 'HOLD') {
-                    // --- DYNAMIC ENTRY VETO (PRE-FLIGHT CHECK) ---
-                    if (this.bot.config.isMomentumConcordanceEnabled) {
-                        this.addLog('Performing Momentum Concordance check...', LogType.Info);
-                        const livePriceForVeto = this.bot.livePrice || 0;
-                        const vetoCheck = await getDynamicEntryVeto(klinesForAnalysis, livePriceForVeto, signal.signal, this.bot.config);
-                        
-                        // Always log the result of the check for visibility
-                        this.addLog(vetoCheck.reason, vetoCheck.veto ? LogType.Error : LogType.Success);
-                        
-                        if (vetoCheck.veto) {
-                            // Update analysis for UI feedback and prevent execution
-                            this.updateState({ analysis: { ...signal, signal: 'HOLD', reasons: [vetoCheck.reason, ...signal.reasons] } });
-                            return; 
-                        }
+                    if (this.executing) { this.addLog('Execution already in process', LogType.Info); return; }
+                    this.executing = true;
+                    try {
+                        this.updateState({ status: BotStatus.ExecutingTrade });
+                        await this.executeTrade(signal, klinesForAnalysis, htfKlines);
+                    } finally {
+                        this.executing = false;
                     }
-                    // --- END OF VETO BLOCK ---
-
-                    this.updateState({ status: BotStatus.ExecutingTrade });
-                    await this.executeTrade(signal, klinesForAnalysis, htfKlines);
                 } else {
-                    const primaryReason = signal.reasons.find(r => r.startsWith('❌') || r.startsWith('ℹ️')) || "Conditions not met.";
+                    const primaryReason = signal.reasons.find(r => r.startsWith('❌') || r.startsWith('ℹ️') || r.startsWith('⚠️')) || "Conditions not met.";
                     this.addLog(`Analysis: HOLD. ${primaryReason.substring(2)}`, LogType.Info);
                 }
             } else if (isForManagement) {
                 const { score, reasons } = await getSupervisorSignal(this.bot.openPosition!, klinesForAnalysis, this.bot.config, htfKlines);
-
-                this.updateState({
-                    openPosition: { ...this.bot.openPosition!, invalidationScore: score }
-                });
-
-                const sensitivityThreshold = {
-                    low: 80,
-                    medium: 65,
-                    high: 50
-                }[this.bot.config.invalidationSensitivity];
-
+                this.updateState({ openPosition: { ...this.bot.openPosition!, invalidationScore: score } });
+                const sensitivityThreshold = { low: 80, medium: 65, high: 50 }[this.bot.config.invalidationSensitivity];
                 if (score >= sensitivityThreshold) {
                     const reason = `Supervisor Exit: Thesis Invalidated (Score: ${score} >= ${sensitivityThreshold}). Reasons: ${reasons.join(' ')}`;
                     this.addLog(reason, LogType.Action);
@@ -355,17 +243,23 @@ class BotInstance {
 
     public async onMainKlineUpdate(newKline: Kline) {
         const lastKline = this.klines.length > 0 ? this.klines[this.klines.length - 1] : null;
-        const previousLastKline = lastKline ? { ...lastKline } : null;
+        
+        let isNewCandleEvent = false;
 
         if (lastKline && newKline.time === lastKline.time) {
+            // Tick update for the current candle.
             this.klines[this.klines.length - 1] = newKline;
         } else if (!lastKline || newKline.time > lastKline.time) {
+            // First tick of a new candle. This implies the previous one is closed.
+            isNewCandleEvent = true;
             this.klines.push(newKline);
             if (this.klines.length > 500) this.klines.shift();
         }
         this.updateState({ klinesLoaded: this.klines.length });
         
-        if (newKline.isFinal && previousLastKline && newKline.time > previousLastKline.time) {
+        // This block executes exactly once when the first tick of a new candle arrives.
+        // `lastKline` at this point refers to the candle that just closed.
+        if (isNewCandleEvent && lastKline) {
             if (this.bot.openPosition) {
                 const candlesSinceEntry = (this.bot.openPosition.candlesSinceEntry || 0) + 1;
                 this.updateState({
@@ -374,17 +268,16 @@ class BotInstance {
 
                 // Post-Entry Confirmation Candle Check
                 if (this.bot.config.isConfirmationCandleEnabled && candlesSinceEntry === 1) {
-                    // The "entry candle" is the one that was active when the trade was placed.
-                    // Since `newKline` is the first full candle AFTER entry, the entry candle is the one before it.
-                    const entryCandle = this.klines[this.klines.length - 2];
+                    // At this point, `this.klines` is [..., entryCandle, closedCandle, newPartialCandle]
+                    const entryCandle = this.klines[this.klines.length - 3];
+                    const closedCandle = lastKline; // The candle that just finished.
                     if (entryCandle) {
                          const isLong = this.bot.openPosition.direction === 'LONG';
-                         // Check if the confirmation candle is a strong reversal (e.g., closes below the low of the entry candle for a long)
-                         const isContradictory = isLong ? newKline.close < entryCandle.low : newKline.close > entryCandle.high;
+                         const isContradictory = isLong ? closedCandle.close < entryCandle.low : closedCandle.close > entryCandle.high;
                          if (isContradictory) {
                              this.addLog('Confirmation candle failed. Closing position.', LogType.Action);
-                             this.handlers.onClosePosition(this.bot.openPosition, 'Confirmation Failed', newKline.close);
-                             return; // Exit early to avoid redundant analysis
+                             this.handlers.onClosePosition(this.bot.openPosition, 'Confirmation Failed', closedCandle.close);
+                             return; // Exit early
                          }
                     }
                 }
@@ -462,6 +355,23 @@ class BotInstance {
 
     private async managePositionOnTick(currentPrice: number) {
         if (!this.bot.openPosition) return;
+
+        // --- Trade Guardian System ---
+        const guardianConfig = this.bot.openPosition.botConfigSnapshot;
+        if (guardianConfig) {
+            try {
+                const microTf = getMicroTimeframe(this.bot.config.timeFrame);
+                const microKlines = await sharedKlineService.getData(this.bot.config.pair, microTf, this.bot.config.mode);
+                const guardianSignal = getTradeGuardianSignal(this.bot.openPosition, this.klines, microKlines, currentPrice);
+                if (guardianSignal.action === 'close') {
+                    this.addLog(guardianSignal.reason!, LogType.Action);
+                    this.handlers.onClosePosition(this.bot.openPosition, guardianSignal.reason!, currentPrice);
+                    return; // Exit early if guardian closes position
+                }
+            } catch (e) {
+                 this.addLog(`Error in Trade Guardian: ${e instanceof Error ? e.message : String(e)}`, LogType.Error);
+            }
+        }
     
         let positionState: Position = { ...this.bot.openPosition };
         const isLong = positionState.direction === 'LONG';
@@ -473,7 +383,7 @@ class BotInstance {
         const peak = positionState.peakPrice ?? positionState.entryPrice;
         if ((isLong && currentPrice > peak) || (!isLong && currentPrice < peak)) changes.peakPrice = currentPrice;
         const trough = positionState.troughPrice ?? positionState.entryPrice;
-        if ((isLong && currentPrice < trough) || (!isLong && currentPrice > trough)) changes.troughPrice = currentPrice;
+        if ((isLong && currentPrice < trough) || (!isLong && currentPrice < trough)) changes.troughPrice = currentPrice;
 
         // Apply any changes so far to the local state for subsequent logic
         positionState = { ...positionState, ...changes };
@@ -499,7 +409,6 @@ class BotInstance {
     
         // Candidate from Agent Trail
         if (this.bot.config.isAgentTrailEnabled) {
-            // FIX: Replaced 'findLast' with a compatible alternative.
             const lastFinalKline = [...this.klines].reverse().find(k => k.isFinal);
             if (lastFinalKline) {
                 const previewKline: Kline = { ...lastFinalKline, high: Math.max(lastFinalKline.high, currentPrice), low: Math.min(lastFinalKline.low, currentPrice), close: currentPrice, isFinal: false };
@@ -532,7 +441,6 @@ class BotInstance {
         }
     
         // --- Step 3: Evaluate candidates to find the best valid one ---
-        // FIX: Explicitly typed `bestCandidate` to allow an optional `newState` property, resolving an assignment issue.
         let bestCandidate: { price: number; reason: Position['activeStopLossReason']; newState?: Partial<Position> } = { 
             price: positionState.stopLossPrice, 
             reason: positionState.activeStopLossReason, 
@@ -675,6 +583,8 @@ class BotManagerService {
             }
         }
         
+        this.releaseBotData(bot.bot.config);
+        
         const accumulatedActiveMs = bot.bot.accumulatedActiveMs + (Date.now() - (bot.bot.lastResumeTimestamp || Date.now()));
         bot.updateState({ status: BotStatus.Stopped, lastResumeTimestamp: null, accumulatedActiveMs });
         this.unsubscribeFromBotData(bot);
@@ -684,6 +594,7 @@ class BotManagerService {
     public deleteBot = (botId: string) => {
         const bot = this.bots.get(botId);
         if (bot && (bot.bot.status === BotStatus.Stopped || bot.bot.status === BotStatus.Error)) {
+            this.releaseBotData(bot.bot.config);
             this.unsubscribeFromBotData(bot);
             this.bots.delete(botId);
             this.notifyUpdate();
@@ -746,6 +657,25 @@ class BotManagerService {
         const bot = this.bots.get(botId);
         if (bot) {
             bot.notifyTradeExecutionFailed(reason);
+        }
+    }
+
+    private releaseBotData(config: BotConfig) {
+        if (config.isHtfConfirmationEnabled) {
+            const htf = config.htfTimeFrame === 'auto' 
+                ? TIME_FRAMES[TIME_FRAMES.indexOf(config.timeFrame) + 1] 
+                : config.htfTimeFrame;
+            if (htf) {
+                sharedKlineService.releaseData(config.pair, htf, config.mode);
+            }
+        }
+        const needsMicroData = config.isMomentumConcordanceEnabled || config.agent.id === 14;
+        if (needsMicroData) {
+            const microTf = getMicroTimeframe(config.timeFrame);
+            sharedKlineService.releaseData(config.pair, microTf, config.mode);
+        }
+        if (config.isBtcCorrelationVetoEnabled) {
+            sharedKlineService.releaseData('ETH/BTC', config.timeFrame, TradingMode.Spot);
         }
     }
 

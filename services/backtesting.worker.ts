@@ -174,6 +174,7 @@ async function runBacktest(
             mfe,
             mae,
             exitContext,
+            hasBeenProfitable: netPnl > 0,
         };
         trades.push(finalTrade);
         openPosition = null;
@@ -284,16 +285,31 @@ async function runBacktest(
         
         // --- CHECK FOR NEW ENTRY ---
         if (!openPosition && !hasTradedInThisCandle) {
+            // FIX: Correctly prepare ltfKlines and immediateKlines for getTradingSignal, and fix the argument order.
             const microTimeframe = constants.getMicroTimeframe(config.timeFrame);
             const microKlineEndIndex = allMicroKlines.findIndex(k => k.time >= currentCandle.time);
-            let microKlinesForAgent: Kline[] | undefined;
+            
+            let immediateKlines: Kline[] | undefined;
             if (microKlineEndIndex !== -1) {
-                microKlinesForAgent = allMicroKlines.slice(Math.max(0, microKlineEndIndex - 100), microKlineEndIndex + 1);
+                // This is the 1m data slice, used for agent 14's immediate momentum check
+                immediateKlines = allMicroKlines.slice(Math.max(0, microKlineEndIndex - 100), microKlineEndIndex + 1);
+            }
+            
+            let ltfKlines: Kline[] | undefined;
+            const needsLtfData = config.isMomentumConcordanceEnabled || config.agent.id === 14;
+            if (needsLtfData) {
+                if (microTimeframe === '1m') {
+                    ltfKlines = immediateKlines;
+                } else if(microKlineEndIndex !== -1) {
+                    // Aggregate the relevant slice of 1m data up to the LTF.
+                    const relevantMicroKlines = allMicroKlines.slice(0, microKlineEndIndex + 1);
+                    ltfKlines = aggregateKlines(relevantMicroKlines, microTimeframe);
+                }
             }
             
             const ethBtcHistorySlice = allEthBtcKlines ? allEthBtcKlines.filter(k => k.time <= currentCandle.time) : undefined;
 
-            const signal = await getTradingSignal(config.agent, historySlice, config, htfHistorySlice, microKlinesForAgent, ethBtcHistorySlice, currentCandle.close);
+            const signal = await getTradingSignal(config.agent, historySlice, config, htfHistorySlice, immediateKlines, ltfKlines, ethBtcHistorySlice, currentCandle.close);
             
             if (signal.signal !== 'HOLD') {
                 const entryPrice = currentCandle.close;

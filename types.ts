@@ -119,7 +119,6 @@ export interface BinanceOrderResponse {
     cumQuote?: string;
 }
 
-// FIX: Exported OrderBook types for use in the DepthChart component.
 export interface OrderBookEntry {
     price: number;
     amount: number;
@@ -229,8 +228,9 @@ export interface AgentParams {
     ch_trendEmaPeriod?: number;
     ch_adxThreshold?: number;
     
-    // Agent 14: The Sentinel (Refactored for weighted checklist model)
-    sentinel_scoreThreshold?: number;
+    // Agent 14: The Sentinel (Refactored for two-gate system)
+    sentinel_trendConvictionThreshold?: number;
+    sentinel_entryQualityThreshold?: number;
     sentinel_strongTrendAdx?: number;
     sentinel_emaFastPeriod?: number;
     sentinel_emaSlowPeriod?: number;
@@ -244,25 +244,22 @@ export interface AgentParams {
     sentinel_rsiMomentumExitLong?: number;
     sentinel_rsiMomentumExitShort?: number;
     sentinel_volume_vetoMultiplier?: number;
-    sentinel_volume_penaltyMultiplier?: number;
     sentinel_volume_bonusMultiplier?: number;
     sentinel_volume_bonusPoints?: number;
-    // -- Regime-Aware Scoring --
     sentinel_regime_strongTrendAdx?: number;
     sentinel_regime_chopAdx?: number;
-    // -- Percentage-based Penalty System (Tweak #1) --
-    sentinel_penalty_ms_percent?: number;
-    sentinel_penalty_obv_percent?: number;
-    sentinel_penalty_concordance_rsi_percent?: number;
-    sentinel_penalty_concordance_volume_percent?: number;
-    sentinel_penalty_concordance_candlePos_percent?: number;
-    sentinel_penalty_concordance_vwap_percent?: number; // Tweak #4
-    sentinel_penalty_concordance_microStructure_percent?: number; // Tweak #4
-    // -- Hybrid SL --
+    sentinel_concordance_deduction_rsi?: number;
+    sentinel_concordance_deduction_volume?: number;
+    sentinel_concordance_deduction_candlePos?: number;
+    sentinel_concordance_deduction_vwap?: number;
+    sentinel_concordance_deduction_ltf_structure?: number;
+    sentinel_concordance_deduction_immediate_momentum?: number;
     sentinel_atr_mult_strong?: number;
     sentinel_atr_mult_transition?: number;
     sentinel_atr_mult_chop?: number;
     sentinel_useSrLevelsForTp?: boolean;
+    sentinel_exhaustion_adx_start?: number;
+    sentinel_exhaustion_penalty_per_point?: number;
 
 
     // Agent 17: Momentum Swing Trader
@@ -593,6 +590,7 @@ export interface SentinelAnalysis {
         volatility: number;
         momentum: number;
     };
+    concordanceScore?: number;
 }
 
 export interface ConductorAnalysis {

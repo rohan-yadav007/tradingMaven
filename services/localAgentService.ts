@@ -55,8 +55,9 @@ export async function getTradingSignal(
     klines: Kline[],
     originalConfig: BotConfig,
     htfKlines?: Kline[],
-    microKlines?: Kline[],
-    ethBtcKlines?: Kline[], // Tweak #5
+    immediateKlines?: Kline[],
+    ltfKlines?: Kline[],
+    ethBtcKlines?: Kline[],
     livePrice?: number,
 ): Promise<TradeSignal> {
     const config = applyTimeframeSettings(originalConfig);
@@ -74,8 +75,7 @@ export async function getTradingSignal(
         case 11: agentSignal = getHistoricExpertSignal(klines, config, htfContext); break;
         case 13: agentSignal = getChameleonSignal(klines, config, htfContext); break;
         case 14: 
-            const microTimeframe = getMicroTimeframe(config.timeFrame);
-            agentSignal = getTheSentinelSignal(klines, config, htfContext, structureAnalysis, microKlines, microTimeframe, livePrice); 
+            agentSignal = getTheSentinelSignal(klines, config, htfContext, structureAnalysis, immediateKlines, ltfKlines, livePrice); 
             break;
         case 16: agentSignal = getIchimokuTrendRiderSignal(klines, config, htfContext); break;
         case 17: agentSignal = getMomentumSwingTraderSignal(klines, config, htfContext); break;
@@ -109,7 +109,7 @@ export async function getTradingSignal(
     
     // VETO: Liquidation Cascade
     if (config.isLiquidationFilterEnabled && config.mode === TradingMode.USDSM_Futures) {
-        const liquidationVeto = liquidationAnalysisService.getLiquidationVeto(agentSignal.signal, config.pair);
+        const liquidationVeto = liquidationAnalysisService.getLiquidationVeto(agentSignal.signal, config.pair, config);
         if (liquidationVeto.veto) {
             return { signal: 'HOLD', reasons: [...reasons, liquidationVeto.reason] };
         }
@@ -198,8 +198,8 @@ export async function getTradingSignal(
     // Hard Concordance vetos (ATR Chaos, Liquidity Sweeps)
     if (config.isMomentumConcordanceEnabled) {
         const livePriceForVeto = livePrice || currentPrice;
-        const microTimeframe = getMicroTimeframe(config.timeFrame);
-        const hardVeto = getHardConcordanceVetos(klines, livePriceForVeto, agentSignal.signal, config, microKlines, microTimeframe);
+        const ltfTimeframe = getMicroTimeframe(config.timeFrame);
+        const hardVeto = getHardConcordanceVetos(klines, livePriceForVeto, agentSignal.signal, config, ltfKlines, ltfTimeframe);
         if (hardVeto.veto) {
             return { signal: 'HOLD', reasons: [...reasons, hardVeto.reason] };
         }

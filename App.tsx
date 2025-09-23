@@ -246,6 +246,7 @@ const AppContent: React.FC = () => {
                 mfe,
                 mae,
                 exitContext,
+                hasBeenProfitable: netPnl > 0,
             };
             
             setTradeHistory(prevHistory => {

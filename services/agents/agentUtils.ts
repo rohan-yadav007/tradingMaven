@@ -312,7 +312,7 @@ export function captureMarketContext(klines: Kline[], htfKlines?: Kline[]): Part
         if (k.length >= 50) res.sma50 = getLast(SMA.calculate({ period: 50, values: c }));
         if (k.length >= 200) res.sma200 = getLast(SMA.calculate({ period: 200, values: c }));
         res.ichiCloud = getLast(IchimokuCloud.calculate({ conversionPeriod: 9, basePeriod: 26, spanPeriod: 52, displacement: 26, high: h, low: l })) as IchimokuCloudOutput | undefined;
-        res.lastCandlePattern = recognizeCandlestickPattern(k[k.length - 1], k[k.length - 2]) ?? undefined;
+        res.lastCandlePattern = recognizeCandlestickPattern(k[k.length - 1], k[k.length - 2]);
         res.vwap = getLast(calculateVwap(k));
         res.lastVolume = getLast(v);
         res.lastClose = getLast(c);

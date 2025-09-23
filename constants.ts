@@ -170,7 +170,8 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     ch_adxThreshold: 22,
     
     // Agent 14: The Sentinel
-    sentinel_scoreThreshold: 70,
+    sentinel_trendConvictionThreshold: 75,
+    sentinel_entryQualityThreshold: 85,
     sentinel_strongTrendAdx: 25,
     sentinel_emaFastPeriod: 50,
     sentinel_emaSlowPeriod: 200,
@@ -184,24 +185,26 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     sentinel_rsiMomentumExitLong: 45,
     sentinel_rsiMomentumExitShort: 55,
     sentinel_volume_vetoMultiplier: 0.8,
-    sentinel_volume_penaltyMultiplier: 1.0,
     sentinel_volume_bonusMultiplier: 1.5,
     sentinel_volume_bonusPoints: 10,
     sentinel_regime_strongTrendAdx: 30,
     sentinel_regime_chopAdx: 20,
-    // -- Percentage Penalties (Tweak #1 & #4) --
-    sentinel_penalty_ms_percent: 30,
-    sentinel_penalty_obv_percent: 25,
-    sentinel_penalty_concordance_rsi_percent: 15,
-    sentinel_penalty_concordance_volume_percent: 15,
-    sentinel_penalty_concordance_candlePos_percent: 20,
-    sentinel_penalty_concordance_vwap_percent: 25,
-    sentinel_penalty_concordance_microStructure_percent: 30,
-    // -- Hybrid SL --
-    sentinel_atr_mult_strong: 2.0,
+    // Concordance Score Deductions (out of 100)
+    sentinel_concordance_deduction_rsi: 20,
+    sentinel_concordance_deduction_volume: 15,
+    sentinel_concordance_deduction_candlePos: 15,
+    sentinel_concordance_deduction_vwap: 20,
+    sentinel_concordance_deduction_ltf_structure: 25,
+    sentinel_concordance_deduction_immediate_momentum: 10,
+    // Hybrid SL
+    sentinel_atr_mult_strong: 2.2,
     sentinel_atr_mult_transition: 2.5,
     sentinel_atr_mult_chop: 3.0,
     sentinel_useSrLevelsForTp: false,
+    // Scaled Exhaustion Penalty
+    sentinel_exhaustion_adx_start: 55,
+    sentinel_exhaustion_penalty_per_point: 2.5,
+
 
     // Agent 17: Momentum Swing Trader
     mst_emaFastPeriod: 50,
@@ -344,17 +347,17 @@ export const CHAMELEON_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> 
 };
 
 export const SENTINEL_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    // Scalping (1m, 3m, 5m): Faster EMAs, wider stop loss multiplier for noise.
-    '1m':  { sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_stMultiplier: 3.5, sentinel_strongTrendAdx: 28 },
-    '3m':  { sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_stMultiplier: 3.5, sentinel_strongTrendAdx: 28 },
-    '5m':  { sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_stMultiplier: 3.2, sentinel_strongTrendAdx: 25 },
-    // Day Trading (15m, 30m, 1h): Balanced parameters.
-    '15m': { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 100, sentinel_stMultiplier: 3.0, sentinel_strongTrendAdx: 25 },
-    '30m': { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 120, sentinel_stMultiplier: 2.8, sentinel_strongTrendAdx: 22 },
-    '1h':  { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 150, sentinel_stMultiplier: 2.8, sentinel_strongTrendAdx: 22 },
-    // Swing Trading (4h, 1d): Slower EMAs, tighter stop loss multiplier.
-    '4h':  { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_stMultiplier: 2.5, sentinel_strongTrendAdx: 20 },
-    '1d':  { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_stMultiplier: 2.5, sentinel_strongTrendAdx: 20 },
+    // Scalping: High precision required
+    '1m':  { sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_stMultiplier: 3.5, sentinel_strongTrendAdx: 28, sentinel_entryQualityThreshold: 90 },
+    '3m':  { sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_stMultiplier: 3.5, sentinel_strongTrendAdx: 28, sentinel_entryQualityThreshold: 90 },
+    '5m':  { sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_stMultiplier: 3.2, sentinel_strongTrendAdx: 25, sentinel_entryQualityThreshold: 88 },
+    // Day Trading: Balanced approach
+    '15m': { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 100, sentinel_stMultiplier: 3.0, sentinel_strongTrendAdx: 25, sentinel_entryQualityThreshold: 85 },
+    '30m': { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 120, sentinel_stMultiplier: 2.8, sentinel_strongTrendAdx: 22, sentinel_entryQualityThreshold: 85 },
+    '1h':  { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 150, sentinel_stMultiplier: 2.8, sentinel_strongTrendAdx: 22, sentinel_entryQualityThreshold: 80 },
+    // Swing Trading: Macro trend is key, micro-entry is less critical
+    '4h':  { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_stMultiplier: 2.5, sentinel_strongTrendAdx: 20, sentinel_entryQualityThreshold: 75 },
+    '1d':  { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_stMultiplier: 2.5, sentinel_strongTrendAdx: 20, sentinel_entryQualityThreshold: 75 },
 };
 
 export const ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {

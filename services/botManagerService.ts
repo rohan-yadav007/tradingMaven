@@ -5,6 +5,7 @@ import { TIME_FRAMES, getMicroTimeframe } from '../constants';
 import { telegramBotService } from './telegramBotService';
 import { WebSocketManager } from './webSocketManager';
 import { sharedKlineService } from './sharedKlineService';
+import * as constants from '../constants';
 
 const MAX_LOG_ENTRIES = 100;
 
@@ -95,7 +96,10 @@ class BotInstance {
                 return;
             }
     
-            const intervalSeconds = this.bot.config.refreshInterval ?? 60;
+            const intervalMillis = (this.bot.config.refreshInterval ?? 60) * 1000;
+            const now = Date.now();
+            // Calculate delay to the next interval boundary (e.g., next :00 second for a 60s interval)
+            const delay = intervalMillis - (now % intervalMillis);
             
             this.managementInterval = setTimeout(async () => {
                 try {
@@ -108,12 +112,12 @@ class BotInstance {
                 } finally {
                     scheduleNextRun();
                 }
-            }, intervalSeconds * 1000);
+            }, delay);
         };
         
         scheduleNextRun();
         const intervalSeconds = this.bot.config.refreshInterval ?? 60;
-        this.addLog(`Periodic analysis loop started (${intervalSeconds}s interval).`, LogType.Info);
+        this.addLog(`Synchronized analysis loop started (${intervalSeconds}s interval).`, LogType.Info);
     }
     
     public stopManagementLoop() {
@@ -132,6 +136,9 @@ class BotInstance {
         }
     
         if (this.klines.length < 50) return;
+        
+        const intervalSeconds = this.bot.config.refreshInterval ?? 60;
+        this.addLog(`Periodic analysis triggered by ${intervalSeconds}s timer.`, LogType.Info);
     
         const isLookingForEntry = !this.bot.openPosition && this.bot.status === BotStatus.Monitoring;
         const shouldExecute = isLookingForEntry && this.bot.config.entryTiming === 'immediate';
@@ -171,14 +178,23 @@ class BotInstance {
                 } catch(e) { this.addLog(`Warning: could not fetch HTF klines: ${e}`, LogType.Error); }
             }
 
-            let microKlines: Kline[] | undefined;
-            const needsMicroData = this.bot.config.isMomentumConcordanceEnabled || this.bot.config.agent.id === 14;
-            if (needsMicroData) {
+            let ltfKlines: Kline[] | undefined;
+            const needsLtfData = this.bot.config.isMomentumConcordanceEnabled || this.bot.config.agent.id === 14;
+            if (needsLtfData) {
                  try {
-                    const microTf = getMicroTimeframe(this.bot.config.timeFrame);
-                    microKlines = await sharedKlineService.getData(this.bot.config.pair, microTf, this.bot.config.mode);
+                    const ltfTimeframe = getMicroTimeframe(this.bot.config.timeFrame);
+                    ltfKlines = await sharedKlineService.getData(this.bot.config.pair, ltfTimeframe, this.bot.config.mode);
                 } catch (e) {
-                    this.addLog(`Could not fetch micro data for concordance check: ${e instanceof Error ? e.message : String(e)}`, LogType.Error);
+                    this.addLog(`Could not fetch LTF data for concordance check: ${e instanceof Error ? e.message : String(e)}`, LogType.Error);
+                }
+            }
+
+            let immediateKlines: Kline[] | undefined;
+            if (this.bot.config.agent.id === 14) { // Only The Sentinel uses the 1m data currently
+                try {
+                    immediateKlines = await sharedKlineService.getData(this.bot.config.pair, '1m', this.bot.config.mode);
+                } catch (e) {
+                    this.addLog(`Could not fetch immediate (1m) data for concordance check: ${e instanceof Error ? e.message : String(e)}`, LogType.Error);
                 }
             }
             
@@ -192,7 +208,7 @@ class BotInstance {
             }
             
             // --- SIGNAL GENERATION & VETO (Centralized in localAgentService) ---
-            const signal = await getTradingSignal(this.bot.config.agent, klinesForAnalysis, this.bot.config, htfKlines, microKlines, ethBtcKlines, this.bot.livePrice);
+            const signal = await getTradingSignal(this.bot.config.agent, klinesForAnalysis, this.bot.config, htfKlines, immediateKlines, ltfKlines, ethBtcKlines, this.bot.livePrice);
             this.updateState({ analysis: signal });
 
             const isForEntry = !this.bot.openPosition && this.bot.status === BotStatus.Monitoring;
@@ -249,6 +265,8 @@ class BotInstance {
         // This block executes exactly once when the first tick of a new candle arrives.
         // `lastKline` at this point refers to the candle that just closed.
         if (isNewCandleEvent && lastKline) {
+             this.addLog(`New ${this.bot.config.timeFrame} candle closed. Triggering analysis cycle.`, LogType.Info);
+            
             if (this.bot.openPosition) {
                 const candlesSinceEntry = (this.bot.openPosition.candlesSinceEntry || 0) + 1;
                 this.updateState({
@@ -271,11 +289,9 @@ class BotInstance {
                     }
                 }
                 
-                this.addLog(`New candle closed. Running management analysis...`, LogType.Info);
                 await this.runAnalysis({ execute: false });
             }
             if (this.bot.config.entryTiming === 'onNextCandle' && this.bot.status === BotStatus.Monitoring) {
-                this.addLog(`New ${this.bot.config.timeFrame} candle closed. Running entry analysis...`, LogType.Info);
                 await this.runAnalysis({ execute: true });
             }
         }
@@ -367,12 +383,26 @@ class BotInstance {
         let changes: Partial<Position> = {};
     
         // Track MFE/MAE and profit status
-        const isInProfit = isLong ? currentPrice > positionState.entryPrice : currentPrice < positionState.entryPrice;
-        if (!positionState.hasBeenProfitable && isInProfit) changes.hasBeenProfitable = true;
         const peak = positionState.peakPrice ?? positionState.entryPrice;
-        if ((isLong && currentPrice > peak) || (!isLong && currentPrice < peak)) changes.peakPrice = currentPrice;
+        if ((isLong && currentPrice > peak) || (!isLong && currentPrice < peak)) {
+            changes.peakPrice = currentPrice;
+        }
         const trough = positionState.troughPrice ?? positionState.entryPrice;
-        if ((isLong && currentPrice < trough) || (!isLong && currentPrice < trough)) changes.troughPrice = currentPrice;
+        if ((isLong && currentPrice < trough) || (!isLong && currentPrice > trough)) {
+            changes.troughPrice = currentPrice;
+        }
+
+        if (!positionState.hasBeenProfitable) {
+            const feeRate = positionState.takerFeeRate || constants.TAKER_FEE_RATE;
+            const breakevenPriceLong = positionState.entryPrice * (1 + feeRate) / (1 - feeRate);
+            const breakevenPriceShort = positionState.entryPrice * (1 - feeRate) / (1 + feeRate);
+            const isNetProfitable = isLong 
+                ? currentPrice > breakevenPriceLong 
+                : currentPrice < breakevenPriceShort;
+            if (isNetProfitable) {
+                changes.hasBeenProfitable = true;
+            }
+        }
 
         // Apply any changes so far to the local state for subsequent logic
         positionState = { ...positionState, ...changes };
@@ -658,10 +688,13 @@ class BotManagerService {
                 sharedKlineService.releaseData(config.pair, htf, config.mode);
             }
         }
-        const needsMicroData = config.isMomentumConcordanceEnabled || config.agent.id === 14;
-        if (needsMicroData) {
-            const microTf = getMicroTimeframe(config.timeFrame);
-            sharedKlineService.releaseData(config.pair, microTf, config.mode);
+        const needsLtfData = config.isMomentumConcordanceEnabled || config.agent.id === 14;
+        if (needsLtfData) {
+            const ltfTimeframe = getMicroTimeframe(config.timeFrame);
+            sharedKlineService.releaseData(config.pair, ltfTimeframe, config.mode);
+        }
+        if (config.agent.id === 14) {
+            sharedKlineService.releaseData(config.pair, '1m', config.mode);
         }
         if (config.isBtcCorrelationVetoEnabled) {
             sharedKlineService.releaseData('ETH/BTC', config.timeFrame, TradingMode.Spot);

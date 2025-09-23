@@ -136,10 +136,16 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
             return (<div className="space-y-4">
                 <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400">Entry Logic</h4>
                  <ParamSlider 
-                    label="Score Threshold" 
-                    value={allParams.sentinel_scoreThreshold!}
-                    onChange={(v) => updateParam('sentinel_scoreThreshold', v)}
+                    label="Trend Conviction Threshold" 
+                    value={allParams.sentinel_trendConvictionThreshold!}
+                    onChange={(v) => updateParam('sentinel_trendConvictionThreshold', v)}
                     min={50} max={95} step={1}
+                 />
+                 <ParamSlider 
+                    label="Entry Quality Threshold" 
+                    value={allParams.sentinel_entryQualityThreshold!}
+                    onChange={(v) => updateParam('sentinel_entryQualityThreshold', v)}
+                    min={50} max={100} step={1}
                  />
                  <ParamSlider 
                     label="ADX Trend Minimum" 
@@ -149,8 +155,23 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                  />
                 <ParamSlider label="Fast EMA Period" value={allParams.sentinel_emaFastPeriod!} onChange={v => updateParam('sentinel_emaFastPeriod', v)} min={10} max={100} step={1} />
                 <ParamSlider label="Slow EMA Period" value={allParams.sentinel_emaSlowPeriod!} onChange={v => updateParam('sentinel_emaSlowPeriod', v)} min={50} max={300} step={5} />
-                <ParamSlider label="RSI Divergence Lookback" value={allParams.sentinel_rsiDivergenceLookback!} onChange={v => updateParam('sentinel_rsiDivergenceLookback', v)} min={10} max={40} step={1} />
-                 
+                
+                <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-3 border-t border-slate-200 dark:border-slate-700">Exhaustion Filter</h4>
+                 <ParamSlider 
+                    label="Exhaustion ADX Start" 
+                    value={allParams.sentinel_exhaustion_adx_start!}
+                    onChange={(v) => updateParam('sentinel_exhaustion_adx_start', v)}
+                    min={45} max={75} step={1}
+                    valueDisplay={v => `ADX > ${v}`}
+                />
+                <ParamSlider 
+                    label="Penalty Per Point" 
+                    value={allParams.sentinel_exhaustion_penalty_per_point!}
+                    onChange={(v) => updateParam('sentinel_exhaustion_penalty_per_point', v)}
+                    min={1} max={5} step={0.1}
+                    valueDisplay={v => `${v.toFixed(1)} pts`}
+                />
+
                 <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
                     <button onClick={() => setIsExitVetoOpen(!isExitVetoOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
                         <span>Exit & Veto Logic</span>
@@ -170,6 +191,7 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                                 </div>
                                 <ToggleSwitch checked={allParams.sentinel_useSrLevelsForTp!} onChange={v => updateParam('sentinel_useSrLevelsForTp', v)} />
                             </div>
+                            <ParamSlider label="RSI Divergence Lookback" value={allParams.sentinel_rsiDivergenceLookback!} onChange={v => updateParam('sentinel_rsiDivergenceLookback', v)} min={10} max={40} step={1} />
                             <ParamSlider label="SuperTrend Period (SL)" value={allParams.sentinel_stPeriod!} onChange={v => updateParam('sentinel_stPeriod', v)} min={5} max={20} step={1} />
                             <ParamSlider label="SuperTrend Multiplier (SL)" value={allParams.sentinel_stMultiplier!} onChange={v => updateParam('sentinel_stMultiplier', v)} min={1.0} max={5.0} step={0.1} valueDisplay={v => v.toFixed(1)} />
                             <ParamSlider label="Invalidation Candle Limit" value={allParams.sentinel_invalidationCandleLimit!} onChange={v => updateParam('sentinel_invalidationCandleLimit', v)} min={3} max={20} step={1} />

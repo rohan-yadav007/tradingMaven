@@ -1,5 +1,5 @@
-import React, { createContext, useState, useContext, useMemo, useEffect, useCallback } from 'react';
-import { TradingMode, Agent, AgentParams, RiskMode, TradingPairList } from '../types';
+import React, { createContext, useState, useContext, useMemo, useEffect, useCallback, ReactNode } from 'react';
+import { TradingMode, Agent, AgentParams, TradingPairList } from '../types';
 import * as constants from '../constants';
 import * as binanceService from '../services/binanceService';
 import { userPreferencesService } from '../services/userPreferencesService';
@@ -19,10 +19,6 @@ interface TradingConfigState {
     availableBalance: number;
     maxMarginLossPercent: number;
     isInitialRiskVetoEnabled: boolean;
-    // Legacy TP properties for type compatibility
-    takeProfitMode: RiskMode;
-    takeProfitValue: number;
-    isTakeProfitLocked: boolean;
     isHtfConfirmationEnabled: boolean;
     isUniversalProfitTrailEnabled: boolean;
     isMinRrEnabled: boolean;
@@ -121,7 +117,7 @@ const TradingConfigStateContext = createContext<TradingConfigState | undefined>(
 const TradingConfigActionsContext = createContext<TradingConfigActions | undefined>(undefined);
 
 // --- Provider Component ---
-export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const TradingConfigProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     // --- State Initialization ---
     const [executionMode, setExecutionMode] = useState<'live' | 'paper'>('paper');
     const [tradingMode, setTradingMode] = useState<TradingMode>(TradingMode.Spot);
@@ -136,7 +132,7 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [investmentAmount, setInvestmentAmount] = useState<number>(100);
     const [availableBalance, setAvailableBalance] = useState<number>(Infinity);
     const [maxMarginLossPercent, setMaxMarginLossPercent] = useState<number>(constants.MAX_MARGIN_LOSS_PERCENT);
-    const [isInitialRiskVetoEnabled, setIsInitialRiskVetoEnabled] = useState<boolean>(true);
+    const [isInitialRiskVetoEnabled, setIsInitialRiskVetoEnabled] = useState<boolean>(false);
     const [isHtfConfirmationEnabled, setIsHtfConfirmationEnabled] = useState<boolean>(false);
     const [isUniversalProfitTrailEnabled, setIsUniversalProfitTrailEnabled] = useState<boolean>(true);
     const [isMinRrEnabled, setIsMinRrEnabled] = useState<boolean>(true);
@@ -144,17 +140,17 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [isAgentTrailEnabled, setIsAgentTrailEnabled] = useState<boolean>(true);
     const [isBreakevenTrailEnabled, setIsBreakevenTrailEnabled] = useState<boolean>(true);
     const [isMarketCohesionEnabled, setIsMarketCohesionEnabled] = useState<boolean>(true);
-    const [isVwapConfirmationEnabled, setIsVwapConfirmationEnabled] = useState<boolean>(true);
+    const [isVwapConfirmationEnabled, setIsVwapConfirmationEnabled] = useState<boolean>(false);
     const [isBtcConfirmationEnabled, setIsBtcConfirmationEnabled] = useState<boolean>(false);
     const [isBtcCorrelationVetoEnabled, setIsBtcCorrelationVetoEnabled] = useState<boolean>(false);
     const [btcConfirmationThreshold, setBtcConfirmationThreshold] = useState<number>(60);
-    const [isVolumeFilterEnabled, setIsVolumeFilterEnabled] = useState<boolean>(true);
-    const [isAdxFilterEnabled, setIsAdxFilterEnabled] = useState<boolean>(true);
-    const [isExhaustionFilterEnabled, setIsExhaustionFilterEnabled] = useState<boolean>(true);
-    const [isSmcVetoEnabled, setIsSmcVetoEnabled] = useState<boolean>(true);
-    const [isSrAnalysisEnabled, setIsSrAnalysisEnabled] = useState<boolean>(true);
-    const [isCandlestickConfirmationEnabled, setIsCandlestickConfirmationEnabled] = useState<boolean>(true);
-    const [isMarketStructureVetoEnabled, setIsMarketStructureVetoEnabled] = useState<boolean>(true);
+    const [isVolumeFilterEnabled, setIsVolumeFilterEnabled] = useState<boolean>(false);
+    const [isAdxFilterEnabled, setIsAdxFilterEnabled] = useState<boolean>(false);
+    const [isExhaustionFilterEnabled, setIsExhaustionFilterEnabled] = useState<boolean>(false);
+    const [isSmcVetoEnabled, setIsSmcVetoEnabled] = useState<boolean>(false);
+    const [isSrAnalysisEnabled, setIsSrAnalysisEnabled] = useState<boolean>(false);
+    const [isCandlestickConfirmationEnabled, setIsCandlestickConfirmationEnabled] = useState<boolean>(false);
+    const [isMarketStructureVetoEnabled, setIsMarketStructureVetoEnabled] = useState<boolean>(false);
     const [htfTimeFrame, setHtfTimeFrame] = useState<'auto' | string>('auto');
     const [isApiConnected, setIsApiConnected] = useState(false);
     const [walletViewMode, setWalletViewMode] = useState<TradingMode>(TradingMode.Spot);
@@ -164,10 +160,9 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [isAdaptiveTpEnabled, setIsAdaptiveTpEnabled] = useState<boolean>(true);
     const [aggressiveTrailMode, setAggressiveTrailMode] = useState<'distance' | 'pnl'>('distance');
     const [isMarketBreadthFilterEnabled, setIsMarketBreadthFilterEnabled] = useState<boolean>(true);
-    const [isLiquidationFilterEnabled, setIsLiquidationFilterEnabled] = useState<boolean>(false);
+    const [isLiquidationFilterEnabled, setIsLiquidationFilterEnabled] = useState<boolean>(true);
     const [isConfirmationCandleEnabled, setIsConfirmationCandleEnabled] = useState<boolean>(constants.IS_CONFIRMATION_CANDLE_ENABLED);
     const [isMomentumConcordanceEnabled, setIsMomentumConcordanceEnabled] = useState<boolean>(constants.IS_MOMENTUM_CONCORDANCE_ENABLED);
-
 
     // Context-internal state
     const [isPairsLoading, setIsPairsLoading] = useState(true);
@@ -177,7 +172,6 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     const [multiAssetModeError, setMultiAssetModeError] = useState<string | null>(null);
 
     // --- Effects moved from App.tsx ---
-
     useEffect(() => {
         setTradingPairLists(userPreferencesService.getTradingPairLists());
     }, []);
@@ -185,7 +179,6 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
     // Fetch tradable pairs when trading mode changes
     useEffect(() => {
         let isCancelled = false;
-
         const fetchPairs = async () => {
             setIsPairsLoading(true);
             const pairFetcher = tradingMode === TradingMode.USDSM_Futures 
@@ -197,7 +190,6 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
                 if (!isCancelled) {
                     if (pairs.length > 0) {
                         setAllPairs(pairs);
-                        // Ensure at least one valid pair is selected
                         const currentValidPairs = selectedPairs.filter(p => pairs.includes(p));
                         if (currentValidPairs.length === 0) {
                             setSelectedPairs([pairs[0] || 'BTC/USDT']);
@@ -219,14 +211,9 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
                 }
             }
         };
-
         fetchPairs();
-
-        return () => {
-            isCancelled = true;
-        };
+        return () => { isCancelled = true; };
     }, [tradingMode]);
-
 
     // Sync wallet view with trading mode
     useEffect(() => {
@@ -256,139 +243,69 @@ export const TradingConfigProvider: React.FC<{ children: React.ReactNode }> = ({
                 const pairSymbol = primaryPair.replace('/', '');
                 try {
                     const positionRisk = await binanceService.getFuturesPositionRisk(pairSymbol);
-                    if (positionRisk && positionRisk.marginType.toUpperCase() !== marginType) {
+                    if (positionRisk && parseFloat(positionRisk.positionAmt) !== 0) {
+                        // A position exists, cannot change margin type.
+                    } else {
                         await binanceService.setMarginType(pairSymbol, marginType);
                     }
-                } catch (e: any) {
-                    if (e.code !== -4046) {
-                        const errorMessage = binanceService.interpretBinanceError(e);
-                        console.error("Failed to update margin type:", errorMessage);
-                        setFuturesSettingsError(errorMessage);
-                    }
+                } catch (e) {
+                    const errorMessage = binanceService.interpretBinanceError(e);
+                    console.error("Failed to update margin type:", errorMessage);
+                    setFuturesSettingsError(errorMessage);
                 }
             }
         };
         updateMarginType();
     }, [marginType, selectedPairs, tradingMode, executionMode, isApiConnected, isMultiAssetMode]);
 
-    // Get multi-asset margin mode
-    useEffect(() => {
-        if (tradingMode === TradingMode.USDSM_Futures && isApiConnected) {
-            binanceService.getMultiAssetsMargin()
-                .then(data => setIsMultiAssetMode(data.multiAssetsMargin))
-                .catch(e => console.error("Failed to fetch multi-asset margin mode", e));
-        }
-    }, [tradingMode, isApiConnected]);
-    
-     // Fetch leverage brackets
-    useEffect(() => {
-        const primaryPair = selectedPairs[0];
-        if (tradingMode === TradingMode.USDSM_Futures && primaryPair) {
-            setIsLeverageLoading(true);
-            binanceService.fetchFuturesLeverageBrackets(primaryPair)
-                .then(bracketInfo => {
-                    if (bracketInfo && bracketInfo.brackets && bracketInfo.brackets.length > 0) {
-                        const max = bracketInfo.brackets.find(b => b.initialLeverage > 1)?.initialLeverage || 125;
-                        setMaxLeverage(max);
-                        // Use functional update to avoid adding 'leverage' as a dependency, preventing an infinite loop.
-                        setLeverage(currentLeverage => currentLeverage > max ? max : currentLeverage);
-                    } else {
-                        setMaxLeverage(125);
-                    }
-                })
-                .catch(err => {
-                    console.error("Could not fetch leverage brackets", err);
-                    setMaxLeverage(125);
-                })
-                .finally(() => setIsLeverageLoading(false));
-        }
-    }, [selectedPairs, tradingMode]);
-
-    // --- Action Definitions ---
-    const addTradingPairList = (list: Omit<TradingPairList, 'id'>) => {
-        const updatedLists = userPreferencesService.addTradingPairList(list);
-        setTradingPairLists(updatedLists);
-    };
-    const updateTradingPairList = (list: TradingPairList) => {
-        const updatedLists = userPreferencesService.updateTradingPairList(list);
-        setTradingPairLists(updatedLists);
-    };
-    const deleteTradingPairList = (listId: string) => {
-        const updatedLists = userPreferencesService.deleteTradingPairList(listId);
-        setTradingPairLists(updatedLists);
-    };
-    
-    const setSelectedAgentWithReset = useCallback((agent: Agent) => {
-        setSelectedAgent(agent);
-        // Reset params on agent change to avoid carrying over incompatible settings
-        setAgentParams({});
-    }, []);
-
-
     const onSetMultiAssetMode = useCallback(async (isEnabled: boolean) => {
-        if (executionMode !== 'live' || !isApiConnected) return;
         setMultiAssetModeError(null);
         try {
             await binanceService.setMultiAssetsMargin(isEnabled);
             setIsMultiAssetMode(isEnabled);
+            if (isEnabled) {
+                setMarginType('CROSSED');
+            }
         } catch (e) {
             const errorMessage = binanceService.interpretBinanceError(e);
-            console.error("Failed to set multi-asset margin mode:", errorMessage);
+            console.error("Failed to update multi-asset mode:", errorMessage);
             setMultiAssetModeError(errorMessage);
         }
-    }, [executionMode, isApiConnected]);
-    
-    // Memoize actions to prevent re-renders in consumers
-    const actions = useMemo(() => ({
-        setExecutionMode, setTradingMode, setSelectedPairs, setAllPairs,
-        setLeverage, setMarginType, setTimeFrame, setSelectedAgent: setSelectedAgentWithReset,
-        setInvestmentAmount, setAvailableBalance,
-        setMaxMarginLossPercent,
-        setIsInitialRiskVetoEnabled,
-        setIsHtfConfirmationEnabled, setHtfTimeFrame, setAgentParams, setHtfAgentParams, setIsApiConnected, setWalletViewMode,
-        setIsMultiAssetMode, onSetMultiAssetMode, setFuturesSettingsError, setIsUniversalProfitTrailEnabled,
-        setIsMinRrEnabled, setInvalidationSensitivity, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setEntryTiming,
-        setIsMarketCohesionEnabled, setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
-        setIsExhaustionFilterEnabled, setIsSmcVetoEnabled,
-        setIsSrAnalysisEnabled, setIsCandlestickConfirmationEnabled, setIsMarketStructureVetoEnabled,
-        setIsAdaptiveTpEnabled, setAggressiveTrailMode,
-        addTradingPairList, updateTradingPairList, deleteTradingPairList,
-        setIsMarketBreadthFilterEnabled,
-        setIsLiquidationFilterEnabled,
-        setIsConfirmationCandleEnabled,
-        setIsMomentumConcordanceEnabled,
-        setIsBtcCorrelationVetoEnabled,
-    }), [onSetMultiAssetMode, setSelectedAgentWithReset]);
-    
-    const state = {
-        executionMode, tradingMode, selectedPairs, allPairs, isPairsLoading, leverage, marginType, chartTimeFrame,
-        selectedAgent, agentParams, htfAgentParams, investmentAmount, availableBalance,
-        maxMarginLossPercent,
-        isInitialRiskVetoEnabled,
-        // Provide default values for legacy TP properties for internal type compatibility
-        takeProfitMode: RiskMode.Percent,
-        takeProfitValue: 0,
-        isTakeProfitLocked: false,
-        isHtfConfirmationEnabled, isUniversalProfitTrailEnabled, 
-        isMinRrEnabled, invalidationSensitivity, isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled, isBtcConfirmationEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
-        isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled, htfTimeFrame, tradingPairLists,
-        isApiConnected, walletViewMode, isMultiAssetMode, maxLeverage, isLeverageLoading,
-        futuresSettingsError, multiAssetModeError, entryTiming, isAdaptiveTpEnabled, aggressiveTrailMode,
-        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled,
-        isMomentumConcordanceEnabled, isBtcCorrelationVetoEnabled,
-    };
+    }, []);
+
+    const addTradingPairList = useCallback((list: Omit<TradingPairList, 'id'>) => {
+        const newLists = userPreferencesService.addTradingPairList(list);
+        setTradingPairLists(newLists);
+    }, []);
+
+    const updateTradingPairList = useCallback((list: TradingPairList) => {
+        const newLists = userPreferencesService.updateTradingPairList(list);
+        setTradingPairLists(newLists);
+    }, []);
+
+    const deleteTradingPairList = useCallback((listId: string) => {
+        const newLists = userPreferencesService.deleteTradingPairList(listId);
+        setTradingPairLists(newLists);
+    }, []);
+
+    const stateValue = useMemo(() => ({
+        executionMode, tradingMode, selectedPairs, allPairs, isPairsLoading, leverage, marginType, chartTimeFrame, selectedAgent, investmentAmount, availableBalance, maxMarginLossPercent, isInitialRiskVetoEnabled, isHtfConfirmationEnabled, isUniversalProfitTrailEnabled, isMinRrEnabled, invalidationSensitivity, isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled, isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled, isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled, htfTimeFrame, agentParams, htfAgentParams, isApiConnected, walletViewMode, isMultiAssetMode, entryTiming, tradingPairLists, isAdaptiveTpEnabled, aggressiveTrailMode, isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled, maxLeverage, isLeverageLoading, futuresSettingsError, multiAssetModeError
+    }), [executionMode, tradingMode, selectedPairs, allPairs, isPairsLoading, leverage, marginType, chartTimeFrame, selectedAgent, investmentAmount, availableBalance, maxMarginLossPercent, isInitialRiskVetoEnabled, isHtfConfirmationEnabled, isUniversalProfitTrailEnabled, isMinRrEnabled, invalidationSensitivity, isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled, isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled, isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled, htfTimeFrame, agentParams, htfAgentParams, isApiConnected, walletViewMode, isMultiAssetMode, entryTiming, tradingPairLists, isAdaptiveTpEnabled, aggressiveTrailMode, isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled, maxLeverage, isLeverageLoading, futuresSettingsError, multiAssetModeError]);
+
+    const actionsValue: TradingConfigActions = useMemo(() => ({
+        setExecutionMode, setTradingMode, setSelectedPairs, setAllPairs, setLeverage, setMarginType, setTimeFrame, setSelectedAgent, setInvestmentAmount, setAvailableBalance, setMaxMarginLossPercent, setIsInitialRiskVetoEnabled, setIsHtfConfirmationEnabled, setIsUniversalProfitTrailEnabled, setIsMinRrEnabled, setInvalidationSensitivity, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setIsMarketCohesionEnabled, setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setIsBtcCorrelationVetoEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled, setIsExhaustionFilterEnabled, setIsSmcVetoEnabled, setIsSrAnalysisEnabled, setIsCandlestickConfirmationEnabled, setIsMarketStructureVetoEnabled, setHtfTimeFrame, setAgentParams, setHtfAgentParams, setIsApiConnected, setWalletViewMode, setIsMultiAssetMode, setEntryTiming, setIsAdaptiveTpEnabled, setAggressiveTrailMode, setIsMarketBreadthFilterEnabled, setIsLiquidationFilterEnabled, setIsConfirmationCandleEnabled, setIsMomentumConcordanceEnabled, onSetMultiAssetMode, setFuturesSettingsError, addTradingPairList, updateTradingPairList, deleteTradingPairList
+    }), [onSetMultiAssetMode, addTradingPairList, updateTradingPairList, deleteTradingPairList, setExecutionMode, setTradingMode, setSelectedPairs, setAllPairs, setLeverage, setMarginType, setTimeFrame, setSelectedAgent, setInvestmentAmount, setAvailableBalance, setMaxMarginLossPercent, setIsInitialRiskVetoEnabled, setIsHtfConfirmationEnabled, setIsUniversalProfitTrailEnabled, setIsMinRrEnabled, setInvalidationSensitivity, setIsAgentTrailEnabled, setIsBreakevenTrailEnabled, setIsMarketCohesionEnabled, setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setIsBtcCorrelationVetoEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled, setIsExhaustionFilterEnabled, setIsSmcVetoEnabled, setIsSrAnalysisEnabled, setIsCandlestickConfirmationEnabled, setIsMarketStructureVetoEnabled, setHtfTimeFrame, setAgentParams, setHtfAgentParams, setIsApiConnected, setWalletViewMode, setIsMultiAssetMode, setEntryTiming, setIsAdaptiveTpEnabled, setAggressiveTrailMode, setIsMarketBreadthFilterEnabled, setIsLiquidationFilterEnabled, setIsConfirmationCandleEnabled, setIsMomentumConcordanceEnabled, setFuturesSettingsError]);
 
     return (
-        <TradingConfigStateContext.Provider value={state as TradingConfigState}>
-            <TradingConfigActionsContext.Provider value={actions as any}>
+        <TradingConfigStateContext.Provider value={stateValue}>
+            <TradingConfigActionsContext.Provider value={actionsValue}>
                 {children}
             </TradingConfigActionsContext.Provider>
         </TradingConfigStateContext.Provider>
     );
 };
 
-// --- Custom Hooks ---
-export const useTradingConfigState = () => {
+export const useTradingConfigState = (): TradingConfigState => {
     const context = useContext(TradingConfigStateContext);
     if (context === undefined) {
         throw new Error('useTradingConfigState must be used within a TradingConfigProvider');
@@ -396,7 +313,7 @@ export const useTradingConfigState = () => {
     return context;
 };
 
-export const useTradingConfigActions = () => {
+export const useTradingConfigActions = (): TradingConfigActions => {
     const context = useContext(TradingConfigActionsContext);
     if (context === undefined) {
         throw new Error('useTradingConfigActions must be used within a TradingConfigProvider');

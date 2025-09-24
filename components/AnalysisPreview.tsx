@@ -33,8 +33,9 @@ const ReasonItem: React.FC<{ reason: string }> = ({ reason }) => {
     const isMet = reason.startsWith('✅');
     const isUnmet = reason.startsWith('❌');
     const isInfo = reason.startsWith('ℹ️');
+    const isWarning = reason.startsWith('⚠️');
 
-    if (isMet || isUnmet || isInfo) {
+    if (isMet || isUnmet || isInfo || isWarning) {
         const text = reason.substring(2).trim();
         let iconColor: string;
         let textColor: string;
@@ -48,7 +49,7 @@ const ReasonItem: React.FC<{ reason: string }> = ({ reason }) => {
             iconColor = 'text-rose-500';
             textColor = 'text-slate-500 dark:text-slate-400';
             Icon = XCircleIcon;
-        } else { // isInfo
+        } else { // isInfo or isWarning
             iconColor = 'text-sky-500';
             textColor = 'text-slate-600 dark:text-slate-300';
             Icon = InfoIcon;
@@ -83,11 +84,10 @@ const SentinelAnalysisDisplay: React.FC<{ analysis: SentinelAnalysis }> = ({ ana
                     <span className="font-bold text-lg text-emerald-600 dark:text-emerald-400">{bullish.total.toFixed(0)}</span>
                 </div>
                 <ProgressBar value={bullish.total} colorClass="bg-emerald-500" />
-                <div className="grid grid-cols-4 gap-2 text-xs text-center mt-1.5 text-slate-500 dark:text-slate-400">
-                    <span>Trend: {bullish.trend.toFixed(0)}</span>
-                    <span>Align: {bullish.alignment.toFixed(0)}</span>
-                    <span>Vol: {bullish.volatility.toFixed(0)}</span>
-                    <span>Mom: {bullish.momentum.toFixed(0)}</span>
+                <div className="grid grid-cols-3 gap-2 text-xs text-center mt-1.5 text-slate-500 dark:text-slate-400">
+                    <span>Struct: {bullish.structure.toFixed(0)}</span>
+                    <span>Moment: {bullish.momentum.toFixed(0)}</span>
+                    <span>Context: {bullish.context.toFixed(0)}</span>
                 </div>
             </div>
              <div>
@@ -96,11 +96,10 @@ const SentinelAnalysisDisplay: React.FC<{ analysis: SentinelAnalysis }> = ({ ana
                     <span className="font-bold text-lg text-rose-600 dark:text-rose-400">{bearish.total.toFixed(0)}</span>
                 </div>
                 <ProgressBar value={bearish.total} colorClass="bg-rose-500" />
-                 <div className="grid grid-cols-4 gap-2 text-xs text-center mt-1.5 text-slate-500 dark:text-slate-400">
-                    <span>Trend: {bearish.trend.toFixed(0)}</span>
-                    <span>Align: {bearish.alignment.toFixed(0)}</span>
-                    <span>Vol: {bearish.volatility.toFixed(0)}</span>
-                    <span>Mom: {bearish.momentum.toFixed(0)}</span>
+                 <div className="grid grid-cols-3 gap-2 text-xs text-center mt-1.5 text-slate-500 dark:text-slate-400">
+                    <span>Struct: {bearish.structure.toFixed(0)}</span>
+                    <span>Moment: {bearish.momentum.toFixed(0)}</span>
+                    <span>Context: {bearish.context.toFixed(0)}</span>
                 </div>
             </div>
         </div>

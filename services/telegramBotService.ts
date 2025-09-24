@@ -1,5 +1,5 @@
-
-import { BotConfig, TradingMode, RiskMode } from '../types';
+// FIX: Removed unused and non-existent RiskMode from import
+import { BotConfig, TradingMode } from '../types';
 import { historyService } from './historyService';
 import * as constants from '../constants';
 import * as binanceService from './binanceService';
@@ -170,6 +170,7 @@ ID: \`${bot.id}\``;
                     isMarketCohesionEnabled: true,
                     isVwapConfirmationEnabled: true,
                     isBtcConfirmationEnabled: false,
+                    isBtcCorrelationVetoEnabled: false,
                     btcConfirmationThreshold: 60,
                     isVolumeFilterEnabled: true,
                     isAdxFilterEnabled: true,

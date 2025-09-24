@@ -27,11 +27,6 @@ export enum LogType {
     Status = 'Status',
 }
 
-export enum RiskMode {
-    Percent = 'Percent',
-    ATR = 'ATR',
-}
-
 
 // --- Core Data Structures ---
 
@@ -124,8 +119,6 @@ export interface BinanceOrderResponse {
     cumQuote?: string;
 }
 
-// --- Order Book ---
-
 export interface OrderBookEntry {
     price: number;
     amount: number;
@@ -138,7 +131,6 @@ export interface OrderBook {
     spread: number;
     spreadPercentage: number;
 }
-
 
 // --- Agent & Trading Logic ---
 
@@ -236,41 +228,23 @@ export interface AgentParams {
     ch_trendEmaPeriod?: number;
     ch_adxThreshold?: number;
     
-    // Agent 14: The Sentinel (Refactored for weighted checklist model)
-    sentinel_scoreThreshold?: number;
-    sentinel_strongTrendAdx?: number;
-    sentinel_emaFastPeriod?: number;
-    sentinel_emaSlowPeriod?: number;
-    sentinel_adxPeriod?: number;
-    sentinel_rsiPeriod?: number;
-    sentinel_stPeriod?: number;
-    sentinel_stMultiplier?: number;
-    sentinel_emaDistanceVetoThreshold?: number;
-    sentinel_rsiDivergenceLookback?: number;
-    sentinel_invalidationCandleLimit?: number;
-    sentinel_rsiMomentumExitLong?: number;
-    sentinel_rsiMomentumExitShort?: number;
-    sentinel_volume_vetoMultiplier?: number;
-    sentinel_volume_penaltyMultiplier?: number;
-    sentinel_volume_bonusMultiplier?: number;
-    sentinel_volume_bonusPoints?: number;
-    // -- Regime-Aware Scoring --
-    sentinel_regime_strongTrendAdx?: number;
-    sentinel_regime_chopAdx?: number;
-    // -- Percentage-based Penalty System (Tweak #1) --
-    sentinel_penalty_ms_percent?: number;
-    sentinel_penalty_obv_percent?: number;
-    sentinel_penalty_concordance_rsi_percent?: number;
-    sentinel_penalty_concordance_volume_percent?: number;
-    sentinel_penalty_concordance_candlePos_percent?: number;
-    sentinel_penalty_concordance_vwap_percent?: number; // Tweak #4
-    sentinel_penalty_concordance_microStructure_percent?: number; // Tweak #4
-    // -- Hybrid SL --
+    // Agent 14: The Sentinel V2 (Market Structure First)
+    sentinel_entryThreshold?: number;
+    sentinel_swingLookback?: number;
+    sentinel_structureWeight?: number;
+    sentinel_momentumWeight?: number;
+    sentinel_contextWeight?: number;
+    sentinel_htfMultiplier?: number;
+    sentinel_htfPenalty?: number;
     sentinel_atr_mult_strong?: number;
     sentinel_atr_mult_transition?: number;
     sentinel_atr_mult_chop?: number;
-    // FIX: Add missing property for Sentinel agent.
+    // FIX: Add missing parameters for Sentinel exit/SL logic used in riskManagementService
+    sentinel_adxPeriod?: number;
+    sentinel_stPeriod?: number;
+    sentinel_stMultiplier?: number;
     sentinel_useSrLevelsForTp?: boolean;
+    sentinel_rsiPeriod?: number;
 
 
     // Agent 17: Momentum Swing Trader
@@ -326,6 +300,7 @@ export interface MarketDataContext {
     ema9?: number;
     ema21?: number;
     ema50?: number;
+    ema100?: number;
     ema200?: number;
     sma50?: number;
     sma200?: number;
@@ -479,7 +454,6 @@ export interface Position {
     initialRiskRewardRatio?: number;
     agentParamsSnapshot?: AgentParams;
     botConfigSnapshot?: BotConfigSnapshot;
-    invalidationScore?: number;
     proactiveLossCheckTriggered: boolean;
     adaptiveTpTriggered?: boolean;
     entryContext?: Partial<MarketDataContext>;
@@ -579,11 +553,6 @@ export interface VortexIndicatorOutput {
     ndi: number[];
 }
 
-export interface KSTOutput {
-    kst: number;
-    signal: number;
-}
-
 export interface IchimokuCloudOutput {
     conversion: number;
     base: number;
@@ -595,17 +564,15 @@ export interface IchimokuCloudOutput {
 export interface SentinelAnalysis {
     bullish: {
         total: number;
-        trend: number;
-        alignment: number;
-        volatility: number;
+        structure: number;
         momentum: number;
+        context: number;
     };
     bearish: {
         total: number;
-        trend: number;
-        alignment: number;
-        volatility: number;
+        structure: number;
         momentum: number;
+        context: number;
     };
 }
 

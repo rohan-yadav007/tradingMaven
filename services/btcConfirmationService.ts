@@ -107,7 +107,8 @@ class BtcConfirmationService {
     }
 
     public getBtcTrendScore(btcKlines: Kline[]): { bullScore: number; bearScore: number } {
-        if (btcKlines.length < 200) { // FIX: Increased guard from 50 to 200 for EMA200 reliability.
+        // FIX: Increased guard from 50 to 200 for EMA200 reliability.
+        if (btcKlines.length < 200) {
             return { bullScore: 50, bearScore: 50 }; // Neutral if not enough data
         }
 

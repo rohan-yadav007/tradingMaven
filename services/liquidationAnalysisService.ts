@@ -1,6 +1,6 @@
 // services/liquidationAnalysisService.ts
 
-import { TradingMode } from '../types';
+import { BotConfig, TradingMode } from '../types';
 
 interface LiquidationEvent {
     symbol: string;
@@ -168,23 +168,26 @@ class LiquidationAnalysisService {
         }
     }
 
-    public getLiquidationVeto(signalDirection: 'BUY' | 'SELL', pair: string): { veto: boolean; reason: string } {
+    public getLiquidationVeto(signalDirection: 'BUY' | 'SELL', pair: string, config: BotConfig): { veto: boolean; reason: string } {
         const symbol = pair.replace('/', '');
         let state = this.symbolStates.get(symbol);
 
-        // FIX: Proactively create state if it doesn't exist for the requested symbol.
         if (!state) {
             state = this.createInitialState();
             this.symbolStates.set(symbol, state);
         }
 
         if (state.longTermHistory.length < 10) {
-            return { veto: false, reason: 'ℹ️ Liquidation Data: Initializing...' };
+            const reason = 'Liquidation Data: Initializing...';
+            if (config.finalEntryFailSafe === 'fail-closed') {
+                return { veto: true, reason: `❌ VETO: ${reason} (Fail-safe triggered)` };
+            }
+            return { veto: false, reason: `⚠️ ${reason} Trade allowed by fail-open.` };
         }
         
         // If there's no recent activity, don't veto.
         if (state.recentBuckets.length === 0) {
-            return { veto: false, reason: '✅ Liquidation Filter: Passed' };
+            return { veto: false, reason: `✅ Liquidation Filter: Passed` };
         }
 
         const isLongSignal = signalDirection === 'BUY';

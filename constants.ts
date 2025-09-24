@@ -1,3 +1,4 @@
+
 import { Agent, AgentParams, WalletBalance } from './types';
 
 export const TRADING_PAIRS: string[] = [
@@ -169,39 +170,23 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     ch_trendEmaPeriod: 200,
     ch_adxThreshold: 22,
     
-    // Agent 14: The Sentinel
-    sentinel_scoreThreshold: 70,
-    sentinel_strongTrendAdx: 25,
-    sentinel_emaFastPeriod: 50,
-    sentinel_emaSlowPeriod: 200,
-    sentinel_adxPeriod: 14,
-    sentinel_rsiPeriod: 14,
-    sentinel_stPeriod: 10,
-    sentinel_stMultiplier: 3,
-    sentinel_emaDistanceVetoThreshold: 2.5,
-    sentinel_rsiDivergenceLookback: 21,
-    sentinel_invalidationCandleLimit: 8,
-    sentinel_rsiMomentumExitLong: 45,
-    sentinel_rsiMomentumExitShort: 55,
-    sentinel_volume_vetoMultiplier: 0.8,
-    sentinel_volume_penaltyMultiplier: 1.0,
-    sentinel_volume_bonusMultiplier: 1.5,
-    sentinel_volume_bonusPoints: 10,
-    sentinel_regime_strongTrendAdx: 30,
-    sentinel_regime_chopAdx: 20,
-    // -- Percentage Penalties (Tweak #1 & #4) --
-    sentinel_penalty_ms_percent: 30,
-    sentinel_penalty_obv_percent: 25,
-    sentinel_penalty_concordance_rsi_percent: 15,
-    sentinel_penalty_concordance_volume_percent: 15,
-    sentinel_penalty_concordance_candlePos_percent: 20,
-    sentinel_penalty_concordance_vwap_percent: 25,
-    sentinel_penalty_concordance_microStructure_percent: 30,
-    // -- Hybrid SL --
-    sentinel_atr_mult_strong: 2.0,
+    // Agent 14: The Sentinel V2
+    sentinel_entryThreshold: 80,
+    sentinel_swingLookback: 8,
+    sentinel_structureWeight: 50,
+    sentinel_momentumWeight: 30,
+    sentinel_contextWeight: 20,
+    sentinel_htfMultiplier: 1.1,
+    sentinel_htfPenalty: 0.8,
+    sentinel_atr_mult_strong: 2.2,
     sentinel_atr_mult_transition: 2.5,
     sentinel_atr_mult_chop: 3.0,
-    sentinel_useSrLevelsForTp: false,
+    // FIX: Add default values for new Sentinel parameters
+    sentinel_adxPeriod: 14,
+    sentinel_stPeriod: 10,
+    sentinel_stMultiplier: 3.0,
+    sentinel_useSrLevelsForTp: true,
+    sentinel_rsiPeriod: 14,
 
     // Agent 17: Momentum Swing Trader
     mst_emaFastPeriod: 50,
@@ -245,24 +230,6 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
 
 
 // --- TIMEFRAME-SPECIFIC PARAMETER OVERRIDES ---
-
-export const SENTINEL_WEIGHTS_BY_REGIME_AND_TIMEFRAME = {
-    scalping: {
-        strong: { trend: 40, alignment: 30, volatility: 10, momentum: 20 },
-        transition: { trend: 30, alignment: 20, volatility: 20, momentum: 30 },
-        chop: { trend: 20, alignment: 10, volatility: 30, momentum: 40 },
-    },
-    day: {
-        strong: { trend: 50, alignment: 30, volatility: 10, momentum: 10 },
-        transition: { trend: 25, alignment: 25, volatility: 25, momentum: 25 },
-        chop: { trend: 20, alignment: 15, volatility: 30, momentum: 35 },
-    },
-    swing: {
-        strong: { trend: 55, alignment: 35, volatility: 5, momentum: 5 },
-        transition: { trend: 40, alignment: 30, volatility: 10, momentum: 20 },
-        chop: { trend: 20, alignment: 20, volatility: 30, momentum: 30 },
-    }
-};
 
 export const VETO_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
     // Scalping (1m, 3m, 5m)
@@ -344,17 +311,17 @@ export const CHAMELEON_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> 
 };
 
 export const SENTINEL_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    // Scalping (1m, 3m, 5m): Faster EMAs, wider stop loss multiplier for noise.
-    '1m':  { sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_stMultiplier: 3.5, sentinel_strongTrendAdx: 28 },
-    '3m':  { sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_stMultiplier: 3.5, sentinel_strongTrendAdx: 28 },
-    '5m':  { sentinel_emaFastPeriod: 21, sentinel_emaSlowPeriod: 50, sentinel_stMultiplier: 3.2, sentinel_strongTrendAdx: 25 },
-    // Day Trading (15m, 30m, 1h): Balanced parameters.
-    '15m': { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 100, sentinel_stMultiplier: 3.0, sentinel_strongTrendAdx: 25 },
-    '30m': { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 120, sentinel_stMultiplier: 2.8, sentinel_strongTrendAdx: 22 },
-    '1h':  { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 150, sentinel_stMultiplier: 2.8, sentinel_strongTrendAdx: 22 },
-    // Swing Trading (4h, 1d): Slower EMAs, tighter stop loss multiplier.
-    '4h':  { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_stMultiplier: 2.5, sentinel_strongTrendAdx: 20 },
-    '1d':  { sentinel_emaFastPeriod: 50, sentinel_emaSlowPeriod: 200, sentinel_stMultiplier: 2.5, sentinel_strongTrendAdx: 20 },
+    // Scalping: Faster, more sensitive exits. Tighter trails.
+    '1m':  { sentinel_swingLookback: 5, sentinel_entryThreshold: 85, sentinel_stPeriod: 7, sentinel_stMultiplier: 2.0, sentinel_adxPeriod: 10, sentinel_rsiPeriod: 10 },
+    '3m':  { sentinel_swingLookback: 6, sentinel_entryThreshold: 82, sentinel_stPeriod: 7, sentinel_stMultiplier: 2.0, sentinel_adxPeriod: 10, sentinel_rsiPeriod: 10 },
+    '5m':  { sentinel_swingLookback: 8, sentinel_entryThreshold: 80, sentinel_stPeriod: 8, sentinel_stMultiplier: 2.2, sentinel_adxPeriod: 12, sentinel_rsiPeriod: 12 },
+    // Day Trading: Balanced settings.
+    '15m': { sentinel_swingLookback: 10, sentinel_entryThreshold: 78, sentinel_stPeriod: 10, sentinel_stMultiplier: 2.5, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14 },
+    '30m': { sentinel_swingLookback: 10, sentinel_entryThreshold: 78, sentinel_stPeriod: 10, sentinel_stMultiplier: 2.5, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14 },
+    '1h':  { sentinel_swingLookback: 12, sentinel_entryThreshold: 75, sentinel_stPeriod: 12, sentinel_stMultiplier: 2.8, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14 },
+    // Swing Trading: Slower, less sensitive exits. Wider trails.
+    '4h':  { sentinel_swingLookback: 15, sentinel_entryThreshold: 75, sentinel_stPeriod: 12, sentinel_stMultiplier: 3.0, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14 },
+    '1d':  { sentinel_swingLookback: 15, sentinel_entryThreshold: 72, sentinel_stPeriod: 14, sentinel_stMultiplier: 3.0, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14 },
 };
 
 export const ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {

@@ -6,7 +6,6 @@ export {
     getAgentExitSignal, 
     getMultiStageProfitSecureSignal, 
     validateTradeProfitability, 
-    getSupervisorSignal, 
     getMandatoryBreakevenSignal, 
     getProfitSpikeSignal, 
     getAggressiveRangeTrailSignal,
@@ -19,7 +18,7 @@ export { captureMarketContext } from './agents/agentUtils';
 // Imports for getTradingSignal orchestration
 import { Agent, Kline, TradeSignal, BotConfig, MarketDataContext, AgentParams, TradingMode } from '../types';
 import { btcConfirmationService } from './btcConfirmationService';
-import { applyTimeframeSettings, captureMarketContext as _captureMarketContext } from './agents/agentUtils';
+import { applyTimeframeSettings, captureMarketContext as _captureMarketContext, calculateHeikinAshi, isMarketCohesive } from './agents/agentUtils';
 import { SMA, RSI, ATR } from 'technicalindicators';
 import * as binanceService from './binanceService';
 import { getMicroTimeframe } from '../constants';
@@ -56,8 +55,9 @@ export async function getTradingSignal(
     klines: Kline[],
     originalConfig: BotConfig,
     htfKlines?: Kline[],
-    microKlines?: Kline[],
-    ethBtcKlines?: Kline[], // Tweak #5
+    immediateKlines?: Kline[],
+    ltfKlines?: Kline[],
+    ethBtcKlines?: Kline[],
     livePrice?: number,
 ): Promise<TradeSignal> {
     const config = applyTimeframeSettings(originalConfig);
@@ -75,8 +75,7 @@ export async function getTradingSignal(
         case 11: agentSignal = getHistoricExpertSignal(klines, config, htfContext); break;
         case 13: agentSignal = getChameleonSignal(klines, config, htfContext); break;
         case 14: 
-            const microTimeframe = getMicroTimeframe(config.timeFrame);
-            agentSignal = getTheSentinelSignal(klines, config, htfContext, structureAnalysis, microKlines, microTimeframe, livePrice); 
+            agentSignal = getTheSentinelSignal(klines, config, htfContext); 
             break;
         case 16: agentSignal = getIchimokuTrendRiderSignal(klines, config, htfContext); break;
         case 17: agentSignal = getMomentumSwingTraderSignal(klines, config, htfContext); break;
@@ -110,11 +109,22 @@ export async function getTradingSignal(
     
     // VETO: Liquidation Cascade
     if (config.isLiquidationFilterEnabled && config.mode === TradingMode.USDSM_Futures) {
-        const liquidationVeto = liquidationAnalysisService.getLiquidationVeto(agentSignal.signal, config.pair);
+        const liquidationVeto = liquidationAnalysisService.getLiquidationVeto(agentSignal.signal, config.pair, config);
         if (liquidationVeto.veto) {
             return { signal: 'HOLD', reasons: [...reasons, liquidationVeto.reason] };
         }
         reasons.push(liquidationVeto.reason);
+    }
+
+    // VETO: Market Cohesion (Heikin Ashi)
+    if (config.isMarketCohesionEnabled) {
+        const haKlines = calculateHeikinAshi(klines);
+        // Use a fixed lookback of 2 candles for this universal filter, as used by Quantum Scalper.
+        const cohesionCheck = isMarketCohesive(haKlines, agentSignal.signal, config.timeFrame, 2);
+        if (!cohesionCheck.cohesive) {
+            return { signal: 'HOLD', reasons: [...reasons, cohesionCheck.reason] };
+        }
+        reasons.push(cohesionCheck.reason);
     }
 
     // Sentinel (14) has its own advanced, soft-veto volume logic. The hard veto is bypassed.
@@ -199,8 +209,9 @@ export async function getTradingSignal(
     // Hard Concordance vetos (ATR Chaos, Liquidity Sweeps)
     if (config.isMomentumConcordanceEnabled) {
         const livePriceForVeto = livePrice || currentPrice;
-        const microTimeframe = getMicroTimeframe(config.timeFrame);
-        const hardVeto = getHardConcordanceVetos(klines, livePriceForVeto, agentSignal.signal, config, microKlines, microTimeframe);
+        const ltfTimeframe = getMicroTimeframe(config.timeFrame);
+        // FIX: Pass the raw `immediateKlines` (1-minute data) for the most accurate high-fidelity check.
+        const hardVeto = getHardConcordanceVetos(klines, livePriceForVeto, agentSignal.signal, config, immediateKlines, ltfTimeframe);
         if (hardVeto.veto) {
             return { signal: 'HOLD', reasons: [...reasons, hardVeto.reason] };
         }

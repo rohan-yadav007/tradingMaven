@@ -1,10 +1,11 @@
+
 import React from 'react';
 import { useState, useEffect, useMemo } from 'react';
-import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, Kline, RiskMode, OptimizationResultItem } from '../types';
+import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, OptimizationResultItem } from '../types';
 import * as constants from '../constants';
 import * as binanceService from './../services/binanceService';
 import { runBacktest, runOptimization } from '../services/backtestingService';
-import { FlaskIcon, ChevronUp, ChevronDown, LockIcon, UnlockIcon, SparklesIcon, InfoIcon } from './icons';
+import { FlaskIcon, ChevronUp, ChevronDown, SparklesIcon, InfoIcon } from './icons';
 import { useTradingConfigState, useTradingConfigActions } from '../contexts/TradingConfigContext';
 import { SearchableDropdown } from './SearchableDropdown';
 import { BacktestResultDisplay } from './BacktestResultDisplay';
@@ -119,44 +120,83 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                     min={20} max={50} step={1}
                 />
             </div>);
-        case 14: 
-             return (<div className="space-y-4">
-                <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400">Entry Logic</h4>
-                 <ParamSlider 
-                    label="Score Threshold" 
-                    value={allParams.sentinel_scoreThreshold!}
-                    onChange={(v) => updateParam('sentinel_scoreThreshold', v)}
+        case 14:
+            return (<div className="space-y-4">
+                <ParamSlider
+                    label="Entry Score Threshold"
+                    value={allParams.sentinel_entryThreshold!}
+                    onChange={(v) => updateParam('sentinel_entryThreshold', v)}
                     min={50} max={95} step={1}
-                 />
-                 <ParamSlider 
-                    label="ADX Trend Minimum" 
-                    value={allParams.sentinel_strongTrendAdx!}
-                    onChange={(v) => updateParam('sentinel_strongTrendAdx', v)}
-                    min={20} max={35} step={1}
-                 />
-                <ParamSlider label="Fast EMA Period" value={allParams.sentinel_emaFastPeriod!} onChange={v => updateParam('sentinel_emaFastPeriod', v)} min={10} max={100} step={1} />
-                <ParamSlider label="Slow EMA Period" value={allParams.sentinel_emaSlowPeriod!} onChange={v => updateParam('sentinel_emaSlowPeriod', v)} min={50} max={300} step={5} />
-                <ParamSlider label="RSI Divergence Lookback" value={allParams.sentinel_rsiDivergenceLookback!} onChange={v => updateParam('sentinel_rsiDivergenceLookback', v)} min={10} max={40} step={1} />
-                 
-                <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
+                />
+                <ParamSlider
+                    label="Swing Point Lookback"
+                    value={allParams.sentinel_swingLookback!}
+                    onChange={(v) => updateParam('sentinel_swingLookback', v)}
+                    min={3} max={15} step={1}
+                />
+                <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-3 border-t border-slate-200 dark:border-slate-700">Pillar Weights</h4>
+                <ParamSlider
+                    label="Structure Weight"
+                    value={allParams.sentinel_structureWeight!}
+                    onChange={(v) => updateParam('sentinel_structureWeight', v)}
+                    min={20} max={70} step={5}
+                    valueDisplay={v => `${v}%`}
+                />
+                <ParamSlider
+                    label="Momentum Weight"
+                    value={allParams.sentinel_momentumWeight!}
+                    onChange={(v) => updateParam('sentinel_momentumWeight', v)}
+                    min={10} max={50} step={5}
+                    valueDisplay={v => `${v}%`}
+                />
+                <ParamSlider
+                    label="Context Weight"
+                    value={allParams.sentinel_contextWeight!}
+                    onChange={(v) => updateParam('sentinel_contextWeight', v)}
+                    min={10} max={50} step={5}
+                    valueDisplay={v => `${v}%`}
+                />
+                 <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
                     <button onClick={() => setIsExitVetoOpen(!isExitVetoOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
-                        <span>Exit Logic</span>
+                        <span>Exit & SL/TP Logic</span>
                         {isExitVetoOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                     </button>
                     {isExitVetoOpen && (
                         <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
                             <div className="flex items-center justify-between">
-                                <label className={formLabelClass}>Use S/R for Take Profit</label>
+                                 <div className="flex items-center gap-1.5">
+                                    <label className={formLabelClass}>Use S/R for Take Profit</label>
+                                 </div>
                                 <ToggleSwitch checked={allParams.sentinel_useSrLevelsForTp!} onChange={v => updateParam('sentinel_useSrLevelsForTp', v)} />
                             </div>
-                            <ParamSlider label="SuperTrend Period (SL)" value={allParams.sentinel_stPeriod!} onChange={v => updateParam('sentinel_stPeriod', v)} min={5} max={20} step={1} />
-                            <ParamSlider label="SuperTrend Multiplier (SL)" value={allParams.sentinel_stMultiplier!} onChange={v => updateParam('sentinel_stMultiplier', v)} min={1.0} max={5.0} step={0.1} valueDisplay={v => v.toFixed(1)} />
-                            <ParamSlider label="Invalidation Candle Limit" value={allParams.sentinel_invalidationCandleLimit!} onChange={v => updateParam('sentinel_invalidationCandleLimit', v)} min={3} max={20} step={1} />
-                            <ParamSlider label="RSI Exit Long" value={allParams.sentinel_rsiMomentumExitLong!} onChange={v => updateParam('sentinel_rsiMomentumExitLong', v)} min={40} max={50} step={1} />
-                            <ParamSlider label="RSI Exit Short" value={allParams.sentinel_rsiMomentumExitShort!} onChange={v => updateParam('sentinel_rsiMomentumExitShort', v)} min={50} max={60} step={1} />
+                            <ParamSlider label="SuperTrend Period (Trail SL)" value={allParams.sentinel_stPeriod!} onChange={v => updateParam('sentinel_stPeriod', v)} min={5} max={20} step={1} />
+                            <ParamSlider label="SuperTrend Multiplier (Trail SL)" value={allParams.sentinel_stMultiplier!} onChange={v => updateParam('sentinel_stMultiplier', v)} min={1.0} max={5.0} step={0.1} valueDisplay={v => v.toFixed(1)} />
+                            <ParamSlider label="Regime ADX Period (SL)" value={allParams.sentinel_adxPeriod!} onChange={v => updateParam('sentinel_adxPeriod', v)} min={5} max={20} step={1} />
+                            <ParamSlider label="Momentum RSI Period (Exit)" value={allParams.sentinel_rsiPeriod!} onChange={v => updateParam('sentinel_rsiPeriod', v)} min={5} max={20} step={1} />
                         </div>
                     )}
                 </div>
+            </div>);
+        case 16: // Ichimoku Trend Rider
+            return (<div className="space-y-4">
+                <ParamSlider 
+                   label="Tenkan-sen Period"
+                   value={allParams.ichi_conversionPeriod!}
+                   onChange={(v) => updateParam('ichi_conversionPeriod', v)}
+                   min={5} max={20} step={1}
+               />
+               <ParamSlider 
+                   label="Kijun-sen Period"
+                   value={allParams.ichi_basePeriod!}
+                   onChange={(v) => updateParam('ichi_basePeriod', v)}
+                   min={20} max={60} step={1}
+               />
+               <ParamSlider 
+                   label="Senkou Span B Period"
+                   value={allParams.ichi_laggingSpanPeriod!}
+                   onChange={(v) => updateParam('ichi_laggingSpanPeriod', v)}
+                   min={40} max={120} step={2}
+               />
             </div>);
         case 17:
             return (<div className="space-y-4">
@@ -173,6 +213,23 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                    min={100} max={300} step={10}
                />
            </div>);
+        case 18: 
+            return (<div className="space-y-4">
+                 <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">Core Logic</h4>
+                 <ParamSlider label="Base Conviction Threshold" value={allParams.conductor_convictionThreshold!} onChange={v => updateParam('conductor_convictionThreshold', v)} min={50} max={95} step={1} valueDisplay={v => `${v}%`} />
+                 <ParamSlider label="Swing Point Lookback" value={allParams.conductor_swingLookback!} onChange={v => updateParam('conductor_swingLookback', v)} min={3} max={15} step={1} />
+                 <ParamSlider label="Structure Weight" value={allParams.conductor_structureWeight!} onChange={v => updateParam('conductor_structureWeight', v)} min={10} max={60} step={5} valueDisplay={v => `${v}%`} />
+                 <ParamSlider label="Momentum Weight" value={allParams.conductor_momentumWeight!} onChange={v => updateParam('conductor_momentumWeight', v)} min={10} max={60} step={5} valueDisplay={v => `${v}%`} />
+                 <ParamSlider label="Context Weight" value={allParams.conductor_contextWeight!} onChange={v => updateParam('conductor_contextWeight', v)} min={5} max={40} step={5} valueDisplay={v => `${v}%`} />
+                 <ParamSlider label="Confirmation Weight" value={allParams.conductor_confirmationWeight!} onChange={v => updateParam('conductor_confirmationWeight', v)} min={5} max={40} step={5} valueDisplay={v => `${v}%`} />
+
+                 <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">Adaptive Behavior</h4>
+                 <ParamSlider label="Strong Trend ADX" value={allParams.conductor_strongTrendAdx!} onChange={v => updateParam('conductor_strongTrendAdx', v)} min={25} max={40} step={1} />
+                 <ParamSlider label="Strong Trend Threshold" value={allParams.conductor_strongTrendThreshold!} onChange={v => updateParam('conductor_strongTrendThreshold', v)} min={50} max={80} step={1} valueDisplay={v => `${v}%`} />
+                 <ParamSlider label="Choppy Market ADX" value={allParams.conductor_choppyTrendAdx!} onChange={v => updateParam('conductor_choppyTrendAdx', v)} min={15} max={25} step={1} />
+                 <ParamSlider label="Choppy Market Threshold" value={allParams.conductor_choppyTrendThreshold!} onChange={v => updateParam('conductor_choppyTrendThreshold', v)} min={70} max={95} step={1} valueDisplay={v => `${v}%`} />
+                 <ParamSlider label="Structure Weight Multiplier" value={allParams.conductor_structureWeightMultiplier!} onChange={v => updateParam('conductor_structureWeightMultiplier', v)} min={1.0} max={2.0} step={0.05} valueDisplay={v => `${v.toFixed(2)}x`} />
+            </div>);
         default: return <p className="text-sm text-slate-500">This agent does not have any customizable parameters.</p>;
     }
 };
@@ -184,7 +241,6 @@ interface BacktestingPanelProps {
     backtestResult: BacktestResult | null;
     setBacktestResult: (result: BacktestResult | null) => void;
     setActiveView: (view: 'trading' | 'backtesting' | 'preferences') => void;
-    klines: Kline[];
     theme: 'light' | 'dark';
 }
 
@@ -214,6 +270,7 @@ export type BacktestConfig = {
     aggressiveTrailMode: 'distance' | 'pnl';
     isVwapConfirmationEnabled: boolean;
     isBtcConfirmationEnabled: boolean;
+    isBtcCorrelationVetoEnabled: boolean;
     btcConfirmationThreshold: number;
     isVolumeFilterEnabled: boolean;
     isAdxFilterEnabled: boolean;
@@ -270,6 +327,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         aggressiveTrailMode: globalConfig.aggressiveTrailMode,
         isVwapConfirmationEnabled: globalConfig.isVwapConfirmationEnabled,
         isBtcConfirmationEnabled: globalConfig.isBtcConfirmationEnabled,
+        isBtcCorrelationVetoEnabled: globalConfig.isBtcCorrelationVetoEnabled,
         btcConfirmationThreshold: globalConfig.btcConfirmationThreshold,
         isVolumeFilterEnabled: globalConfig.isVolumeFilterEnabled,
         isAdxFilterEnabled: globalConfig.isAdxFilterEnabled,
@@ -291,7 +349,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     const [isFiltersOpen, setIsFiltersOpen] = useState(false);
 
 
-    const canOptimize = [9, 11, 13, 14, 17].includes(config.selectedAgent.id);
+    const canOptimize = [9, 11, 13, 14, 17, 18].includes(config.selectedAgent.id);
     
     const updateConfig = <K extends keyof BacktestConfig>(key: K, value: BacktestConfig[K]) => {
         setConfig(prev => ({...prev, [key]: value}));
@@ -330,7 +388,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
             const backtestKlines = await binanceService.fetchFullKlines(formattedPair, '1m', startTime, Date.now(), config.tradingMode);
             if (backtestKlines.length < 200) { throw new Error("Not enough historical data available for a reliable backtest (min 200 candles)."); }
             
-            let htfKlines: Kline[] | undefined = undefined;
+            let htfKlines: any[] | undefined = undefined;
             if (config.isHtfConfirmationEnabled) {
                 const htf = config.htfTimeFrame === 'auto' ? constants.TIME_FRAMES[constants.TIME_FRAMES.indexOf(config.chartTimeFrame) + 1] : config.htfTimeFrame;
                 if (htf) {
@@ -355,6 +413,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
                 takerFeeRate: constants.TAKER_FEE_RATE,
+                finalEntryFailSafe: 'fail-open',
             };
             const result = await runBacktest(backtestKlines, fullBotConfig, htfKlines);
             setBacktestResult(result);
@@ -375,7 +434,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
             const backtestKlines = await binanceService.fetchFullKlines(formattedPair, '1m', startTime, Date.now(), config.tradingMode);
             if (backtestKlines.length < 200) { throw new Error("Not enough historical data for optimization."); }
             
-            let htfKlines: Kline[] | undefined = undefined;
+            let htfKlines: any[] | undefined = undefined;
             if (config.isHtfConfirmationEnabled) {
                  const htf = config.htfTimeFrame === 'auto' ? constants.TIME_FRAMES[constants.TIME_FRAMES.indexOf(config.chartTimeFrame) + 1] : config.htfTimeFrame;
                 if (htf) {
@@ -399,6 +458,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
                 takerFeeRate: constants.TAKER_FEE_RATE,
+                finalEntryFailSafe: 'fail-open',
             };
             const results = await runOptimization(backtestKlines, baseBotConfig, onProgress, htfKlines);
             if (results.length === 0) { setError("Optimization complete, but no profitable parameter combinations were found."); } else { setOptimizationResults(results); }
@@ -508,55 +568,48 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                             {isFiltersOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                         </button>
                          {isFiltersOpen && (
-                            <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
+                            <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-3">
                                 <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400">Entry Filters</h4>
-                                <div className={formGroupClass}>
-                                    <div className="flex items-center justify-between"><label className={formLabelClass}>Momentum Concordance</label><ToggleSwitch checked={config.isMomentumConcordanceEnabled} onChange={v => updateConfig('isMomentumConcordanceEnabled', v)} /></div>
-                                </div>
-                                 <div className={formGroupClass}>
-                                    <div className="flex items-center justify-between"><label className={formLabelClass}>Market Structure Veto</label><ToggleSwitch checked={config.isMarketStructureVetoEnabled} onChange={v => updateConfig('isMarketStructureVetoEnabled', v)} /></div>
-                                </div>
-                                <div className={formGroupClass}>
-                                    <div className="flex items-center justify-between"><label className={formLabelClass}>SMC Reversal Veto</label><ToggleSwitch checked={config.isSmcVetoEnabled} onChange={v => updateConfig('isSmcVetoEnabled', v)} /></div>
-                                </div>
-                                <div className={formGroupClass}>
-                                    <div className="flex items-center justify-between"><label className={formLabelClass}>ADX Trend Filter</label><ToggleSwitch checked={config.isAdxFilterEnabled} onChange={v => updateConfig('isAdxFilterEnabled', v)} /></div>
-                                </div>
-                                <div className={formGroupClass}>
-                                    <div className="flex items-center justify-between"><label className={formLabelClass}>BTC Trend Confirmation</label><ToggleSwitch checked={config.isBtcConfirmationEnabled} onChange={v => updateConfig('isBtcConfirmationEnabled', v)} /></div>
-                                     {config.isBtcConfirmationEnabled && (<ParamSlider label="BTC Trend Threshold" value={config.btcConfirmationThreshold} onChange={v => updateConfig('btcConfirmationThreshold', v)} min={50} max={85} step={5} valueDisplay={(v) => `${v}%`} />)}
-                                </div>
-                                 <div className={formGroupClass}>
-                                    <div className="flex items-center justify-between"><label className={formLabelClass}>VWAP Confirmation</label><ToggleSwitch checked={config.isVwapConfirmationEnabled} onChange={v => updateConfig('isVwapConfirmationEnabled', v)} /></div>
-                                </div>
-                                <div className={formGroupClass}>
-                                    <div className="flex items-center justify-between"><label className={formLabelClass}>HTF Confirmation</label><ToggleSwitch checked={config.isHtfConfirmationEnabled} onChange={v => updateConfig('isHtfConfirmationEnabled', v)} /></div>
-                                    {config.isHtfConfirmationEnabled && higherTimeFrames.length > 0 && (<select value={config.htfTimeFrame} onChange={e => updateConfig('htfTimeFrame', e.target.value)} className={formInputClass}><option value="auto">Auto</option>{higherTimeFrames.map(tf => <option key={tf} value={tf}>{tf}</option>)}</select>)}
-                                </div>
-                                 <div className={`${formGroupClass} space-y-2`}>
-                                    <div className="flex items-center justify-between"><label className={formLabelClass}>Universal Volume Filter</label><ToggleSwitch checked={config.isVolumeFilterEnabled} onChange={v => updateConfig('isVolumeFilterEnabled', v)} /></div>
-                                    {config.isVolumeFilterEnabled && (<ParamSlider label="Volume Multiplier" value={config.agentParams.veto_volumeFilterMultiplier ?? constants.DEFAULT_AGENT_PARAMS.veto_volumeFilterMultiplier} onChange={v => updateConfig('agentParams', {...config.agentParams, veto_volumeFilterMultiplier: v})} min={0.5} max={2.5} step={0.1} valueDisplay={v => `${v.toFixed(1)}x Avg`} />)}
-                                </div>
-                                <div className={`${formGroupClass} space-y-2`}>
-                                    <div className="flex items-center justify-between"><label className={formLabelClass}>S/R Zone Analysis</label><ToggleSwitch checked={config.isSrAnalysisEnabled} onChange={v => updateConfig('isSrAnalysisEnabled', v)} /></div>
-                                    {config.isSrAnalysisEnabled && (<ParamSlider label="S/R Zone Buffer" value={config.agentParams.veto_srZoneAtrBuffer ?? constants.DEFAULT_AGENT_PARAMS.veto_srZoneAtrBuffer} onChange={v => updateConfig('agentParams', {...config.agentParams, veto_srZoneAtrBuffer: v})} min={0.1} max={2.0} step={0.1} valueDisplay={v => `${v.toFixed(1)}x ATR`} />)}
-                                </div>
-                                
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>Momentum Concordance</label><ToggleSwitch checked={config.isMomentumConcordanceEnabled} onChange={v => updateConfig('isMomentumConcordanceEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>Liquidation Cascade Veto</label><ToggleSwitch checked={config.isLiquidationFilterEnabled} onChange={v => updateConfig('isLiquidationFilterEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>Market Breadth Filter</label><ToggleSwitch checked={config.isMarketBreadthFilterEnabled} onChange={v => updateConfig('isMarketBreadthFilterEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>Capital Flow Veto</label><ToggleSwitch checked={config.isBtcCorrelationVetoEnabled} onChange={v => updateConfig('isBtcCorrelationVetoEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>Market Cohesion Filter</label><ToggleSwitch checked={config.isMarketCohesionEnabled} onChange={v => updateConfig('isMarketCohesionEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>Exhaustion Filter</label><ToggleSwitch checked={config.isExhaustionFilterEnabled} onChange={v => updateConfig('isExhaustionFilterEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>Candlestick Veto</label><ToggleSwitch checked={config.isCandlestickConfirmationEnabled} onChange={v => updateConfig('isCandlestickConfirmationEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>Initial Risk Veto</label><ToggleSwitch checked={config.isInitialRiskVetoEnabled} onChange={v => updateConfig('isInitialRiskVetoEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>Market Structure Veto</label><ToggleSwitch checked={config.isMarketStructureVetoEnabled} onChange={v => updateConfig('isMarketStructureVetoEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>SMC Reversal Veto</label><ToggleSwitch checked={config.isSmcVetoEnabled} onChange={v => updateConfig('isSmcVetoEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>ADX Trend Filter</label><ToggleSwitch checked={config.isAdxFilterEnabled} onChange={v => updateConfig('isAdxFilterEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>BTC Trend Confirmation</label><ToggleSwitch checked={config.isBtcConfirmationEnabled} onChange={v => updateConfig('isBtcConfirmationEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>VWAP Confirmation</label><ToggleSwitch checked={config.isVwapConfirmationEnabled} onChange={v => updateConfig('isVwapConfirmationEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>HTF Confirmation</label><ToggleSwitch checked={config.isHtfConfirmationEnabled} onChange={v => updateConfig('isHtfConfirmationEnabled', v)} /></div>
+                                {config.isHtfConfirmationEnabled && higherTimeFrames.length > 0 && (<select value={config.htfTimeFrame} onChange={e => updateConfig('htfTimeFrame', e.target.value)} className={formInputClass}><option value="auto">Auto</option>{higherTimeFrames.map(tf => <option key={tf} value={tf}>{tf}</option>)}</select>)}
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>Universal Volume Filter</label><ToggleSwitch checked={config.isVolumeFilterEnabled} onChange={v => updateConfig('isVolumeFilterEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>S/R Zone Analysis</label><ToggleSwitch checked={config.isSrAnalysisEnabled} onChange={v => updateConfig('isSrAnalysisEnabled', v)} /></div>
+
                                 <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-3 border-t border-slate-200 dark:border-slate-700">Trade Management</h4>
-                                <div className={formGroupClass}>
-                                    <div className="flex items-center justify-between"><label className={formLabelClass}>Agent Indicator Trail</label><ToggleSwitch checked={config.isAgentTrailEnabled} onChange={v => updateConfig('isAgentTrailEnabled', v)} /></div>
-                                </div>
-                                <div className={formGroupClass}>
-                                    <div className="flex items-center justify-between"><label className={formLabelClass}>Mandatory Breakeven Trail</label><ToggleSwitch checked={config.isBreakevenTrailEnabled} onChange={v => updateConfig('isBreakevenTrailEnabled', v)} /></div>
-                                </div>
-                                <div className={formGroupClass}>
-                                    <div className="flex items-center justify-between"><label className={formLabelClass}>Universal Profit Trail</label><ToggleSwitch checked={config.isUniversalProfitTrailEnabled} onChange={v => updateConfig('isUniversalProfitTrailEnabled', v)} /></div>
-                                </div>
-                                <div className={formGroupClass}>
-                                    <div className="flex items-center justify-between"><label className={formLabelClass}>Adaptive Take Profit</label><ToggleSwitch checked={config.isAdaptiveTpEnabled} onChange={v => updateConfig('isAdaptiveTpEnabled', v)} /></div>
-                                </div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>Agent Indicator Trail</label><ToggleSwitch checked={config.isAgentTrailEnabled} onChange={v => updateConfig('isAgentTrailEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>Mandatory Breakeven</label><ToggleSwitch checked={config.isBreakevenTrailEnabled} onChange={v => updateConfig('isBreakevenTrailEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>Universal Profit Trail</label><ToggleSwitch checked={config.isUniversalProfitTrailEnabled} onChange={v => updateConfig('isUniversalProfitTrailEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>Adaptive Take Profit</label><ToggleSwitch checked={config.isAdaptiveTpEnabled} onChange={v => updateConfig('isAdaptiveTpEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>Confirmation Candle Veto</label><ToggleSwitch checked={config.isConfirmationCandleEnabled} onChange={v => updateConfig('isConfirmationCandleEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>Minimum R:R Veto</label><ToggleSwitch checked={config.isMinRrEnabled} onChange={v => updateConfig('isMinRrEnabled', v)} /></div>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>Immediate Entry</label><ToggleSwitch checked={config.entryTiming === 'immediate'} onChange={v => updateConfig('entryTiming', v ? 'immediate' : 'onNextCandle')} /></div>
                                  <div className={formGroupClass}>
-                                    <div className="flex items-center justify-between"><label className={formLabelClass}>Confirmation Candle Veto</label><ToggleSwitch checked={config.isConfirmationCandleEnabled} onChange={v => updateConfig('isConfirmationCandleEnabled', v)} /></div>
+                                    <label htmlFor="aggressive-trail-mode" className={formLabelClass}>Aggressive Trail Mode</label>
+                                    <select id="aggressive-trail-mode" value={config.aggressiveTrailMode} onChange={e => updateConfig('aggressiveTrailMode', e.target.value as 'distance' | 'pnl')} className={formInputClass}>
+                                        <option value="distance">Distance to TP</option>
+                                        <option value="pnl">PNL %</option>
+                                    </select>
+                                </div>
+                                <div className={formGroupClass}>
+                                    <label htmlFor="invalidation-sensitivity" className={formLabelClass}>Invalidation Sensitivity</label>
+                                    <select id="invalidation-sensitivity" value={config.invalidationSensitivity} onChange={e => updateConfig('invalidationSensitivity', e.target.value as 'low' | 'medium' | 'high')} className={formInputClass}>
+                                        <option value="low">Low</option>
+                                        <option value="medium">Medium</option>
+                                        <option value="high">High</option>
+                                    </select>
                                 </div>
                             </div>
                         )}

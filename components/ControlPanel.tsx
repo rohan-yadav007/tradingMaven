@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { TradingMode, Kline, RiskMode, TradeSignal, AgentParams, BotConfig, Agent, MarketDataContext } from '../types';
+import { TradingMode, Kline, TradeSignal, AgentParams, BotConfig, Agent } from '../types';
 import * as constants from '../constants';
-import { PlayIcon, LockIcon, UnlockIcon, CpuIcon, ChevronDown, ChevronUp, InfoIcon } from './icons';
+import { PlayIcon, CpuIcon, ChevronDown, ChevronUp, InfoIcon } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
 import { getTradingSignal, captureMarketContext } from '../services/localAgentService';
 import * as binanceService from '../services/binanceService';
@@ -134,38 +134,81 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
             </div>);
         case 14: 
             return (<div className="space-y-4">
-                <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400">Entry Logic</h4>
-                 <ParamSlider 
-                    label="Score Threshold" 
-                    value={allParams.sentinel_scoreThreshold!}
-                    onChange={(v) => updateParam('sentinel_scoreThreshold', v)}
+                <ParamSlider 
+                    label="Entry Score Threshold" 
+                    value={allParams.sentinel_entryThreshold!}
+                    onChange={(v) => updateParam('sentinel_entryThreshold', v)}
                     min={50} max={95} step={1}
                  />
-                 <ParamSlider 
-                    label="ADX Trend Minimum" 
-                    value={allParams.sentinel_strongTrendAdx!}
-                    onChange={(v) => updateParam('sentinel_strongTrendAdx', v)}
-                    min={20} max={35} step={1}
+                <ParamSlider 
+                    label="Swing Point Lookback" 
+                    value={allParams.sentinel_swingLookback!}
+                    onChange={(v) => updateParam('sentinel_swingLookback', v)}
+                    min={3} max={15} step={1}
                  />
-                <ParamSlider label="Fast EMA Period" value={allParams.sentinel_emaFastPeriod!} onChange={v => updateParam('sentinel_emaFastPeriod', v)} min={10} max={100} step={1} />
-                <ParamSlider label="Slow EMA Period" value={allParams.sentinel_emaSlowPeriod!} onChange={v => updateParam('sentinel_emaSlowPeriod', v)} min={50} max={300} step={5} />
-                <ParamSlider label="RSI Divergence Lookback" value={allParams.sentinel_rsiDivergenceLookback!} onChange={v => updateParam('sentinel_rsiDivergenceLookback', v)} min={10} max={40} step={1} />
-                 
-                <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
+                <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-3 border-t border-slate-200 dark:border-slate-700">Pillar Weights</h4>
+                <ParamSlider 
+                    label="Structure Weight" 
+                    value={allParams.sentinel_structureWeight!}
+                    onChange={(v) => updateParam('sentinel_structureWeight', v)}
+                    min={20} max={70} step={5}
+                    valueDisplay={v => `${v}%`}
+                 />
+                 <ParamSlider 
+                    label="Momentum Weight" 
+                    value={allParams.sentinel_momentumWeight!}
+                    onChange={(v) => updateParam('sentinel_momentumWeight', v)}
+                    min={10} max={50} step={5}
+                    valueDisplay={v => `${v}%`}
+                 />
+                 <ParamSlider 
+                    label="Context Weight" 
+                    value={allParams.sentinel_contextWeight!}
+                    onChange={(v) => updateParam('sentinel_contextWeight', v)}
+                    min={10} max={50} step={5}
+                    valueDisplay={v => `${v}%`}
+                 />
+                 <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
                     <button onClick={() => setIsExitVetoOpen(!isExitVetoOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
-                        <span>Exit & Veto Logic</span>
+                        <span>Exit & SL/TP Logic</span>
                         {isExitVetoOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                     </button>
                     {isExitVetoOpen && (
                         <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
-                            <ParamSlider label="SuperTrend Period (SL)" value={allParams.sentinel_stPeriod!} onChange={v => updateParam('sentinel_stPeriod', v)} min={5} max={20} step={1} />
-                            <ParamSlider label="SuperTrend Multiplier (SL)" value={allParams.sentinel_stMultiplier!} onChange={v => updateParam('sentinel_stMultiplier', v)} min={1.0} max={5.0} step={0.1} valueDisplay={v => v.toFixed(1)} />
-                            <ParamSlider label="Invalidation Candle Limit" value={allParams.sentinel_invalidationCandleLimit!} onChange={v => updateParam('sentinel_invalidationCandleLimit', v)} min={3} max={20} step={1} />
-                            <ParamSlider label="RSI Exit Long" value={allParams.sentinel_rsiMomentumExitLong!} onChange={v => updateParam('sentinel_rsiMomentumExitLong', v)} min={40} max={50} step={1} />
-                            <ParamSlider label="RSI Exit Short" value={allParams.sentinel_rsiMomentumExitShort!} onChange={v => updateParam('sentinel_rsiMomentumExitShort', v)} min={50} max={60} step={1} />
+                            <div className="flex items-center justify-between">
+                                 <div className="flex items-center gap-1.5">
+                                    <label className={formLabelClass}>Use S/R for Take Profit</label>
+                                 </div>
+                                <ToggleSwitch checked={allParams.sentinel_useSrLevelsForTp!} onChange={v => updateParam('sentinel_useSrLevelsForTp', v)} />
+                            </div>
+                            <ParamSlider label="SuperTrend Period (Trail SL)" value={allParams.sentinel_stPeriod!} onChange={v => updateParam('sentinel_stPeriod', v)} min={5} max={20} step={1} />
+                            <ParamSlider label="SuperTrend Multiplier (Trail SL)" value={allParams.sentinel_stMultiplier!} onChange={v => updateParam('sentinel_stMultiplier', v)} min={1.0} max={5.0} step={0.1} valueDisplay={v => v.toFixed(1)} />
+                            <ParamSlider label="Regime ADX Period (SL)" value={allParams.sentinel_adxPeriod!} onChange={v => updateParam('sentinel_adxPeriod', v)} min={5} max={20} step={1} />
+                            <ParamSlider label="Momentum RSI Period (Exit)" value={allParams.sentinel_rsiPeriod!} onChange={v => updateParam('sentinel_rsiPeriod', v)} min={5} max={20} step={1} />
                         </div>
                     )}
                 </div>
+            </div>);
+        case 16: // Ichimoku Trend Rider
+            return (<div className="space-y-4">
+                <ParamSlider 
+                   label="Tenkan-sen Period"
+                   value={allParams.ichi_conversionPeriod!}
+                   onChange={(v) => updateParam('ichi_conversionPeriod', v)}
+                   min={5} max={20} step={1}
+               />
+               <ParamSlider 
+                   label="Kijun-sen Period"
+                   value={allParams.ichi_basePeriod!}
+                   onChange={(v) => updateParam('ichi_basePeriod', v)}
+                   min={20} max={60} step={1}
+               />
+               <ParamSlider 
+                   label="Senkou Span B Period"
+                   value={allParams.ichi_laggingSpanPeriod!}
+                   onChange={(v) => updateParam('ichi_laggingSpanPeriod', v)}
+                   min={40} max={120} step={2}
+               />
             </div>);
         case 17:
             return (<div className="space-y-4">
@@ -599,6 +642,11 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     </div>
                 )}
                 {selectedAgent.id === 11 && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
+                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
+                    </div>
+                )}
+                 {selectedAgent.id === 16 && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
                         <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
                     </div>

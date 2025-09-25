@@ -4,12 +4,25 @@ import { Kline, TradingMode } from '../types';
 import * as binanceService from './binanceService';
 import { WebSocketManager } from './webSocketManager';
 
+const getTimeframeDuration = (timeframe: string): number => {
+    const unit = timeframe.slice(-1);
+    const value = parseInt(timeframe.slice(0, -1), 10);
+    if (isNaN(value)) return 0;
+    switch (unit) {
+        case 'm': return value * 60 * 1000;
+        case 'h': return value * 60 * 60 * 1000;
+        case 'd': return value * 24 * 60 * 60 * 1000;
+        default: return 0;
+    }
+};
+
 class SharedKlineService {
     private klineCache = new Map<string, Kline[]>();
     private referenceCounts = new Map<string, number>();
     private spotWsManager: WebSocketManager;
     private futuresWsManager: WebSocketManager;
     private fetchingPromises = new Map<string, Promise<Kline[]>>();
+    private latestClosedCandleTimes = new Map<string, number>(); // <cacheKey, timestamp>
 
     constructor() {
         this.spotWsManager = new WebSocketManager(() => '/proxy-spot-ws');
@@ -48,6 +61,12 @@ class SharedKlineService {
         console.log(`[SharedKlineService] Cache miss for ${key}. Fetching initial data...`);
         const klines = await binanceService.fetchKlines(pair.replace('/', ''), timeframe, { limit: 501, mode });
         this.klineCache.set(key, klines);
+        
+        const lastClosedKline = [...klines].reverse().find(k => k.isFinal);
+        if (lastClosedKline) {
+            this.latestClosedCandleTimes.set(key, lastClosedKline.time);
+        }
+
         this.subscribeToUpdates(pair, timeframe, mode, key);
         return klines;
     }
@@ -74,8 +93,32 @@ class SharedKlineService {
                     }
                 }
             }
+             if (newKline.isFinal) {
+                this.latestClosedCandleTimes.set(key, newKline.time);
+            }
         });
     }
+    
+    public areKlinesReadyForTimestamp(
+        dependencies: { pair: string, timeframe: string, mode: TradingMode }[],
+        analysisTimestamp: number
+    ): boolean {
+        for (const dep of dependencies) {
+            const key = this.getCacheKey(dep.pair, dep.timeframe, dep.mode);
+            const timeframeMs = getTimeframeDuration(dep.timeframe);
+            if (timeframeMs === 0) continue;
+
+            const expectedCandleStartTime = Math.floor(analysisTimestamp / timeframeMs) * timeframeMs;
+
+            const latestClosedTime = this.latestClosedCandleTimes.get(key);
+
+            if (!latestClosedTime || latestClosedTime < expectedCandleStartTime) {
+                return false;
+            }
+        }
+        return true;
+    }
+
 
     public releaseData(pair: string, timeframe: string, mode: TradingMode) {
         const key = this.getCacheKey(pair, timeframe, mode);
@@ -88,9 +131,7 @@ class SharedKlineService {
             if (newCount === 0) {
                 console.log(`[SharedKlineService] Last reference to ${key} released. Cleaning up.`);
                 this.klineCache.delete(key);
-                // Note: We don't unsubscribe from WebSockets here as it's complex to manage
-                // shared subscriptions without a more advanced WebSocket manager.
-                // The primary goal is stopping redundant HTTP calls, which this achieves.
+                this.latestClosedCandleTimes.delete(key);
             }
         }
     }

@@ -529,6 +529,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             },
             entryContext: executionDetails.entryContext,
             entryAtr: executionDetails.entryContext.atr14,
+            tradeType: execSignal.tradeType,
         };
 
         const chatId = config.telegramChatId;

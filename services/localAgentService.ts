@@ -34,6 +34,7 @@ import { getTheSentinelSignal } from './agents/sentinel';
 import { getIchimokuTrendRiderSignal } from './agents/ichimokuTrendRider';
 import { getMomentumSwingTraderSignal } from './agents/momentumSwingTrader';
 import { getTheConductorSignal } from './agents/conductor';
+import { getAstraXSignal } from './agents/astrax';
 
 // Import all veto services
 import {
@@ -70,17 +71,24 @@ export async function getTradingSignal(
     const structureAnalysis = analyzeMarketStructure(findSwingPoints(klines, 5));
 
     let agentSignal: TradeSignal;
-    switch (agent.id) {
-        case 9: agentSignal = getQuantumScalperSignal(klines, config, htfContext); break;
-        case 11: agentSignal = getHistoricExpertSignal(klines, config, htfContext); break;
-        case 13: agentSignal = getChameleonSignal(klines, config, htfContext); break;
-        case 14: 
-            agentSignal = getTheSentinelSignal(klines, config, htfContext); 
-            break;
-        case 16: agentSignal = getIchimokuTrendRiderSignal(klines, config, htfContext); break;
-        case 17: agentSignal = getMomentumSwingTraderSignal(klines, config, htfContext); break;
-        case 18: agentSignal = getTheConductorSignal(klines, config, htfContext); break;
-        default: agentSignal = { signal: 'HOLD', reasons: ['Agent not found'] };
+
+    // --- Agent-Specific Signal Generation ---
+    if (agent.id === 19) { // AstraX is now fully self-contained
+        agentSignal = await getAstraXSignal(config);
+    } else {
+        // All other agents follow the traditional data-passing model
+        switch (agent.id) {
+            case 9: agentSignal = getQuantumScalperSignal(klines, config, htfContext); break;
+            case 11: agentSignal = getHistoricExpertSignal(klines, config, htfContext); break;
+            case 13: agentSignal = getChameleonSignal(klines, config, htfContext); break;
+            case 14: 
+                agentSignal = getTheSentinelSignal(klines, config, htfContext); 
+                break;
+            case 16: agentSignal = getIchimokuTrendRiderSignal(klines, config, htfContext); break;
+            case 17: agentSignal = getMomentumSwingTraderSignal(klines, config, htfContext); break;
+            case 18: agentSignal = getTheConductorSignal(klines, config, htfContext); break;
+            default: agentSignal = { signal: 'HOLD', reasons: ['Agent not found'] };
+        }
     }
     
     reasons.push(...agentSignal.reasons);
@@ -90,8 +98,8 @@ export async function getTradingSignal(
     }
 
     const lastKline = klines[klines.length-1];
-    const currentPrice = lastKline?.close;
-    if (!currentPrice) {
+    const currentPrice = livePrice || lastKline?.close;
+    if (!currentPrice || currentPrice <= 0) {
         return { signal: 'HOLD', reasons: ['Could not get current price for validation.'] };
     }
 

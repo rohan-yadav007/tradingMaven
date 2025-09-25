@@ -117,7 +117,7 @@ export const isObvTrending = (obvValues: number[], direction: 'bullish' | 'beari
     return direction === 'bullish' ? lastObv > lastSma : lastObv < lastSma;
 };
 
-export function calculateVwap(klines: Kline[]): (number | undefined)[] {
+export function calculateDailyVwap(klines: Kline[]): (number | undefined)[] {
     if (klines.length === 0) return [];
 
     const vwapValues: (number | undefined)[] = new Array(klines.length).fill(undefined);
@@ -149,6 +149,56 @@ export function calculateVwap(klines: Kline[]): (number | undefined)[] {
     }
     return vwapValues;
 }
+
+/**
+ * Calculates VWAP for specific time windows within a day (e.g., trading sessions).
+ * @param klines - The array of k-line data.
+ * @param sessionWindows - Array of session start/end hours in UTC. e.g., [{start: 0, end: 8}, {start: 8, end: 16}]
+ * @returns The VWAP for the current active session, or undefined if not in a session.
+ */
+export function calculateSessionVwap(klines: Kline[], sessionWindows: { start: number; end: number }[]): { vwap: number | undefined, session: string } {
+    if (klines.length === 0) return { vwap: undefined, session: 'N/A' };
+
+    const lastKline = klines[klines.length - 1];
+    const lastKlineDate = new Date(lastKline.time);
+    const currentDay = lastKlineDate.getUTCDate();
+    const currentMonth = lastKlineDate.getUTCMonth();
+    const currentYear = lastKlineDate.getUTCFullYear();
+    const currentHour = lastKlineDate.getUTCHours();
+
+    const activeSession = sessionWindows.find(s => currentHour >= s.start && currentHour < s.end);
+
+    if (!activeSession) {
+        return { vwap: undefined, session: 'Inactive' };
+    }
+
+    const sessionKlines = klines.filter(k => {
+        const d = new Date(k.time);
+        return d.getUTCFullYear() === currentYear &&
+               d.getUTCMonth() === currentMonth &&
+               d.getUTCDate() === currentDay &&
+               d.getUTCHours() >= activeSession.start &&
+               d.getUTCHours() < activeSession.end;
+    });
+
+    if (sessionKlines.length === 0) {
+        return { vwap: undefined, session: `${activeSession.start}-${activeSession.end}` };
+    }
+
+    let cumulativeTpVol = 0;
+    let cumulativeVol = 0;
+
+    for (const kline of sessionKlines) {
+        const typicalPrice = (kline.high + kline.low + kline.close) / 3;
+        const volume = kline.volume || 0;
+        cumulativeTpVol += typicalPrice * volume;
+        cumulativeVol += volume;
+    }
+
+    const vwap = cumulativeVol > 0 ? cumulativeTpVol / cumulativeVol : undefined;
+    return { vwap, session: `${activeSession.start}-${activeSession.end}` };
+}
+
 
 export function applyTimeframeSettings(config: BotConfig): BotConfig {
     const { agent, timeFrame, agentParams } = config;
@@ -312,8 +362,8 @@ export function captureMarketContext(klines: Kline[], htfKlines?: Kline[]): Part
         if (k.length >= 50) res.sma50 = getLast(SMA.calculate({ period: 50, values: c }));
         if (k.length >= 200) res.sma200 = getLast(SMA.calculate({ period: 200, values: c }));
         res.ichiCloud = getLast(IchimokuCloud.calculate({ conversionPeriod: 9, basePeriod: 26, spanPeriod: 52, displacement: 26, high: h, low: l })) as IchimokuCloudOutput | undefined;
-        res.lastCandlePattern = recognizeCandlestickPattern(k[k.length - 1], k[k.length - 2]) ?? undefined;
-        res.vwap = getLast(calculateVwap(k));
+        res.lastCandlePattern = recognizeCandlestickPattern(k[k.length - 1], k[k.length - 2]);
+        res.vwap = getLast(calculateDailyVwap(k));
         res.lastVolume = getLast(v);
         res.lastClose = getLast(c);
         return res;

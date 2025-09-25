@@ -44,6 +44,7 @@ export interface LiveTicker {
     pair: string;
     closePrice: number;
     highPrice: number;
+
     lowPrice: number;
     volume: number;
     quoteVolume: number;
@@ -269,6 +270,25 @@ export interface AgentParams {
     conductor_choppyTrendAdx?: number;
     conductor_choppyTrendThreshold?: number;
     conductor_structureWeightMultiplier?: number;
+    
+    // Agent 19: AstraX Super-Agent
+    astraX_baseThreshold?: number;
+    astraX_strongTrendAdx?: number;
+    astraX_chopAdx?: number;
+    astraX_regimeMultiplier_strong?: number;
+    astraX_regimeMultiplier_chop?: number;
+    astraX_structureLookback?: number;
+    astraX_microTfLookback?: number;
+    astraX_vwapDistanceMultiplier?: number;
+    astraX_liquiditySweepMultiplier?: number;
+    astraX_fundingRateMultiplier?: number;
+    astraX_holdingPeriodHours?: number;
+    // New scalping module parameters
+    astraX_scalp_bbPeriod?: number;
+    astraX_scalp_bbStdDev?: number;
+    astraX_scalp_stochRsiPeriod?: number;
+    astraX_scalp_stochRsiOversold?: number;
+    astraX_scalp_stochRsiOverbought?: number;
 
     // SMC Reversal Veto
     smc_divergenceLookback?: number;
@@ -316,6 +336,15 @@ export interface MarketDataContext {
     htf_trend?: 'bullish' | 'bearish' | 'neutral';
 }
 
+export interface AstraXAnalysis {
+    conviction: number; // -100 to 100
+    regime: 'Strong Trend' | 'Developing Trend' | 'Choppy Market';
+    threshold: number;
+    finalBullishScore: number;
+    finalBearishScore: number;
+    // Individual component scores are useful for debugging but less for UI
+}
+
 export interface TradeSignal {
     signal: 'BUY' | 'SELL' | 'HOLD';
     reasons: string[];
@@ -324,6 +353,8 @@ export interface TradeSignal {
     stopLossPrice?: number;
     sentinelAnalysis?: SentinelAnalysis;
     conductorAnalysis?: ConductorAnalysis;
+    astraXAnalysis?: AstraXAnalysis;
+    tradeType?: 'conviction' | 'scalp';
 }
 
 export interface TradeManagementSignal {
@@ -377,7 +408,6 @@ export interface BotConfig {
     takerFeeRate: number;
     entryTiming: 'immediate' | 'onNextCandle';
     telegramChatId?: string;
-    refreshInterval?: number;
     isMarketBreadthFilterEnabled?: boolean;
     isLiquidationFilterEnabled?: boolean;
     isConfirmationCandleEnabled?: boolean;
@@ -459,6 +489,8 @@ export interface Position {
     entryContext?: Partial<MarketDataContext>;
     exitContext?: Partial<MarketDataContext>;
     entryAtr?: number;
+    tradeType?: 'conviction' | 'scalp';
+    promotedFrom?: 'scalp';
 }
 
 export interface Trade extends Position {

@@ -68,6 +68,17 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
 
     const updateParam = (key: keyof AgentParams, value: number | boolean | string) => { onParamsChange({ ...params, [key]: value }); };
     switch (agent.id) {
+        case 19: return (<div className="space-y-4">
+             <ParamSlider label="Base Conviction Threshold" value={allParams.astraX_baseThreshold!} onChange={v => updateParam('astraX_baseThreshold', v)} min={25} max={75} step={1} />
+             <ParamSlider label="Strong Trend ADX" value={allParams.astraX_strongTrendAdx!} onChange={v => updateParam('astraX_strongTrendAdx', v)} min={25} max={40} step={1} />
+             <ParamSlider label="Chop Market ADX" value={allParams.astraX_chopAdx!} onChange={v => updateParam('astraX_chopAdx', v)} min={15} max={25} step={1} />
+             <ParamSlider label="Strong Trend Multiplier" value={allParams.astraX_regimeMultiplier_strong!} onChange={v => updateParam('astraX_regimeMultiplier_strong', v)} min={0.5} max={1.0} step={0.05} valueDisplay={v => `${v.toFixed(2)}x`} />
+             <ParamSlider label="Chop Market Multiplier" value={allParams.astraX_regimeMultiplier_chop!} onChange={v => updateParam('astraX_regimeMultiplier_chop', v)} min={1.0} max={1.5} step={0.05} valueDisplay={v => `${v.toFixed(2)}x`} />
+             <ParamSlider label="Structure Lookback" value={allParams.astraX_structureLookback!} onChange={v => updateParam('astraX_structureLookback', v)} min={5} max={15} step={1} />
+             <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-3 border-t border-slate-200 dark:border-slate-700">Advanced Adjustments</h4>
+             <ParamSlider label="Funding Rate Multiplier" value={allParams.astraX_fundingRateMultiplier!} onChange={v => updateParam('astraX_fundingRateMultiplier', v)} min={0} max={50} step={1} />
+             <ParamSlider label="Expected Holding Period" value={allParams.astraX_holdingPeriodHours!} onChange={v => updateParam('astraX_holdingPeriodHours', v)} min={1} max={48} step={1} valueDisplay={v => `${v} hrs`} />
+            </div>);
         case 9: return (<div className="space-y-4">
             <div className="flex flex-col gap-1.5">
                 <label className={formLabelClass}>Entry Mode</label>
@@ -657,6 +668,11 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     </div>
                 )}
                 {selectedAgent.id === 18 && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
+                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
+                    </div>
+                )}
+                {selectedAgent.id === 19 && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
                         <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
                     </div>

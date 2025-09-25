@@ -1,4 +1,5 @@
 
+
 import { Agent, AgentParams, WalletBalance } from './types';
 
 export const TRADING_PAIRS: string[] = [
@@ -39,6 +40,12 @@ export const getHigherTimeframe = (timeframe: string): string | undefined => {
 
 
 export const AGENTS: Agent[] = [
+    {
+        id: 19,
+        name: 'AstraX Super-Agent',
+        description: "A TF-agnostic, multi-pair, long-running agent that derives a unified market state from multiple timeframes to determine directional conviction and adaptive risk.",
+        indicators: ["Multi-Timeframe Analysis", "Market Structure", "VWAP", "Volume Profile"],
+    },
     {
         id: 18,
         name: 'The Conductor',
@@ -211,6 +218,25 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     conductor_choppyTrendThreshold: 82,
     conductor_structureWeightMultiplier: 1.25,
 
+    // Agent 19: AstraX Super-Agent
+    astraX_baseThreshold: 45,
+    astraX_strongTrendAdx: 30,
+    astraX_chopAdx: 20,
+    astraX_regimeMultiplier_strong: 0.7,
+    astraX_regimeMultiplier_chop: 1.3,
+    astraX_structureLookback: 8,
+    astraX_microTfLookback: 3,
+    astraX_vwapDistanceMultiplier: 10,
+    astraX_liquiditySweepMultiplier: 2.5,
+    astraX_fundingRateMultiplier: 25,
+    astraX_holdingPeriodHours: 8,
+    // New scalping module parameters
+    astraX_scalp_bbPeriod: 20,
+    astraX_scalp_bbStdDev: 2,
+    astraX_scalp_stochRsiPeriod: 14,
+    astraX_scalp_stochRsiOversold: 20,
+    astraX_scalp_stochRsiOverbought: 80,
+
     // SMC Reversal Veto
     smc_divergenceLookback: 12,
     smc_volumeMultiplier: 2.0,
@@ -342,6 +368,12 @@ export const MOMENTUM_SWING_TRADER_TIMEFRAME_SETTINGS: Record<string, Partial<Ag
     '1h':  { mst_emaFastPeriod: 50, mst_emaSlowPeriod: 200 },
 };
 
+export const ASTRAX_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
+    '1m':  {}, '3m':  {}, '5m':  {},
+    '15m': {}, '30m': {}, '1h':  {},
+    '4h':  {}, '1d':  {},
+};
+
 /**
  * A helper function to get the correct, timeframe-specific parameters for a given agent.
  * This now merges general SMC settings with agent-specific settings.
@@ -362,6 +394,7 @@ export const getAgentTimeframeSettings = (agentId: number, timeFrame: string): P
         case 16: agentSettings = ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 17: agentSettings = MOMENTUM_SWING_TRADER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 18: agentSettings = CONDUCTOR_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+        case 19: agentSettings = ASTRAX_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
     }
 
     return { ...vetoSettings, ...smcSettings, ...agentSettings };

@@ -3,8 +3,9 @@
 import { TradingMode, Agent, Kline, AgentParams, Position, ADXOutput, MACDOutput, BollingerBandsOutput, StochasticRSIOutput, TradeManagementSignal, BotConfig, IchimokuCloudOutput } from '../types';
 import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, IchimokuCloud, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, dragonflydoji, gravestonedoji, hammerpattern, hangingman, morningstar, piercingline, shootingstar, eveningstar } from 'technicalindicators';
 import * as constants from '../constants';
-import { calculateSupportResistance, findSwingPoints } from './chartAnalysisService';
-import { Supertrend, applyTimeframeSettings, getLast, getPenultimate, captureMarketContext, detectRsiDivergence, calculateVwap } from './agents/agentUtils';
+import { calculateSupportResistance, findSwingPoints, analyzeMarketStructure } from './chartAnalysisService';
+// FIX: Changed import from non-existent 'calculateVwap' to 'calculateDailyVwap'.
+import { Supertrend, applyTimeframeSettings, getLast, getPenultimate, captureMarketContext, detectRsiDivergence, calculateDailyVwap } from './agents/agentUtils';
 import { detectSmcReversalPattern } from './vetoService';
 
 const MIN_STOP_LOSS_PERCENT = 0.5; // Minimum 0.5% SL distance from entry price.
@@ -185,6 +186,29 @@ export function getInitialAgentTargets(
                 agentStopLoss = fallbackStop();
             }
             break;
+            
+        case 19: // AstraX
+            {
+                const swingPoints = findSwingPoints(klines, params.astraX_structureLookback || 8);
+                const lastSwing = isLong 
+                    ? swingPoints.filter(p => p.type === 'low').pop()
+                    : swingPoints.filter(p => p.type === 'high').pop();
+                
+                let structureSl: number | undefined;
+                if (lastSwing) {
+                    const buffer = currentAtr * 0.25;
+                    structureSl = isLong ? lastSwing.price - buffer : lastSwing.price + buffer;
+                }
+
+                const atrSl = isLong ? entryPrice - (currentAtr * atrMultiplier) : entryPrice + (currentAtr * atrMultiplier);
+                
+                if (structureSl) {
+                    agentStopLoss = isLong ? Math.min(structureSl, atrSl) : Math.max(structureSl, atrSl);
+                } else {
+                    agentStopLoss = atrSl;
+                }
+                break;
+            }
 
         default:
             agentStopLoss = fallbackStop();
@@ -246,7 +270,7 @@ export function getInitialAgentTargets(
 
     const maxLossInDollars = config.investmentAmount * (config.maxMarginLossPercent / 100);
     const positionValue = mode === TradingMode.USDSM_Futures ? config.investmentAmount * leverage : config.investmentAmount;
-    const positionSize = positionValue / entryPrice;
+    const positionSize = (entryPrice > 0) ? positionValue / entryPrice : 0;
 
     if (positionSize > 0) {
         const priceDistanceForMaxLoss = maxLossInDollars / positionSize;
@@ -320,7 +344,7 @@ export function validateTradeProfitability(
 
     // Check 2: The trade must be profitable enough to cover fees.
     const positionValue = config.investmentAmount * (config.mode === TradingMode.USDSM_Futures ? config.leverage : 1);
-    const tradeSize = positionValue / entryPrice;
+    const tradeSize = (entryPrice > 0) ? positionValue / entryPrice : 0;
     if (tradeSize > 0) {
         const roundTripFee = positionValue * config.takerFeeRate * 2;
         const feeInPrice = roundTripFee / tradeSize;
@@ -726,6 +750,40 @@ export function getAgentExitSignal(
             }
             break;
 
+        case 19: // AstraX
+            {
+                // Tier 3: Critical reversal (ChoCH on main TF) -> Aggressive close
+                const swingPoints = findSwingPoints(klines, params.astraX_structureLookback || 8);
+                const structure = analyzeMarketStructure(swingPoints);
+                if ((isLong && structure.lastSignal === 'ChoCH_Bearish') || (!isLong && structure.lastSignal === 'ChoCH_Bullish')) {
+                    newStopLoss = isLong ? currentPrice * 0.999 : currentPrice * 1.001;
+                    reasons.push('AstraX Tier 3: Market structure broke against position.');
+                    break;
+                }
+        
+                // Tier 2: Actionable warning (divergence)
+                const rsiValues = RSI.calculate({ period: 14, values: closes });
+                if (detectRsiDivergence(klines, rsiValues, position.direction, 14)) {
+                     const breakevenPrice = isLong
+                        ? position.entryPrice * (1 + position.takerFeeRate) / (1 - position.takerFeeRate)
+                        : position.entryPrice * (1 - position.takerFeeRate) / (1 + position.takerFeeRate);
+                    newStopLoss = breakevenPrice;
+                    reasons.push('AstraX Tier 2: Divergence detected, moving SL to Break-even.');
+                    break;
+                }
+        
+                // Tier 1: Soft deterioration (momentum fade) -> Trail with fast EMA
+                const macd = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false })) as MACDOutput | undefined;
+                if ((isLong && macd?.histogram && macd.histogram < 0) || (!isLong && macd?.histogram && macd.histogram > 0)) {
+                    const fastEma = getLast(EMA.calculate({ period: 9, values: closes }));
+                    if (fastEma) {
+                        newStopLoss = fastEma;
+                        reasons.push('AstraX Tier 1: Momentum faded, trailing with fast EMA.');
+                    }
+                }
+            }
+            break;
+
         default:
             break;
     }
@@ -910,7 +968,7 @@ export function getTradeGuardianSignal(
     }
 
     // --- Check 4: VWAP/EMA Guardian ---
-    const vwap = getLast(calculateVwap(klines));
+    const vwap = getLast(calculateDailyVwap(klines));
     const ema = getLast(EMA.calculate({ period: params.vwapEmaPeriod, values: closes }));
     if (vwap && ema) {
         if (isLong && currentPrice < vwap && currentPrice < ema) {

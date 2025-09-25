@@ -293,63 +293,65 @@ async function runBacktest(
                     const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(currentMainTimeframeView, currentPrice, isLong ? 'LONG' : 'SHORT', config);
                     
                     if (validateTradeProfitability(currentPrice, agentStopLoss, takeProfitPrice, isLong ? 'LONG' : 'SHORT', config).isValid) {
-                        const posVal = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
-                        const size = posVal / currentPrice;
+                        if (currentPrice > 0) { // Safety check against division by zero
+                            const posVal = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
+                            const size = posVal / currentPrice;
 
-                        const initialRiskInDollars = Math.abs(currentPrice - agentStopLoss) * size;
-                        const maxAllowedRiskInDollars = config.investmentAmount * (config.maxMarginLossPercent / 100);
+                            const initialRiskInDollars = Math.abs(currentPrice - agentStopLoss) * size;
+                            const maxAllowedRiskInDollars = config.investmentAmount * (config.maxMarginLossPercent / 100);
 
-                        if (!config.isInitialRiskVetoEnabled || initialRiskInDollars <= maxAllowedRiskInDollars) {
-                             const risk = Math.abs(currentPrice - agentStopLoss);
-                             const reward = Math.abs(takeProfitPrice - currentPrice);
-                             const initialRiskRewardRatio = risk > 0 ? reward / risk : 0;
-                             const entryContext = captureMarketContext(currentMainTimeframeView, htfHistorySlice);
+                            if (!config.isInitialRiskVetoEnabled || initialRiskInDollars <= maxAllowedRiskInDollars) {
+                                const risk = Math.abs(currentPrice - agentStopLoss);
+                                const reward = Math.abs(takeProfitPrice - currentPrice);
+                                const initialRiskRewardRatio = risk > 0 ? reward / risk : 0;
+                                const entryContext = captureMarketContext(currentMainTimeframeView, htfHistorySlice);
 
-                            openPosition = {
-                                id: currentTime, botId: 'backtest', orderId: null, pair: config.pair, mode: config.mode,
-                                executionMode: 'paper', direction: isLong ? 'LONG' : 'SHORT', entryPrice: currentPrice,
-                                size, investmentAmount: config.investmentAmount, leverage: config.leverage,
-                                entryTime: new Date(currentTime).toISOString(), entryReason: signal.reasons.join(' '),
-                                agentName: config.agent.name, takeProfitPrice, stopLossPrice,
-                                initialTakeProfitPrice: takeProfitPrice, initialStopLossPrice: agentStopLoss,
-                                pricePrecision: config.pricePrecision, timeFrame: config.timeFrame, marginType: config.marginType,
-                                initialStopLossReason: slReason, activeStopLossReason: slReason, isBreakevenSet: false,
-                                profitLockTier: 0, profitSpikeTier: 0, aggressiveTrailTier: 0, peakPrice: currentPrice,
-                                troughPrice: currentPrice, proactiveLossCheckTriggered: false, candlesSinceEntry: 0,
-                                hasBeenProfitable: false, takerFeeRate: config.takerFeeRate,
-                                initialRiskInPrice: Math.abs(currentPrice - agentStopLoss),
-                                initialRiskRewardRatio, agentParamsSnapshot: config.agentParams,
-                                botConfigSnapshot: {
-                                    isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
-                                    isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
-                                    isMinRrEnabled: config.isMinRrEnabled,
-                                    invalidationSensitivity: config.invalidationSensitivity,
-                                    isAgentTrailEnabled: config.isAgentTrailEnabled,
-                                    isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
-                                    isMarketCohesionEnabled: config.isMarketCohesionEnabled,
-                                    isVwapConfirmationEnabled: config.isVwapConfirmationEnabled,
-                                    isBtcConfirmationEnabled: config.isBtcConfirmationEnabled,
-                                    isBtcCorrelationVetoEnabled: config.isBtcCorrelationVetoEnabled,
-                                    btcConfirmationThreshold: config.btcConfirmationThreshold,
-                                    isVolumeFilterEnabled: config.isVolumeFilterEnabled,
-                                    isAdxFilterEnabled: config.isAdxFilterEnabled,
-                                    isExhaustionFilterEnabled: config.isExhaustionFilterEnabled,
-                                    isSmcVetoEnabled: config.isSmcVetoEnabled,
-                                    isSrAnalysisEnabled: config.isSrAnalysisEnabled,
-                                    isCandlestickConfirmationEnabled: config.isCandlestickConfirmationEnabled,
-                                    isMarketStructureVetoEnabled: config.isMarketStructureVetoEnabled,
-                                    htfTimeFrame: config.htfTimeFrame,
-                                    entryTiming: config.entryTiming,
-                                    isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,
-                                    aggressiveTrailMode: config.aggressiveTrailMode,
-                                    isInitialRiskVetoEnabled: config.isInitialRiskVetoEnabled,
-                                    isMarketBreadthFilterEnabled: config.isMarketBreadthFilterEnabled,
-                                    isLiquidationFilterEnabled: config.isLiquidationFilterEnabled,
-                                    isConfirmationCandleEnabled: config.isConfirmationCandleEnabled,
-                                    isMomentumConcordanceEnabled: config.isMomentumConcordanceEnabled,
-                                    finalEntryFailSafe: config.finalEntryFailSafe,
-                                }, entryContext, entryAtr: entryContext.atr14,
-                            };
+                                openPosition = {
+                                    id: currentTime, botId: 'backtest', orderId: null, pair: config.pair, mode: config.mode,
+                                    executionMode: 'paper', direction: isLong ? 'LONG' : 'SHORT', entryPrice: currentPrice,
+                                    size, investmentAmount: config.investmentAmount, leverage: config.leverage,
+                                    entryTime: new Date(currentTime).toISOString(), entryReason: signal.reasons.join(' '),
+                                    agentName: config.agent.name, takeProfitPrice, stopLossPrice,
+                                    initialTakeProfitPrice: takeProfitPrice, initialStopLossPrice: agentStopLoss,
+                                    pricePrecision: config.pricePrecision, timeFrame: config.timeFrame, marginType: config.marginType,
+                                    initialStopLossReason: slReason, activeStopLossReason: slReason, isBreakevenSet: false,
+                                    profitLockTier: 0, profitSpikeTier: 0, aggressiveTrailTier: 0, peakPrice: currentPrice,
+                                    troughPrice: currentPrice, proactiveLossCheckTriggered: false, candlesSinceEntry: 0,
+                                    hasBeenProfitable: false, takerFeeRate: config.takerFeeRate,
+                                    initialRiskInPrice: Math.abs(currentPrice - agentStopLoss),
+                                    initialRiskRewardRatio, agentParamsSnapshot: config.agentParams,
+                                    botConfigSnapshot: {
+                                        isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
+                                        isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
+                                        isMinRrEnabled: config.isMinRrEnabled,
+                                        invalidationSensitivity: config.invalidationSensitivity,
+                                        isAgentTrailEnabled: config.isAgentTrailEnabled,
+                                        isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
+                                        isMarketCohesionEnabled: config.isMarketCohesionEnabled,
+                                        isVwapConfirmationEnabled: config.isVwapConfirmationEnabled,
+                                        isBtcConfirmationEnabled: config.isBtcConfirmationEnabled,
+                                        isBtcCorrelationVetoEnabled: config.isBtcCorrelationVetoEnabled,
+                                        btcConfirmationThreshold: config.btcConfirmationThreshold,
+                                        isVolumeFilterEnabled: config.isVolumeFilterEnabled,
+                                        isAdxFilterEnabled: config.isAdxFilterEnabled,
+                                        isExhaustionFilterEnabled: config.isExhaustionFilterEnabled,
+                                        isSmcVetoEnabled: config.isSmcVetoEnabled,
+                                        isSrAnalysisEnabled: config.isSrAnalysisEnabled,
+                                        isCandlestickConfirmationEnabled: config.isCandlestickConfirmationEnabled,
+                                        isMarketStructureVetoEnabled: config.isMarketStructureVetoEnabled,
+                                        htfTimeFrame: config.htfTimeFrame,
+                                        entryTiming: config.entryTiming,
+                                        isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,
+                                        aggressiveTrailMode: config.aggressiveTrailMode,
+                                        isInitialRiskVetoEnabled: config.isInitialRiskVetoEnabled,
+                                        isMarketBreadthFilterEnabled: config.isMarketBreadthFilterEnabled,
+                                        isLiquidationFilterEnabled: config.isLiquidationFilterEnabled,
+                                        isConfirmationCandleEnabled: config.isConfirmationCandleEnabled,
+                                        isMomentumConcordanceEnabled: config.isMomentumConcordanceEnabled,
+                                        finalEntryFailSafe: config.finalEntryFailSafe,
+                                    }, entryContext, entryAtr: entryContext.atr14,
+                                };
+                            }
                         }
                     }
                 }

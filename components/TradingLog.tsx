@@ -132,6 +132,11 @@ const TradeRow: React.FC<{ trade: Trade; isOpen: boolean; onToggle: () => void; 
                             {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                         </span>
                         <div className="font-semibold">{trade.pair}</div>
+                        {trade.promotedFrom === 'scalp' && (
+                            <div className="text-xs font-bold px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300" title="Promoted from a scalp trade">
+                                PRO
+                            </div>
+                        )}
                         <div className={`text-xs font-bold px-2 py-0.5 rounded-full ${executionModeTag.bg} ${executionModeTag.text_color}`}>{executionModeTag.text}</div>
                         <div className="text-xs font-semibold bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded-full">{trade.timeFrame}</div>
                     </div>
@@ -159,6 +164,14 @@ const TradeRow: React.FC<{ trade: Trade; isOpen: boolean; onToggle: () => void; 
                                         <p>MAE: <span className="font-semibold text-rose-500">${trade.mae?.toFixed(2) ?? 'N/A'}</span></p>
                                     </div>
                                 } />
+                                { (trade.tradeType || trade.promotedFrom) && (
+                                    <DetailItem label="Trade Type" value={
+                                        <div className="flex items-center gap-2">
+                                            <span className="capitalize font-semibold">{trade.tradeType || 'conviction'}</span>
+                                            {trade.promotedFrom && <span className="text-xs bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded-full">Promoted</span>}
+                                        </div>
+                                    } />
+                                )}
                             </div>
                             <div className="space-y-4">
                                <MarketContextDisplay title="Entry Context" context={trade.entryContext} />

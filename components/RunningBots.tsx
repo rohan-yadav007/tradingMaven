@@ -396,7 +396,7 @@ const BotLog: React.FC<{ log: BotLogEntry[] }> = ({ log }) => {
 
     useEffect(() => {
         if (logContainerRef.current) {
-            logContainerRef.current.scrollTop = 0;
+            logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
         }
     }, [log]);
 
@@ -410,8 +410,10 @@ const BotLog: React.FC<{ log: BotLogEntry[] }> = ({ log }) => {
         }
     };
     return (
-        <div ref={logContainerRef} className="bg-slate-900 text-white font-mono text-xs rounded-lg p-3 h-[28rem] overflow-y-auto">
-            {log.map((entry, index) => (
+        <div ref={logContainerRef} className="bg-slate-900 text-white font-mono text-xs rounded-lg p-3 h-[28rem] flex flex-col-reverse overflow-y-auto">
+            {/* The empty div is a trick to make scroll anchoring work better with flex-reverse */}
+            <div></div>
+            {log.slice().reverse().map((entry, index) => (
                 <div key={index} className="flex">
                     <span className="text-slate-500 mr-2">{new Date(entry.timestamp).toLocaleTimeString()}</span>
                     <span className={getLogColor(entry.type)}>{entry.message}</span>
@@ -460,8 +462,6 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
     
     const roundTripFee = position ? position.entryPrice * position.size * TAKER_FEE_RATE * 2 : 0;
     
-    const REFRESH_INTERVALS = [10, 20, 30, 60];
-
     const errorReason = useMemo(() => {
         if (bot.status === BotStatus.Error && bot.analysis && bot.analysis.reasons.length > 0) {
             return bot.analysis.reasons[0].replace('CRITICAL: ', '').replace('Please close manually on Binance to prevent loss. Reason: ', '');
@@ -564,22 +564,13 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
                             <div>
                                 <div className="flex justify-between items-center mb-2">
                                      <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base">AI Analysis</h4>
-                                    <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-700/50 px-2 py-0.5 rounded-full">
-                                        <RefreshIcon className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-                                        <select
-                                            value={bot.config.refreshInterval ?? 60}
-                                            onChange={(e) => {
-                                                actions.onUpdateBotConfig(bot.id, { refreshInterval: Number(e.target.value) });
-                                                actions.onRefreshBotAnalysis(bot.id);
-                                            }}
-                                            className="bg-transparent text-xs font-semibold text-slate-500 dark:text-slate-400 focus:outline-none border-none p-0.5"
-                                            title="Change AI analysis refresh interval"
-                                        >
-                                            {REFRESH_INTERVALS.map(interval => (
-                                                <option key={interval} value={interval}>{interval}s</option>
-                                            ))}
-                                        </select>
-                                    </div>
+                                     <button
+                                        onClick={() => actions.onRefreshBotAnalysis(bot.id)}
+                                        className="p-1.5 bg-slate-100 dark:bg-slate-700/50 rounded-full text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
+                                        title="Refresh analysis now"
+                                     >
+                                        <RefreshIcon className="w-4 h-4"/>
+                                     </button>
                                 </div>
                                  <AnalysisPreview agent={bot.config.agent} agentParams={bot.config.agentParams} analysis={bot.analysis} isLoading={false} />
                             </div>

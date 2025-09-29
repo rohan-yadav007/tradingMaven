@@ -114,7 +114,8 @@ export const isObvTrending = (obvValues: number[], direction: 'bullish' | 'beari
     const lastObv = getLast(obvValues);
     const lastSma = getLast(obvSma);
     if (lastObv === undefined || lastSma === undefined) return false;
-    return direction === 'bullish' ? lastObv > lastSma : lastObv < lastSma;
+    // FIX: Explicitly cast to number for comparison
+    return direction === 'bullish' ? (lastObv as number) > (lastSma as number) : (lastObv as number) < (lastSma as number);
 };
 
 export function calculateDailyVwap(klines: Kline[]): (number | undefined)[] {
@@ -149,56 +150,6 @@ export function calculateDailyVwap(klines: Kline[]): (number | undefined)[] {
     }
     return vwapValues;
 }
-
-/**
- * Calculates VWAP for specific time windows within a day (e.g., trading sessions).
- * @param klines - The array of k-line data.
- * @param sessionWindows - Array of session start/end hours in UTC. e.g., [{start: 0, end: 8}, {start: 8, end: 16}]
- * @returns The VWAP for the current active session, or undefined if not in a session.
- */
-export function calculateSessionVwap(klines: Kline[], sessionWindows: { start: number; end: number }[]): { vwap: number | undefined, session: string } {
-    if (klines.length === 0) return { vwap: undefined, session: 'N/A' };
-
-    const lastKline = klines[klines.length - 1];
-    const lastKlineDate = new Date(lastKline.time);
-    const currentDay = lastKlineDate.getUTCDate();
-    const currentMonth = lastKlineDate.getUTCMonth();
-    const currentYear = lastKlineDate.getUTCFullYear();
-    const currentHour = lastKlineDate.getUTCHours();
-
-    const activeSession = sessionWindows.find(s => currentHour >= s.start && currentHour < s.end);
-
-    if (!activeSession) {
-        return { vwap: undefined, session: 'Inactive' };
-    }
-
-    const sessionKlines = klines.filter(k => {
-        const d = new Date(k.time);
-        return d.getUTCFullYear() === currentYear &&
-               d.getUTCMonth() === currentMonth &&
-               d.getUTCDate() === currentDay &&
-               d.getUTCHours() >= activeSession.start &&
-               d.getUTCHours() < activeSession.end;
-    });
-
-    if (sessionKlines.length === 0) {
-        return { vwap: undefined, session: `${activeSession.start}-${activeSession.end}` };
-    }
-
-    let cumulativeTpVol = 0;
-    let cumulativeVol = 0;
-
-    for (const kline of sessionKlines) {
-        const typicalPrice = (kline.high + kline.low + kline.close) / 3;
-        const volume = kline.volume || 0;
-        cumulativeTpVol += typicalPrice * volume;
-        cumulativeVol += volume;
-    }
-
-    const vwap = cumulativeVol > 0 ? cumulativeTpVol / cumulativeVol : undefined;
-    return { vwap, session: `${activeSession.start}-${activeSession.end}` };
-}
-
 
 export function applyTimeframeSettings(config: BotConfig): BotConfig {
     const { agent, timeFrame, agentParams } = config;
@@ -374,8 +325,9 @@ export function captureMarketContext(klines: Kline[], htfKlines?: Kline[]): Part
         for (const key in htfCtxRaw) (context as any)[`htf_${key}`] = (htfCtxRaw as any)[key];
         if(htfKlines.length >= 200) {
             const lastClose = getLast(htfKlines.map(x => x.close))!;
-            const ema50 = getLast(EMA.calculate({ period: 50, values: htfKlines.map(x => x.close) }))!;
-            const ema200 = getLast(EMA.calculate({ period: 200, values: htfKlines.map(x => x.close) }))!;
+            // FIX: Explicitly cast results to number for comparison
+            const ema50 = getLast(EMA.calculate({ period: 50, values: htfKlines.map(x => x.close) })) as number;
+            const ema200 = getLast(EMA.calculate({ period: 200, values: htfKlines.map(x => x.close) })) as number;
             if (lastClose > ema50 && ema50 > ema200) context.htf_trend = 'bullish';
             else if (lastClose < ema50 && ema50 < ema200) context.htf_trend = 'bearish';
             else context.htf_trend = 'neutral';

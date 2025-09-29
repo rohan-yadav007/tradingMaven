@@ -8,7 +8,6 @@ import { useTradingConfigState, useTradingConfigActions } from '../contexts/Trad
 interface SidebarProps {
     onStartBot: () => void;
     klines: Kline[];
-    livePrice: number;
     botsToCreateCount: number;
     selectedPairsCount: number;
     theme: 'light' | 'dark';
@@ -53,7 +52,6 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                 {activeTab === 'trade' && (
                     <ControlPanel
                         klines={props.klines}
-                        livePrice={props.livePrice}
                         botsToCreateCount={props.botsToCreateCount}
                         selectedPairsCount={props.selectedPairsCount}
                         onStartBot={props.onStartBot}

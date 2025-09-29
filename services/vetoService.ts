@@ -240,10 +240,11 @@ export function getHardConcordanceVetos(
         const lastLtfCandle = microKlines[microKlines.length - 1];
         const prevLtfCandle = microKlines[microKlines.length - 2];
         if (prevLtfCandle) {
-            const volumeSma = getLast(SMA.calculate({ period: 20, values: ltfVolumes }));
+            const volumeSma = getLast(SMA.calculate({ period: 20, values: ltfVolumes })) as number | undefined;
             const lastVolume = lastLtfCandle.volume || 0;
-            const hasHighVolume = volumeSma && lastVolume > volumeSma;
             const bodySize = Math.abs(lastLtfCandle.close - lastLtfCandle.open);
+            // FIX: Defined 'hasHighVolume' which was used without being declared.
+            const hasHighVolume = volumeSma && lastVolume > volumeSma * params.veto_concordanceVolumeMinMultiplier;
 
             if (signalDirection === 'BUY' && lastLtfCandle.high > prevLtfCandle.high && lastLtfCandle.close < prevLtfCandle.high) {
                 const upperWick = lastLtfCandle.high - Math.max(lastLtfCandle.open, lastLtfCandle.close);

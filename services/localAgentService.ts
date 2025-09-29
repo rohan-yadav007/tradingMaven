@@ -74,7 +74,7 @@ export async function getTradingSignal(
 
     // --- Agent-Specific Signal Generation ---
     if (agent.id === 19) { // AstraX is now fully self-contained
-        agentSignal = await getAstraXSignal(config);
+        agentSignal = await getAstraXSignal(config, immediateKlines, livePrice);
     } else {
         // All other agents follow the traditional data-passing model
         switch (agent.id) {
@@ -86,7 +86,7 @@ export async function getTradingSignal(
                 break;
             case 16: agentSignal = getIchimokuTrendRiderSignal(klines, config, htfContext); break;
             case 17: agentSignal = getMomentumSwingTraderSignal(klines, config, htfContext); break;
-            case 18: agentSignal = getTheConductorSignal(klines, config, htfContext); break;
+            case 18: agentSignal = getTheConductorSignal(klines, config, htfContext, ltfKlines); break;
             default: agentSignal = { signal: 'HOLD', reasons: ['Agent not found'] };
         }
     }
@@ -218,7 +218,6 @@ export async function getTradingSignal(
     if (config.isMomentumConcordanceEnabled) {
         const livePriceForVeto = livePrice || currentPrice;
         const ltfTimeframe = getMicroTimeframe(config.timeFrame);
-        // FIX: Pass the raw `immediateKlines` (1-minute data) for the most accurate high-fidelity check.
         const hardVeto = getHardConcordanceVetos(klines, livePriceForVeto, agentSignal.signal, config, immediateKlines, ltfTimeframe);
         if (hardVeto.veto) {
             return { signal: 'HOLD', reasons: [...reasons, hardVeto.reason] };

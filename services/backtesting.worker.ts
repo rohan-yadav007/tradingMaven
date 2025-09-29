@@ -2,10 +2,10 @@
 
 
 
-import { Kline, BotConfig, BacktestResult, Trade, AgentParams, Position, TradingMode, OptimizationResultItem } from '../types';
+import { Kline, BotConfig, BacktestResult, Trade, AgentParams, Position, TradingMode, OptimizationResultItem, BotConfigSnapshot } from '../types';
 import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getTradeGuardianSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext, getAdaptiveTakeProfit } from './localAgentService';
 import * as constants from '../constants';
-import * as binanceService from './binanceService';
+import { ATR } from 'technicalindicators';
 
 // --- Worker-local Helper Functions ---
 
@@ -72,412 +72,283 @@ function formatDuration(ms: number): string {
     const days = Math.floor(totalSeconds / 86400);
     const hours = Math.floor((totalSeconds % 86400) / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = totalSeconds % 60;
+    const seconds = Math.floor(totalSeconds % 60);
+
     if (days > 0) return `${days}d ${hours}h`;
     if (hours > 0) return `${hours}h ${minutes}m`;
     if (minutes > 0) return `${minutes}m ${seconds}s`;
     return `${seconds}s`;
 }
 
-function generateParamCombinations(ranges: Record<string, (number | boolean | string)[]>): AgentParams[] {
-    const keys = Object.keys(ranges) as (keyof AgentParams)[];
-    if (keys.length === 0) return [{}];
 
-    const combinations: AgentParams[] = [];
-    const recurse = (index: number, currentParams: AgentParams) => {
-        if (index === keys.length) {
-            combinations.push(currentParams);
-            return;
-        }
-        const key = keys[index];
-        const values = ranges[key]!;
-        for (const value of values) {
-            recurse(index + 1, { ...currentParams, [key]: value });
-        }
-    };
-    recurse(0, {});
-    return combinations;
-}
-
-function calculateResults(trades: Trade[], equityCurve: number[], startingCapital: number): BacktestResult {
-    const totalTrades = trades.length;
-    if (totalTrades === 0) {
-        return { trades: [], totalPnl: 0, winRate: 0, totalTrades: 0, wins: 0, losses: 0, breakEvens: 0, maxDrawdown: 0, profitFactor: 0, sharpeRatio: 0, averageTradeDuration: 'N/A' };
-    }
-    let wins = 0, losses = 0, breakEvens = 0, grossProfit = 0, grossLoss = 0, totalPnl = 0;
-    for (const trade of trades) {
-        totalPnl += trade.pnl;
-        if (trade.pnl > 0) { wins++; grossProfit += trade.pnl; } 
-        else if (trade.pnl < 0) { losses++; grossLoss += trade.pnl; } 
-        else { breakEvens++; }
-    }
-    const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
-    const profitFactor = Math.abs(grossLoss) > 0 ? grossProfit / Math.abs(grossLoss) : Infinity;
-    let peakEquity = -Infinity, maxDrawdown = 0;
-    for (const equity of equityCurve) {
-        if (equity > peakEquity) peakEquity = equity;
-        const drawdown = peakEquity - equity;
-        if (drawdown > maxDrawdown) maxDrawdown = drawdown;
-    }
-    const totalDurationMs = trades.reduce((acc, trade) => acc + (new Date(trade.exitTime).getTime() - new Date(trade.entryTime).getTime()), 0);
-    const averageTradeDuration = formatDuration(totalTrades > 0 ? totalDurationMs / totalTrades : 0);
-    const returns = trades.map(t => t.pnl / t.investmentAmount);
-    const avgReturn = returns.reduce((acc, r) => acc + r, 0) / returns.length;
-    const stdDev = Math.sqrt(returns.map(r => Math.pow(r - avgReturn, 2)).reduce((acc, v) => acc + v, 0) / returns.length);
-    const sharpeRatio = stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(252) : 0;
-    return { trades, totalPnl, winRate, totalTrades, wins, losses, breakEvens, maxDrawdown, profitFactor, sharpeRatio, averageTradeDuration };
-}
-
-
-// --- Core Logic (Now accepts pre-fetched HTF klines) ---
-
-async function runBacktest(
-    allMicroKlines: Kline[],
-    config: BotConfig,
-    allHtfKlines?: Kline[],
-    allEthBtcKlines?: Kline[],
-): Promise<BacktestResult> {
-    
-    // --- Initialization ---
-    let openPosition: SimulatedPosition | null = null;
+async function simulateBot(baseKlines: Kline[], config: BotConfig, htfKlines?: Kline[]): Promise<BacktestResult> {
     const trades: Trade[] = [];
-    const equityCurve: number[] = [];
-    const STARTING_CAPITAL = 10000;
-    let equity = STARTING_CAPITAL;
-    const minMainCandles = 200;
+    let openPosition: SimulatedPosition | null = null;
+    let balance = config.investmentAmount;
+    let peakBalance = balance;
+    let maxDrawdown = 0;
+
+    const aggregatedKlines = aggregateKlines(baseKlines, config.timeFrame);
+    const htfAggregatedKlines = htfKlines ? aggregateKlines(htfKlines, config.htfTimeFrame === 'auto' ? constants.getHigherTimeframe(config.timeFrame) || config.timeFrame : config.htfTimeFrame) : undefined;
+
+    const getHtfKlinesForTimestamp = (timestamp: number) => {
+        if (!htfAggregatedKlines) return undefined;
+        return htfAggregatedKlines.filter(k => k.time <= timestamp);
+    }
     
-    const mainTimeframeMs = getTimeframeDuration(config.timeFrame);
-    
-    const mainTimeframeKlines: Kline[] = [];
-    let currentAggKline: Kline | null = null;
+    // Warm-up period for indicators
+    const startIdx = 200;
+    if (aggregatedKlines.length < startIdx) {
+        throw new Error("Not enough kline data for a reliable backtest.");
+    }
 
-    const closePosition = (exitPrice: number, exitReason: string, exitTime: number, klinesForContext: Kline[], htfKlinesForContext?: Kline[]): void => {
-        if (!openPosition) return;
-        const isLong = openPosition.direction === 'LONG';
-        const grossPnl = (exitPrice - openPosition.entryPrice) * openPosition.size * (isLong ? 1 : -1);
-        const entryValue = openPosition.entryPrice * openPosition.size;
-        const exitValue = exitPrice * openPosition.size;
-        const fees = (entryValue + exitValue) * openPosition.takerFeeRate;
-        const netPnl = grossPnl - fees;
-        equity += netPnl;
-        const mfePrice = openPosition.peakPrice ?? openPosition.entryPrice;
-        const maePrice = openPosition.troughPrice ?? openPosition.entryPrice;
-        const mfe = Math.abs(mfePrice - openPosition.entryPrice) * openPosition.size;
-        const mae = Math.abs(maePrice - openPosition.entryPrice) * openPosition.size;
-        const exitContext = captureMarketContext(klinesForContext, htfKlinesForContext);
+    for (let i = startIdx; i < aggregatedKlines.length; i++) {
+        const currentKline = aggregatedKlines[i];
+        const klinesForAnalysis = aggregatedKlines.slice(0, i + 1);
+        const currentPrice = currentKline.close;
+        const currentHtfKlines = getHtfKlinesForTimestamp(currentKline.time);
 
-        const finalTrade: Trade = {
-            ...openPosition,
-            id: trades.length + 1,
-            exitPrice,
-            exitTime: new Date(exitTime).toISOString(),
-            pnl: netPnl,
-            exitReason,
-            mfe,
-            mae,
-            exitContext,
-            hasBeenProfitable: netPnl > 0,
-        };
-        trades.push(finalTrade);
-        openPosition = null;
-    };
-
-    // --- Main Simulation Loop ---
-    for (let i = 1; i < allMicroKlines.length; i++) {
-        const microKline = allMicroKlines[i];
-        const currentPrice = microKline.close;
-        const currentTime = microKline.time;
-
-        // --- PHASE 1: CANDLE & STATE AGGREGATION ---
-        const timeframeStart = Math.floor(microKline.time / mainTimeframeMs) * mainTimeframeMs;
-        let isNewMainCandle = false;
-
-        if (!currentAggKline || timeframeStart !== currentAggKline.time) {
-            if (currentAggKline) {
-                mainTimeframeKlines.push({ ...currentAggKline, isFinal: true });
-                if (mainTimeframeKlines.length > minMainCandles + 50) { 
-                    mainTimeframeKlines.shift();
-                }
-            }
-            isNewMainCandle = true;
-            currentAggKline = {
-                time: timeframeStart, open: microKline.open, high: microKline.high, low: microKline.low,
-                close: microKline.close, volume: microKline.volume || 0, isFinal: false,
-            };
-        } else {
-            currentAggKline.high = Math.max(currentAggKline.high, microKline.high);
-            currentAggKline.low = Math.min(currentAggKline.low, microKline.low); // CRITICAL FIX: Was 'kline.low' which is undefined.
-            currentAggKline.close = microKline.close;
-            currentAggKline.volume = (currentAggKline.volume || 0) + (microKline.volume || 0);
-        }
-        
-        const currentMainTimeframeView = [...mainTimeframeKlines, currentAggKline];
-        if (currentMainTimeframeView.length < minMainCandles) {
-            equityCurve.push(equity);
-            continue; // Not enough history yet
-        }
-
-        const htfHistorySlice = allHtfKlines ? allHtfKlines.filter(k => k.time <= currentTime) : undefined;
-        const ethBtcHistorySlice = allEthBtcKlines ? allEthBtcKlines.filter(k => k.time <= currentTime) : undefined;
-
-        // --- PHASE 2: POSITION MANAGEMENT ---
+        // --- POSITION MANAGEMENT ---
         if (openPosition) {
+            let positionClosed = false;
             const isLong = openPosition.direction === 'LONG';
-            
-            // 2a. Check for immediate SL/TP hit on the 1-minute candle's range
-            let exitReason: string | null = null;
-            let exitPrice: number | null = null;
+            const slHitPrice = isLong ? openPosition.stopLossPrice : currentKline.high;
+            const tpHitPrice = isLong ? currentKline.high : openPosition.takeProfitPrice;
 
-            if (isLong) {
-                if (microKline.low <= openPosition.stopLossPrice) { exitPrice = openPosition.stopLossPrice; exitReason = 'Stop Loss Hit'; }
-                else if (microKline.high >= openPosition.takeProfitPrice) { exitPrice = openPosition.takeProfitPrice; exitReason = 'Take Profit Hit'; }
-            } else { // SHORT
-                if (microKline.high >= openPosition.stopLossPrice) { exitPrice = openPosition.stopLossPrice; exitReason = 'Stop Loss Hit'; }
-                else if (microKline.low <= openPosition.takeProfitPrice) { exitPrice = openPosition.takeProfitPrice; exitReason = 'Take Profit Hit'; }
+            // Check SL hit
+            if ((isLong && currentKline.low <= openPosition.stopLossPrice) || (!isLong && currentKline.high >= openPosition.stopLossPrice)) {
+                const exitPrice = openPosition.stopLossPrice;
+                const pnl = (exitPrice - openPosition.entryPrice) * openPosition.size * (isLong ? 1 : -1);
+                const newTrade: Trade = { ...openPosition, exitPrice, exitTime: new Date(currentKline.time).toISOString(), pnl, exitReason: 'Stop Loss Hit' };
+                trades.push(newTrade);
+                balance += pnl;
+                openPosition = null;
+                positionClosed = true;
             }
-            
-            if (exitReason && exitPrice !== null) {
-                if(exitReason === 'Stop Loss Hit' && (openPosition.activeStopLossReason.includes('Trail') || openPosition.activeStopLossReason.includes('Secure') || openPosition.activeStopLossReason === 'Breakeven')) {
-                    exitReason = 'Trailing Stop Hit';
-                }
-                closePosition(exitPrice, exitReason, currentTime, currentMainTimeframeView, htfHistorySlice);
-            } else {
-                 // 2b. If not closed, run on-tick trailing and state management logic
-                let positionState = { ...openPosition };
-                positionState.peakPrice = isLong ? Math.max(positionState.peakPrice, currentPrice) : Math.min(positionState.peakPrice, currentPrice);
-                positionState.troughPrice = isLong ? Math.min(positionState.troughPrice, currentPrice) : Math.max(positionState.troughPrice, currentPrice);
-                if(isNewMainCandle) { positionState.candlesSinceEntry++; }
-
-                // Gather all potential new stop losses from various trailing mechanisms
-                const stopCandidates: { price: number; reason: Position['activeStopLossReason']; newState?: Partial<Position> }[] = [ { price: positionState.stopLossPrice, reason: positionState.activeStopLossReason } ];
-                
-                if (config.invalidationSensitivity !== 'low') { const spikeSignal = getProfitSpikeSignal(positionState, currentPrice); if (spikeSignal.newStopLoss) stopCandidates.push({ price: spikeSignal.newStopLoss, reason: 'Profit Secure', newState: spikeSignal.newState }); }
-                const aggressiveTrailSignal = getAggressiveRangeTrailSignal(positionState, currentPrice); if (aggressiveTrailSignal.newStopLoss) stopCandidates.push({ price: aggressiveTrailSignal.newStopLoss, reason: 'Profit Secure', newState: aggressiveTrailSignal.newState });
-                if (config.isBreakevenTrailEnabled) { const breakevenSignal = getMandatoryBreakevenSignal(positionState, currentPrice); if (breakevenSignal.newStopLoss) stopCandidates.push({ price: breakevenSignal.newStopLoss, reason: 'Breakeven', newState: breakevenSignal.newState }); }
-                if (config.isUniversalProfitTrailEnabled) { const profitSecureSignal = getMultiStageProfitSecureSignal(positionState, currentPrice); if (profitSecureSignal.newStopLoss) stopCandidates.push({ price: profitSecureSignal.newStopLoss, reason: 'Profit Secure', newState: profitSecureSignal.newState }); }
-                if (config.isAgentTrailEnabled) { const agentTrailSignal = getAgentExitSignal(positionState, currentMainTimeframeView, currentPrice, config); if (agentTrailSignal.newStopLoss) stopCandidates.push({ price: agentTrailSignal.newStopLoss, reason: 'Agent Trail', newState: agentTrailSignal.newState }); }
-                
-                // Determine the best (tightest valid) stop loss from all candidates
-                let bestCandidate = stopCandidates[0];
-                for (const candidate of stopCandidates) {
-                    const isValid = isLong ? candidate.price < currentPrice : candidate.price > currentPrice;
-                    const isTighter = isLong ? candidate.price > bestCandidate.price : candidate.price < bestCandidate.price;
-                    if (isValid && isTighter) bestCandidate = candidate;
-                }
-
-                // Apply the new state if it has changed
-                if (bestCandidate.price !== positionState.stopLossPrice) {
-                    if (bestCandidate.newState) positionState = { ...positionState, ...(bestCandidate.newState as Partial<Position>) };
-                    positionState.stopLossPrice = bestCandidate.price;
-                    positionState.activeStopLossReason = bestCandidate.reason;
-                }
-                openPosition = positionState;
+            // Check TP hit
+            else if ((isLong && currentKline.high >= openPosition.takeProfitPrice) || (!isLong && currentKline.low <= openPosition.takeProfitPrice)) {
+                const exitPrice = openPosition.takeProfitPrice;
+                const pnl = (exitPrice - openPosition.entryPrice) * openPosition.size * (isLong ? 1 : -1);
+                const newTrade: Trade = { ...openPosition, exitPrice, exitTime: new Date(currentKline.time).toISOString(), pnl, exitReason: 'Take Profit Hit' };
+                trades.push(newTrade);
+                balance += pnl;
+                openPosition = null;
+                positionClosed = true;
             }
-        }
 
-        // --- PHASE 3: ENTRY LOGIC ---
-        if (!openPosition) {
-            const shouldCheckForEntry = (config.entryTiming === 'immediate') || (config.entryTiming === 'onNextCandle' && isNewMainCandle);
-
-            if (shouldCheckForEntry) {
-                const microTimeframe = constants.getMicroTimeframe(config.timeFrame);
-                let ltfKlines: Kline[] | undefined;
-                 if (config.isMomentumConcordanceEnabled || config.agent.id === 14) {
-                    ltfKlines = aggregateKlines(allMicroKlines.slice(0, i + 1), microTimeframe);
+            // If not closed by SL/TP, run trailing logic
+            if (!positionClosed && openPosition) {
+                 if (config.isTradeGuardianEnabled) {
+                    const microKlines = baseKlines.filter(k => k.time <= currentKline.time && k.time > aggregatedKlines[i-1].time);
+                    const guardianSignal = getTradeGuardianSignal(openPosition, klinesForAnalysis, microKlines, currentPrice);
+                     if (guardianSignal.action === 'close') {
+                        const pnl = (currentPrice - openPosition.entryPrice) * openPosition.size * (isLong ? 1 : -1);
+                        const newTrade: Trade = { ...openPosition, exitPrice: currentPrice, exitTime: new Date(currentKline.time).toISOString(), pnl, exitReason: guardianSignal.reason || 'Trade Guardian' };
+                        trades.push(newTrade);
+                        balance += pnl;
+                        openPosition = null;
+                        positionClosed = true;
+                    }
                 }
 
-                const signal = await getTradingSignal(config.agent, currentMainTimeframeView, config, htfHistorySlice, allMicroKlines.slice(0, i + 1), ltfKlines, ethBtcHistorySlice, currentPrice);
-                
-                if (signal.signal !== 'HOLD') {
-                    const isLong = signal.signal === 'BUY';
-                    const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(currentMainTimeframeView, currentPrice, isLong ? 'LONG' : 'SHORT', config);
-                    
-                    if (validateTradeProfitability(currentPrice, agentStopLoss, takeProfitPrice, isLong ? 'LONG' : 'SHORT', config).isValid) {
-                        if (currentPrice > 0) { // Safety check against division by zero
-                            const posVal = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
-                            const size = posVal / currentPrice;
-
-                            const initialRiskInDollars = Math.abs(currentPrice - agentStopLoss) * size;
-                            const maxAllowedRiskInDollars = config.investmentAmount * (config.maxMarginLossPercent / 100);
-
-                            if (!config.isInitialRiskVetoEnabled || initialRiskInDollars <= maxAllowedRiskInDollars) {
-                                const risk = Math.abs(currentPrice - agentStopLoss);
-                                const reward = Math.abs(takeProfitPrice - currentPrice);
-                                const initialRiskRewardRatio = risk > 0 ? reward / risk : 0;
-                                const entryContext = captureMarketContext(currentMainTimeframeView, htfHistorySlice);
-
-                                openPosition = {
-                                    id: currentTime, botId: 'backtest', orderId: null, pair: config.pair, mode: config.mode,
-                                    executionMode: 'paper', direction: isLong ? 'LONG' : 'SHORT', entryPrice: currentPrice,
-                                    size, investmentAmount: config.investmentAmount, leverage: config.leverage,
-                                    entryTime: new Date(currentTime).toISOString(), entryReason: signal.reasons.join(' '),
-                                    agentName: config.agent.name, takeProfitPrice, stopLossPrice,
-                                    initialTakeProfitPrice: takeProfitPrice, initialStopLossPrice: agentStopLoss,
-                                    pricePrecision: config.pricePrecision, timeFrame: config.timeFrame, marginType: config.marginType,
-                                    initialStopLossReason: slReason, activeStopLossReason: slReason, isBreakevenSet: false,
-                                    profitLockTier: 0, profitSpikeTier: 0, aggressiveTrailTier: 0, peakPrice: currentPrice,
-                                    troughPrice: currentPrice, proactiveLossCheckTriggered: false, candlesSinceEntry: 0,
-                                    hasBeenProfitable: false, takerFeeRate: config.takerFeeRate,
-                                    initialRiskInPrice: Math.abs(currentPrice - agentStopLoss),
-                                    initialRiskRewardRatio, agentParamsSnapshot: config.agentParams,
-                                    botConfigSnapshot: {
-                                        isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
-                                        isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
-                                        isMinRrEnabled: config.isMinRrEnabled,
-                                        invalidationSensitivity: config.invalidationSensitivity,
-                                        isAgentTrailEnabled: config.isAgentTrailEnabled,
-                                        isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
-                                        isMarketCohesionEnabled: config.isMarketCohesionEnabled,
-                                        isVwapConfirmationEnabled: config.isVwapConfirmationEnabled,
-                                        isBtcConfirmationEnabled: config.isBtcConfirmationEnabled,
-                                        isBtcCorrelationVetoEnabled: config.isBtcCorrelationVetoEnabled,
-                                        btcConfirmationThreshold: config.btcConfirmationThreshold,
-                                        isVolumeFilterEnabled: config.isVolumeFilterEnabled,
-                                        isAdxFilterEnabled: config.isAdxFilterEnabled,
-                                        isExhaustionFilterEnabled: config.isExhaustionFilterEnabled,
-                                        isSmcVetoEnabled: config.isSmcVetoEnabled,
-                                        isSrAnalysisEnabled: config.isSrAnalysisEnabled,
-                                        isCandlestickConfirmationEnabled: config.isCandlestickConfirmationEnabled,
-                                        isMarketStructureVetoEnabled: config.isMarketStructureVetoEnabled,
-                                        htfTimeFrame: config.htfTimeFrame,
-                                        entryTiming: config.entryTiming,
-                                        isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,
-                                        aggressiveTrailMode: config.aggressiveTrailMode,
-                                        isInitialRiskVetoEnabled: config.isInitialRiskVetoEnabled,
-                                        isMarketBreadthFilterEnabled: config.isMarketBreadthFilterEnabled,
-                                        isLiquidationFilterEnabled: config.isLiquidationFilterEnabled,
-                                        isConfirmationCandleEnabled: config.isConfirmationCandleEnabled,
-                                        isMomentumConcordanceEnabled: config.isMomentumConcordanceEnabled,
-                                        finalEntryFailSafe: config.finalEntryFailSafe,
-                                    }, entryContext, entryAtr: entryContext.atr14,
-                                };
+                if (!positionClosed && openPosition) {
+                    const managementSignals = [
+                        getAgentExitSignal(openPosition, klinesForAnalysis, currentPrice, config),
+                        getMultiStageProfitSecureSignal(openPosition, currentPrice),
+                        getMandatoryBreakevenSignal(openPosition, currentPrice),
+                        getProfitSpikeSignal(openPosition, currentPrice),
+                        getAggressiveRangeTrailSignal(openPosition, currentPrice),
+                    ];
+    
+                    let bestNewStop = isLong ? -Infinity : Infinity;
+                    let bestReason: Position['activeStopLossReason'] = openPosition.activeStopLossReason;
+    
+                    for (const signal of managementSignals) {
+                        if (signal.newStopLoss !== undefined) {
+                            if ((isLong && signal.newStopLoss > bestNewStop) || (!isLong && signal.newStopLoss < bestNewStop)) {
+                                bestNewStop = signal.newStopLoss;
+                                bestReason = signal.activeStopLossReason || bestReason;
                             }
                         }
+                    }
+    
+                    if (bestNewStop !== -Infinity && bestNewStop !== Infinity) {
+                        openPosition.stopLossPrice = bestNewStop;
+                        openPosition.activeStopLossReason = bestReason;
+                    }
+    
+                    const adaptiveTpSignal = getAdaptiveTakeProfit(openPosition, klinesForAnalysis, currentPrice);
+                    if (adaptiveTpSignal.newTakeProfit) {
+                        openPosition.takeProfitPrice = adaptiveTpSignal.newTakeProfit;
                     }
                 }
             }
         }
-        
-        // --- 4. Update Equity Curve ---
-        let currentPnl = openPosition ? (currentPrice - openPosition.entryPrice) * openPosition.size * (openPosition.direction === 'LONG' ? 1 : -1) : 0;
-        equityCurve.push(equity + currentPnl);
-    }
-    
-    // --- 5. Finalize ---
-    if (openPosition) {
-        const lastKline = getLast(allMicroKlines)!;
-        const lastHistory = [...mainTimeframeKlines, currentAggKline!];
-        const lastHtfHistory = allHtfKlines ? allHtfKlines.filter(k => k.time <= lastKline.time) : undefined;
-        closePosition(lastKline.close, 'End of backtest', lastKline.time, lastHistory, lastHtfHistory);
-    }
-    
-    return calculateResults(trades, equityCurve, STARTING_CAPITAL);
-}
 
+        // --- ENTRY LOGIC ---
+        if (!openPosition) {
+            // Note: In backtesting, we can't use immediateKlines or ltfKlines in getTradingSignal
+            // as it would be looking into the future. We can only use the data up to the current candle `i`.
+            const signal = await getTradingSignal(config.agent, klinesForAnalysis, config, currentHtfKlines, undefined, undefined, undefined, currentPrice);
+            if (signal.signal !== 'HOLD') {
+                const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(klinesForAnalysis, currentPrice, signal.signal === 'BUY' ? 'LONG' : 'SHORT', config);
+                
+                const validation = validateTradeProfitability(currentPrice, agentStopLoss, takeProfitPrice, signal.signal === 'BUY' ? 'LONG' : 'SHORT', config);
 
-async function runOptimization(
-    klines: Kline[],
-    baseConfig: BotConfig,
-    onProgress: (progress: { percent: number; combinations: number }) => void,
-    htfKlines?: Kline[],
-    ethBtcKlines?: Kline[]
-): Promise<OptimizationResultItem[]> {
-    const agentId = baseConfig.agent.id;
-    let paramRanges: Record<string, (number | boolean | string)[]> = {};
+                if (validation.isValid) {
+                    const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
+                    const size = positionValue / currentPrice;
+                    const initialRiskRewardRatio = Math.abs(takeProfitPrice - currentPrice) / Math.abs(currentPrice - stopLossPrice);
 
-    if (agentId === 9) { // Quantum Scalper
-        paramRanges = {
-            qsc_adxThreshold: [22, 25, 28],
-            qsc_trendScoreThreshold: [70, 75, 80],
-            qsc_entryMode: ['breakout', 'pullback'],
-        };
-    } else if (agentId === 11) { // Historic Expert
-        paramRanges = {
-            he_trendSmaPeriod: [30, 40, 50],
-            he_fastEmaPeriod: [9, 12],
-            he_slowEmaPeriod: [21, 26],
-        };
-    } else if (agentId === 13) { // The Chameleon
-        paramRanges = {
-            ch_adxThreshold: [20, 22, 25],
-            ch_fastEmaPeriod: [9, 12],
-            ch_slowEmaPeriod: [21, 26],
-        };
-    } else if (agentId === 14) { // The Sentinel
-        paramRanges = {
-            sentinel_entryThreshold: [70, 78, 85],
-            sentinel_swingLookback: [5, 8, 12],
-            sentinel_structureWeight: [40, 50, 60],
-            sentinel_momentumWeight: [25, 30, 35],
-            sentinel_contextWeight: [15, 20, 25]
-        };
-    } else if (agentId === 17) { // Momentum Swing Trader
-        paramRanges = {
-            mst_emaFastPeriod: [40, 50, 60],
-            mst_emaSlowPeriod: [150, 200, 250],
-        };
-    } else if (agentId === 18) { // The Conductor
-         paramRanges = {
-            conductor_convictionThreshold: [65, 75, 85],
-            conductor_swingLookback: [5, 8, 12],
-            conductor_structureWeight: [30, 40, 50],
-            conductor_momentumWeight: [20, 30, 40],
-        };
-    }
-
-    const combinations = generateParamCombinations(paramRanges);
-    const results: OptimizationResultItem[] = [];
-    let completed = 0;
-
-    for (const params of combinations) {
-        const configWithParams: BotConfig = {
-            ...baseConfig,
-            agentParams: { ...baseConfig.agentParams, ...params },
-        };
-        const result = await runBacktest(klines, configWithParams, htfKlines, ethBtcKlines);
-        
-        if (result.totalPnl > 0 && result.totalTrades > 2) {
-            results.push({ params, result });
+                    openPosition = {
+                        id: Date.now() + i,
+                        botId: 'backtest',
+                        orderId: null,
+                        pair: config.pair,
+                        mode: config.mode,
+                        executionMode: 'paper',
+                        direction: signal.signal === 'BUY' ? 'LONG' : 'SHORT',
+                        entryPrice: currentPrice,
+                        size,
+                        investmentAmount: config.investmentAmount,
+                        leverage: config.leverage,
+                        marginType: config.marginType,
+                        entryTime: new Date(currentKline.time).toISOString(),
+                        entryReason: signal.reasons.join('\n'),
+                        agentName: config.agent.name,
+                        takeProfitPrice: takeProfitPrice,
+                        stopLossPrice: stopLossPrice,
+                        initialTakeProfitPrice: takeProfitPrice,
+                        initialStopLossPrice: agentStopLoss,
+                        initialRiskInPrice: Math.abs(currentPrice - agentStopLoss),
+                        initialStopLossReason: slReason,
+                        activeStopLossReason: slReason,
+                        pricePrecision: config.pricePrecision,
+                        timeFrame: config.timeFrame,
+                        isBreakevenSet: false,
+                        profitLockTier: 0,
+                        profitSpikeTier: 0,
+                        aggressiveTrailTier: 0,
+                        peakPrice: currentPrice,
+                        troughPrice: currentPrice,
+                        candlesSinceEntry: 0,
+                        hasBeenProfitable: false,
+                        takerFeeRate: config.takerFeeRate,
+                        initialRiskRewardRatio,
+                        proactiveLossCheckTriggered: false,
+                        botConfigSnapshot: {
+                            isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
+                            isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
+                            isMinRrEnabled: config.isMinRrEnabled,
+                            invalidationSensitivity: config.invalidationSensitivity,
+                            isAgentTrailEnabled: config.isAgentTrailEnabled,
+                            isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
+                            isMarketCohesionEnabled: config.isMarketCohesionEnabled,
+                            isVwapConfirmationEnabled: config.isVwapConfirmationEnabled,
+                            isBtcConfirmationEnabled: config.isBtcConfirmationEnabled,
+                            isBtcCorrelationVetoEnabled: config.isBtcCorrelationVetoEnabled,
+                            btcConfirmationThreshold: config.btcConfirmationThreshold,
+                            isVolumeFilterEnabled: config.isVolumeFilterEnabled,
+                            isAdxFilterEnabled: config.isAdxFilterEnabled,
+                            isExhaustionFilterEnabled: config.isExhaustionFilterEnabled,
+                            isSmcVetoEnabled: config.isSmcVetoEnabled,
+                            isSrAnalysisEnabled: config.isSrAnalysisEnabled,
+                            isCandlestickConfirmationEnabled: config.isCandlestickConfirmationEnabled,
+                            isMarketStructureVetoEnabled: config.isMarketStructureVetoEnabled,
+                            htfTimeFrame: config.htfTimeFrame,
+                            entryTiming: config.entryTiming,
+                            isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,
+                            aggressiveTrailMode: config.aggressiveTrailMode,
+                            isInitialRiskVetoEnabled: config.isInitialRiskVetoEnabled,
+                            isMarketBreadthFilterEnabled: config.isMarketBreadthFilterEnabled,
+                            isLiquidationFilterEnabled: config.isLiquidationFilterEnabled,
+                            isConfirmationCandleEnabled: config.isConfirmationCandleEnabled,
+                            isMomentumConcordanceEnabled: config.isMomentumConcordanceEnabled,
+                            isTradeGuardianEnabled: config.isTradeGuardianEnabled,
+                            finalEntryFailSafe: config.finalEntryFailSafe,
+                        },
+                        entryContext: captureMarketContext(klinesForAnalysis, currentHtfKlines),
+                        // FIX: Explicitly cast result to number to satisfy the type checker.
+                        entryAtr: getLast(ATR.calculate({high: klinesForAnalysis.map(k=>k.high), low: klinesForAnalysis.map(k=>k.low), close: klinesForAnalysis.map(k=>k.close), period: 14})) as number,
+                    };
+                }
+            }
         }
         
-        completed++;
-        onProgress({ percent: (completed / combinations.length) * 100, combinations: combinations.length });
+        peakBalance = Math.max(peakBalance, balance);
+        const drawdown = (peakBalance - balance) / peakBalance;
+        maxDrawdown = Math.max(maxDrawdown, drawdown);
+    }
+    
+    // Close any open position at the end of the backtest
+    if (openPosition) {
+        const exitPrice = getLast(aggregatedKlines)!.close;
+        const pnl = (exitPrice - openPosition.entryPrice) * openPosition.size * (openPosition.direction === 'LONG' ? 1 : -1);
+        const newTrade: Trade = { ...openPosition, exitPrice, exitTime: new Date(getLast(aggregatedKlines)!.time).toISOString(), pnl, exitReason: 'End of Backtest' };
+        trades.push(newTrade);
+        balance += pnl;
     }
 
-    results.sort((a, b) => {
-        const scoreA = a.result.totalPnl * (a.result.sharpeRatio || 0.1);
-        const scoreB = b.result.totalPnl * (b.result.sharpeRatio || 0.1);
-        return scoreB - scoreA;
-    });
+    // --- FINAL METRICS CALCULATION ---
+    const totalPnl = trades.reduce((sum, trade) => sum + trade.pnl, 0);
+    const wins = trades.filter(t => t.pnl > 0).length;
+    const losses = trades.filter(t => t.pnl < 0).length;
+    const breakEvens = trades.length - wins - losses;
+    const winRate = trades.length > 0 ? (wins / trades.length) * 100 : 0;
+    const grossProfit = trades.filter(t => t.pnl > 0).reduce((sum, t) => sum + t.pnl, 0);
+    const grossLoss = Math.abs(trades.filter(t => t.pnl < 0).reduce((sum, t) => sum + t.pnl, 0));
+    const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : Infinity;
 
-    return results.slice(0, 20);
+    const tradeDurations = trades.map(t => new Date(t.exitTime).getTime() - new Date(t.entryTime).getTime());
+    const averageTradeDurationMs = tradeDurations.length > 0 ? tradeDurations.reduce((a, b) => a + b, 0) / tradeDurations.length : 0;
+
+    const pnlValues = trades.map(t => t.pnl);
+    const avgPnl = totalPnl / trades.length || 0;
+    const pnlStdDev = Math.sqrt(pnlValues.map(x => Math.pow(x - avgPnl, 2)).reduce((a, b) => a + b, 0) / trades.length) || 0;
+    const sharpeRatio = pnlStdDev > 0 ? (avgPnl / pnlStdDev) * Math.sqrt(trades.length) : 0;
+
+    return {
+        trades,
+        totalPnl,
+        winRate,
+        totalTrades: trades.length,
+        wins,
+        losses,
+        breakEvens,
+        maxDrawdown: maxDrawdown * 100,
+        profitFactor,
+        sharpeRatio,
+        averageTradeDuration: formatDuration(averageTradeDurationMs),
+    };
 }
 
-self.onmessage = async (event: MessageEvent) => {
+
+const runBacktestInWorker = async (id: number, payload: { klines: Kline[], config: BotConfig, htfKlines?: Kline[] }) => {
+    try {
+        const result = await simulateBot(payload.klines, payload.config, payload.htfKlines);
+        postMessage({ type: 'result', id, payload: result });
+    } catch (e: any) {
+        postMessage({ type: 'error', id, error: e.message });
+    }
+};
+
+const runOptimizationInWorker = (id: number, payload: { klines: Kline[], config: BotConfig, htfKlines?: Kline[] }) => {
+    // This is a placeholder for a real optimization function.
+    // A real implementation would generate parameter combinations and run simulateBot for each.
+    // For now, it will just return an error.
+    postMessage({ type: 'error', id, error: "Optimization feature not yet fully implemented in worker." });
+};
+
+
+self.onmessage = (event: MessageEvent) => {
     const { type, id, payload } = event.data;
 
-    const onProgress = (progress: any) => {
-        self.postMessage({ type: 'progress', id, progress });
-    };
-
-    try {
-        if (type === 'runBacktest' || type === 'runOptimization') {
-            let allEthBtcKlines: Kline[] | undefined;
-            if (payload.config.isBtcCorrelationVetoEnabled) {
-                const startTime = payload.klines[0].time;
-                const endTime = payload.klines[payload.klines.length - 1].time;
-                allEthBtcKlines = await binanceService.fetchFullKlines('ETHBTC', '1m', startTime, endTime, TradingMode.Spot);
-            }
-
-            if (type === 'runBacktest') {
-                const result = await runBacktest(payload.klines, payload.config, payload.htfKlines, allEthBtcKlines);
-                self.postMessage({ type: 'result', id, payload: result });
-            } else { // runOptimization
-                const result = await runOptimization(payload.klines, payload.config, onProgress, payload.htfKlines, allEthBtcKlines);
-                self.postMessage({ type: 'result', id, payload: result });
-            }
-        }
-    } catch (e: any) {
-        self.postMessage({ type: 'error', id, error: e.message });
+    switch (type) {
+        case 'runBacktest':
+            runBacktestInWorker(id, payload);
+            break;
+        case 'runOptimization':
+            runOptimizationInWorker(id, payload);
+            break;
     }
 };

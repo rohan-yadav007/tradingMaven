@@ -174,42 +174,20 @@ export function getInitialAgentTargets(
             }
         
         case 18: // The Conductor: SL based on last valid swing point.
+        case 19: // AstraX: "Breathing Room" SL
             const swingPoints = findSwingPoints(klines, params.conductor_swingLookback);
             const lastSwing = isLong 
                 ? swingPoints.filter(p => p.type === 'low').pop()
                 : swingPoints.filter(p => p.type === 'high').pop();
             
             if (lastSwing) {
-                const atrBuffer = currentAtr * params.conductor_slAtrMultiplier;
+                const atrBuffer = currentAtr * (agent.id === 19 ? 0.25 : params.conductor_slAtrMultiplier);
                 agentStopLoss = isLong ? lastSwing.price - atrBuffer : lastSwing.price + atrBuffer;
             } else {
                 agentStopLoss = fallbackStop();
             }
             break;
             
-        case 19: // AstraX
-            {
-                const swingPoints = findSwingPoints(klines, params.astraX_structureLookback || 8);
-                const lastSwing = isLong 
-                    ? swingPoints.filter(p => p.type === 'low').pop()
-                    : swingPoints.filter(p => p.type === 'high').pop();
-                
-                let structureSl: number | undefined;
-                if (lastSwing) {
-                    const buffer = currentAtr * 0.25;
-                    structureSl = isLong ? lastSwing.price - buffer : lastSwing.price + buffer;
-                }
-
-                const atrSl = isLong ? entryPrice - (currentAtr * atrMultiplier) : entryPrice + (currentAtr * atrMultiplier);
-                
-                if (structureSl) {
-                    agentStopLoss = isLong ? Math.min(structureSl, atrSl) : Math.max(structureSl, atrSl);
-                } else {
-                    agentStopLoss = atrSl;
-                }
-                break;
-            }
-
         default:
             agentStopLoss = fallbackStop();
             break;
@@ -1005,7 +983,7 @@ export function getTradeGuardianSignal(
         }
     }
 
-    if (strikes.size >= 5) {
+    if (strikes.size >= 3) {
         return { action: 'close', reason: `Trade Guardian Exit: ${[...strikes].join('; ')}` };
     }
 

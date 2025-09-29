@@ -1,11 +1,16 @@
 // services/agents/conductor.ts
 
-import { Kline, BotConfig, MarketDataContext, TradeSignal, ConductorAnalysis, ADXOutput } from '../../types';
-import { RSI, ATR, MACD, SMA, ADX } from 'technicalindicators';
-import { getLast, recognizeCandlestickPattern, detectRsiDivergence } from './agentUtils';
+import { Kline, BotConfig, MarketDataContext, TradeSignal, ConductorAnalysis, ADXOutput, MACDOutput } from '../../types';
+import { RSI, ATR, MACD, SMA, ADX, EMA } from 'technicalindicators';
+import { getLast, recognizeCandlestickPattern, detectRsiDivergence, analyzeMicroMarketStructure } from './agentUtils';
 import { findSwingPoints, analyzeMarketStructure, calculateSupportResistance } from '../chartAnalysisService';
 
-export const getTheConductorSignal = (klines: Kline[], config: BotConfig, htfContext?: MarketDataContext): TradeSignal => {
+export const getTheConductorSignal = (
+    klines: Kline[], 
+    config: BotConfig, 
+    htfContext?: MarketDataContext,
+    microKlines?: Kline[], // Added for mBOS
+): TradeSignal => {
     const params = config.agentParams as Required<typeof config.agentParams>;
     const minKlines = 50;
     if (klines.length < minKlines) {
@@ -61,7 +66,7 @@ export const getTheConductorSignal = (klines: Kline[], config: BotConfig, htfCon
     // --- Pillar 2: Momentum Quality ---
     const rsiValues = RSI.calculate({ period: 14, values: closes });
     const macdValues = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
-    const lastMacd = getLast(macdValues);
+    const lastMacd = getLast(macdValues) as MACDOutput | undefined;
     let momentumBullish = 0;
     let momentumBearish = 0;
 
@@ -80,7 +85,7 @@ export const getTheConductorSignal = (klines: Kline[], config: BotConfig, htfCon
 
     // B. Acceleration check (short-term momentum signal)
     if (lastMacd?.histogram && macdValues.length > 2) {
-        const prevMacd = macdValues[macdValues.length - 2];
+        const prevMacd = macdValues[macdValues.length - 2] as MACDOutput;
         if (lastMacd.histogram > 0 && prevMacd.histogram !== undefined && lastMacd.histogram > prevMacd.histogram) {
             accelBull = 40;
             reasons.push(`✅ Momentum: Accelerating Bullish`);
@@ -91,14 +96,8 @@ export const getTheConductorSignal = (klines: Kline[], config: BotConfig, htfCon
         }
     }
     
-    // C. Combine scores: conflicting signals will negate each other
-    momentumBullish = divBull + accelBull - accelBear;
-    momentumBearish = divBear + accelBear - accelBull;
-
-    // D. Final scores cannot be negative
-    momentumBullish = Math.max(0, momentumBullish);
-    momentumBearish = Math.max(0, momentumBearish);
-
+    momentumBullish = Math.max(0, divBull + accelBull - accelBear);
+    momentumBearish = Math.max(0, divBear + accelBear - accelBull);
 
     // --- Pillar 3: Liquidity & Order Flow Context ---
     const srLevels = calculateSupportResistance(klines, 15, 0.01);
@@ -117,34 +116,55 @@ export const getTheConductorSignal = (klines: Kline[], config: BotConfig, htfCon
         reasons.push(`✅ Context: Price at key resistance level.`);
     }
 
-    // --- Pillar 4: Price Action Confirmation ---
+    // --- Pillar 4: Entry Trigger Module (High-Precision Confirmation) ---
     const lastKline = klines[klines.length - 1];
-    const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes }))!;
-    const candlePattern = recognizeCandlestickPattern(lastKline, klines[klines.length - 2]);
+    const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes })) as number | undefined;
     let confirmationBullish = 0;
     let confirmationBearish = 0;
 
-    if (lastKline.volume && lastKline.volume > volumeSma * params.conductor_volumeMultiplier) {
-        if (lastKline.close > lastKline.open) {
-            confirmationBullish += 60;
-            reasons.push(`✅ Confirmation: High bullish volume.`);
-        } else {
-            confirmationBearish += 60;
-            reasons.push(`✅ Confirmation: High bearish volume.`);
+    // A. Candlestick Velocity (30%)
+    const hasHighVolume = lastKline.volume && volumeSma && lastKline.volume > volumeSma * params.conductor_volumeMultiplier;
+    const candlePattern = recognizeCandlestickPattern(lastKline, klines[klines.length - 2]);
+    if (candlePattern && hasHighVolume) {
+        const range = lastKline.high - lastKline.low;
+        if (range > 0) {
+            const closePosition = (lastKline.close - lastKline.low) / range;
+            if (candlePattern.type === 'bullish' && closePosition > params.conductor_entryTrigger_candleVelocity) {
+                confirmationBullish += 30;
+                reasons.push(`✅ Trigger: High-velocity bullish candle (${candlePattern.name}).`);
+            } else if (candlePattern.type === 'bearish' && closePosition < (1 - params.conductor_entryTrigger_candleVelocity)) {
+                confirmationBearish += 30;
+                reasons.push(`✅ Trigger: High-velocity bearish candle (${candlePattern.name}).`);
+            }
         }
     }
-    if (candlePattern) {
-        if (candlePattern.type === 'bullish') {
-            confirmationBullish += 40;
-            reasons.push(`✅ Confirmation: Bullish pattern (${candlePattern.name}).`);
-        } else {
-            confirmationBearish += 40;
-            reasons.push(`✅ Confirmation: Bearish pattern (${candlePattern.name}).`);
+    
+    // B. Micro-Timeframe Break of Structure (mBOS) (40%)
+    const microStructure = microKlines ? analyzeMicroMarketStructure(microKlines) : null;
+    if (microStructure === 'ascending') {
+        confirmationBullish += 40;
+        reasons.push(`✅ Trigger: Micro-TF is ascending (mBOS).`);
+    } else if (microStructure === 'descending') {
+        confirmationBearish += 40;
+        reasons.push(`✅ Trigger: Micro-TF is descending (mBOS).`);
+    }
+
+    // C. RSI Hook (30%)
+    const lastRsi = getLast(rsiValues) as number | undefined;
+    if (lastRsi && rsiValues.length >= params.conductor_entryTrigger_rsiHookPeriod) {
+        const rsiSma = getLast(SMA.calculate({ period: params.conductor_entryTrigger_rsiHookPeriod, values: rsiValues })) as number | undefined;
+        if (rsiSma) {
+            if (lastRsi > rsiSma && lastRsi < 70) { // Bullish hook below overbought
+                confirmationBullish += 30;
+                reasons.push(`✅ Trigger: RSI Hooked Up.`);
+            } else if (lastRsi < rsiSma && lastRsi > 30) { // Bearish hook above oversold
+                confirmationBearish += 30;
+                reasons.push(`✅ Trigger: RSI Hooked Down.`);
+            }
         }
     }
 
     // --- Confluence Engine: Final Scoring ---
-    
     const totalBullishScore = 
         (Math.min(100, structureBullish) * weights.structure) +
         (Math.min(100, momentumBullish) * weights.momentum) +

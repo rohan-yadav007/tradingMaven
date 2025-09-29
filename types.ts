@@ -240,7 +240,6 @@ export interface AgentParams {
     sentinel_atr_mult_strong?: number;
     sentinel_atr_mult_transition?: number;
     sentinel_atr_mult_chop?: number;
-    // FIX: Add missing parameters for Sentinel exit/SL logic used in riskManagementService
     sentinel_adxPeriod?: number;
     sentinel_stPeriod?: number;
     sentinel_stMultiplier?: number;
@@ -270,6 +269,8 @@ export interface AgentParams {
     conductor_choppyTrendAdx?: number;
     conductor_choppyTrendThreshold?: number;
     conductor_structureWeightMultiplier?: number;
+    conductor_entryTrigger_candleVelocity?: number;
+    conductor_entryTrigger_rsiHookPeriod?: number;
     
     // Agent 19: AstraX Super-Agent
     astraX_baseThreshold?: number;
@@ -283,12 +284,14 @@ export interface AgentParams {
     astraX_liquiditySweepMultiplier?: number;
     astraX_fundingRateMultiplier?: number;
     astraX_holdingPeriodHours?: number;
+    astraX_confirmation_volumeMultiplier?: number;
     // New scalping module parameters
     astraX_scalp_bbPeriod?: number;
     astraX_scalp_bbStdDev?: number;
     astraX_scalp_stochRsiPeriod?: number;
     astraX_scalp_stochRsiOversold?: number;
     astraX_scalp_stochRsiOverbought?: number;
+    astraX_scalp_volumeMultiplier?: number;
 
     // SMC Reversal Veto
     smc_divergenceLookback?: number;
@@ -413,6 +416,7 @@ export interface BotConfig {
     isConfirmationCandleEnabled?: boolean;
     isMomentumConcordanceEnabled: boolean;
     finalEntryFailSafe?: 'fail-open' | 'fail-closed';
+    isTradeGuardianEnabled?: boolean;
 }
 
 export interface BotConfigSnapshot {
@@ -425,7 +429,7 @@ export interface BotConfigSnapshot {
     isMarketCohesionEnabled?: boolean;
     isVwapConfirmationEnabled?: boolean;
     isBtcConfirmationEnabled?: boolean;
-    isBtcCorrelationVetoEnabled?: boolean; // Tweak #5
+    isBtcCorrelationVetoEnabled?: boolean;
     btcConfirmationThreshold?: number;
     isVolumeFilterEnabled?: boolean;
     isAdxFilterEnabled?: boolean;
@@ -442,8 +446,9 @@ export interface BotConfigSnapshot {
     isMarketBreadthFilterEnabled?: boolean;
     isLiquidationFilterEnabled?: boolean;
     isConfirmationCandleEnabled?: boolean;
-    isMomentumConcordanceEnabled: boolean;
+    isMomentumConcordanceEnabled?: boolean;
     finalEntryFailSafe?: 'fail-open' | 'fail-closed';
+    isTradeGuardianEnabled?: boolean;
 }
 
 export interface Position {

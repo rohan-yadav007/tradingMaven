@@ -15,15 +15,6 @@ import { BacktestingPanel } from './components/BacktestingPanel';
 import { PreferencesPanel } from './components/PreferencesPanel';
 import { TradingConfigProvider, useTradingConfigState, useTradingConfigActions } from './contexts/TradingConfigContext';
 
-interface BinanceTickerStreamData {
-    s: string; // Symbol
-    c: string; // Close price
-    h: string; // High price
-    l: string; // Low price
-    v: string; // Total traded base asset volume
-    q: string; // Total traded quote asset volume
-}
-
 interface BinanceKlineStreamData {
     k: {
         t: number;    // Kline start time
@@ -36,6 +27,10 @@ interface BinanceKlineStreamData {
     };
 }
 
+const parseToFloat = (value: string, fallback: number = 0): number => {
+    const num = parseFloat(value);
+    return isNaN(num) ? fallback : num;
+};
 
 const AppContent: React.FC = () => {
     // ---- State Management ----
@@ -60,7 +55,8 @@ const AppContent: React.FC = () => {
         isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, isInitialRiskVetoEnabled,
         isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
-        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled
+        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled,
+        isTradeGuardianEnabled
     } = configState;
 
     const {
@@ -82,8 +78,6 @@ const AppContent: React.FC = () => {
     const [klines, setKlines] = useState<Kline[]>([]);
     const [isChartLoading, setIsChartLoading] = useState(true);
     const [isFetchingMoreChartData, setIsFetchingMoreChartData] = useState(false);
-    const [livePrice, setLivePrice] = useState(0);
-    const [liveTicker, setLiveTicker] = useState<LiveTicker | undefined>();
     const [symbolInfo, setSymbolInfo] = useState<SymbolInfo | undefined>();
     const [fundingInfo, setFundingInfo] = useState<{ rate: string; time: number } | null>(null);
     const pricePrecision = binanceService.getPricePrecision(symbolInfo);
@@ -177,6 +171,7 @@ const AppContent: React.FC = () => {
                     isLiquidationFilterEnabled,
                     isConfirmationCandleEnabled,
                     isMomentumConcordanceEnabled,
+                    isTradeGuardianEnabled,
                     finalEntryFailSafe: executionMode === 'live' ? 'fail-closed' : 'fail-open',
                 };
 
@@ -196,7 +191,7 @@ const AppContent: React.FC = () => {
         isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, 
         isMarketStructureVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, isMarketBreadthFilterEnabled,
-        isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled,
+        isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled, isTradeGuardianEnabled,
     ]);
 
     const handleClosePosition = useCallback(async (posToClose: Position, exitReason: string = "Manual Close", exitPriceOverride?: number) => {
@@ -398,26 +393,15 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
         let finalEntryPrice: number;
         let finalLiquidationPrice: number | undefined = undefined;
 
-        // Calculate trade size first to perform risk checks before placing live orders.
+        // Use the entry price from the signal, which is the live price at the time of analysis.
         const tempEntryPrice = execSignal.entryPrice || 0;
         if (tempEntryPrice === 0) {
             botManagerService.notifyTradeExecutionFailed(botId, "No live price was provided by the bot for trade.");
             return;
         }
-        const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
-        const preliminaryTradeSize = positionValue / tempEntryPrice;
         
-        // --- Initial Risk Veto Logic ---
-        if (config.isInitialRiskVetoEnabled) {
-            const initialRiskInDollars = Math.abs(tempEntryPrice - executionDetails.agentStopLoss) * preliminaryTradeSize;
-            const maxAllowedRiskInDollars = config.investmentAmount * (config.maxMarginLossPercent / 100);
-            if (initialRiskInDollars > maxAllowedRiskInDollars) {
-                const reason = `❌ VETO: Initial risk ($${initialRiskInDollars.toFixed(2)}) exceeds max allowed ($${maxAllowedRiskInDollars.toFixed(2)}).`;
-                botManagerService.notifyTradeExecutionFailed(botId, reason);
-                return;
-            }
-        }
-
+        // The risk check logic is now fully encapsulated within riskManagementService.
+        // This handler's responsibility is to execute the trade as validated by the service.
 
         if (config.executionMode === 'live') {
             if (!accountInfo) {
@@ -474,7 +458,8 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             }
         } else {
             finalEntryPrice = tempEntryPrice;
-            tradeSize = preliminaryTradeSize;
+            const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
+            tradeSize = positionValue / tempEntryPrice;
         }
         
         const risk = Math.abs(finalEntryPrice - executionDetails.agentStopLoss);
@@ -525,6 +510,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 isLiquidationFilterEnabled: config.isLiquidationFilterEnabled,
                 isConfirmationCandleEnabled: config.isConfirmationCandleEnabled,
                 isMomentumConcordanceEnabled: config.isMomentumConcordanceEnabled,
+                isTradeGuardianEnabled: config.isTradeGuardianEnabled,
                 finalEntryFailSafe: config.finalEntryFailSafe,
             },
             entryContext: executionDetails.entryContext,
@@ -605,7 +591,6 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
                 const data = await binanceService.fetchKlines(formattedPair, chartTimeFrame, { limit: 500, mode: tradingMode });
                 if (!isCancelled) {
                     setKlines(data);
-                    if (data.length > 0) setLivePrice(data[data.length - 1].close);
                 }
             } catch (err) { console.error("Failed to fetch klines:", err); if (!isCancelled) setKlines([]);
             } finally { if (!isCancelled) setIsChartLoading(false); }
@@ -626,25 +611,32 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
         fetchAllData();
 
         const formattedPair = displayPair.replace('/', '');
-        const tickerCallback = (data: BinanceTickerStreamData) => {
-             const ticker: LiveTicker = { pair: data.s, closePrice: parseFloat(data.c), highPrice: parseFloat(data.h), lowPrice: parseFloat(data.l), volume: parseFloat(data.v), quoteVolume: parseFloat(data.q) };
-             if (ticker.pair.toLowerCase() === formattedPair.toLowerCase()) { setLivePrice(ticker.closePrice); setLiveTicker(ticker); }
-        };
         const klineCallback = (data: BinanceKlineStreamData) => {
-             const newKline: Kline = { time: data.k.t, open: parseFloat(data.k.o), high: parseFloat(data.k.h), low: parseFloat(data.k.l), close: parseFloat(data.k.c), volume: parseFloat(data.k.v), isFinal: data.k.x };
+             const newKline: Kline = { 
+                 time: data.k.t, 
+                 open: parseToFloat(data.k.o), 
+                 high: parseToFloat(data.k.h), 
+                 low: parseToFloat(data.k.l), 
+                 close: parseToFloat(data.k.c), 
+                 volume: parseToFloat(data.k.v), 
+                 isFinal: data.k.x 
+            };
              setKlines(prev => {
                 const last = prev[prev.length - 1];
-                if (last && newKline.time === last.time) { if (newKline.isFinal) { const newKlines = [...prev]; newKlines[newKlines.length - 1] = newKline; return newKlines; } return prev;
-                } else if (!last || newKline.time > last.time) { return [...prev, newKline]; }
+                if (last && newKline.time === last.time) {
+                    const newKlines = [...prev];
+                    newKlines[newKlines.length - 1] = newKline;
+                    return newKlines;
+                } else if (!last || newKline.time > last.time) {
+                    return [...prev, newKline];
+                }
                 return prev;
             });
         };
-        botManagerService.subscribeToTickerUpdates(formattedPair, tradingMode, tickerCallback);
         botManagerService.subscribeToKlineUpdates(formattedPair, chartTimeFrame, tradingMode, klineCallback);
 
         return () => { 
             isCancelled = true;
-            botManagerService.unsubscribeFromTickerUpdates(formattedPair, tradingMode, tickerCallback);
             botManagerService.unsubscribeFromKlineUpdates(formattedPair, chartTimeFrame, tradingMode, klineCallback);
         };
     }, [displayPair, chartTimeFrame, tradingMode]);
@@ -700,7 +692,7 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
                   <div className="col-span-12 lg:col-span-3 order-last lg:order-first">
                     <Sidebar
-                        onStartBot={handleStartBot} klines={klines} livePrice={livePrice}
+                        onStartBot={handleStartBot} klines={klines}
                         botsToCreateCount={botsToCreate.length} selectedPairsCount={selectedPairs.length}
                         theme={theme} isApiConnected={isApiConnected} pricePrecision={pricePrecision}
                         accountInfo={accountInfo} isWalletLoading={isWalletLoading} walletError={walletError}
@@ -710,7 +702,7 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
                     <ChartComponent
                         data={klines} pair={displayPair} allPairs={configState.allPairs}
                         onPairChange={(newPair) => setSelectedPairs([newPair])}
-                        isLoading={isChartLoading} pricePrecision={pricePrecision} livePrice={livePrice}
+                        isLoading={isChartLoading} pricePrecision={pricePrecision}
                         chartTimeFrame={chartTimeFrame} onTimeFrameChange={configActions.setTimeFrame}
                         onLoadMoreData={handleLoadMoreData} isFetchingMoreData={isFetchingMoreChartData}
                         theme={theme} fundingInfo={fundingInfo}

@@ -1,4 +1,5 @@
 
+
 import React from 'react';
 import { useState, useEffect, useMemo } from 'react';
 import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, OptimizationResultItem } from '../types';
@@ -281,6 +282,7 @@ export type BacktestConfig = {
     isLiquidationFilterEnabled: boolean;
     isConfirmationCandleEnabled: boolean;
     isMomentumConcordanceEnabled: boolean;
+    isTradeGuardianEnabled: boolean;
 };
 
 const getTimeframeDuration = (timeframe: string): number => {
@@ -338,6 +340,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         isLiquidationFilterEnabled: globalConfig.isLiquidationFilterEnabled,
         isConfirmationCandleEnabled: globalConfig.isConfirmationCandleEnabled,
         isMomentumConcordanceEnabled: globalConfig.isMomentumConcordanceEnabled,
+        isTradeGuardianEnabled: globalConfig.isTradeGuardianEnabled,
     });
 
     const [backtestDays, setBacktestDays] = useState(3);
@@ -589,6 +592,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                                 <div className="flex items-center justify-between"><label className={formLabelClass}>S/R Zone Analysis</label><ToggleSwitch checked={config.isSrAnalysisEnabled} onChange={v => updateConfig('isSrAnalysisEnabled', v)} /></div>
 
                                 <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-3 border-t border-slate-200 dark:border-slate-700">Trade Management</h4>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>Trade Guardian</label><ToggleSwitch checked={config.isTradeGuardianEnabled} onChange={v => updateConfig('isTradeGuardianEnabled', v)} /></div>
                                 <div className="flex items-center justify-between"><label className={formLabelClass}>Agent Indicator Trail</label><ToggleSwitch checked={config.isAgentTrailEnabled} onChange={v => updateConfig('isAgentTrailEnabled', v)} /></div>
                                 <div className="flex items-center justify-between"><label className={formLabelClass}>Mandatory Breakeven</label><ToggleSwitch checked={config.isBreakevenTrailEnabled} onChange={v => updateConfig('isBreakevenTrailEnabled', v)} /></div>
                                 <div className="flex items-center justify-between"><label className={formLabelClass}>Universal Profit Trail</label><ToggleSwitch checked={config.isUniversalProfitTrailEnabled} onChange={v => updateConfig('isUniversalProfitTrailEnabled', v)} /></div>

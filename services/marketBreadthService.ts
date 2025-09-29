@@ -1,7 +1,5 @@
 // services/marketBreadthService.ts
 
-import { TradingMode } from '../types';
-
 interface TickerState {
     price: number;
     trend: 'up' | 'down' | 'neutral';

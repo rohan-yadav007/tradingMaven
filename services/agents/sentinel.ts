@@ -1,6 +1,6 @@
 // services/agents/sentinel.ts
 
-import { Kline, BotConfig, MarketDataContext, TradeSignal, SentinelAnalysis, AgentParams } from '../../types';
+import { Kline, BotConfig, MarketDataContext, TradeSignal, SentinelAnalysis, AgentParams, MACDOutput } from '../../types';
 import { EMA, RSI, MACD, ATR, ADX } from 'technicalindicators';
 import { getLast, detectRsiDivergence } from './agentUtils';
 import { MarketStructureAnalysis, findSwingPoints, analyzeMarketStructure, calculateSupportResistance } from '../chartAnalysisService';
@@ -38,10 +38,11 @@ export const getTheSentinelSignal = (
 
     // --- Pillar 2: Momentum & Exhaustion (Weight: 30%) ---
     const rsiValues = RSI.calculate({ period: 14, values: closes });
-    const lastRsi = getLast(rsiValues);
+    const lastRsi = getLast(rsiValues) as number | undefined;
     const macdValues = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
-    const lastMacd = getLast(macdValues);
-    const prevMacd = macdValues.length > 1 ? macdValues[macdValues.length - 2] : undefined;
+    // FIX: Explicitly cast to MACDOutput
+    const lastMacd = getLast(macdValues) as MACDOutput | undefined;
+    const prevMacd = macdValues.length > 1 ? macdValues[macdValues.length - 2] as MACDOutput : undefined;
 
     let momentumBullish = 0;
     let momentumBearish = 0;
@@ -90,12 +91,12 @@ export const getTheSentinelSignal = (
     };
 
     const currentEmaPeriods = emaPeriods[timeframeCategory];
-    const emaFast = getLast(EMA.calculate({ period: currentEmaPeriods.fast, values: closes }));
-    const emaSlow = getLast(EMA.calculate({ period: currentEmaPeriods.slow, values: closes }));
-    const lastVolume = getLast(volumes);
-    const volumeSma = getLast(EMA.calculate({ period: 20, values: volumes })); // Use EMA for volume too for responsiveness
+    const emaFast = getLast(EMA.calculate({ period: currentEmaPeriods.fast, values: closes })) as number | undefined;
+    const emaSlow = getLast(EMA.calculate({ period: currentEmaPeriods.slow, values: closes })) as number | undefined;
+    const lastVolume = getLast(volumes) as number | undefined;
+    const volumeSma = getLast(EMA.calculate({ period: 20, values: volumes })) as number | undefined; // Use EMA for volume too for responsiveness
     const srLevels = calculateSupportResistance(klines);
-    const lastAtr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: 14 }));
+    const lastAtr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: 14 })) as number | undefined;
     
     let contextBullish = 0;
     let contextBearish = 0;

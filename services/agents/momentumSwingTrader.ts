@@ -2,7 +2,6 @@
 
 import { Kline, BotConfig, MarketDataContext, TradeSignal, MACDOutput } from '../../types';
 import { EMA, MACD } from 'technicalindicators';
-// FIX: Changed import from non-existent 'calculateVwap' to 'calculateDailyVwap'.
 import { getLast, calculateDailyVwap } from './agentUtils';
 
 export const getMomentumSwingTraderSignal = (klines: Kline[], config: BotConfig, htfContext?: MarketDataContext): TradeSignal => {
@@ -13,13 +12,13 @@ export const getMomentumSwingTraderSignal = (klines: Kline[], config: BotConfig,
     }
 
     const closes = klines.map(k => k.close);
-    const currentPrice = getLast(closes) as number | undefined;
+    const currentPrice = getLast(closes);
     
     // Indicators
-    // FIX: Changed usage from non-existent 'calculateVwap' to 'calculateDailyVwap'. This also resolves the subsequent type errors.
     const vwap = getLast(calculateDailyVwap(klines));
-    const emaFast = getLast(EMA.calculate({ period: params.mst_emaFastPeriod, values: closes })) as number | undefined;
-    const emaSlow = getLast(EMA.calculate({ period: params.mst_emaSlowPeriod, values: closes })) as number | undefined;
+    const emaFast = getLast(EMA.calculate({ period: params.mst_emaFastPeriod, values: closes }));
+    const emaSlow = getLast(EMA.calculate({ period: params.mst_emaSlowPeriod, values: closes }));
+    // FIX: Explicitly cast to MACDOutput
     const macd = getLast(MACD.calculate({
         values: closes,
         fastPeriod: params.mst_macdFastPeriod,

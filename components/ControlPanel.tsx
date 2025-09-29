@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { TradingMode, Kline, TradeSignal, AgentParams, BotConfig, Agent } from '../types';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { TradingMode, Kline, TradeSignal, AgentParams, BotConfig, Agent, LiveTicker } from '../types';
 import * as constants from '../constants';
 import { PlayIcon, CpuIcon, ChevronDown, ChevronUp, InfoIcon } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
@@ -7,6 +7,8 @@ import { getTradingSignal, captureMarketContext } from '../services/localAgentSe
 import * as binanceService from '../services/binanceService';
 import { SearchableDropdown } from './SearchableDropdown';
 import { useTradingConfigState, useTradingConfigActions } from '../contexts/TradingConfigContext';
+import { botManagerService } from '../services/botManagerService';
+
 
 interface ControlPanelProps {
     onStartBot: () => void;
@@ -14,7 +16,6 @@ interface ControlPanelProps {
     selectedPairsCount: number;
     theme: 'light' | 'dark';
     klines: Kline[];
-    livePrice: number;
 }
 
 const formGroupClass = "flex flex-col gap-1.5";
@@ -259,7 +260,7 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
 
 export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
     const {
-        onStartBot, botsToCreateCount, selectedPairsCount, theme, klines, livePrice
+        onStartBot, botsToCreateCount, selectedPairsCount, theme, klines
     } = props;
     
     const config = useTradingConfigState();
@@ -277,7 +278,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isInitialRiskVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode,
         isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
-        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled
+        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled,
+        isTradeGuardianEnabled
     } = config;
 
     const {
@@ -290,15 +292,49 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setIsBtcCorrelationVetoEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
         setIsExhaustionFilterEnabled, setIsInitialRiskVetoEnabled, setIsAdaptiveTpEnabled, setAggressiveTrailMode,
         setIsSmcVetoEnabled, setIsSrAnalysisEnabled, setIsCandlestickConfirmationEnabled, setIsMarketStructureVetoEnabled,
-        setIsMarketBreadthFilterEnabled, setIsLiquidationFilterEnabled, setIsConfirmationCandleEnabled, setIsMomentumConcordanceEnabled
+        setIsMarketBreadthFilterEnabled, setIsLiquidationFilterEnabled, setIsConfirmationCandleEnabled, setIsMomentumConcordanceEnabled,
+        setIsTradeGuardianEnabled
     } = actions;
     
+    const [livePrice, setLivePrice] = useState(0);
+
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
 
     const [analysisSignal, setAnalysisSignal] = useState<TradeSignal | null>(null);
     const [isAnalysisLoading, setIsAnalysisLoading] = useState(false);
     const [isAnalysisOpen, setIsAnalysisOpen] = useState(true);
     const [selectedList, setSelectedList] = useState<string | null>(null);
+
+    const analysisPair = useMemo(() => selectedPairs[0], [selectedPairs]);
+    
+    const lastAnalysisRequestTime = useRef(0);
+    const analysisInProgress = useRef(false);
+    const lastAnalysisErrorTime = useRef(0);
+
+    useEffect(() => {
+        if (!analysisPair) return;
+
+        const formattedPair = analysisPair.replace('/', '');
+        const tickerCallback = (tickerData: any) => {
+             const ticker: LiveTicker = { 
+                 pair: tickerData.s, 
+                 closePrice: parseFloat(tickerData.c), 
+                 highPrice: parseFloat(tickerData.h), 
+                 lowPrice: parseFloat(tickerData.l), 
+                 volume: parseFloat(tickerData.v), 
+                 quoteVolume: parseFloat(tickerData.q) 
+             };
+             if (ticker.pair.toLowerCase() === formattedPair.toLowerCase()) {
+                setLivePrice(ticker.closePrice);
+             }
+        };
+
+        botManagerService.subscribeToTickerUpdates(formattedPair, tradingMode, tickerCallback);
+
+        return () => {
+            botManagerService.unsubscribeFromTickerUpdates(formattedPair, tradingMode, tickerCallback);
+        };
+    }, [analysisPair, tradingMode]);
 
     const pairListOptions = useMemo(() => {
         const spotLists = tradingPairLists
@@ -349,93 +385,73 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         }
     }, [timeFrame, htfTimeFrame, higherTimeFrames, setHtfTimeFrame]);
 
-    useEffect(() => {
-        const analysisPair = selectedPairs[0];
-        const fetchAnalysis = async () => {
+    const fetchAnalysis = useCallback(async () => {
+        if (analysisInProgress.current) return;
+
+        const now = Date.now();
+        // Add a 10-second cool-down period after a failed analysis to prevent spamming the API.
+        if (now - lastAnalysisErrorTime.current < 10000) {
+            return;
+        }
+        
+        if (now - lastAnalysisRequestTime.current < 2000) { // 2 second throttle
+            return;
+        }
+        lastAnalysisRequestTime.current = now;
+        
+        try {
             if (analysisPair && klines.length > 0 && livePrice > 0) {
+                analysisInProgress.current = true;
                 setIsAnalysisLoading(true);
 
                 const lastKline = klines[klines.length - 1];
-                const previewKline: Kline = {
-                    ...lastKline,
-                    high: Math.max(lastKline.high, livePrice),
-                    low: Math.min(lastKline.low, livePrice),
-                    close: livePrice,
-                    isFinal: false,
-                };
+                const previewKline: Kline = { ...lastKline, high: Math.max(lastKline.high, livePrice), low: Math.min(lastKline.low, livePrice), close: livePrice, isFinal: false };
                 const previewKlines = [...klines.slice(0, -1), previewKline];
 
-                try {
-                    let htfKlines: Kline[] | undefined;
-                    if (config.isHtfConfirmationEnabled) {
-                        const htf = config.htfTimeFrame === 'auto'
-                            ? constants.TIME_FRAMES[constants.TIME_FRAMES.indexOf(timeFrame) + 1]
-                            : config.htfTimeFrame;
-                        if (htf) {
-                            htfKlines = await binanceService.fetchKlines(analysisPair.replace('/', ''), htf, { limit: 205, mode: config.tradingMode });
-                        }
-                    }
-                    
-                    const marketContext = captureMarketContext(previewKlines, htfKlines);
-                    
-                    const previewConfig: BotConfig = {
-                        pair: analysisPair,
-                        mode: config.tradingMode,
-                        executionMode: config.executionMode,
-                        leverage: config.leverage,
-                        marginType: config.marginType,
-                        agent: selectedAgent,
-                        timeFrame: timeFrame,
-                        investmentAmount: config.investmentAmount,
-                        maxMarginLossPercent: config.maxMarginLossPercent,
-                        isInitialRiskVetoEnabled: config.isInitialRiskVetoEnabled,
-                        isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
-                        isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled,
-                        isMinRrEnabled: config.isMinRrEnabled,
-                        invalidationSensitivity: config.invalidationSensitivity,
-                        isAgentTrailEnabled: config.isAgentTrailEnabled,
-                        isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
-                        isMarketCohesionEnabled: config.isMarketCohesionEnabled,
-                        isVwapConfirmationEnabled: config.isVwapConfirmationEnabled,
-                        isBtcConfirmationEnabled: config.isBtcConfirmationEnabled,
-                        isBtcCorrelationVetoEnabled: config.isBtcCorrelationVetoEnabled,
-                        btcConfirmationThreshold: config.btcConfirmationThreshold,
-                        isVolumeFilterEnabled: config.isVolumeFilterEnabled,
-                        isAdxFilterEnabled: config.isAdxFilterEnabled,
-                        isExhaustionFilterEnabled: config.isExhaustionFilterEnabled,
-                        htfTimeFrame: config.htfTimeFrame,
-                        agentParams: agentParams,
-                        pricePrecision: 8,
-                        quantityPrecision: 8,
-                        stepSize: 0.00000001,
-                        takerFeeRate: constants.TAKER_FEE_RATE,
-                        entryTiming: config.entryTiming,
-                        isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,
-                        aggressiveTrailMode: config.aggressiveTrailMode,
-                        isSmcVetoEnabled: config.isSmcVetoEnabled,
-                        isSrAnalysisEnabled: config.isSrAnalysisEnabled,
-                        isCandlestickConfirmationEnabled: config.isCandlestickConfirmationEnabled,
-                        isMarketStructureVetoEnabled: config.isMarketStructureVetoEnabled,
-                        isMarketBreadthFilterEnabled: config.isMarketBreadthFilterEnabled,
-                        isLiquidationFilterEnabled: config.isLiquidationFilterEnabled,
-                        isConfirmationCandleEnabled: config.isConfirmationCandleEnabled,
-                        isMomentumConcordanceEnabled: config.isMomentumConcordanceEnabled,
-                    };
-
-                    const signal = await getTradingSignal(selectedAgent, previewKlines, previewConfig, htfKlines);
-                    setAnalysisSignal(signal);
-                } catch (e) {
-                    console.error("Error fetching analysis signal:", e);
-                    setAnalysisSignal({ signal: 'HOLD', reasons: ['Error fetching analysis.'] });
-                } finally {
-                    setIsAnalysisLoading(false);
+                let htfKlines: Kline[] | undefined;
+                if (config.isHtfConfirmationEnabled) {
+                    const htf = config.htfTimeFrame === 'auto' ? constants.TIME_FRAMES[constants.TIME_FRAMES.indexOf(timeFrame) + 1] : config.htfTimeFrame;
+                    if (htf) htfKlines = await binanceService.fetchKlines(analysisPair.replace('/', ''), htf, { limit: 205, mode: config.tradingMode });
                 }
+                
+                const marketContext = captureMarketContext(previewKlines, htfKlines);
+                const previewConfig: BotConfig = {
+                    pair: analysisPair, mode: config.tradingMode, executionMode: config.executionMode, leverage: config.leverage, marginType: config.marginType,
+                    agent: selectedAgent, timeFrame: timeFrame, investmentAmount: config.investmentAmount, maxMarginLossPercent: config.maxMarginLossPercent,
+                    isInitialRiskVetoEnabled: config.isInitialRiskVetoEnabled, isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
+                    isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled, isMinRrEnabled: config.isMinRrEnabled,
+                    invalidationSensitivity: config.invalidationSensitivity, isAgentTrailEnabled: config.isAgentTrailEnabled, isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
+                    isMarketCohesionEnabled: config.isMarketCohesionEnabled, isVwapConfirmationEnabled: config.isVwapConfirmationEnabled,
+                    isBtcConfirmationEnabled: config.isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled: config.isBtcCorrelationVetoEnabled,
+                    btcConfirmationThreshold: config.btcConfirmationThreshold, isVolumeFilterEnabled: config.isVolumeFilterEnabled, isAdxFilterEnabled: config.isAdxFilterEnabled,
+                    isExhaustionFilterEnabled: config.isExhaustionFilterEnabled, htfTimeFrame: config.htfTimeFrame, agentParams: agentParams,
+                    pricePrecision: 8, quantityPrecision: 8, stepSize: 0.00000001, takerFeeRate: constants.TAKER_FEE_RATE, entryTiming: config.entryTiming,
+                    isAdaptiveTpEnabled: config.isAdaptiveTpEnabled, aggressiveTrailMode: config.aggressiveTrailMode, isSmcVetoEnabled: config.isSmcVetoEnabled,
+                    isSrAnalysisEnabled: config.isSrAnalysisEnabled, isCandlestickConfirmationEnabled: config.isCandlestickConfirmationEnabled,
+                    isMarketStructureVetoEnabled: config.isMarketStructureVetoEnabled, isMarketBreadthFilterEnabled: config.isMarketBreadthFilterEnabled,
+                    isLiquidationFilterEnabled: config.isLiquidationFilterEnabled, isConfirmationCandleEnabled: config.isConfirmationCandleEnabled,
+                    isMomentumConcordanceEnabled: config.isMomentumConcordanceEnabled, isTradeGuardianEnabled: config.isTradeGuardianEnabled,
+                };
+
+                const signal = await getTradingSignal(selectedAgent, previewKlines, previewConfig, htfKlines);
+                setAnalysisSignal(signal);
+                lastAnalysisErrorTime.current = 0; // Reset error time on success
             } else {
                 setAnalysisSignal(null);
             }
-        };
+        } catch (e) {
+            console.error("Error fetching analysis signal:", e);
+            setAnalysisSignal({ signal: 'HOLD', reasons: ['Error fetching analysis. Check console.'] });
+            lastAnalysisErrorTime.current = now; // Set error time on failure
+        } finally {
+            setIsAnalysisLoading(false);
+            analysisInProgress.current = false;
+        }
+    }, [selectedAgent, klines, timeFrame, agentParams, config, livePrice, analysisPair]);
+
+    useEffect(() => {
         fetchAnalysis();
-    }, [selectedAgent, klines, timeFrame, agentParams, config, livePrice, selectedPairs]);
+    }, [livePrice, fetchAnalysis]);
     
     const getButtonText = () => {
         if (selectedPairsCount === 0) return 'Select One or More Markets';
@@ -1011,6 +1027,26 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     <ToggleSwitch
                         checked={isCandlestickConfirmationEnabled}
                         onChange={setIsCandlestickConfirmationEnabled}
+                    />
+                </div>
+            </div>
+            <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                     <div className="flex items-center gap-1.5">
+                        <label htmlFor="trade-guardian-toggle" className={formLabelClass}>
+                            Trade Guardian
+                        </label>
+                         <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-52 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                Proactive exit system. Continuously monitors open positions for signs of invalidation (e.g., fading momentum, adverse price action) to exit trades before the stop loss is hit.
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch
+                        checked={isTradeGuardianEnabled}
+                        onChange={setIsTradeGuardianEnabled}
                     />
                 </div>
             </div>

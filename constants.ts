@@ -188,7 +188,6 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     sentinel_atr_mult_strong: 2.2,
     sentinel_atr_mult_transition: 2.5,
     sentinel_atr_mult_chop: 3.0,
-    // FIX: Add default values for new Sentinel parameters
     sentinel_adxPeriod: 14,
     sentinel_stPeriod: 10,
     sentinel_stMultiplier: 3.0,
@@ -217,6 +216,8 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     conductor_choppyTrendAdx: 20,
     conductor_choppyTrendThreshold: 82,
     conductor_structureWeightMultiplier: 1.25,
+    conductor_entryTrigger_candleVelocity: 0.75, // Requires close in top/bottom 25% of range
+    conductor_entryTrigger_rsiHookPeriod: 3,
 
     // Agent 19: AstraX Super-Agent
     astraX_baseThreshold: 45,
@@ -230,12 +231,14 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     astraX_liquiditySweepMultiplier: 2.5,
     astraX_fundingRateMultiplier: 25,
     astraX_holdingPeriodHours: 8,
+    astraX_confirmation_volumeMultiplier: 1.2,
     // New scalping module parameters
     astraX_scalp_bbPeriod: 20,
     astraX_scalp_bbStdDev: 2,
     astraX_scalp_stochRsiPeriod: 14,
     astraX_scalp_stochRsiOversold: 20,
     astraX_scalp_stochRsiOverbought: 80,
+    astraX_scalp_volumeMultiplier: 1.5,
 
     // SMC Reversal Veto
     smc_divergenceLookback: 12,
@@ -369,9 +372,17 @@ export const MOMENTUM_SWING_TRADER_TIMEFRAME_SETTINGS: Record<string, Partial<Ag
 };
 
 export const ASTRAX_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '1m':  {}, '3m':  {}, '5m':  {},
-    '15m': {}, '30m': {}, '1h':  {},
-    '4h':  {}, '1d':  {},
+    // Scalping: More sensitive StochRSI, wider BBs for volatility, higher volume confirmation
+    '1m':  { astraX_scalp_bbStdDev: 2.2, astraX_scalp_stochRsiOversold: 15, astraX_scalp_stochRsiOverbought: 85, astraX_scalp_volumeMultiplier: 1.8 },
+    '3m':  { astraX_scalp_bbStdDev: 2.1, astraX_scalp_stochRsiOversold: 18, astraX_scalp_stochRsiOverbought: 82, astraX_scalp_volumeMultiplier: 1.7 },
+    '5m':  { astraX_scalp_bbStdDev: 2.0, astraX_scalp_stochRsiOversold: 20, astraX_scalp_stochRsiOverbought: 80, astraX_scalp_volumeMultiplier: 1.5 },
+    // Day Trading: Balanced settings (defaults)
+    '15m': { astraX_scalp_bbStdDev: 2.0, astraX_scalp_stochRsiOversold: 20, astraX_scalp_stochRsiOverbought: 80, astraX_scalp_volumeMultiplier: 1.5 },
+    '30m': { astraX_scalp_bbStdDev: 2.0, astraX_scalp_stochRsiOversold: 22, astraX_scalp_stochRsiOverbought: 78, astraX_scalp_volumeMultiplier: 1.4 },
+    '1h':  { astraX_scalp_bbStdDev: 2.0, astraX_scalp_stochRsiOversold: 25, astraX_scalp_stochRsiOverbought: 75, astraX_scalp_volumeMultiplier: 1.3 },
+    // Swing Trading: Less sensitive StochRSI, tighter BBs, lower volume confirmation threshold
+    '4h':  { astraX_scalp_bbStdDev: 1.9, astraX_scalp_stochRsiOversold: 25, astraX_scalp_stochRsiOverbought: 75, astraX_scalp_volumeMultiplier: 1.2 },
+    '1d':  { astraX_scalp_bbStdDev: 1.9, astraX_scalp_stochRsiOversold: 28, astraX_scalp_stochRsiOverbought: 72, astraX_scalp_volumeMultiplier: 1.1 },
 };
 
 /**

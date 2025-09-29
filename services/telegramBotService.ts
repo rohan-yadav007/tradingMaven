@@ -1,6 +1,6 @@
 // FIX: Removed unused and non-existent RiskMode from import
 import { BotConfig, TradingMode } from '../types';
-import { historyService } from './historyService';
+import { historyService } from '../services/historyService';
 import * as constants from '../constants';
 import * as binanceService from './binanceService';
 
@@ -193,6 +193,7 @@ ID: \`${bot.id}\``;
                     isLiquidationFilterEnabled: false,
                     isConfirmationCandleEnabled: constants.IS_CONFIRMATION_CANDLE_ENABLED,
                     isMomentumConcordanceEnabled: constants.IS_MOMENTUM_CONCORDANCE_ENABLED,
+                    isTradeGuardianEnabled: true,
                 };
                 
                 const newBot = _botManagerService.startBot(config);

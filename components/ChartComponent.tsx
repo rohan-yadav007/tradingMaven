@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react';
-import { type Kline } from '../types';
+import { type Kline, LiveTicker, TradingMode } from '../types';
 import * as constants from '../constants';
 import { SearchableDropdown } from './SearchableDropdown';
 import { createChart, ColorType, type IChartApi, type ISeriesApi, type CandlestickData, type UTCTimestamp, TickMarkType } from 'lightweight-charts';
+import { botManagerService } from '../services/botManagerService';
+import { useTradingConfigState } from '../contexts/TradingConfigContext';
 
 interface ChartComponentProps {
     data: Kline[];
@@ -11,7 +13,6 @@ interface ChartComponentProps {
     onPairChange: (newPair: string) => void;
     isLoading: boolean;
     pricePrecision: number;
-    livePrice: number;
     chartTimeFrame: string;
     onTimeFrameChange: (newTimeFrame: string) => void;
     onLoadMoreData: () => void | Promise<void>;
@@ -122,7 +123,7 @@ const TimeFrameSelector: React.FC<{selected: string, onSelect: (tf: string) => v
 
 export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
     const { 
-        data, pair, isLoading, pricePrecision, livePrice, 
+        data, pair, isLoading, pricePrecision,
         chartTimeFrame, onTimeFrameChange, allPairs, onPairChange,
         onLoadMoreData, isFetchingMoreData, theme, fundingInfo 
     } = props;
@@ -130,7 +131,9 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
-    
+    const [livePrice, setLivePrice] = useState(0);
+    const { tradingMode } = useTradingConfigState();
+
     const [priceChange, setPriceChange] = useState<'up' | 'down' | 'none'>('none');
     const prevPriceRef = useRef(livePrice);
     
@@ -138,6 +141,40 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
     onLoadMoreDataRef.current = onLoadMoreData;
     const isFetchingMoreDataRef = useRef(isFetchingMoreData);
     isFetchingMoreDataRef.current = isFetchingMoreData;
+
+    useEffect(() => {
+        if (data.length > 0) {
+            setLivePrice(data[data.length - 1].close);
+        }
+    }, [data]);
+    
+    // Subscribe to live ticker updates for the current pair
+    useEffect(() => {
+        if (!pair) return;
+
+        const formattedPair = pair.replace('/', '');
+        const tickerCallback = (tickerData: any) => {
+             const ticker: LiveTicker = { 
+                 pair: tickerData.s, 
+                 closePrice: parseFloat(tickerData.c), 
+                 highPrice: parseFloat(tickerData.h), 
+                 lowPrice: parseFloat(tickerData.l), 
+                 volume: parseFloat(tickerData.v), 
+                 quoteVolume: parseFloat(tickerData.q) 
+             };
+             // Ensure update is for the correct pair
+             if (ticker.pair.toLowerCase() === formattedPair.toLowerCase()) {
+                setLivePrice(ticker.closePrice);
+             }
+        };
+
+        botManagerService.subscribeToTickerUpdates(formattedPair, tradingMode, tickerCallback);
+
+        return () => {
+            botManagerService.unsubscribeFromTickerUpdates(formattedPair, tradingMode, tickerCallback);
+        };
+
+    }, [pair, tradingMode]);
     
     useEffect(() => {
         if (livePrice > prevPriceRef.current) setPriceChange('up');

@@ -4,7 +4,7 @@ import * as constants from '../constants';
 import { PlayIcon, CpuIcon, ChevronDown, ChevronUp, InfoIcon } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
 import { getTradingSignal, captureMarketContext } from '../services/localAgentService';
-import * as binanceService from '../services/binanceService';
+import { sharedKlineService } from '../services/sharedKlineService';
 import { SearchableDropdown } from './SearchableDropdown';
 import { useTradingConfigState, useTradingConfigActions } from '../contexts/TradingConfigContext';
 import { botManagerService } from '../services/botManagerService';
@@ -61,6 +61,8 @@ const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) =>
 
 const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParamsChange: (p: AgentParams) => void, isAdxFilterEnabled: boolean, timeFrame: string}> = ({ agent, params, onParamsChange, isAdxFilterEnabled, timeFrame }) => {
     const [isExitVetoOpen, setIsExitVetoOpen] = useState(false);
+    const [isScalpingOpen, setIsScalpingOpen] = useState(false);
+    const [isPillarWeightsOpen, setIsPillarWeightsOpen] = useState(false);
 
     const allParams = useMemo(() => {
         const timeframeDefaults = constants.getAgentTimeframeSettings(agent.id, timeFrame);
@@ -70,6 +72,37 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
     const updateParam = (key: keyof AgentParams, value: number | boolean | string) => { onParamsChange({ ...params, [key]: value }); };
     switch (agent.id) {
         case 19: return (<div className="space-y-4">
+            <div className={formGroupClass}>
+                <label className={formLabelClass}>Execution Mode</label>
+                <div className="flex items-center gap-1 p-1 bg-slate-200 dark:bg-slate-900/70 rounded-md mt-1">
+                    <button 
+                        onClick={() => updateParam('astraX_executionMode', 'conviction')} 
+                        className={`flex-1 text-center text-xs font-semibold p-1.5 rounded-md transition-colors ${ (allParams.astraX_executionMode ?? 'conviction') === 'conviction' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
+                    >
+                        Conviction
+                    </button>
+                    <button 
+                        onClick={() => updateParam('astraX_executionMode', 'scalp')}
+                        className={`flex-1 text-center text-xs font-semibold p-1.5 rounded-md transition-colors ${ allParams.astraX_executionMode === 'scalp' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
+                    >
+                        Scalp
+                    </button>
+                </div>
+            </div>
+             <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
+                <button onClick={() => setIsPillarWeightsOpen(!isPillarWeightsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
+                    <span>Pillar Weights (Conviction Mode)</span>
+                    {isPillarWeightsOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                </button>
+                {isPillarWeightsOpen && (
+                    <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
+                        <ParamSlider label="Structure Weight" value={allParams.astraX_weights_structure!} onChange={v => updateParam('astraX_weights_structure', v)} min={0} max={100} step={5} valueDisplay={v => `${v}%`} />
+                        <ParamSlider label="Momentum Weight" value={allParams.astraX_weights_momentum!} onChange={v => updateParam('astraX_weights_momentum', v)} min={0} max={100} step={5} valueDisplay={v => `${v}%`} />
+                        <ParamSlider label="Context Weight" value={allParams.astraX_weights_context!} onChange={v => updateParam('astraX_weights_context', v)} min={0} max={100} step={5} valueDisplay={v => `${v}%`} />
+                        <ParamSlider label="Confirmation Weight" value={allParams.astraX_weights_confirmation!} onChange={v => updateParam('astraX_weights_confirmation', v)} min={0} max={100} step={5} valueDisplay={v => `${v}%`} />
+                    </div>
+                )}
+            </div>
              <ParamSlider label="Base Conviction Threshold" value={allParams.astraX_baseThreshold!} onChange={v => updateParam('astraX_baseThreshold', v)} min={25} max={75} step={1} />
              <ParamSlider label="Strong Trend ADX" value={allParams.astraX_strongTrendAdx!} onChange={v => updateParam('astraX_strongTrendAdx', v)} min={25} max={40} step={1} />
              <ParamSlider label="Chop Market ADX" value={allParams.astraX_chopAdx!} onChange={v => updateParam('astraX_chopAdx', v)} min={15} max={25} step={1} />
@@ -77,8 +110,56 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
              <ParamSlider label="Chop Market Multiplier" value={allParams.astraX_regimeMultiplier_chop!} onChange={v => updateParam('astraX_regimeMultiplier_chop', v)} min={1.0} max={1.5} step={0.05} valueDisplay={v => `${v.toFixed(2)}x`} />
              <ParamSlider label="Structure Lookback" value={allParams.astraX_structureLookback!} onChange={v => updateParam('astraX_structureLookback', v)} min={5} max={15} step={1} />
              <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-3 border-t border-slate-200 dark:border-slate-700">Advanced Adjustments</h4>
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                    <label className={formLabelClass}>Use VWAP as Hard Veto</label>
+                    <div className="relative group">
+                        <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                        <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                            If enabled, prevents LONGs below VWAP and SHORTs above it, overriding the conviction score.
+                        </div>
+                    </div>
+                </div>
+                <ToggleSwitch checked={allParams.astraX_useVwapAsHardVeto!} onChange={v => updateParam('astraX_useVwapAsHardVeto', v)} />
+            </div>
              <ParamSlider label="Funding Rate Multiplier" value={allParams.astraX_fundingRateMultiplier!} onChange={v => updateParam('astraX_fundingRateMultiplier', v)} min={0} max={50} step={1} />
              <ParamSlider label="Expected Holding Period" value={allParams.astraX_holdingPeriodHours!} onChange={v => updateParam('astraX_holdingPeriodHours', v)} min={1} max={48} step={1} valueDisplay={v => `${v} hrs`} />
+             
+             <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
+                    <button onClick={() => setIsScalpingOpen(!isScalpingOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
+                        <span>Scalping Module (Conviction Fallback)</span>
+                        {isScalpingOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                    </button>
+                    {isScalpingOpen && (
+                        <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
+                            <div className="flex items-center justify-between">
+                                 <div className="flex items-center gap-1.5">
+                                    <label className={formLabelClass}>Enable Scalping in Chop</label>
+                                     <div className="relative group">
+                                        <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                                        <div className="absolute bottom-full mb-2 w-52 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                            If enabled, the agent will attempt to take mean-reversion scalp trades when the primary timeframe is in a choppy market regime.
+                                        </div>
+                                    </div>
+                                 </div>
+                                <ToggleSwitch checked={allParams.astraX_scalp_enabledInChop!} onChange={v => updateParam('astraX_scalp_enabledInChop', v)} />
+                            </div>
+                            <div className="flex items-center justify-between">
+                                 <div className="flex items-center gap-1.5">
+                                    <label className={formLabelClass}>Use Retest Confirmation</label>
+                                 </div>
+                                <ToggleSwitch checked={allParams.astraX_scalp_useRetestConfirmation!} onChange={v => updateParam('astraX_scalp_useRetestConfirmation', v)} />
+                            </div>
+                            {allParams.astraX_scalp_useRetestConfirmation && (
+                                <>
+                                    <ParamSlider label="Retest EMA Period" value={allParams.astraX_scalp_retestEmaPeriod!} onChange={v => updateParam('astraX_scalp_retestEmaPeriod', v)} min={5} max={20} step={1} />
+                                    <ParamSlider label="Retest Candle Lookback" value={allParams.astraX_scalp_retestCandleLookback!} onChange={v => updateParam('astraX_scalp_retestCandleLookback', v)} min={2} max={10} step={1} />
+                                </>
+                            )}
+                             <ParamSlider label="Scalp Volume Multiplier" value={allParams.astraX_scalp_volumeMultiplier!} onChange={v => updateParam('astraX_scalp_volumeMultiplier', v)} min={1.0} max={3.0} step={0.1} valueDisplay={v => `${v.toFixed(1)}x`} />
+                        </div>
+                    )}
+                </div>
             </div>);
         case 9: return (<div className="space-y-4">
             <div className="flex flex-col gap-1.5">
@@ -271,16 +352,23 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         isPairsLoading, leverage, chartTimeFrame: timeFrame, selectedAgent, investmentAmount,
         agentParams, maxMarginLossPercent, tradingPairLists,
         marginType, futuresSettingsError, isMultiAssetMode, multiAssetModeError,
-        maxLeverage, isLeverageLoading, isHtfConfirmationEnabled, htfTimeFrame,
-        isUniversalProfitTrailEnabled, isMinRrEnabled, invalidationSensitivity,
-        entryTiming,
-        isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
-        isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
-        isExhaustionFilterEnabled, isInitialRiskVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode,
-        isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
-        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled,
-        isTradeGuardianEnabled
+        maxLeverage, isLeverageLoading,
     } = config;
+
+    // Destructure config properties to stabilize dependencies
+    const {
+        isHtfConfirmationEnabled, htfTimeFrame,
+        isUniversalProfitTrailEnabled, isMinRrEnabled, invalidationSensitivity,
+        entryTiming, isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled,
+        isVwapConfirmationEnabled, isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled,
+        btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
+        isExhaustionFilterEnabled, isInitialRiskVetoEnabled, isAdaptiveTpEnabled,
+        aggressiveTrailMode, isSmcVetoEnabled, isSrAnalysisEnabled,
+        isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
+        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled,
+        isConfirmationCandleEnabled, isMomentumConcordanceEnabled, isTradeGuardianEnabled
+    } = config;
+
 
     const {
         setExecutionMode, setTradingMode, setSelectedPairs, setLeverage, setTimeFrame,
@@ -297,6 +385,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
     } = actions;
     
     const [livePrice, setLivePrice] = useState(0);
+    const livePriceRef = useRef(0);
 
     const isInvestmentInvalid = executionMode === 'live' && investmentAmount > availableBalance;
 
@@ -326,6 +415,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
              };
              if (ticker.pair.toLowerCase() === formattedPair.toLowerCase()) {
                 setLivePrice(ticker.closePrice);
+                livePriceRef.current = ticker.closePrice;
              }
         };
 
@@ -400,37 +490,38 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         lastAnalysisRequestTime.current = now;
         
         try {
-            if (analysisPair && klines.length > 0 && livePrice > 0) {
+            const currentLivePrice = livePriceRef.current;
+            if (analysisPair && klines.length > 0 && currentLivePrice > 0) {
                 analysisInProgress.current = true;
                 setIsAnalysisLoading(true);
 
                 const lastKline = klines[klines.length - 1];
-                const previewKline: Kline = { ...lastKline, high: Math.max(lastKline.high, livePrice), low: Math.min(lastKline.low, livePrice), close: livePrice, isFinal: false };
+                const previewKline: Kline = { ...lastKline, high: Math.max(lastKline.high, currentLivePrice), low: Math.min(lastKline.low, currentLivePrice), close: currentLivePrice, isFinal: false };
                 const previewKlines = [...klines.slice(0, -1), previewKline];
 
                 let htfKlines: Kline[] | undefined;
-                if (config.isHtfConfirmationEnabled) {
-                    const htf = config.htfTimeFrame === 'auto' ? constants.TIME_FRAMES[constants.TIME_FRAMES.indexOf(timeFrame) + 1] : config.htfTimeFrame;
-                    if (htf) htfKlines = await binanceService.fetchKlines(analysisPair.replace('/', ''), htf, { limit: 205, mode: config.tradingMode });
+                if (isHtfConfirmationEnabled) {
+                    const htf = htfTimeFrame === 'auto' ? constants.TIME_FRAMES[constants.TIME_FRAMES.indexOf(timeFrame) + 1] : htfTimeFrame;
+                    if (htf) htfKlines = await sharedKlineService.getData(analysisPair, htf, tradingMode);
                 }
                 
                 const marketContext = captureMarketContext(previewKlines, htfKlines);
                 const previewConfig: BotConfig = {
-                    pair: analysisPair, mode: config.tradingMode, executionMode: config.executionMode, leverage: config.leverage, marginType: config.marginType,
-                    agent: selectedAgent, timeFrame: timeFrame, investmentAmount: config.investmentAmount, maxMarginLossPercent: config.maxMarginLossPercent,
-                    isInitialRiskVetoEnabled: config.isInitialRiskVetoEnabled, isHtfConfirmationEnabled: config.isHtfConfirmationEnabled,
-                    isUniversalProfitTrailEnabled: config.isUniversalProfitTrailEnabled, isMinRrEnabled: config.isMinRrEnabled,
-                    invalidationSensitivity: config.invalidationSensitivity, isAgentTrailEnabled: config.isAgentTrailEnabled, isBreakevenTrailEnabled: config.isBreakevenTrailEnabled,
-                    isMarketCohesionEnabled: config.isMarketCohesionEnabled, isVwapConfirmationEnabled: config.isVwapConfirmationEnabled,
-                    isBtcConfirmationEnabled: config.isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled: config.isBtcCorrelationVetoEnabled,
-                    btcConfirmationThreshold: config.btcConfirmationThreshold, isVolumeFilterEnabled: config.isVolumeFilterEnabled, isAdxFilterEnabled: config.isAdxFilterEnabled,
-                    isExhaustionFilterEnabled: config.isExhaustionFilterEnabled, htfTimeFrame: config.htfTimeFrame, agentParams: agentParams,
-                    pricePrecision: 8, quantityPrecision: 8, stepSize: 0.00000001, takerFeeRate: constants.TAKER_FEE_RATE, entryTiming: config.entryTiming,
-                    isAdaptiveTpEnabled: config.isAdaptiveTpEnabled, aggressiveTrailMode: config.aggressiveTrailMode, isSmcVetoEnabled: config.isSmcVetoEnabled,
-                    isSrAnalysisEnabled: config.isSrAnalysisEnabled, isCandlestickConfirmationEnabled: config.isCandlestickConfirmationEnabled,
-                    isMarketStructureVetoEnabled: config.isMarketStructureVetoEnabled, isMarketBreadthFilterEnabled: config.isMarketBreadthFilterEnabled,
-                    isLiquidationFilterEnabled: config.isLiquidationFilterEnabled, isConfirmationCandleEnabled: config.isConfirmationCandleEnabled,
-                    isMomentumConcordanceEnabled: config.isMomentumConcordanceEnabled, isTradeGuardianEnabled: config.isTradeGuardianEnabled,
+                    pair: analysisPair, mode: tradingMode, executionMode: executionMode, leverage: leverage, marginType: marginType,
+                    agent: selectedAgent, timeFrame: timeFrame, investmentAmount: investmentAmount, maxMarginLossPercent: maxMarginLossPercent,
+                    isInitialRiskVetoEnabled: isInitialRiskVetoEnabled, isHtfConfirmationEnabled: isHtfConfirmationEnabled,
+                    isUniversalProfitTrailEnabled: isUniversalProfitTrailEnabled, isMinRrEnabled: isMinRrEnabled,
+                    invalidationSensitivity: invalidationSensitivity, isAgentTrailEnabled: isAgentTrailEnabled, isBreakevenTrailEnabled: isBreakevenTrailEnabled,
+                    isMarketCohesionEnabled: isMarketCohesionEnabled, isVwapConfirmationEnabled: isVwapConfirmationEnabled,
+                    isBtcConfirmationEnabled: isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled: isBtcCorrelationVetoEnabled,
+                    btcConfirmationThreshold: btcConfirmationThreshold, isVolumeFilterEnabled: isVolumeFilterEnabled, isAdxFilterEnabled: isAdxFilterEnabled,
+                    isExhaustionFilterEnabled: isExhaustionFilterEnabled, htfTimeFrame: htfTimeFrame, agentParams: agentParams,
+                    pricePrecision: 8, quantityPrecision: 8, stepSize: 0.00000001, takerFeeRate: constants.TAKER_FEE_RATE, entryTiming: entryTiming,
+                    isAdaptiveTpEnabled: isAdaptiveTpEnabled, aggressiveTrailMode: aggressiveTrailMode, isSmcVetoEnabled: isSmcVetoEnabled,
+                    isSrAnalysisEnabled: isSrAnalysisEnabled, isCandlestickConfirmationEnabled: isCandlestickConfirmationEnabled,
+                    isMarketStructureVetoEnabled: isMarketStructureVetoEnabled, isMarketBreadthFilterEnabled: isMarketBreadthFilterEnabled,
+                    isLiquidationFilterEnabled: isLiquidationFilterEnabled, isConfirmationCandleEnabled: isConfirmationCandleEnabled,
+                    isMomentumConcordanceEnabled: isMomentumConcordanceEnabled, isTradeGuardianEnabled: isTradeGuardianEnabled,
                 };
 
                 const signal = await getTradingSignal(selectedAgent, previewKlines, previewConfig, htfKlines);
@@ -447,11 +538,35 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
             setIsAnalysisLoading(false);
             analysisInProgress.current = false;
         }
-    }, [selectedAgent, klines, timeFrame, agentParams, config, livePrice, analysisPair]);
+    }, [
+        selectedAgent, klines, timeFrame, agentParams, analysisPair,
+        tradingMode, executionMode, leverage, marginType, investmentAmount, maxMarginLossPercent,
+        isInitialRiskVetoEnabled, isHtfConfirmationEnabled, htfTimeFrame,
+        isUniversalProfitTrailEnabled, isMinRrEnabled, invalidationSensitivity,
+        isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled,
+        isVwapConfirmationEnabled, isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled,
+        btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
+        isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled,
+        isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
+        isAdaptiveTpEnabled, aggressiveTrailMode, entryTiming,
+        isMarketBreadthFilterEnabled, isLiquidationFilterEnabled,
+        isConfirmationCandleEnabled, isMomentumConcordanceEnabled, isTradeGuardianEnabled
+    ]);
 
     useEffect(() => {
-        fetchAnalysis();
-    }, [livePrice, fetchAnalysis]);
+        // Don't run analysis if there are no klines yet.
+        if (klines.length > 0) {
+            fetchAnalysis(); // Initial analysis
+        }
+
+        const analysisInterval = setInterval(() => {
+             if (klines.length > 0) {
+                fetchAnalysis();
+            }
+        }, 5000); // Refresh every 5 seconds
+
+        return () => clearInterval(analysisInterval);
+    }, [fetchAnalysis, klines.length]);
     
     const getButtonText = () => {
         if (selectedPairsCount === 0) return 'Select One or More Markets';
@@ -627,7 +742,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
 
             <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
 
-            <div className={formGroupClass}>
+             <div className={formGroupClass}>
                 <div className="flex justify-between items-center">
                     <label htmlFor="agent-select" className={formLabelClass}>Trading Agent</label>
                     <button 

@@ -1,5 +1,3 @@
-
-
 import { Agent, AgentParams, WalletBalance } from './types';
 
 export const TRADING_PAIRS: string[] = [
@@ -124,6 +122,14 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     veto_atrChaos_graceMultiplier: 1.2,
     veto_atrChaos_strongTrendAdx: 30,
     veto_liquiditySweep_maxAdx: 30,
+    // New Context-Aware Entry Classifier
+    veto_entryScoreThreshold: 65,
+    veto_microEmaFast: 5,       // For Breakout mode
+    veto_microEmaSlow: 9,       // For Breakout mode
+    veto_pullback_stochRsiPeriod: 14, // For Pullback mode
+    veto_pullback_stochRsiOversold: 25, // For Pullback mode
+    veto_pullback_stochRsiOverbought: 75, // For Pullback mode
+
 
     // Agent 9: Quantum Scalper
     qsc_adxPeriod: 10,
@@ -220,6 +226,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     conductor_entryTrigger_rsiHookPeriod: 3,
 
     // Agent 19: AstraX Super-Agent
+    astraX_executionMode: 'conviction',
     astraX_baseThreshold: 45,
     astraX_strongTrendAdx: 30,
     astraX_chopAdx: 20,
@@ -232,6 +239,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     astraX_fundingRateMultiplier: 25,
     astraX_holdingPeriodHours: 8,
     astraX_confirmation_volumeMultiplier: 1.2,
+    astraX_useVwapAsHardVeto: false,
     // New scalping module parameters
     astraX_scalp_bbPeriod: 20,
     astraX_scalp_bbStdDev: 2,
@@ -239,6 +247,21 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     astraX_scalp_stochRsiOversold: 20,
     astraX_scalp_stochRsiOverbought: 80,
     astraX_scalp_volumeMultiplier: 1.5,
+    astraX_scalp_useRetestConfirmation: true,
+    astraX_scalp_retestEmaPeriod: 9,
+    astraX_scalp_retestCandleLookback: 3,
+    astraX_scalp_enabledInChop: false,
+    // New 4-pillar system parameters
+    astraX_weights_structure: 35,
+    astraX_weights_momentum: 35,
+    astraX_weights_context: 15,
+    astraX_weights_confirmation: 15,
+    astraX_confirmation_minVolumeMultiplier: 1.1,
+    astraX_confirmation_candleBodyMinRatio: 0.3,
+    astraX_context_btcFlowWeight: 0,
+    astraX_context_volatilityWeight: 30,
+    astraX_smc_divergenceLookback: 14,
+
 
     // SMC Reversal Veto
     smc_divergenceLookback: 12,
@@ -467,19 +490,22 @@ export const getMicroTimeframe = (tf: string) => MICRO_TIMEFRAME_MAP[tf] || '1m'
 export const TRADE_GUARDIAN_CONFIG: Record<string, {
     rsi7_long_threshold?: number;
     rsi7_short_threshold?: number;
-    rsi14_long_threshold?: number;
-    rsi14_short_threshold?: number;
+    rsi14_long_threshold: number;
+    rsi14_short_threshold: number;
     atrSpikeMultiplier: number;
     pnlRetracePercent: number;
     maxCandles: number;
     vwapEmaPeriod: number;
 }> = {
-    '1m':  { rsi7_long_threshold: 48, rsi7_short_threshold: 52, atrSpikeMultiplier: 2.5, pnlRetracePercent: 0.6, maxCandles: 10, vwapEmaPeriod: 9 },
-    '3m':  { rsi7_long_threshold: 48, rsi7_short_threshold: 52, atrSpikeMultiplier: 2.5, pnlRetracePercent: 0.6, maxCandles: 10, vwapEmaPeriod: 9 },
-    '5m':  { rsi7_long_threshold: 48, rsi7_short_threshold: 52, atrSpikeMultiplier: 2.5, pnlRetracePercent: 0.6, maxCandles: 10, vwapEmaPeriod: 9 },
-    '15m': { rsi7_long_threshold: 50, rsi7_short_threshold: 50, atrSpikeMultiplier: 2.0, pnlRetracePercent: 0.5, maxCandles: 8, vwapEmaPeriod: 21 },
-    '30m': { rsi7_long_threshold: 50, rsi7_short_threshold: 50, atrSpikeMultiplier: 2.0, pnlRetracePercent: 0.5, maxCandles: 8, vwapEmaPeriod: 21 },
-    '1h':  { rsi14_long_threshold: 50, rsi14_short_threshold: 50, atrSpikeMultiplier: 1.8, pnlRetracePercent: 0.5, maxCandles: 5, vwapEmaPeriod: 50 },
-    '4h':  { rsi14_long_threshold: 50, rsi14_short_threshold: 50, atrSpikeMultiplier: 1.8, pnlRetracePercent: 0.5, maxCandles: 5, vwapEmaPeriod: 50 },
-    '1d':  { rsi14_long_threshold: 45, rsi14_short_threshold: 55, atrSpikeMultiplier: 1.5, pnlRetracePercent: 0.4, maxCandles: 3, vwapEmaPeriod: 100 }
+    // Scalping & Low TF: More sensitive, uses RSI7 as an early warning.
+    '1m':  { rsi7_long_threshold: 45, rsi7_short_threshold: 55, rsi14_long_threshold: 42, rsi14_short_threshold: 58, atrSpikeMultiplier: 2.5, pnlRetracePercent: 0.6, maxCandles: 10, vwapEmaPeriod: 9 },
+    '3m':  { rsi7_long_threshold: 45, rsi7_short_threshold: 55, rsi14_long_threshold: 42, rsi14_short_threshold: 58, atrSpikeMultiplier: 2.5, pnlRetracePercent: 0.6, maxCandles: 10, vwapEmaPeriod: 9 },
+    '5m':  { rsi7_long_threshold: 45, rsi7_short_threshold: 55, rsi14_long_threshold: 42, rsi14_short_threshold: 58, atrSpikeMultiplier: 2.5, pnlRetracePercent: 0.6, maxCandles: 10, vwapEmaPeriod: 9 },
+    // Mid TF: Slightly less sensitive, gives more room.
+    '15m': { rsi7_long_threshold: 42, rsi7_short_threshold: 58, rsi14_long_threshold: 40, rsi14_short_threshold: 60, atrSpikeMultiplier: 2.0, pnlRetracePercent: 0.5, maxCandles: 8, vwapEmaPeriod: 21 },
+    '30m': { rsi7_long_threshold: 42, rsi7_short_threshold: 58, rsi14_long_threshold: 40, rsi14_short_threshold: 60, atrSpikeMultiplier: 2.0, pnlRetracePercent: 0.5, maxCandles: 8, vwapEmaPeriod: 21 },
+    // High TF: Much more lenient, ignores noisy RSI7 completely.
+    '1h':  { rsi14_long_threshold: 40, rsi14_short_threshold: 60, atrSpikeMultiplier: 1.8, pnlRetracePercent: 0.5, maxCandles: 5, vwapEmaPeriod: 50 },
+    '4h':  { rsi14_long_threshold: 40, rsi14_short_threshold: 60, atrSpikeMultiplier: 1.8, pnlRetracePercent: 0.5, maxCandles: 5, vwapEmaPeriod: 50 },
+    '1d':  { rsi14_long_threshold: 38, rsi14_short_threshold: 62, atrSpikeMultiplier: 1.5, pnlRetracePercent: 0.4, maxCandles: 3, vwapEmaPeriod: 100 }
 };

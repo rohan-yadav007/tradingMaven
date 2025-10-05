@@ -269,7 +269,7 @@ async function simulateBot(baseKlines: Kline[], config: BotConfig, htfKlines?: K
                         },
                         entryContext: captureMarketContext(klinesForAnalysis, currentHtfKlines),
                         // FIX: Explicitly cast result to number to satisfy the type checker.
-                        entryAtr: getLast(ATR.calculate({high: klinesForAnalysis.map(k=>k.high), low: klinesForAnalysis.map(k=>k.low), close: klinesForAnalysis.map(k=>k.close), period: 14})) as number,
+                        entryAtr: getLast(ATR.calculate({high: klinesForAnalysis.map(k=>k.high), low: klinesForAnalysis.map(k=>k.low), close: klinesForAnalysis.map(k=>k.close), period: 14})) as number | undefined,
                     };
                 }
             }

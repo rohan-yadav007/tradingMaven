@@ -30,167 +30,76 @@ export function getInitialAgentTargets(
     const highs = klines.map(k => k.high);
     const lows = klines.map(k => k.low);
     const isLong = direction === 'LONG';
+    
+    const timeframeCategory = ['1m', '3m', '5m'].includes(timeFrame) ? 'scalping'
+        : ['15m', '30m', '1h'].includes(timeFrame) ? 'day'
+        : 'swing';
 
-    // --- Step 1: Calculate Agent-Specific Stop Loss ---
+    // --- Step 1: Calculate Agent-Specific Stop Loss based on timeframe category ---
     let agentStopLoss: number;
     const atrPeriod = params.atrPeriod;
     const atrValues = ATR.calculate({ high: highs, low: lows, close: closes, period: atrPeriod });
     const currentAtr = (getLast(atrValues) as number | undefined) || (entryPrice * 0.01);
-
-    // --- Volatility-Adaptive ATR Multiplier ---
     const timeframeConfig = TIMEFRAME_ATR_CONFIG[timeFrame] || TIMEFRAME_ATR_CONFIG['5m'];
     let atrMultiplier = timeframeConfig.atrMultiplier;
-    
-    if (atrValues.length > 50) {
-        const recentAtrHistory = atrValues.slice(-200).filter(v => v !== undefined) as number[];
-        if (recentAtrHistory.length > 20) {
-            const sortedAtr = [...recentAtrHistory].sort((a, b) => a - b);
-            const rank = sortedAtr.indexOf(currentAtr);
-            const percentile = (rank / sortedAtr.length) * 100;
-            
-            if (percentile >= params.risk_atrVolatilityPercentile_upper) {
-                atrMultiplier += params.risk_atrVolatilityMultiplier_upper_adj;
-            } else if (percentile <= params.risk_atrVolatilityPercentile_lower) {
-                atrMultiplier += params.risk_atrVolatilityMultiplier_lower_adj;
-            }
-        }
-    }
-    
-    // Default Fallback SL using the (potentially adapted) ATR multiplier
-    const fallbackStop = () => {
-        return isLong ? entryPrice - (currentAtr * atrMultiplier) : entryPrice + (currentAtr * atrMultiplier);
-    }
 
-    switch (agent.id) {
-        case 9: // Quantum Scalper: Context-aware SL (Trending vs. Ranging).
+    if (timeframeCategory === 'scalping') {
+        // SCALPING LOGIC: Prioritize tight, invalidation-based stops near recent price action.
+        const lastKline = klines[klines.length - 1];
+        const prevKline = klines[klines.length - 2];
+        const atrBuffer = currentAtr * 0.25;
+
+        let stopCandidate: number;
+        if (isLong) {
+            const lowestLow = Math.min(lastKline.low, prevKline?.low || lastKline.low);
+            stopCandidate = lowestLow - atrBuffer;
+        } else {
+            const highestHigh = Math.max(lastKline.high, prevKline?.high || lastKline.high);
+            stopCandidate = highestHigh + atrBuffer;
+        }
+        agentStopLoss = stopCandidate;
+
+        // Agent-specific override (e.g., Quantum Scalper's ranging logic might need a wider stop)
+        if (agent.id === 9) {
             const adxValues = ADX.calculate({ high: highs, low: lows, close: closes, period: params.qsc_adxPeriod });
             const adx = getLast(adxValues) as ADXOutput | undefined;
-            if (!adx) { agentStopLoss = fallbackStop(); break; }
-            
-            const isTrending = adx.adx > params.qsc_adxThreshold;
-            if (isTrending) { 
-                const psarInput = { high: highs, low: lows, step: params.qsc_psarStep, max: params.qsc_psarMax };
-                const psar = getLast(PSAR.calculate(psarInput)) as number | undefined;
-
-                const stInput = { high: highs, low: lows, close: closes, period: params.qsc_superTrendPeriod, multiplier: params.qsc_superTrendMultiplier };
-                const st = getLast(Supertrend.calculate(stInput)) as number | undefined;
-
-                let psarCandidate: number | undefined;
-                if (psar && ((isLong && psar < entryPrice) || (!isLong && psar > entryPrice))) {
-                    psarCandidate = psar;
-                }
-
-                let stCandidate: number | undefined;
-                if (st && ((isLong && st < entryPrice) || (!isLong && st > entryPrice))) {
-                    stCandidate = st;
-                }
-
-                if (psarCandidate && stCandidate) {
-                    // Both are valid, pick the one that gives a tighter stop (better R:R)
-                    agentStopLoss = isLong ? Math.max(psarCandidate, stCandidate) : Math.min(psarCandidate, stCandidate);
-                } else if (stCandidate) {
-                    agentStopLoss = stCandidate;
-                } else if (psarCandidate) {
-                    agentStopLoss = psarCandidate;
-                } else {
-                    agentStopLoss = fallbackStop();
-                }
-            } else { // Use BB for ranging/reversion SL
+            const isRanging = adx && adx.adx < params.qsc_adxThreshold;
+            if (isRanging) {
                 const bbValues = BollingerBands.calculate({ period: params.qsc_bbPeriod, stdDev: params.qsc_bbStdDev, values: closes });
                 const bb = getLast(bbValues) as BollingerBandsOutput | undefined;
-                if (!bb) { agentStopLoss = fallbackStop(); break; }
-                agentStopLoss = isLong ? bb.lower - currentAtr * 0.2 : bb.upper + currentAtr * 0.2;
+                if (bb) {
+                    agentStopLoss = isLong ? bb.lower - currentAtr * 0.2 : bb.upper + currentAtr * 0.2;
+                }
             }
-            break;
-            
-        case 16: // Ichimoku Trend Rider
-            const ichi_params_ch = {
-                high: highs, low: lows,
-                conversionPeriod: params.ichi_conversionPeriod, basePeriod: params.ichi_basePeriod,
-                spanPeriod: params.ichi_laggingSpanPeriod, displacement: params.ichi_displacement
-            };
-            const ichi = getLast(IchimokuCloud.calculate(ichi_params_ch)) as IchimokuCloudOutput | undefined;
-            if (ichi?.base) {
-                const kijunSen = ichi.base;
-                // Check if Kijun is on the protective side
-                if ((isLong && kijunSen < entryPrice) || (!isLong && kijunSen > entryPrice)) {
-                    agentStopLoss = isLong ? kijunSen - currentAtr * 0.25 : kijunSen + currentAtr * 0.25;
-                } else if (ichi.spanA && ichi.spanB) {
-                    // Kijun is on the wrong side, use Kumo as fallback
-                    const kumoBoundary = isLong ? Math.min(ichi.spanA, ichi.spanB) : Math.max(ichi.spanA, ichi.spanB);
-                    agentStopLoss = kumoBoundary;
-                } else {
-                    agentStopLoss = fallbackStop();
-                }
-            } else {
-                agentStopLoss = fallbackStop();
-            }
-            break;
-            
-        case 14: // The Sentinel: Hybrid SL
-            { // Use a block to scope variables
-                const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: params.sentinel_adxPeriod! })) as ADXOutput | undefined;
-                if (!adx) {
-                    agentStopLoss = fallbackStop();
-                    break;
-                }
+        }
+    } else { // DAY TRADING & SWING TRADING
+        // Start with a standard ATR-based volatility stop as the default safe option.
+        const volatilityStop = isLong ? entryPrice - (currentAtr * atrMultiplier) : entryPrice + (currentAtr * atrMultiplier);
+        agentStopLoss = volatilityStop;
 
-                const candidates: number[] = [];
-
-                // Candidate 1: SuperTrend SL
-                const st = getLast(Supertrend.calculate({ high: highs, low: lows, close: closes, period: params.sentinel_stPeriod!, multiplier: params.sentinel_stMultiplier! })) as number | undefined;
-                if (st && ((isLong && st < entryPrice) || (!isLong && st > entryPrice))) {
-                    candidates.push(st);
-                }
-
-                // Candidate 2: Swing Structure SL
-                const swingPoints = findSwingPoints(klines, 5);
+        // Now, calculate a structural stop as a potential *tighter* alternative.
+        let structuralStop: number | undefined;
+        switch (agent.id) {
+            case 14: // Sentinel
+            case 18: // Conductor
+            case 19: // AstraX
+                const swingPoints = findSwingPoints(klines, params.conductor_swingLookback);
                 const lastSwing = isLong ? swingPoints.filter(p => p.type === 'low').pop() : swingPoints.filter(p => p.type === 'high').pop();
                 if (lastSwing) {
-                    const swingSL = isLong ? lastSwing.price - (currentAtr * 0.5) : lastSwing.price + (currentAtr * 0.5);
-                    candidates.push(swingSL);
-                }
-
-                // Candidate 3: Regime-based ATR SL
-                let regimeMultiplier: number;
-                if (adx.adx >= 30) {
-                    regimeMultiplier = params.sentinel_atr_mult_strong!;
-                } else if (adx.adx >= 20 && adx.adx < 30) {
-                    regimeMultiplier = params.sentinel_atr_mult_transition!;
-                } else {
-                    regimeMultiplier = params.sentinel_atr_mult_chop!;
-                }
-                const atrSL = isLong ? entryPrice - (currentAtr * regimeMultiplier) : entryPrice + (currentAtr * regimeMultiplier);
-                candidates.push(atrSL);
-
-                // Final SL is the WIDEST (safest) of the valid candidates
-                if (candidates.length > 0) {
-                    agentStopLoss = isLong ? Math.min(...candidates) : Math.max(...candidates);
-                } else {
-                    // Fallback if no candidates were generated
-                    agentStopLoss = fallbackStop();
+                    const atrBuffer = currentAtr * (agent.id === 19 ? 0.25 : params.conductor_slAtrMultiplier);
+                    structuralStop = isLong ? lastSwing.price - atrBuffer : lastSwing.price + atrBuffer;
                 }
                 break;
-            }
+        }
         
-        case 18: // The Conductor: SL based on last valid swing point.
-        case 19: // AstraX: "Breathing Room" SL
-            const swingPoints = findSwingPoints(klines, params.conductor_swingLookback);
-            const lastSwing = isLong 
-                ? swingPoints.filter(p => p.type === 'low').pop()
-                : swingPoints.filter(p => p.type === 'high').pop();
-            
-            if (lastSwing) {
-                const atrBuffer = currentAtr * (agent.id === 19 ? 0.25 : params.conductor_slAtrMultiplier);
-                agentStopLoss = isLong ? lastSwing.price - atrBuffer : lastSwing.price + atrBuffer;
-            } else {
-                agentStopLoss = fallbackStop();
+        // For 'day' and 'swing', use the structural stop ONLY if it's tighter (less risk) than the volatility stop.
+        if (structuralStop !== undefined) {
+            if (isLong && structuralStop > agentStopLoss) { // Higher price = tighter stop for a long
+                agentStopLoss = structuralStop;
+            } else if (!isLong && structuralStop < agentStopLoss) { // Lower price = tighter stop for a short
+                agentStopLoss = structuralStop;
             }
-            break;
-            
-        default:
-            agentStopLoss = fallbackStop();
-            break;
+        }
     }
     
     let stopLossAfterInitialChecks = agentStopLoss;
@@ -199,7 +108,6 @@ export function getInitialAgentTargets(
     const minSlOffset = entryPrice * (MIN_STOP_LOSS_PERCENT / 100);
     const minSafeStopLoss = isLong ? entryPrice - minSlOffset : entryPrice + minSlOffset;
 
-    // If agent's stop is tighter than the minimum, widen it to the minimum safe distance.
     if ((isLong && stopLossAfterInitialChecks > minSafeStopLoss) || (!isLong && stopLossAfterInitialChecks < minSafeStopLoss)) {
         stopLossAfterInitialChecks = minSafeStopLoss;
     }
@@ -209,38 +117,30 @@ export function getInitialAgentTargets(
     
     const timeframeConfigForRr = TIMEFRAME_ATR_CONFIG[timeFrame] || TIMEFRAME_ATR_CONFIG['5m'];
     let riskRewardRatio = timeframeConfigForRr.riskRewardRatio;
-    if (agent.id === 13) riskRewardRatio = 4; // Special R:R for Chameleon
+    if (agent.id === 13) riskRewardRatio = 4;
     let suggestedTakeProfit = isLong 
         ? entryPrice + (stopLossDistance * riskRewardRatio) 
         : entryPrice - (stopLossDistance * riskRewardRatio);
 
-    // Agent-Specific TP Logic (Sentinel S/R) - conditionally override
     if (agent.id === 14 && params.sentinel_useSrLevelsForTp) {
         const srLevels = calculateSupportResistance(klines, 15, 0.005);
-        const buffer = currentAtr * 0.2; // Small buffer before the S/R level
-
+        const buffer = currentAtr * 0.2;
         let targetSrLevel: number | undefined;
-
         if (isLong) {
             const nextResistance = srLevels.resistances.filter(r => r.price > entryPrice).sort((a, b) => a.price - b.price)[0];
             if (nextResistance) targetSrLevel = nextResistance.price - buffer;
-        } else { // SHORT
+        } else {
             const nextSupport = srLevels.supports.filter(s => s.price < entryPrice).sort((a, b) => b.price - a.price)[0];
             if (nextSupport) targetSrLevel = nextSupport.price + buffer;
         }
-
         if (targetSrLevel) {
-            const risk = stopLossDistance;
             const reward = Math.abs(targetSrLevel - entryPrice);
-            const rrRatio = risk > 0 ? reward / risk : 0;
-            const minSrRr = Math.max(1.0, constants.MIN_RISK_REWARD_RATIO - 0.5);
-
-            if (rrRatio >= minSrRr) {
-                suggestedTakeProfit = targetSrLevel; // Override default
+            const rrRatio = stopLossDistance > 0 ? reward / stopLossDistance : 0;
+            if (rrRatio >= Math.max(1.0, constants.MIN_RISK_REWARD_RATIO - 0.5)) {
+                suggestedTakeProfit = targetSrLevel;
             }
         }
     }
-
 
     // --- Step 4: Apply Hard Cap as the FINAL, non-negotiable limit ---
     let finalStopLoss = stopLossAfterInitialChecks;
@@ -256,7 +156,6 @@ export function getInitialAgentTargets(
             ? entryPrice - priceDistanceForMaxLoss
             : entryPrice + priceDistanceForMaxLoss;
             
-        // Check if the current stop loss (agent's or min distance) is riskier than the hard cap.
         const currentSlIsRiskier = isLong
             ? finalStopLoss < hardCapStopLossPrice
             : finalStopLoss > hardCapStopLossPrice;
@@ -266,7 +165,6 @@ export function getInitialAgentTargets(
             slReason = 'Hard Cap';
         }
     }
-
 
     // --- Step 5: CRITICAL FINAL SAFETY CHECKS ---
     let finalTakeProfit = suggestedTakeProfit;
@@ -285,10 +183,7 @@ export function getInitialAgentTargets(
     }
     
     if ((isLong && finalStopLoss >= entryPrice) || (!isLong && finalStopLoss <= entryPrice)) {
-        finalStopLoss = fallbackStop();
-        if ((isLong && finalStopLoss >= entryPrice) || (!isLong && finalStopLoss <= entryPrice)) {
-            finalStopLoss = isLong ? entryPrice * (1 - (MIN_STOP_LOSS_PERCENT/100)) : entryPrice * (1 + (MIN_STOP_LOSS_PERCENT/100));
-        }
+        finalStopLoss = isLong ? entryPrice * (1 - (MIN_STOP_LOSS_PERCENT/100)) : entryPrice * (1 + (MIN_STOP_LOSS_PERCENT/100));
     }
     
     if ((isLong && finalTakeProfit <= entryPrice) || (!isLong && finalTakeProfit >= entryPrice)) {
@@ -301,9 +196,9 @@ export function getInitialAgentTargets(
         stopLossPrice: finalStopLoss,
         takeProfitPrice: finalTakeProfit,
         slReason,
-        agentStopLoss: stopLossAfterInitialChecks // Return the intended SL for validation and record-keeping
+        agentStopLoss: stopLossAfterInitialChecks
     };
-};
+}
 
 export function validateTradeProfitability(
     entryPrice: number,
@@ -314,13 +209,11 @@ export function validateTradeProfitability(
 ): { isValid: boolean, reason: string } {
     const isLong = direction === 'LONG';
 
-    // Check 1: Stop Loss and Take Profit are on the correct side of the entry price
     if ((isLong && (agentStopLossPrice >= entryPrice || takeProfitPrice <= entryPrice)) ||
         (!isLong && (agentStopLossPrice <= entryPrice || takeProfitPrice >= entryPrice))) {
         return { isValid: false, reason: "❌ VETO: SL/TP targets are on the wrong side of the entry price." };
     }
 
-    // Check 2: The trade must be profitable enough to cover fees.
     const positionValue = config.investmentAmount * (config.mode === TradingMode.USDSM_Futures ? config.leverage : 1);
     const tradeSize = (entryPrice > 0) ? positionValue / entryPrice : 0;
     if (tradeSize > 0) {
@@ -333,9 +226,7 @@ export function validateTradeProfitability(
         }
     }
 
-    // Check 3: Enforce Minimum Risk/Reward if enabled.
     if (config.isMinRrEnabled) {
-        // Use the intended agent stop loss (post-safety-checks) for R:R calculation.
         const risk = Math.abs(entryPrice - agentStopLossPrice);
         const reward = Math.abs(takeProfitPrice - entryPrice);
         const rrRatio = risk > 0 ? reward / risk : 0;
@@ -349,6 +240,7 @@ export function validateTradeProfitability(
     return { isValid: true, reason: `✅ Profitability checks passed.` };
 };
 
+// ... (rest of the file remains the same)
 // ----------------------------------------------------------------------------------
 // --- #2: TRADE MANAGEMENT (Trailing Stops, etc.) ---
 // ----------------------------------------------------------------------------------
@@ -379,22 +271,18 @@ export function getProfitSpikeSignal(
 
     const pnlPercentage = (currentPnl / investmentAmount) * 100;
 
-    // Tiers based on PNL % of initial investment, but locking in a % of *current* profit.
     const tiers = [
-        { triggerPercent: 600, lockPercent: 0.80, tier: 4 }, // At 600% gain, lock 80% of it
-        { triggerPercent: 400, lockPercent: 0.70, tier: 3 }, // At 400% gain, lock 70% of it
-        { triggerPercent: 200, lockPercent: 0.60, tier: 2 }, // At 200% gain, lock 60% of it
-        { triggerPercent: 100, lockPercent: 0.50, tier: 1 }, // At 100% gain, lock 50% of it
+        { triggerPercent: 600, lockPercent: 0.80, tier: 4 },
+        { triggerPercent: 400, lockPercent: 0.70, tier: 3 },
+        { triggerPercent: 200, lockPercent: 0.60, tier: 2 },
+        { triggerPercent: 100, lockPercent: 0.50, tier: 1 },
     ];
 
     const applicableTier = tiers.find(t => pnlPercentage >= t.triggerPercent && profitSpikeTier < t.tier);
 
     if (applicableTier) {
-        // Calculate PNL to lock based on *current* profit
         const lockedPnlDollars = currentPnl * applicableTier.lockPercent;
-        
         const lockedPnlInPrice = lockedPnlDollars / size;
-        
         const newStopLoss = entryPrice + (lockedPnlInPrice * (isLong ? 1 : -1));
 
         if ((isLong && newStopLoss > stopLossPrice) || (!isLong && newStopLoss < stopLossPrice)) {
@@ -417,17 +305,13 @@ export function getMandatoryBreakevenSignal(
 ): TradeManagementSignal {
     const { entryPrice, stopLossPrice, direction, isBreakevenSet, size, takerFeeRate } = position;
 
-    // Rule applies only once, before any other profit locking.
     if (isBreakevenSet) {
         return { reasons: [] };
     }
 
     const isLong = direction === 'LONG';
-    
-    // --- Direct Dollar-Based Calculation ---
     const currentPnlDollars = (currentPrice - entryPrice) * size * (isLong ? 1 : -1);
     
-    // Not in profit, no action needed.
     if (currentPnlDollars <= 0) {
         return { reasons: [] };
     }
@@ -435,15 +319,12 @@ export function getMandatoryBreakevenSignal(
     const positionValueDollars = entryPrice * size;
     const roundTripFeeDollars = positionValueDollars * takerFeeRate * 2;
 
-    // Check if the PNL is at least 2x the round-trip fee.
     if (roundTripFeeDollars > 0 && currentPnlDollars >= (roundTripFeeDollars * 2)) {
-        // Breakeven stop loss is the exact price needed to exit with zero PNL after fees.
         const feeRate = takerFeeRate;
         const breakevenStop = isLong
             ? entryPrice * (1 + feeRate) / (1 - feeRate)
             : entryPrice * (1 - feeRate) / (1 + feeRate);
 
-        // Only update if the new breakeven stop is better (tighter) than the current one.
         if ((isLong && breakevenStop > stopLossPrice) || (!isLong && breakevenStop < stopLossPrice)) {
             return {
                 newStopLoss: breakevenStop,
@@ -483,7 +364,6 @@ export function getMultiStageProfitSecureSignal(
         return { reasons: [] };
     }
 
-    // Handle the first profit lock (breakeven equivalent) if it hasn't been done
     if (currentFeeMultiple >= 2 && profitLockTier < 2) {
         const feeRate = takerFeeRate;
         const breakevenStop = isLong
@@ -500,17 +380,17 @@ export function getMultiStageProfitSecureSignal(
         }
     }
     
-    // Handle subsequent profit locks (N-2) for N >= 3 to give more breathing room
-    if (currentFeeMultiple > profitLockTier && currentFeeMultiple >= 3) {
-        const lockFeeMultiple = currentFeeMultiple - 2;
+    // FIX: Changed logic to give more breathing room. Trail starts locking profit only after 4x fees are covered.
+    if (currentFeeMultiple > profitLockTier && currentFeeMultiple >= 4) {
+        const lockFeeMultiple = currentFeeMultiple - 3; // Previously was -2
         
-        if (lockFeeMultiple > 1) { // Ensure we are at least locking in breakeven-level profit
+        if (lockFeeMultiple > 1) {
             const lockedPnlDollars = roundTripFeeDollars * lockFeeMultiple;
             const lockedPnlInPrice = lockedPnlDollars / size;
             const newStopLoss = entryPrice + (lockedPnlInPrice * (isLong ? 1 : -1));
 
             if ((isLong && newStopLoss > stopLossPrice) || (!isLong && newStopLoss < stopLossPrice)) {
-                const reason = `Universal Trail: Tier ${currentFeeMultiple - 2} activated at ${currentFeeMultiple}x fee gain.`;
+                const reason = `Universal Trail: Tier ${currentFeeMultiple - 3} activated at ${currentFeeMultiple}x fee gain.`;
                 return {
                     newStopLoss,
                     reasons: [reason],
@@ -633,7 +513,6 @@ export function getAgentExitSignal(
     const highs = klines.map(k => k.high);
     const lows = klines.map(k => k.low);
 
-    // --- Profit Velocity Engine ---
     const { entryPrice, takeProfitPrice, timeFrame } = position;
     
     const totalTargetDistance = Math.abs(takeProfitPrice - entryPrice);
@@ -653,7 +532,7 @@ export function getAgentExitSignal(
 
 
     switch (agent.id) {
-        case 9: // Quantum Scalper: PSAR-based trailing stop with ATR buffer
+        case 9:
             let step = params.qsc_psarStep;
             let max = params.qsc_psarMax;
             
@@ -688,8 +567,7 @@ export function getAgentExitSignal(
             break;
 
         case 14:
-            { // Block scope
-                // --- Momentum Check ---
+            {
                 const rsi = getLast(RSI.calculate({ period: params.sentinel_rsiPeriod!, values: closes })) as number | undefined;
                 const obvValues = OBV.calculate({ close: closes, volume: klines.map(k => k.volume || 0) });
                 const obvDelta = (getLast(obvValues) || 0) - (getPenultimate(obvValues) || 0);
@@ -705,7 +583,6 @@ export function getAgentExitSignal(
 
                 if (momentumSupportsTrail) {
                     reasons.push(`✅ Momentum supports trailing.`);
-                    // --- Trailing Logic ---
                     const baseMultiplier = params.sentinel_stMultiplier;
                     const trailMultiplier = Math.max(1, baseMultiplier / profitVelocity);
                     if (profitVelocity > 1) reasons.push(`Agent Trail: Profit Velocity active (${profitVelocity}x speed)`);
@@ -713,7 +590,6 @@ export function getAgentExitSignal(
                     newStopLoss = getLast(Supertrend.calculate({ high: highs, low: lows, close: closes, period: params.sentinel_stPeriod, multiplier: trailMultiplier })) as number | undefined;
                 } else {
                     reasons.push(`ℹ️ Momentum faded. Trailing SL is frozen.`);
-                    // newStopLoss remains undefined, so the SL doesn't move
                 }
                 break;
             }
@@ -728,9 +604,8 @@ export function getAgentExitSignal(
             }
             break;
 
-        case 19: // AstraX
+        case 19:
             {
-                // Tier 3: Critical reversal (ChoCH on main TF) -> Aggressive close
                 const swingPoints = findSwingPoints(klines, params.astraX_structureLookback || 8);
                 const structure = analyzeMarketStructure(swingPoints);
                 if ((isLong && structure.lastSignal === 'ChoCH_Bearish') || (!isLong && structure.lastSignal === 'ChoCH_Bullish')) {
@@ -739,7 +614,6 @@ export function getAgentExitSignal(
                     break;
                 }
         
-                // Tier 2: Actionable warning (divergence)
                 const rsiValues = RSI.calculate({ period: 14, values: closes });
                 if (detectRsiDivergence(klines, rsiValues, position.direction, 14)) {
                      const breakevenPrice = isLong
@@ -750,7 +624,6 @@ export function getAgentExitSignal(
                     break;
                 }
         
-                // Tier 1: Soft deterioration (momentum fade) -> Trail with fast EMA
                 const macd = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false })) as MACDOutput | undefined;
                 if ((isLong && macd?.histogram && macd.histogram < 0) || (!isLong && macd?.histogram && macd.histogram > 0)) {
                     const fastEma = getLast(EMA.calculate({ period: 9, values: closes }));
@@ -770,7 +643,7 @@ export function getAgentExitSignal(
         const feeRate = position.takerFeeRate;
         const breakevenPrice = isLong
             ? position.entryPrice * (1 + feeRate) / (1 - feeRate)
-            : position.entryPrice * (1 - feeRate) / (1 + feeRate);
+            : position.entryPrice * (1 + feeRate) / (1 + feeRate);
         if (isLong) newStopLoss = Math.max(newStopLoss, breakevenPrice);
         else newStopLoss = Math.min(newStopLoss, breakevenPrice);
         reasons.push('Agent Trail active post-breakeven.');
@@ -783,7 +656,7 @@ export function getAdaptiveTakeProfit(
     position: Position,
     klines: Kline[],
     currentPrice: number,
-): { newTakeProfit?: number; reason?: string; newState?: Partial<Position> } {
+): { newTakeProfit?: number; newStopLoss?: number; reason?: string; newState?: Partial<Position>; activeStopLossReason?: Position['activeStopLossReason'] } {
     const { direction, entryPrice, takeProfitPrice, botConfigSnapshot, adaptiveTpTriggered } = position;
 
     if (!botConfigSnapshot?.isAdaptiveTpEnabled || adaptiveTpTriggered) {
@@ -830,7 +703,7 @@ export function getAdaptiveTakeProfit(
         const reason = hasDivergence ? `Adaptive TP: Tightening due to RSI divergence.` : `Adaptive TP: Tightening due to StochRSI exhaustion.`;
         const newTakeProfit = isLong ? currentPrice * 1.0005 : currentPrice * 0.9995;
         
-        const isStillProfitable = (isLong && newTakeProfit > entryPrice) || (!isLong && newTakeProfit < takeProfitPrice);
+        const isStillProfitable = (isLong && newTakeProfit > entryPrice) || (!isLong && newTakeProfit < entryPrice);
         const isTighter = (isLong && newTakeProfit < takeProfitPrice) || (!isLong && newTakeProfit > takeProfitPrice);
 
         if (isStillProfitable && isTighter) {
@@ -849,6 +722,24 @@ export function getAdaptiveTakeProfit(
         const isExtension = (isLong && newTakeProfit > takeProfitPrice) || (!isLong && newTakeProfit < takeProfitPrice);
         
         if (isExtension) {
+            const unrealizedPnlInPrice = (currentPrice - entryPrice) * (isLong ? 1 : -1);
+            if (unrealizedPnlInPrice > 0) {
+                const profitToLockInPrice = unrealizedPnlInPrice * 0.90;
+                const newStopLoss = entryPrice + (profitToLockInPrice * (isLong ? 1 : -1));
+
+                const isTighter = (isLong && newStopLoss > position.stopLossPrice) || (!isLong && newStopLoss < position.stopLossPrice);
+                
+                if (isTighter) {
+                    return {
+                        newTakeProfit,
+                        newStopLoss,
+                        reason: `Adaptive TP: Extending target & locking 90% of profit due to strong momentum.`,
+                        newState: { adaptiveTpTriggered: true },
+                        activeStopLossReason: 'Profit Secure'
+                    };
+                }
+            }
+            
             return {
                 newTakeProfit,
                 reason: `Adaptive TP: Extending target due to strong momentum.`,
@@ -867,8 +758,8 @@ interface GuardianSignal {
 
 export function getTradeGuardianSignal(
     position: Position,
-    klines: Kline[],
-    microKlines: Kline[] | undefined,
+    klines: Kline[], // Main TF klines for context
+    microKlines: Kline[] | undefined, // Micro TF klines for reactivity
     currentPrice: number,
 ): GuardianSignal {
     const config = position.botConfigSnapshot;
@@ -880,89 +771,81 @@ export function getTradeGuardianSignal(
     const strikes = new Set<string>();
     const isLong = position.direction === 'LONG';
     
-    const closes = klines.map(k => k.close);
-    const volumes = klines.map(k => k.volume || 0);
-    const highs = klines.map(k => k.high);
-    const lows = klines.map(k => k.low);
-    const lastKline = getLast(klines)!;
-
-    // --- Check 1: Momentum Exhaustion ---
-    const rsi14_values = RSI.calculate({ period: 14, values: closes });
-    const rsi14 = getLast(rsi14_values);
-    const prev_rsi14 = rsi14_values[rsi14_values.length - 2];
-    const rsi7_values = RSI.calculate({ period: 7, values: closes });
-    const rsi7 = getLast(rsi7_values);
-
-    if (rsi7 !== undefined && rsi14 !== undefined && prev_rsi14 !== undefined) {
-        const rsi14_is_weakening_for_long = rsi14 < prev_rsi14 || Math.abs(rsi14 - prev_rsi14) < 1;
-        const rsi14_is_weakening_for_short = rsi14 > prev_rsi14 || Math.abs(rsi14 - prev_rsi14) < 1;
+    // --- Reactive Checks on Micro-Timeframe Data ---
+    if (microKlines && microKlines.length >= 20) {
+        const microCloses = microKlines.map(k => k.close);
+        const microVolumes = microKlines.map(k => k.volume || 0);
         
-        if (isLong && params.rsi7_long_threshold && rsi7 < params.rsi7_long_threshold && rsi14_is_weakening_for_long) {
-            strikes.add('Momentum Exhaustion (RSI)');
+        // --- Check 1: Momentum Exhaustion (on Micro TF) ---
+        const rsi14 = getLast(RSI.calculate({ period: 14, values: microCloses })) as number | undefined;
+        const rsi7 = getLast(RSI.calculate({ period: 7, values: microCloses })) as number | undefined;
+
+        // Fast RSI check (early warning)
+        if (params.rsi7_long_threshold && rsi7 !== undefined) {
+            if (isLong && rsi7 < params.rsi7_long_threshold) strikes.add('Fast Momentum Weakness (RSI7)');
+            if (!isLong && params.rsi7_short_threshold && rsi7 > params.rsi7_short_threshold) strikes.add('Fast Momentum Weakness (RSI7)');
         }
-        if (!isLong && params.rsi7_short_threshold && rsi7 > params.rsi7_short_threshold && rsi14_is_weakening_for_short) {
-            strikes.add('Momentum Exhaustion (RSI)');
+        
+        // Slow RSI check (stronger signal)
+        if (rsi14 !== undefined) {
+            if (isLong && rsi14 < params.rsi14_long_threshold) strikes.add('Core Momentum Failure (RSI14)');
+            if (!isLong && rsi14 > params.rsi14_short_threshold) strikes.add('Core Momentum Failure (RSI14)');
         }
-        if (isLong && params.rsi14_long_threshold && rsi14 < params.rsi14_long_threshold && prev_rsi14 >= params.rsi14_long_threshold) {
-             strikes.add('Momentum Exhaustion (RSI)');
+
+        const obv_values = OBV.calculate({ close: microCloses, volume: microVolumes });
+        if (obv_values.length > 5) {
+            const price_slope_positive = (getLast(microCloses)! - microCloses[microCloses.length - 5]) > 0;
+            const obv_slope_positive = ((getLast(obv_values) as number) - obv_values[obv_values.length - 5]) > 0;
+            if (isLong && price_slope_positive && !obv_slope_positive) strikes.add('Momentum Exhaustion (OBV Divergence)');
+            if (!isLong && !price_slope_positive && obv_slope_positive) strikes.add('Momentum Exhaustion (OBV Divergence)');
         }
-        if (!isLong && params.rsi14_short_threshold && rsi14 > params.rsi14_short_threshold && prev_rsi14 <= params.rsi14_short_threshold) {
-             strikes.add('Momentum Exhaustion (RSI)');
+
+        // --- Check 2: Candle Behavior Shift (on Micro TF) ---
+        if (microKlines.length >= 2) {
+            const prevMicroKline = microKlines[microKlines.length - 2];
+            const lastMicroKline = microKlines[microKlines.length - 1];
+            const engulfingInput = { 
+                open: [prevMicroKline.open, lastMicroKline.open], 
+                high: [prevMicroKline.high, lastMicroKline.high], 
+                low: [prevMicroKline.low, lastMicroKline.low], 
+                close: [prevMicroKline.close, lastMicroKline.close]
+            };
+            if (isLong && getLast(bearishengulfingpattern(engulfingInput))) {
+                strikes.add('Bearish Engulfing Candle (Micro)');
+            }
+            if (!isLong && getLast(bullishengulfingpattern(engulfingInput))) {
+                strikes.add('Bullish Engulfing Candle (Micro)');
+            }
         }
-    }
-    const obv_values = OBV.calculate({ close: closes, volume: volumes });
-    if (obv_values.length > 5) {
-        const price_slope_positive = (lastKline.close - klines[klines.length - 5].close) > 0;
-        const obv_slope_positive = (getLast(obv_values)! - obv_values[obv_values.length - 5]) > 0;
-        if (isLong && price_slope_positive && !obv_slope_positive) strikes.add('Momentum Exhaustion (OBV Divergence)');
-        if (!isLong && !price_slope_positive && obv_slope_positive) strikes.add('Momentum Exhaustion (OBV Divergence)');
+        const last3micro = microKlines.slice(-3);
+        if (isLong && last3micro.length === 3 && last3micro.every(k => k.close < k.open)) strikes.add('3 consecutive micro-bear candles');
+        if (!isLong && last3micro.length === 3 && last3micro.every(k => k.close > k.open)) strikes.add('3 consecutive micro-bull candles');
     }
 
-    // --- Check 2: Candle Behavior Shift ---
-    const volumeSma = getLast(SMA.calculate({ period: 20, values: volumes }));
-    const hasVolumeSpike = lastKline.volume && volumeSma && lastKline.volume > volumeSma * 1.5;
-    if (klines.length >= 2) {
-        const engulfingInput = { open: [klines[klines.length-2].open, lastKline.open], high: [klines[klines.length-2].high, lastKline.high], low: [klines[klines.length-2].low, lastKline.low], close: [klines[klines.length-2].close, lastKline.close]};
-        if (isLong && bearishengulfingpattern(engulfingInput) && hasVolumeSpike) {
-            strikes.add('Bearish Engulfing Candle');
-        }
-        if (!isLong && bullishengulfingpattern(engulfingInput) && hasVolumeSpike) {
-            strikes.add('Bullish Engulfing Candle');
-        }
-    }
-    if (microKlines && microKlines.length >= 3) {
-        const last3micro = microKlines.slice(-3);
-        if (isLong && last3micro.every(k => k.close < k.open)) strikes.add('3 consecutive micro-bear candles');
-        if (!isLong && last3micro.every(k => k.close > k.open)) strikes.add('3 consecutive micro-bull candles');
-    }
-    
-    // --- Check 3: ATR/Volatility Spike ---
-    const currentAtr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: 14 }));
+    // --- Contextual Checks on Main Timeframe Data ---
+    const mainCloses = klines.map(k => k.close);
+    const mainHighs = klines.map(k => k.high);
+    const mainLows = klines.map(k => k.low);
+    const lastMainKline = getLast(klines)!;
+
+    // --- Check 3: ATR/Volatility Spike (on Main TF) ---
+    const currentAtr = getLast(ATR.calculate({ high: mainHighs, low: mainLows, close: mainCloses, period: 14 }));
     if (position.entryAtr && currentAtr && currentAtr > position.entryAtr * params.atrSpikeMultiplier) {
-        const isAgainst = isLong ? lastKline.close < lastKline.open : lastKline.close > lastKline.open;
+        const isAgainst = isLong ? lastMainKline.close < lastMainKline.open : lastMainKline.close > lastMainKline.open;
         if (isAgainst) {
             strikes.add('Volatility Spike Reversal');
         }
     }
 
-    // --- Check 4: VWAP/EMA Guardian ---
+    // --- Check 4: VWAP/EMA Guardian (on Main TF) ---
     const vwap = getLast(calculateDailyVwap(klines));
-    const ema = getLast(EMA.calculate({ period: params.vwapEmaPeriod, values: closes }));
-    if (vwap && ema) {
+    const ema = getLast(EMA.calculate({ period: params.vwapEmaPeriod, values: mainCloses }));
+    if (vwap !== undefined && ema !== undefined) {
         if (isLong && currentPrice < vwap && currentPrice < ema) {
             strikes.add('Broken below VWAP/EMA support');
         }
         if (!isLong && currentPrice > vwap && currentPrice > ema) {
             strikes.add('Broken above VWAP/EMA resistance');
-        }
-    }
-
-    // --- Check 5: Micro-Timeframe Concordance (Simplified) ---
-    if (microKlines) {
-        const microRsi = getLast(RSI.calculate({ period: 14, values: microKlines.map(k => k.close) }));
-        if (microRsi) {
-            if (isLong && microRsi < 45) strikes.add('Micro-TF momentum weak');
-            if (!isLong && microRsi > 55) strikes.add('Micro-TF momentum weak');
         }
     }
 
@@ -983,7 +866,7 @@ export function getTradeGuardianSignal(
         }
     }
 
-    if (strikes.size >= 3) {
+    if (strikes.size >= 4) {
         return { action: 'close', reason: `Trade Guardian Exit: ${[...strikes].join('; ')}` };
     }
 

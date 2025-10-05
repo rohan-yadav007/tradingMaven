@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -199,20 +200,39 @@ const AppContent: React.FC = () => {
             return;
         }
         setClosingPositionIds(prev => new Set(prev).add(posToClose.id));
-
-        const exitPrice = exitPriceOverride ?? botManagerService.getBot(posToClose.botId!)?.bot.livePrice ?? 0;
-        if (exitPrice === 0 && posToClose.executionMode !== 'live') {
-            console.error("Could not determine exit price for paper trade", posToClose.id);
+    
+        let exitPrice = exitPriceOverride;
+    
+        // If no override is provided or it's invalid, find the best available price.
+        if (!exitPrice || exitPrice <= 0) {
+            const bot = botManagerService.getBot(posToClose.botId!);
+            if (bot) {
+                // 1. Use live ticker price if available
+                if (bot.bot.livePrice && bot.bot.livePrice > 0) {
+                    exitPrice = bot.bot.livePrice;
+                } 
+                // 2. Fallback to the last known close price from the bot's klines
+                else if (bot.klines.length > 0) {
+                    exitPrice = bot.klines[bot.klines.length - 1].close;
+                    botManagerService.addBotLog(posToClose.botId!, `Used last kline close for exit price: ${exitPrice}`, LogType.Info);
+                }
+            }
+        }
+        
+        // For paper trades, a valid price is mandatory to simulate the close.
+        if ((!exitPrice || exitPrice <= 0) && posToClose.executionMode === 'paper') {
+            console.error("Could not determine a valid exit price for paper trade", posToClose.id);
+            botManagerService.addBotLog(posToClose.botId!, `CRITICAL: Failed to determine exit price for paper trade ${posToClose.id}.`, LogType.Error);
             setClosingPositionIds(prev => { const newSet = new Set(prev); newSet.delete(posToClose.id); return newSet; });
             return;
         }
-
+    
         const closePositionInState = async (finalExitPrice: number, fees: number = 0) => {
             const isLong = posToClose.direction === 'LONG';
             const grossPnl = (finalExitPrice - posToClose.entryPrice) * posToClose.size * (isLong ? 1 : -1);
             
             const netPnl = grossPnl - fees;
-
+    
             const mfePrice = posToClose.peakPrice ?? posToClose.entryPrice;
             const maePrice = posToClose.troughPrice ?? posToClose.entryPrice;
             const mfe = Math.abs(mfePrice - posToClose.entryPrice) * posToClose.size;
@@ -220,7 +240,7 @@ const AppContent: React.FC = () => {
             
             const bot = botManagerService.getBot(posToClose.botId!);
             const botKlines = bot ? bot.klines : [];
-
+    
             let htfKlines: Kline[] | undefined;
             if (posToClose.botConfigSnapshot?.isHtfConfirmationEnabled) {
                 const htf = posToClose.botConfigSnapshot.htfTimeFrame === 'auto'
@@ -231,7 +251,7 @@ const AppContent: React.FC = () => {
                 }
             }
             const exitContext = localAgentService.captureMarketContext(botKlines, htfKlines);
-
+    
             const newTrade: Trade = { 
                 ...posToClose, 
                 exitPrice: finalExitPrice, 
@@ -249,7 +269,7 @@ const AppContent: React.FC = () => {
                 const updatedHistory = historyService.saveTrade(newTrade);
                 return updatedHistory;
             });
-
+    
             if (posToClose.botId) {
                 botManagerService.notifyPositionClosed(posToClose.botId, netPnl);
             }
@@ -270,10 +290,10 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 `;
                 telegramBotService.sendMessage(message, chatId);
             }
-
+    
             setClosingPositionIds(prev => { const newSet = new Set(prev); newSet.delete(posToClose.id); return newSet; });
         }
-
+    
         if (posToClose.executionMode === 'live') {
             botManagerService.addBotLog(posToClose.botId!, `Attempting to close live position for ${posToClose.pair}...`, LogType.Info);
             try {
@@ -282,18 +302,18 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 const liveSymbolInfo = posToClose.mode === TradingMode.USDSM_Futures 
                     ? await binanceService.getFuturesSymbolInfo(formattedPair) 
                     : await binanceService.getSymbolInfo(formattedPair);
-
+    
                 if (!liveSymbolInfo) throw new Error(`Could not fetch symbol info for ${formattedPair} to close position.`);
-
+    
                 const quantityPrecision = binanceService.getQuantityPrecision(liveSymbolInfo);
                 const closingSide = posToClose.direction === 'LONG' ? 'SELL' : 'BUY';
                 
                 const quantity = parseFloat(posToClose.size.toFixed(quantityPrecision));
-
+    
                 if (quantity <= 0) {
                      throw { code: -4003, msg: "Calculated closing quantity is zero or less. Cannot close position." };
                 }
-
+    
                 let orderResponse: BinanceOrderResponse;
                 switch(posToClose.mode) {
                     case TradingMode.Spot:
@@ -310,7 +330,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                  if (Math.abs(executedQuantity - quantity) > 1e-9) {
                      throw new Error(`Position closure failed: Order only partially filled. Requested ${quantity}, but executed ${executedQuantity}. Please resolve manually on the exchange.`);
                  }
-
+    
                  botManagerService.addBotLog(posToClose.botId!, `Live position closed successfully via API.`, LogType.Success);
                  const finalExitPrice = parseFloat(orderResponse.cummulativeQuoteQty) / executedQuantity;
                  
@@ -318,9 +338,9 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                  const exitValue = finalExitPrice * posToClose.size;
                  const feeRate = posToClose.takerFeeRate || constants.TAKER_FEE_RATE;
                  const totalFees = (entryValue + exitValue) * feeRate;
-
+    
                  await closePositionInState(finalExitPrice, totalFees);
-
+    
             } catch(e) {
                 const errorMessage = binanceService.interpretBinanceError(e);
                 console.error("CRITICAL: Failed to close live position on Binance:", e);
@@ -345,7 +365,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                     chatId
                     );
                 }
-
+    
                 setClosingPositionIds(prev => {
                     const newSet = new Set(prev);
                     newSet.delete(posToClose.id);
@@ -354,10 +374,10 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             }
         } else {
             const entryValue = posToClose.entryPrice * posToClose.size;
-            const exitValue = exitPrice * posToClose.size;
+            const exitValue = exitPrice! * posToClose.size;
             const feeRate = posToClose.takerFeeRate || constants.TAKER_FEE_RATE;
             const simulatedFees = (entryValue + exitValue) * feeRate;
-            await closePositionInState(exitPrice, simulatedFees);
+            await closePositionInState(exitPrice!, simulatedFees);
         }
     }, [closingPositionIds]);
 
@@ -666,7 +686,7 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
             const balance = paperWallet.find(b => b.asset === quoteAsset);
             setAvailableBalance(balance ? balance.free : 10000);
         }
-    }, [executionMode, isApiConnected, configState.walletViewMode, displayPair]);
+    }, [executionMode, isApiConnected, configState.walletViewMode, displayPair, setAvailableBalance]);
 
     const handleLoadMoreData = useCallback(async () => {
         if (isFetchingMoreChartData || klines.length === 0) return;

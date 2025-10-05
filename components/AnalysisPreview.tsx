@@ -142,10 +142,9 @@ const ConductorAnalysisDisplay: React.FC<{ analysis: ConductorAnalysis }> = ({ a
 };
 
 const AstraXAnalysisDisplay: React.FC<{ analysis: AstraXAnalysis }> = ({ analysis }) => {
-    const { conviction, threshold, regime } = analysis;
+    const { conviction, threshold, regime, scores, adjustments } = analysis;
     const isBullish = conviction > 0;
     
-    // Scale conviction from [-100, 100] to a [0, 100] percentage for the progress bar
     const barPercent = (conviction + 100) / 2;
     const thresholdPercent = (threshold / 100);
 
@@ -153,7 +152,7 @@ const AstraXAnalysisDisplay: React.FC<{ analysis: AstraXAnalysis }> = ({ analysi
         <div className="space-y-4 text-sm">
              <div>
                 <div className="flex justify-between items-baseline mb-1">
-                    <span className="font-bold text-slate-800 dark:text-slate-200">Conviction Score</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200">Final Conviction Score</span>
                     <span className={`font-bold text-lg ${isBullish ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{conviction.toFixed(0)}</span>
                 </div>
                  <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-3 relative" title={`Conviction: ${conviction.toFixed(0)} | Threshold: ±${threshold.toFixed(0)}`}>
@@ -169,6 +168,38 @@ const AstraXAnalysisDisplay: React.FC<{ analysis: AstraXAnalysis }> = ({ analysi
                     Regime: <b>{regime}</b> | Entry Threshold: <b>±{threshold.toFixed(0)}</b>
                 </div>
             </div>
+
+            {scores && (
+                <div className="space-y-2 pt-3 border-t border-slate-200 dark:border-slate-700">
+                    {Object.entries(scores).map(([pillar, pillarScores]) => (
+                        <div key={pillar}>
+                            <div className="flex justify-between items-baseline text-xs mb-0.5">
+                                <span className="font-semibold capitalize text-slate-600 dark:text-slate-300">{pillar}</span>
+                                <span className={`font-mono font-bold ${pillarScores.bull > pillarScores.bear ? 'text-emerald-500' : pillarScores.bull < pillarScores.bear ? 'text-rose-500' : 'text-slate-500'}`}>
+                                    {pillarScores.bull.toFixed(0)} / {pillarScores.bear.toFixed(0)}
+                                </span>
+                            </div>
+                            <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5 relative">
+                                <div className="absolute top-0 bottom-0 w-0.5 bg-slate-400 dark:bg-slate-500" style={{ left: '50%' }}></div>
+                                <div className="h-full bg-emerald-400 rounded-l-full" style={{ width: `${pillarScores.bull / 2}%` }}></div>
+                                <div className="h-full bg-rose-400 rounded-r-full absolute top-0 right-0" style={{ width: `${pillarScores.bear / 2}%` }}></div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+            
+            {adjustments && adjustments.length > 0 && (
+                <div className="pt-2">
+                    <h5 className="font-semibold text-xs text-slate-600 dark:text-slate-300 mb-1">Risk Adjustments</h5>
+                    {adjustments.map((adj, i) => (
+                        <div key={i} className="flex justify-between items-baseline text-xs text-amber-600 dark:text-amber-400">
+                            <span>{adj.reason}</span>
+                            <span className="font-mono">{adj.impact.toFixed(0)}</span>
+                        </div>
+                    ))}
+                </div>
+            )}
         </div>
     );
 };

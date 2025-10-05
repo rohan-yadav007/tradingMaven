@@ -1,4 +1,6 @@
-import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, TradingMode, MarketDataContext } from '../types';
+// services/botManagerService.ts
+
+import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, TradingMode, MarketDataContext, AgentParams } from '../types';
 import * as binanceService from './binanceService';
 import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getTradeGuardianSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext, getAdaptiveTakeProfit } from './localAgentService';
 import { TIME_FRAMES, getMicroTimeframe } from '../constants';
@@ -32,7 +34,7 @@ export interface BotHandlers {
             entryContext: MarketDataContext,
         }
     ) => Promise<void>;
-    onClosePosition: (position: Position, exitReason: string, exitPrice: number) => void;
+    onClosePosition: (position: Position, exitReason: string, exitPrice?: number) => void;
 }
 
 class BotInstance {
@@ -202,36 +204,37 @@ class BotInstance {
                 const isAstraXOnNextCandle = this.bot.config.agent.id === 19 && this.bot.config.entryTiming === 'onNextCandle';
                 const isTickTrigger = options.reason.includes('Tick');
 
-                if (isAstraXOnNextCandle && isTickTrigger) {
-                    // Special path for AstraX: only execute scalp trades on tick-based analysis in onNextCandle mode.
-                    if (signal.tradeType === 'scalp' && signal.signal !== 'HOLD') {
-                        this.updateState({ status: BotStatus.ExecutingTrade });
-                        await this.executeTrade(signal, klinesForAnalysis); 
-                    }
-                    // Conviction signals are ignored here; they are handled by onMainKlineUpdate.
-                } else {
-                    // Standard execution path for all other cases.
+                // This is the standard execution path for immediate entries or candle-close entries.
+                const isStandardExecution = this.bot.config.entryTiming === 'immediate' || !isTickTrigger;
+
+                if (isStandardExecution) {
                     if (signal.signal !== 'HOLD') {
                         this.updateState({ status: BotStatus.ExecutingTrade });
-                        await this.executeTrade(signal, klinesForAnalysis); 
-                    } else {
-                        if(!this.bot.openPosition && this.bot.config.entryTiming === 'onNextCandle') {
-                            this.addLog(`Analysis Result (Reason: ${options.reason}): HOLD`, LogType.Info);
-                            const titleLine = `Analysis Result: HOLD`;
-                            const reasonLines = signal.reasons.map(reason => {
-                                let logType = LogType.Info;
-                                if (reason.startsWith('✅')) logType = LogType.Success;
-                                else if (reason.startsWith('❌')) logType = LogType.Error;
-                                else if (reason.startsWith('⚠️')) logType = LogType.Status;
-                                
-                                const message = `- ${reason.substring(2).trim()}`;
-                                return { message, logType };
-                            });
+                        await this.executeTrade(signal, klinesForAnalysis);
+                    } else if (!this.bot.openPosition && this.bot.config.entryTiming === 'onNextCandle') {
+                        this.addLog(`Analysis Result (Reason: ${options.reason}): HOLD`, LogType.Info);
+                        const titleLine = `Analysis Result: HOLD`;
+                        const reasonLines = signal.reasons.map(reason => {
+                            let logType = LogType.Info;
+                            if (reason.startsWith('✅')) logType = LogType.Success;
+                            else if (reason.startsWith('❌')) logType = LogType.Error;
+                            else if (reason.startsWith('⚠️')) logType = LogType.Status;
                             
-                            this.addLog(titleLine, LogType.Info);
-                            reasonLines.forEach(line => this.addLog(line.message, line.logType));
-                        }
+                            const message = `- ${reason.substring(2).trim()}`;
+                            return { message, logType };
+                        });
+                        
+                        this.addLog(titleLine, LogType.Info);
+                        reasonLines.forEach(line => this.addLog(line.message, line.logType));
                     }
+                } 
+                // This is the special path for AstraX scalps on tick when in onNextCandle mode.
+                else if (isAstraXOnNextCandle && isTickTrigger) {
+                    if (signal.tradeType === 'scalp' && signal.signal !== 'HOLD') {
+                        this.updateState({ status: BotStatus.ExecutingTrade });
+                        await this.executeTrade(signal, klinesForAnalysis);
+                    }
+                    // If it's not a scalp, do nothing. Conviction trades will be handled by onMainKlineUpdate.
                 }
             }
         } catch (error) {
@@ -250,10 +253,18 @@ class BotInstance {
             await this.managePositionOnTick(price);
             this.checkPriceBoundaries(price);
         } else if (this.bot.status === BotStatus.Monitoring) {
-            const isAstraXOnNextCandle = this.bot.config.agent.id === 19 && this.bot.config.entryTiming === 'onNextCandle';
-            const isImmediateMode = this.bot.config.entryTiming === 'immediate';
+            const { config } = this.bot;
+            // Merge defaults with user overrides to get effective params for the check.
+            const params = { ...constants.DEFAULT_AGENT_PARAMS, ...config.agentParams };
 
-            if (isImmediateMode || isAstraXOnNextCandle) {
+            const isAstraXOnNextCandle = config.agent.id === 19 && config.entryTiming === 'onNextCandle';
+            const isImmediateMode = config.entryTiming === 'immediate';
+            
+            // AstraX should only run on ticks if it's in scalp mode or conviction mode with scalp fallback enabled.
+            const isAstraXScalpPossible = isAstraXOnNextCandle && 
+                (params.astraX_executionMode === 'scalp' || params.astraX_scalp_enabledInChop);
+
+            if (isImmediateMode || isAstraXScalpPossible) {
                 const now = Date.now();
                 const lastAnalysis = this.bot.lastAnalysisTimestamp || 0;
                 if (now - lastAnalysis >= 1000) { // Throttle to prevent overwhelming on rapid ticks
@@ -263,7 +274,7 @@ class BotInstance {
                     this.updateState({ lastAnalysisTimestamp: now });
                     this.executing = true;
                     try {
-                        const reason = isAstraXOnNextCandle 
+                        const reason = isAstraXScalpPossible 
                             ? "AstraX Scalp Check (On Tick)" 
                             : "Immediate Entry Check (On Tick)";
                         await this.runAnalysis({ execute: true, reason });
@@ -481,20 +492,31 @@ class BotInstance {
         let hasChanges = Object.keys(changes).length > 0;
     
         const adaptiveTpSignal = getAdaptiveTakeProfit(positionState, this.klines, currentPrice);
+        let adaptiveTpTakeProfitApplied = false;
+
         if (adaptiveTpSignal.newTakeProfit) {
             const newTp = adaptiveTpSignal.newTakeProfit;
-            const isTighter = isLong ? newTp < positionState.takeProfitPrice : newTp > positionState.takeProfitPrice;
-            const isExtension = isLong ? newTp > positionState.takeProfitPrice : newTp < positionState.takeProfitPrice;
+            const takeProfitPrice = positionState.takeProfitPrice;
+            const isTighter = isLong ? newTp < takeProfitPrice : newTp > takeProfitPrice;
+            const isExtension = isLong ? newTp > takeProfitPrice : newTp < takeProfitPrice;
 
             if (isTighter || isExtension) {
                 positionState.takeProfitPrice = newTp;
-                if(adaptiveTpSignal.newState) positionState = { ...positionState, ...adaptiveTpSignal.newState };
-                this.addLog(`${adaptiveTpSignal.reason} New TP: ${newTp.toFixed(this.bot.config.pricePrecision)}`, LogType.Info);
+                if (adaptiveTpSignal.newState) positionState = { ...positionState, ...adaptiveTpSignal.newState };
                 hasChanges = true;
+                adaptiveTpTakeProfitApplied = true;
             }
         }
     
         const stopCandidates: { price: number; reason: Position['activeStopLossReason']; newState?: Partial<Position> }[] = [];
+    
+        if (adaptiveTpSignal.newStopLoss && adaptiveTpSignal.activeStopLossReason) {
+            stopCandidates.push({
+                price: adaptiveTpSignal.newStopLoss,
+                reason: adaptiveTpSignal.activeStopLossReason,
+                newState: adaptiveTpSignal.newState
+            });
+        }
     
         if (this.bot.config.isAgentTrailEnabled) {
             const stableKlines = [...this.klines];
@@ -544,11 +566,18 @@ class BotInstance {
         }
     
         if (bestCandidate.price !== positionState.stopLossPrice) {
+            let logMessage = `SL moved to ${bestCandidate.price.toFixed(this.bot.config.pricePrecision)} by ${bestCandidate.reason}.`;
+            if (adaptiveTpSignal.newStopLoss && bestCandidate.price === adaptiveTpSignal.newStopLoss && adaptiveTpSignal.reason) {
+                logMessage = adaptiveTpSignal.reason;
+            }
+            this.addLog(logMessage, LogType.Action);
+
             positionState.stopLossPrice = bestCandidate.price;
             positionState.activeStopLossReason = bestCandidate.reason;
             if (bestCandidate.newState) positionState = { ...positionState, ...bestCandidate.newState };
-            this.addLog(`SL moved to ${bestCandidate.price.toFixed(this.bot.config.pricePrecision)} by ${bestCandidate.reason}.`, LogType.Action);
             hasChanges = true;
+        } else if (adaptiveTpTakeProfitApplied && !adaptiveTpSignal.newStopLoss) {
+             this.addLog(`${adaptiveTpSignal.reason} New TP: ${positionState.takeProfitPrice.toFixed(this.bot.config.pricePrecision)}`, LogType.Info);
         }
     
         if (hasChanges) {
@@ -653,14 +682,15 @@ class BotManagerService {
     public stopBot = async (botId: string) => {
         const bot = this.bots.get(botId);
         if (!bot) return;
-
+    
         bot.updateState({ status: BotStatus.Stopping });
         bot.addLog('Stopping bot...', LogType.Status);
-
+    
         if (bot.bot.openPosition) {
             bot.addLog('Closing open position before stopping...', LogType.Action);
             try {
-                await this.handlers?.onClosePosition(bot.bot.openPosition, 'Bot Stopped', bot.bot.livePrice || 0);
+                // Pass undefined; the handler will find the best available price.
+                await this.handlers?.onClosePosition(bot.bot.openPosition, 'Bot Stopped', undefined);
             } catch (e) {
                 bot.addLog(`Could not close open position: ${e}`, LogType.Error);
             }

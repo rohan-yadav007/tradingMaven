@@ -217,8 +217,7 @@ export async function getTradingSignal(
     // Hard Concordance vetos (ATR Chaos, Liquidity Sweeps)
     if (config.isMomentumConcordanceEnabled) {
         const livePriceForVeto = livePrice || currentPrice;
-        const ltfTimeframe = getMicroTimeframe(config.timeFrame);
-        const hardVeto = getHardConcordanceVetos(klines, livePriceForVeto, agentSignal.signal, config, immediateKlines, ltfTimeframe);
+        const hardVeto = getHardConcordanceVetos(klines, livePriceForVeto, agentSignal.signal, config, immediateKlines);
         if (hardVeto.veto) {
             return { signal: 'HOLD', reasons: [...reasons, hardVeto.reason] };
         }

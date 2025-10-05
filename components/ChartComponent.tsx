@@ -141,12 +141,6 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
     onLoadMoreDataRef.current = onLoadMoreData;
     const isFetchingMoreDataRef = useRef(isFetchingMoreData);
     isFetchingMoreDataRef.current = isFetchingMoreData;
-
-    useEffect(() => {
-        if (data.length > 0) {
-            setLivePrice(data[data.length - 1].close);
-        }
-    }, [data]);
     
     // Subscribe to live ticker updates for the current pair
     useEffect(() => {
@@ -347,7 +341,7 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
                     </div>
                     <div className="flex flex-col">
                         <div className={`text-xl font-bold transition-colors duration-300 ${priceChange === 'up' ? 'text-emerald-500' : priceChange === 'down' ? 'text-rose-500' : 'dark:text-white'}`}>
-                            {livePrice > 0 ? livePrice.toFixed(pricePrecision) : '...'}
+                            {livePrice > 0 ? livePrice.toFixed(pricePrecision) : (data.length > 0 ? data[data.length-1].close.toFixed(pricePrecision) : '...')}
                         </div>
                         {fundingInfo && <FundingRateTimer fundingInfo={fundingInfo} />}
                     </div>

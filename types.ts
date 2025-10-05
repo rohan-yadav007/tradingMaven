@@ -176,6 +176,13 @@ export interface AgentParams {
     veto_liquiditySweep_maxAdx?: number;
     veto_sr_buffer_scalp?: number;
     veto_sr_buffer_swing?: number;
+    // -- Context-Aware Entry Classifier --
+    veto_entryScoreThreshold?: number;
+    veto_microEmaFast?: number; // For Breakout mode
+    veto_microEmaSlow?: number; // For Breakout mode
+    veto_pullback_stochRsiPeriod?: number; // For Pullback mode
+    veto_pullback_stochRsiOversold?: number; // For Pullback mode
+    veto_pullback_stochRsiOverbought?: number; // For Pullback mode
     
     // Agent 9: Quantum Scalper
     qsc_adxPeriod?: number;
@@ -273,6 +280,7 @@ export interface AgentParams {
     conductor_entryTrigger_rsiHookPeriod?: number;
     
     // Agent 19: AstraX Super-Agent
+    astraX_executionMode?: 'conviction' | 'scalp';
     astraX_baseThreshold?: number;
     astraX_strongTrendAdx?: number;
     astraX_chopAdx?: number;
@@ -285,6 +293,7 @@ export interface AgentParams {
     astraX_fundingRateMultiplier?: number;
     astraX_holdingPeriodHours?: number;
     astraX_confirmation_volumeMultiplier?: number;
+    astraX_useVwapAsHardVeto?: boolean;
     // New scalping module parameters
     astraX_scalp_bbPeriod?: number;
     astraX_scalp_bbStdDev?: number;
@@ -292,6 +301,20 @@ export interface AgentParams {
     astraX_scalp_stochRsiOversold?: number;
     astraX_scalp_stochRsiOverbought?: number;
     astraX_scalp_volumeMultiplier?: number;
+    astraX_scalp_useRetestConfirmation?: boolean;
+    astraX_scalp_retestEmaPeriod?: number;
+    astraX_scalp_retestCandleLookback?: number;
+    astraX_scalp_enabledInChop?: boolean;
+    // New 4-pillar system parameters
+    astraX_weights_structure?: number;
+    astraX_weights_momentum?: number;
+    astraX_weights_context?: number;
+    astraX_weights_confirmation?: number;
+    astraX_confirmation_minVolumeMultiplier?: number;
+    astraX_confirmation_candleBodyMinRatio?: number;
+    astraX_context_btcFlowWeight?: number;
+    astraX_context_volatilityWeight?: number;
+    astraX_smc_divergenceLookback?: number;
 
     // SMC Reversal Veto
     smc_divergenceLookback?: number;
@@ -345,7 +368,13 @@ export interface AstraXAnalysis {
     threshold: number;
     finalBullishScore: number;
     finalBearishScore: number;
-    // Individual component scores are useful for debugging but less for UI
+    scores?: {
+        structure: { bull: number, bear: number, weight: number },
+        momentum: { bull: number, bear: number, weight: number },
+        context: { bull: number, bear: number, weight: number },
+        confirmation: { bull: number, bear: number, weight: number },
+    };
+    adjustments?: { reason: string, impact: number }[];
 }
 
 export interface TradeSignal {

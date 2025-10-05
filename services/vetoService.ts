@@ -176,21 +176,21 @@ export function getSmcVeto(
 }
 
 /**
- * Performs a 'just-in-time' analysis before entry using micro-timeframe data to apply non-negotiable "hard" vetos.
- * This checks for extreme volatility and clear liquidity sweep patterns that pose an immediate high risk.
+ * NEW: Context-Aware Entry Classifier.
+ * This system first classifies the entry type ('breakout' or 'pullback') based on the live price's position within the
+ * main timeframe candle. It then applies a specialized scoring model tailored to that specific entry type.
  */
 export function getHardConcordanceVetos(
     mainTimeframeKlines: Kline[],
     livePrice: number,
     signalDirection: 'BUY' | 'SELL',
     config: BotConfig,
-    microKlines: Kline[] | undefined,
-    microTimeframe: string,
+    microKlines: Kline[] | undefined, // 1-minute klines
 ): { veto: boolean; reason: string } {
     const params = config.agentParams as Required<AgentParams>;
 
-    if (!microKlines || microKlines.length < 50) {
-        const reason = `Concordance: Insufficient ${microTimeframe} data.`;
+    if (!microKlines || microKlines.length < 20) {
+        const reason = `Entry Dynamics: Insufficient 1m data.`;
         if (config.finalEntryFailSafe === 'fail-closed') {
             return { veto: true, reason: `❌ VETO: ${reason} (Fail-safe triggered)` };
         }
@@ -198,71 +198,99 @@ export function getHardConcordanceVetos(
     }
 
     const isLongSignal = signalDirection === 'BUY';
-    const mainTfAdx = getLast(ADX.calculate({ high: mainTimeframeKlines.map(k=>k.high), low: mainTimeframeKlines.map(k=>k.low), close: mainTimeframeKlines.map(k=>k.close), period: 14 })) as ADXOutput | undefined;
+    const lastMainCandle = mainTimeframeKlines[mainTimeframeKlines.length - 1];
     
-    const ltfHighs = microKlines.map(k => k.high);
-    const ltfLows = microKlines.map(k => k.low);
-    const ltfCloses = microKlines.map(k => k.close);
-    const ltfVolumes = microKlines.map(k => k.volume || 0);
-
-    // --- Hard Veto 1: Directional ATR Chaos Veto with Grace Band & Normalization (Tweak #2) ---
-    const mainTfAtrRaw = getLast(ATR.calculate({ high: mainTimeframeKlines.map(k=>k.high), low: mainTimeframeKlines.map(k=>k.low), close: mainTimeframeKlines.map(k=>k.close), period: 14 })) as number | undefined;
-    const ltfAtrValues = ATR.calculate({ high: ltfHighs, low: ltfLows, close: ltfCloses, period: 5 });
-    const ltfAtrRaw = getLast(ltfAtrValues) as number | undefined;
+    const candleRange = lastMainCandle.high - lastMainCandle.low;
+    const pricePositionRatio = candleRange > 0 ? (livePrice - lastMainCandle.low) / candleRange : 0.5;
     
-    let effectiveAtrRatio = params.veto_atrChaosRatio;
-    if (mainTfAdx && mainTfAdx.adx > params.veto_atrChaos_strongTrendAdx) {
-        effectiveAtrRatio *= params.veto_atrChaos_graceMultiplier;
+    let entryType: 'breakout' | 'pullback';
+    if ((isLongSignal && pricePositionRatio > 0.7) || (!isLongSignal && pricePositionRatio < 0.3)) {
+        entryType = 'breakout';
+    } else {
+        entryType = 'pullback';
     }
 
-    if (mainTfAtrRaw && ltfAtrRaw) {
-        const mainTfAtr = params.veto_normalizeAtrChaos ? mainTfAtrRaw / livePrice : mainTfAtrRaw;
-        const ltfAtr = params.veto_normalizeAtrChaos ? ltfAtrRaw / livePrice : ltfAtrRaw;
+    let totalScore = 0;
+    let scoreDetails = '';
 
-        if (ltfAtr > (mainTfAtr * effectiveAtrRatio)) {
-            const prevLtfAtrRaw = getPenultimate(ltfAtrValues) as number | undefined;
-            if (prevLtfAtrRaw) {
-                const prevLtfAtr = params.veto_normalizeAtrChaos ? prevLtfAtrRaw / livePrice : prevLtfAtrRaw;
-                if (ltfAtr > prevLtfAtr) { // Volatility is expanding
-                    const priceDirectionIsUp = getLast(ltfCloses)! > getPenultimate(ltfCloses)!;
-                    if ((isLongSignal && !priceDirectionIsUp) || (!isLongSignal && priceDirectionIsUp)) {
-                        return { veto: true, reason: `❌ VETO: LTF volatility expanding against signal direction.` };
-                    }
-                }
-            }
-            // If volatility is high but not expanding, or if we can't check expansion, treat as chaotic
-            return { veto: true, reason: `❌ VETO: LTF volatility chaotic (ATR Ratio > ${effectiveAtrRatio.toFixed(1)}x).` };
+    const microCloses = microKlines.map(k => k.close);
+    const microVolumes = microKlines.map(k => k.volume || 0);
+
+    if (entryType === 'breakout') {
+        // --- BREAKOUT SCORING MODEL ---
+        // 1. Momentum Flow (40 pts): 1m EMAs must be aligned and supportive.
+        const microEmaFast = getLast(EMA.calculate({ period: params.veto_microEmaFast, values: microCloses })) as number | undefined;
+        const microEmaSlow = getLast(EMA.calculate({ period: params.veto_microEmaSlow, values: microCloses })) as number | undefined;
+        let momentumScore = 0;
+        if (microEmaFast && microEmaSlow) {
+            if (isLongSignal && livePrice > microEmaFast && microEmaFast > microEmaSlow) momentumScore = 40;
+            if (!isLongSignal && livePrice < microEmaFast && microEmaFast < microEmaSlow) momentumScore = 40;
         }
-    }
+        totalScore += momentumScore;
+        scoreDetails += `Momentum:${momentumScore}/40 `;
 
-    // --- Hard Veto 2: ADX-Gated Liquidity Sweep Detection ---
-    if (mainTfAdx && mainTfAdx.adx < params.veto_liquiditySweep_maxAdx) {
-        const lastLtfCandle = microKlines[microKlines.length - 1];
-        const prevLtfCandle = microKlines[microKlines.length - 2];
-        if (prevLtfCandle) {
-            const volumeSma = getLast(SMA.calculate({ period: 20, values: ltfVolumes })) as number | undefined;
-            const lastVolume = lastLtfCandle.volume || 0;
-            const bodySize = Math.abs(lastLtfCandle.close - lastLtfCandle.open);
-            // FIX: Defined 'hasHighVolume' which was used without being declared.
-            const hasHighVolume = volumeSma && lastVolume > volumeSma * params.veto_concordanceVolumeMinMultiplier;
-
-            if (signalDirection === 'BUY' && lastLtfCandle.high > prevLtfCandle.high && lastLtfCandle.close < prevLtfCandle.high) {
-                const upperWick = lastLtfCandle.high - Math.max(lastLtfCandle.open, lastLtfCandle.close);
-                if(bodySize > 0 && upperWick >= 0.4 * bodySize && hasHighVolume){ 
-                    return { veto: true, reason: '❌ VETO: High volume bearish liquidity sweep.' }; 
-                }
-            }
-            if (signalDirection === 'SELL' && lastLtfCandle.low < prevLtfCandle.low && lastLtfCandle.close > prevLtfCandle.low) {
-                const lowerWick = Math.min(lastLtfCandle.open, lastLtfCandle.close) - lastLtfCandle.low;
-                if(bodySize > 0 && lowerWick >= 0.4 * bodySize && hasHighVolume){ 
-                    return { veto: true, reason: '❌ VETO: High volume bullish liquidity sweep.' };
-                }
-            }
+        // 2. Volume Thrust (40 pts): Volume must be increasing and above average.
+        const volumeSma = getLast(SMA.calculate({ period: 20, values: microVolumes })) as number | undefined;
+        const lastVol = getLast(microVolumes);
+        const prevVol = getPenultimate(microVolumes);
+        let volumeScore = 0;
+        if (lastVol && prevVol && volumeSma) {
+            if (lastVol > prevVol && lastVol > volumeSma * 1.2) volumeScore = 40;
+            else if (lastVol > volumeSma) volumeScore = 20;
         }
+        totalScore += volumeScore;
+        scoreDetails += `Volume:${volumeScore}/40 `;
+        
+        // 3. Positioning (20 pts): Penalize entering at the absolute wick extreme.
+        let positionScore = 0;
+        if (isLongSignal) positionScore = (1 - Math.max(0, (pricePositionRatio - 0.7) / 0.3)) * 20;
+        else positionScore = (1 - Math.max(0, (0.3 - pricePositionRatio) / 0.3)) * 20;
+        totalScore += positionScore;
+        scoreDetails += `Position:${positionScore.toFixed(0)}/20`;
+
+    } else { // entryType === 'pullback'
+        // --- PULLBACK SCORING MODEL ---
+        // 1. Favorable Positioning (50 pts): Price must have pulled back significantly.
+        let positionScore = 0;
+        if (isLongSignal) positionScore = Math.max(0, (0.7 - pricePositionRatio) / 0.7) * 50;
+        else positionScore = Math.max(0, (pricePositionRatio - 0.3) / 0.7) * 50;
+        totalScore += positionScore;
+        scoreDetails += `Position:${positionScore.toFixed(0)}/50 `;
+
+        // 2. Micro-Exhaustion Hook (30 pts): 1m StochRSI must show a reversal hook from an extreme.
+        const stochRsi = getLast(StochasticRSI.calculate({ values: microCloses, rsiPeriod: params.veto_pullback_stochRsiPeriod, stochasticPeriod: params.veto_pullback_stochRsiPeriod, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
+        let exhaustionScore = 0;
+        if (stochRsi) {
+            if (isLongSignal && stochRsi.k < params.veto_pullback_stochRsiOversold && stochRsi.k > stochRsi.d) exhaustionScore = 30;
+            if (!isLongSignal && stochRsi.k > params.veto_pullback_stochRsiOverbought && stochRsi.k < stochRsi.d) exhaustionScore = 30;
+        }
+        totalScore += exhaustionScore;
+        scoreDetails += `Exhaustion:${exhaustionScore}/30 `;
+
+        // 3. Volume Confirmation (20 pts): Volume on the turn should not be hostile.
+        const lastMicroCandle = microKlines[microKlines.length - 1];
+        const lastVol = lastMicroCandle.volume || 0;
+        const volumeSma = getLast(SMA.calculate({ period: 20, values: microVolumes })) as number | undefined;
+        let volumeScore = 0;
+        if (volumeSma) {
+             if (isLongSignal && lastMicroCandle.close > lastMicroCandle.open && lastVol > volumeSma * 0.8) volumeScore = 20;
+             else if (!isLongSignal && lastMicroCandle.close < lastMicroCandle.open && lastVol > volumeSma * 0.8) volumeScore = 20;
+        }
+        totalScore += volumeScore;
+        scoreDetails += `Volume:${volumeScore.toFixed(0)}/20`;
     }
-    
-    return { veto: false, reason: '✅ Hard Concordance: Passed' };
+
+    const threshold = params.veto_entryScoreThreshold;
+    if (totalScore >= threshold) {
+        return { veto: false, reason: `✅ Entry Dynamics (${entryType}): Score ${totalScore.toFixed(0)}/${threshold}` };
+    } else {
+        return { 
+            veto: true, 
+            reason: `❌ VETO: Entry Dynamics (${entryType}) Score ${totalScore.toFixed(0)} < ${threshold}. (${scoreDetails.trim()})`
+        };
+    }
 }
+
 
 export function getBtcTrendScore(btcKlines: Kline[]): { bullScore: number; bearScore: number } {
     return btcConfirmationService.getBtcTrendScore(btcKlines);

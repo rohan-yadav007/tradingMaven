@@ -504,16 +504,31 @@ export function getAgentExitSignal(
     const config = applyTimeframeSettings(originalConfig);
     const { agent } = config;
     const params = config.agentParams as Required<typeof config.agentParams>;
+    
+    // --- 1R PROFIT GATEKEEPER ---
+    const { entryPrice, direction, initialRiskInPrice } = position;
+    if (!initialRiskInPrice || initialRiskInPrice <= 0) {
+        // Failsafe if initialRiskInPrice is not set, don't trail.
+        return { reasons: [`ℹ️ Agent Trail: Initial risk not defined.`] };
+    }
+    const isLong = direction === 'LONG';
+    const currentProfitInPrice = isLong ? currentPrice - entryPrice : entryPrice - currentPrice;
+
+    // Only allow trailing after 1R of profit is achieved.
+    if (currentProfitInPrice < initialRiskInPrice) {
+        return { reasons: [`ℹ️ Agent Trail: Awaiting 1R profit target.`] };
+    }
+    // --- END GATEKEEPER ---
+    
     const reasons: string[] = [];
     let newStopLoss: number | undefined;
     let action: TradeManagementSignal['action'] = 'hold';
 
-    const isLong = position.direction === 'LONG';
     const closes = klines.map(k => k.close);
     const highs = klines.map(k => k.high);
     const lows = klines.map(k => k.low);
 
-    const { entryPrice, takeProfitPrice, timeFrame } = position;
+    const { takeProfitPrice, timeFrame } = position;
     
     const totalTargetDistance = Math.abs(takeProfitPrice - entryPrice);
     const currentProgressDistance = isLong ? Math.max(0, currentPrice - entryPrice) : Math.max(0, entryPrice - currentPrice);

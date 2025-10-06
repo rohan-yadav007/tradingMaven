@@ -125,9 +125,10 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
              <ParamSlider label="Funding Rate Multiplier" value={allParams.astraX_fundingRateMultiplier!} onChange={v => updateParam('astraX_fundingRateMultiplier', v)} min={0} max={50} step={1} />
              <ParamSlider label="Expected Holding Period" value={allParams.astraX_holdingPeriodHours!} onChange={v => updateParam('astraX_holdingPeriodHours', v)} min={1} max={48} step={1} valueDisplay={v => `${v} hrs`} />
              
-             <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
+             {(allParams.astraX_executionMode ?? 'conviction') === 'conviction' && (
+                <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
                     <button onClick={() => setIsScalpingOpen(!isScalpingOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
-                        <span>Scalping Module (Conviction Fallback)</span>
+                        <span>Fallback Scalping Module (Conviction Mode)</span>
                         {isScalpingOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                     </button>
                     {isScalpingOpen && (
@@ -160,6 +161,7 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                         </div>
                     )}
                 </div>
+            )}
             </div>);
         case 9: return (<div className="space-y-4">
             <div className="flex flex-col gap-1.5">

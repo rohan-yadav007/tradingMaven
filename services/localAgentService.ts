@@ -200,15 +200,15 @@ export function getHardConcordanceVetos(
     const isLongSignal = signalDirection === 'BUY';
     const microCloses = microKlines.map(k => k.close);
 
-    // --- NEW: Anti-Momentum Chasing Filter ---
-    // Veto 1: StochRSI Exhaustion Check
+    // --- NEW: Anti-Momentum Chasing Filter (Universal Safety Net) ---
+    // Veto 1: StochRSI Exhaustion Check on 1m TF
     const stochRsi = getLast(StochasticRSI.calculate({ values: microCloses, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
     if (stochRsi) {
         if (isLongSignal && stochRsi.k > 80) return { veto: true, reason: '❌ VETO: 1m Momentum Overbought (StochRSI > 80).' };
         if (!isLongSignal && stochRsi.k < 20) return { veto: true, reason: '❌ VETO: 1m Momentum Oversold (StochRSI < 20).' };
     }
 
-    // Veto 2: MACD Deceleration Check
+    // Veto 2: MACD Deceleration Check on 1m TF
     const macdValues = MACD.calculate({ values: microCloses, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
     const lastHist = (getLast(macdValues) as MACDOutput | undefined)?.histogram;
     const prevHist = (getPenultimate(macdValues) as MACDOutput | undefined)?.histogram;

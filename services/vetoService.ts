@@ -4,7 +4,7 @@ import { Kline, BotConfig, MarketDataContext, StochasticRSIOutput, AgentParams, 
 import { RSI, StochasticRSI, ADX, SMA, EMA, ATR, BollingerBands } from 'technicalindicators';
 import * as constants from '../constants';
 import { btcConfirmationService } from './btcConfirmationService';
-import { getLast, getPenultimate, detectRsiDivergence } from './agentUtils';
+import { getLast, getPenultimate, detectRsiDivergence } from './agents/agentUtils';
 
 /**
  * A universal gatekeeper to prevent entering trades when the trend is likely exhausted.

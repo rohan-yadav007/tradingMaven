@@ -39,6 +39,8 @@ import { getAstraXSignal } from './agents/astrax';
 import { validateTradeProfitability, getInitialAgentTargets } from './riskManagementService';
 import { calculateSupportResistance, findSwingPoints, analyzeMarketStructure } from './chartAnalysisService';
 import * as constants from '../constants';
+import { detectSmcReversalPattern } from './vetoService';
+
 
 // --- VETO IMPLEMENTATIONS (Consolidated from vetoService.ts) ---
 
@@ -79,76 +81,6 @@ export function getExhaustionFilterVeto(
     return { veto: false, reason: '' };
 }
 
-export function detectSmcReversalPattern(
-    klines: Kline[],
-    reversalTypeToDetect: 'bullish' | 'bearish',
-    config: BotConfig,
-    rsiValues: number[],
-    volumeSma: number | undefined,
-): { detected: boolean; reason: string } {
-    const params = config.agentParams as Required<AgentParams>;
-    const lookback = params.smc_divergenceLookback;
-    
-    const isScalpingTf = ['1m', '3m', '5m'].includes(config.timeFrame);
-    let requiresConfluence = isScalpingTf && params.smc_requireConfluenceOnScalp;
-    let confluenceMet = !requiresConfluence;
-
-    if (requiresConfluence) {
-        const bb = getLast(BollingerBands.calculate({ period: 20, stdDev: 2, values: klines.map(k => k.close) })) as BollingerBandsOutput | undefined;
-        if (bb) {
-            const bbWidth = (bb.upper - bb.lower) / bb.middle;
-            if (bbWidth < params.smc_confluence_bbwSqueezeThreshold) {
-                confluenceMet = true;
-            }
-        }
-    }
-
-    const rsiStartIndex = klines.length - rsiValues.length;
-    if (rsiStartIndex < 0) return { detected: false, reason: '' };
-    const getRsiForKlineIndex = (klineIndex: number): number | undefined => {
-        const rsiIndex = klineIndex - rsiStartIndex;
-        return (rsiIndex >= 0 && rsiIndex < rsiValues.length) ? rsiValues[rsiIndex] : undefined;
-    };
-
-    const pivots = findSwingPoints(klines, lookback);
-
-    if (reversalTypeToDetect === 'bearish') {
-        const recentHighs = pivots.filter(p => p.type === 'high').slice(-2);
-        if (recentHighs.length === 2) {
-            const [prevHigh, lastHigh] = recentHighs;
-            const prevRsi = getRsiForKlineIndex(prevHigh.index);
-            const lastRsi = getRsiForKlineIndex(lastHigh.index);
-
-            if (prevRsi !== undefined && lastRsi !== undefined && lastHigh.price > prevHigh.price && lastRsi < prevRsi) {
-                const sweepCandle = klines[lastHigh.index];
-                const hasHighVolume = sweepCandle.volume! > (volumeSma || 0) * params.smc_volumeMultiplier;
-                if (hasHighVolume && confluenceMet) {
-                    return { detected: true, reason: `SMC Reversal: Bearish divergence + liquidity sweep.` };
-                }
-            }
-        }
-    }
-
-    if (reversalTypeToDetect === 'bullish') {
-        const recentLows = pivots.filter(p => p.type === 'low').slice(-2);
-        if (recentLows.length === 2) {
-            const [prevLow, lastLow] = recentLows;
-            const prevRsi = getRsiForKlineIndex(prevLow.index);
-            const lastRsi = getRsiForKlineIndex(lastLow.index);
-
-            if (prevRsi !== undefined && lastRsi !== undefined && lastLow.price < prevLow.price && lastRsi > prevRsi) {
-                const sweepCandle = klines[lastLow.index];
-                const hasHighVolume = sweepCandle.volume! > (volumeSma || 0) * params.smc_volumeMultiplier;
-                if (hasHighVolume && confluenceMet) {
-                    return { detected: true, reason: `SMC Reversal: Bullish divergence + liquidity sweep.` };
-                }
-            }
-        }
-    }
-    
-    return { detected: false, reason: '' };
-}
-
 export function getSmcVeto(
     klines: Kline[],
     direction: 'BUY' | 'SELL',
@@ -185,7 +117,7 @@ export function getHardConcordanceVetos(
     livePrice: number,
     signalDirection: 'BUY' | 'SELL',
     config: BotConfig,
-    microKlines: Kline[] | undefined, // 1-minute klines
+    microKlines: Kline[] | undefined,
 ): { veto: boolean; reason: string } {
     const params = config.agentParams as Required<AgentParams>;
 
@@ -196,98 +128,91 @@ export function getHardConcordanceVetos(
         }
         return { veto: false, reason: `⚠️ ${reason} Trade allowed by fail-open.` };
     }
-    
+
     const isLongSignal = signalDirection === 'BUY';
-    const microCloses = microKlines.map(k => k.close);
-
-    // --- NEW: Anti-Momentum Chasing Filter (Universal Safety Net) ---
-    // Veto 1: StochRSI Exhaustion Check on 1m TF
-    const stochRsi = getLast(StochasticRSI.calculate({ values: microCloses, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
-    if (stochRsi) {
-        if (isLongSignal && stochRsi.k > 80) return { veto: true, reason: '❌ VETO: 1m Momentum Overbought (StochRSI > 80).' };
-        if (!isLongSignal && stochRsi.k < 20) return { veto: true, reason: '❌ VETO: 1m Momentum Oversold (StochRSI < 20).' };
-    }
-
-    // Veto 2: MACD Deceleration Check on 1m TF
-    const macdValues = MACD.calculate({ values: microCloses, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
-    const lastHist = (getLast(macdValues) as MACDOutput | undefined)?.histogram;
-    const prevHist = (getPenultimate(macdValues) as MACDOutput | undefined)?.histogram;
-    if (lastHist !== undefined && prevHist !== undefined) {
-        if (isLongSignal && lastHist > 0 && lastHist < prevHist) return { veto: true, reason: '❌ VETO: 1m Bullish Momentum is Decelerating (MACD).' };
-        if (!isLongSignal && lastHist < 0 && lastHist > prevHist) return { veto: true, reason: '❌ VETO: 1m Bearish Momentum is Decelerating (MACD).' };
-    }
-    // --- End of NEW Filter ---
-
     const lastMainCandle = mainTimeframeKlines[mainTimeframeKlines.length - 1];
     const candleRange = lastMainCandle.high - lastMainCandle.low;
     const pricePositionRatio = candleRange > 0 ? (livePrice - lastMainCandle.low) / candleRange : 0.5;
     
     const entryType = (isLongSignal && pricePositionRatio > 0.7) || (!isLongSignal && pricePositionRatio < 0.3) ? 'breakout' : 'pullback';
 
-    let totalScore = 0;
-    let scoreDetails = '';
-    const microVolumes = microKlines.map(k => k.volume || 0);
-
+    const microCloses = microKlines.map(k => k.close);
+    
     if (entryType === 'breakout') {
-        const microEmaFast = getLast(EMA.calculate({ period: params.veto_microEmaFast, values: microCloses })) as number | undefined;
-        const microEmaSlow = getLast(EMA.calculate({ period: params.veto_microEmaSlow, values: microCloses })) as number | undefined;
-        let momentumScore = 0;
-        if (microEmaFast && microEmaSlow) {
-            if (isLongSignal && livePrice > microEmaFast && microEmaFast > microEmaSlow) momentumScore = 40;
-            if (!isLongSignal && livePrice < microEmaFast && microEmaFast < microEmaSlow) momentumScore = 40;
+        // --- BREAKOUT VETO LOGIC: The "Anti-Chase Filter" ---
+        const stochRsi = getLast(StochasticRSI.calculate({ values: microCloses, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
+        if (stochRsi) {
+            if (isLongSignal && stochRsi.k > 80) return { veto: true, reason: '❌ VETO (Breakout): 1m momentum is overbought (StochRSI > 80).' };
+            if (!isLongSignal && stochRsi.k < 20) return { veto: true, reason: '❌ VETO (Breakout): 1m momentum is oversold (StochRSI < 20).' };
         }
-        totalScore += momentumScore;
-        scoreDetails += `Momentum:${momentumScore}/40 `;
+
+        const macdValues = MACD.calculate({ values: microCloses, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
+        const lastHist = (getLast(macdValues) as MACDOutput | undefined)?.histogram;
+        const prevHist = (getPenultimate(macdValues) as MACDOutput | undefined)?.histogram;
+        if (lastHist !== undefined && prevHist !== undefined) {
+            if (isLongSignal && lastHist > 0 && lastHist < prevHist) return { veto: true, reason: '❌ VETO (Breakout): 1m bullish momentum is decelerating.' };
+            if (!isLongSignal && lastHist < 0 && lastHist > prevHist) return { veto: true, reason: '❌ VETO (Breakout): 1m bearish momentum is decelerating.' };
+        }
         
-        const volumeSma = getLast(SMA.calculate({ period: 20, values: microVolumes })) as number | undefined;
-        const lastVol = getLast(microVolumes);
-        const prevVol = getPenultimate(microVolumes);
-        let volumeScore = 0;
-        if (lastVol && prevVol && volumeSma) {
-            if (lastVol > prevVol && lastVol > volumeSma * 1.2) volumeScore = 40;
-            else if (lastVol > volumeSma) volumeScore = 20;
+        return { veto: false, reason: `✅ Entry Dynamics (breakout): Passed Anti-Chase Filter.` };
+    } else {
+        // --- PULLBACK VETO LOGIC: Strict Multi-Condition Check ---
+        const reasons: string[] = [];
+        let conditionsMet = 0;
+
+        // Condition 1: Location Check (must be near a key MA on main timeframe)
+        const mainCloses = mainTimeframeKlines.map(k => k.close);
+        const ema21 = getLast(EMA.calculate({ period: 21, values: mainCloses }));
+        const ema50 = getLast(EMA.calculate({ period: 50, values: mainCloses }));
+        const isAtEma21 = ema21 && lastMainCandle.low <= ema21 && lastMainCandle.high >= ema21;
+        const isAtEma50 = ema50 && lastMainCandle.low <= ema50 && lastMainCandle.high >= ema50;
+        if (isAtEma21 || isAtEma50) {
+            conditionsMet++;
+            reasons.push(`Location: OK (at key EMA)`);
+        } else {
+            reasons.push(`Location: Fail (not at key EMA)`);
         }
-        totalScore += volumeScore;
-        scoreDetails += `Volume:${volumeScore}/40 `;
         
-        let positionScore = 0;
-        if (isLongSignal) positionScore = (1 - Math.max(0, (pricePositionRatio - 0.7) / 0.3)) * 20;
-        else positionScore = (1 - Math.max(0, (0.3 - pricePositionRatio) / 0.3)) * 20;
-        totalScore += positionScore;
-        scoreDetails += `Position:${positionScore.toFixed(0)}/20`;
-
-    } else { // pullback
-        let positionScore = 0;
-        if (isLongSignal) positionScore = Math.max(0, (0.7 - pricePositionRatio) / 0.7) * 50;
-        else positionScore = Math.max(0, (pricePositionRatio - 0.3) / 0.7) * 50;
-        totalScore += positionScore;
-        scoreDetails += `Position:${positionScore.toFixed(0)}/50 `;
-
-        const stochRsiHook = getLast(StochasticRSI.calculate({ values: microCloses, rsiPeriod: params.veto_pullback_stochRsiPeriod, stochasticPeriod: params.veto_pullback_stochRsiPeriod, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
-        let exhaustionScore = 0;
-        if (stochRsiHook) {
-            if (isLongSignal && stochRsiHook.k < params.veto_pullback_stochRsiOversold && stochRsiHook.k > stochRsiHook.d) exhaustionScore = 30;
-            if (!isLongSignal && stochRsiHook.k > params.veto_pullback_stochRsiOverbought && stochRsiHook.k < stochRsiHook.d) exhaustionScore = 30;
+        // Condition 2: Exhaustion Check (1m StochRSI must be in reversal zone)
+        const stochRsi = getLast(StochasticRSI.calculate({ values: microCloses, rsiPeriod: params.veto_pullback_stochRsiPeriod, stochasticPeriod: params.veto_pullback_stochRsiPeriod, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
+        if (stochRsi) {
+            if (isLongSignal && stochRsi.k < params.veto_pullback_stochRsiOversold) {
+                conditionsMet++;
+                reasons.push(`Exhaustion: OK (1m StochRSI is oversold)`);
+            } else if (!isLongSignal && stochRsi.k > params.veto_pullback_stochRsiOverbought) {
+                conditionsMet++;
+                reasons.push(`Exhaustion: OK (1m StochRSI is overbought)`);
+            } else {
+                reasons.push(`Exhaustion: Fail (1m StochRSI not in reversal zone)`);
+            }
+        } else {
+            reasons.push(`Exhaustion: Fail (no StochRSI data)`);
         }
-        totalScore += exhaustionScore;
-        scoreDetails += `Exhaustion:${exhaustionScore}/30 `;
 
-        const lastMicroCandle = microKlines[microKlines.length - 1];
-        const lastVol = lastMicroCandle.volume || 0;
-        const volumeSma = getLast(SMA.calculate({ period: 20, values: microVolumes })) as number | undefined;
-        let volumeScore = 0;
-        if (volumeSma) {
-             if (isLongSignal && lastMicroCandle.close > lastMicroCandle.open && lastVol > volumeSma * 0.8) volumeScore = 20;
-             else if (!isLongSignal && lastMicroCandle.close < lastMicroCandle.open && lastVol > volumeSma * 0.8) volumeScore = 20;
+        // Condition 3: Momentum Turn Check (1m MACD histogram must confirm the turn)
+        const macdValues = MACD.calculate({ values: microCloses, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
+        const lastHist = (getLast(macdValues) as MACDOutput | undefined)?.histogram;
+        const prevHist = (getPenultimate(macdValues) as MACDOutput | undefined)?.histogram;
+        if (lastHist !== undefined && prevHist !== undefined) {
+            if (isLongSignal && lastHist > 0 && prevHist <= 0) {
+                conditionsMet++;
+                reasons.push(`Momentum: OK (1m MACD crossed bullish)`);
+            } else if (!isLongSignal && lastHist < 0 && prevHist >= 0) {
+                conditionsMet++;
+                reasons.push(`Momentum: OK (1m MACD crossed bearish)`);
+            } else {
+                reasons.push(`Momentum: Fail (no 1m MACD cross)`);
+            }
+        } else {
+            reasons.push(`Momentum: Fail (no MACD data)`);
         }
-        totalScore += volumeScore;
-        scoreDetails += `Volume:${volumeScore.toFixed(0)}/20`;
+
+        if (conditionsMet === 3) {
+            return { veto: false, reason: `✅ Entry Dynamics (pullback): Passed all conditions.` };
+        } else {
+            return { veto: true, reason: `❌ VETO (Pullback): Failed validation (${reasons.join(', ')}).` };
+        }
     }
-
-    const threshold = params.veto_entryScoreThreshold;
-    return totalScore >= threshold
-        ? { veto: false, reason: `✅ Entry Dynamics (${entryType}): Score ${totalScore.toFixed(0)}/${threshold}` }
-        : { veto: true, reason: `❌ VETO: Entry Dynamics (${entryType}) Score ${totalScore.toFixed(0)} < ${threshold}. (${scoreDetails.trim()})` };
 }
 
 

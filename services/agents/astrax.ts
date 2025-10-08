@@ -246,23 +246,6 @@ function getAstraXScalpSignal(config: BotConfig, scalpKlines: Kline[] | undefine
                      const isBullishTrigger = confirmationCandle.close > confirmationCandle.open;
 
                      if (isBullishTrigger && lastStoch && lastStoch.k < params.astraX_scalp_stochRsiOversold! && volumeConfirms) {
-                        if (oneMinKlines && oneMinKlines.length > 26) {
-                            const microCloses = oneMinKlines.map(k => k.close);
-                            const microStochRsi = getLast(StochasticRSI.calculate({ values: microCloses, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
-                            if (microStochRsi && microStochRsi.k > 80) {
-                                reasons.push(`❌ Scalp Veto: 1m Momentum Overbought.`);
-                                continue;
-                            }
-                            const microMacdValues = MACD.calculate({ values: microCloses, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
-                            const lastHist = (getLast(microMacdValues) as MACDOutput | undefined)?.histogram;
-                            const prevHist = (getPenultimate(microMacdValues) as MACDOutput | undefined)?.histogram;
-                            if (lastHist !== undefined && prevHist !== undefined) {
-                                if (lastHist > 0 && lastHist < prevHist) {
-                                    reasons.push(`❌ Scalp Veto: 1m Bullish Momentum is Decelerating.`);
-                                    continue;
-                                }
-                            }
-                        }
                         reasons.push(`✅ Scalp: Bullish retest confirmed.`);
                         return { signal: 'BUY', reasons, tradeType: 'scalp' };
                      }
@@ -279,23 +262,6 @@ function getAstraXScalpSignal(config: BotConfig, scalpKlines: Kline[] | undefine
                     const isBearishTrigger = confirmationCandle.close < confirmationCandle.open;
                     
                     if (isBearishTrigger && lastStoch && lastStoch.k > params.astraX_scalp_stochRsiOverbought! && volumeConfirms) {
-                        if (oneMinKlines && oneMinKlines.length > 26) {
-                            const microCloses = oneMinKlines.map(k => k.close);
-                            const microStochRsi = getLast(StochasticRSI.calculate({ values: microCloses, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
-                            if (microStochRsi && microStochRsi.k < 20) {
-                                reasons.push(`❌ Scalp Veto: 1m Momentum Oversold.`);
-                                continue;
-                            }
-                            const microMacdValues = MACD.calculate({ values: microCloses, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
-                            const lastHist = (getLast(microMacdValues) as MACDOutput | undefined)?.histogram;
-                            const prevHist = (getPenultimate(microMacdValues) as MACDOutput | undefined)?.histogram;
-                            if (lastHist !== undefined && prevHist !== undefined) {
-                                if (lastHist < 0 && lastHist > prevHist) {
-                                    reasons.push(`❌ Scalp Veto: 1m Bearish Momentum is Decelerating.`);
-                                    continue;
-                                }
-                            }
-                        }
                         reasons.push(`✅ Scalp: Bearish retest confirmed.`);
                         return { signal: 'SELL', reasons, tradeType: 'scalp' };
                     }

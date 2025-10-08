@@ -177,7 +177,6 @@ export interface AgentParams {
     veto_sr_buffer_scalp?: number;
     veto_sr_buffer_swing?: number;
     // -- Context-Aware Entry Classifier --
-    veto_entryScoreThreshold?: number;
     veto_microEmaFast?: number; // For Breakout mode
     veto_microEmaSlow?: number; // For Breakout mode
     veto_pullback_stochRsiPeriod?: number; // For Pullback mode

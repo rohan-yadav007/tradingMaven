@@ -123,7 +123,6 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     veto_atrChaos_strongTrendAdx: 30,
     veto_liquiditySweep_maxAdx: 30,
     // New Context-Aware Entry Classifier
-    veto_entryScoreThreshold: 65,
     veto_microEmaFast: 5,       // For Breakout mode
     veto_microEmaSlow: 9,       // For Breakout mode
     veto_pullback_stochRsiPeriod: 14, // For Pullback mode

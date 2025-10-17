@@ -1,6 +1,7 @@
 // services/agents/conductor.ts
 
-import { Kline, BotConfig, MarketDataContext, TradeSignal, ConductorAnalysis, ADXOutput, MACDOutput } from '../../types';
+// Fix: Add missing import for AgentParams from ../../types to resolve type error.
+import { Kline, BotConfig, MarketDataContext, TradeSignal, ConductorAnalysis, ADXOutput, MACDOutput, AgentParams } from '../../types';
 import { RSI, ATR, MACD, SMA, ADX, EMA } from 'technicalindicators';
 import { getLast, recognizeCandlestickPattern, detectRsiDivergence, analyzeMicroMarketStructure } from './agentUtils';
 import { findSwingPoints, analyzeMarketStructure, calculateSupportResistance } from '../chartAnalysisService';
@@ -11,7 +12,7 @@ export const getTheConductorSignal = (
     htfContext?: MarketDataContext,
     microKlines?: Kline[], // Added for mBOS
 ): TradeSignal => {
-    const params = config.agentParams as Required<typeof config.agentParams>;
+    const params = config.agentParams as Required<AgentParams>;
     const minKlines = 50;
     if (klines.length < minKlines) {
         return { signal: 'HOLD', reasons: [`ℹ️ Insufficient data for The Conductor (${klines.length}/${minKlines} candles).`] };
@@ -86,13 +87,16 @@ export const getTheConductorSignal = (
     // B. Acceleration check (short-term momentum signal)
     if (lastMacd?.histogram && macdValues.length > 2) {
         const prevMacd = macdValues[macdValues.length - 2] as MACDOutput;
-        if (lastMacd.histogram > 0 && prevMacd.histogram !== undefined && lastMacd.histogram > prevMacd.histogram) {
-            accelBull = 40;
-            reasons.push(`✅ Momentum: Accelerating Bullish`);
-        }
-        if (lastMacd.histogram < 0 && prevMacd.histogram !== undefined && lastMacd.histogram < prevMacd.histogram) {
-            accelBear = 40;
-            reasons.push(`✅ Momentum: Accelerating Bearish`);
+        // FIX: Use typeof check to properly narrow types for comparison.
+        if (typeof lastMacd.histogram === 'number' && typeof prevMacd?.histogram === 'number') {
+            if (lastMacd.histogram > 0 && lastMacd.histogram > prevMacd.histogram) {
+                accelBull = 40;
+                reasons.push(`✅ Momentum: Accelerating Bullish`);
+            }
+            if (lastMacd.histogram < 0 && lastMacd.histogram < prevMacd.histogram) {
+                accelBear = 40;
+                reasons.push(`✅ Momentum: Accelerating Bearish`);
+            }
         }
     }
     
@@ -189,7 +193,7 @@ export const getTheConductorSignal = (
         return { signal: 'BUY', reasons, conductorAnalysis };
     }
 
-    if (totalBearishScore >= convictionThreshold && totalBearishScore > totalBullishScore) {
+    if (totalBearishScore >= convictionThreshold && totalBearishScore > totalBearishScore) {
         reasons.unshift(`✅ Bearish conviction threshold met.`);
         return { signal: 'SELL', reasons, conductorAnalysis };
     }

@@ -89,8 +89,6 @@ const AppContent: React.FC = () => {
     const [walletError, setWalletError] = useState<string | null>(null);
     const [closingPositionIds, setClosingPositionIds] = useState<Set<number>>(new Set());
     
-    const [currentFeeRate, setCurrentFeeRate] = useState(constants.TAKER_FEE_RATE);
-
     const handlersRef = useRef<BotHandlers | null>(null);
 
     const botsToCreate = useMemo(() => {
@@ -166,7 +164,7 @@ const AppContent: React.FC = () => {
                     pricePrecision: pricePrecisionForBot,
                     quantityPrecision: quantityPrecisionForBot,
                     stepSize: stepSizeForBot,
-                    takerFeeRate: currentFeeRate,
+                    takerFeeRate: constants.TAKER_FEE_RATE,
                     entryTiming,
                     isMarketBreadthFilterEnabled,
                     isLiquidationFilterEnabled,
@@ -187,7 +185,7 @@ const AppContent: React.FC = () => {
         selectedAgent, chartTimeFrame, investmentAmount, maxMarginLossPercent, isInitialRiskVetoEnabled,
         isHtfConfirmationEnabled, htfTimeFrame, agentParams, htfAgentParams,
         isUniversalProfitTrailEnabled, isMinRrEnabled, invalidationSensitivity,
-        currentFeeRate, entryTiming,
+        entryTiming,
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, 
@@ -203,15 +201,12 @@ const AppContent: React.FC = () => {
     
         let exitPrice = exitPriceOverride;
     
-        // If no override is provided or it's invalid, find the best available price.
         if (!exitPrice || exitPrice <= 0) {
             const bot = botManagerService.getBot(posToClose.botId!);
             if (bot) {
-                // 1. Use live ticker price if available
                 if (bot.bot.livePrice && bot.bot.livePrice > 0) {
                     exitPrice = bot.bot.livePrice;
                 } 
-                // 2. Fallback to the last known close price from the bot's klines
                 else if (bot.klines.length > 0) {
                     exitPrice = bot.klines[bot.klines.length - 1].close;
                     botManagerService.addBotLog(posToClose.botId!, `Used last kline close for exit price: ${exitPrice}`, LogType.Info);
@@ -219,12 +214,14 @@ const AppContent: React.FC = () => {
             }
         }
         
-        // For paper trades, a valid price is mandatory to simulate the close.
         if ((!exitPrice || exitPrice <= 0) && posToClose.executionMode === 'paper') {
-            console.error("Could not determine a valid exit price for paper trade", posToClose.id);
-            botManagerService.addBotLog(posToClose.botId!, `CRITICAL: Failed to determine exit price for paper trade ${posToClose.id}.`, LogType.Error);
-            setClosingPositionIds(prev => { const newSet = new Set(prev); newSet.delete(posToClose.id); return newSet; });
-            return;
+            if (exitPriceOverride && exitPriceOverride <= 0) {
+                 botManagerService.addBotLog(posToClose.botId!, `CRITICAL: Invalid exit price override (${exitPriceOverride}) for paper trade ${posToClose.id}. Cannot close.`, LogType.Error);
+                 setClosingPositionIds(prev => { const newSet = new Set(prev); newSet.delete(posToClose.id); return newSet; });
+                 return;
+            }
+            exitPrice = posToClose.entryPrice;
+            botManagerService.addBotLog(posToClose.botId!, `WARNING: Could not determine live market price for paper trade closure. Using entry price ${exitPrice} as failsafe.`, LogType.Error);
         }
     
         const closePositionInState = async (finalExitPrice: number, fees: number = 0) => {
@@ -233,10 +230,16 @@ const AppContent: React.FC = () => {
             
             const netPnl = grossPnl - fees;
     
-            const mfePrice = posToClose.peakPrice ?? posToClose.entryPrice;
-            const maePrice = posToClose.troughPrice ?? posToClose.entryPrice;
-            const mfe = Math.abs(mfePrice - posToClose.entryPrice) * posToClose.size;
-            const mae = Math.abs(maePrice - posToClose.entryPrice) * posToClose.size;
+            const finalPeakPrice = isLong
+                ? Math.max(posToClose.peakPrice, finalExitPrice)
+                : Math.min(posToClose.peakPrice, finalExitPrice);
+            
+            const finalTroughPrice = isLong
+                ? Math.min(posToClose.troughPrice, finalExitPrice)
+                : Math.max(posToClose.troughPrice, finalExitPrice);
+
+            const mfe = (isLong ? (finalPeakPrice - posToClose.entryPrice) : (posToClose.entryPrice - finalPeakPrice)) * posToClose.size;
+            const mae = (isLong ? (posToClose.entryPrice - finalTroughPrice) : (finalTroughPrice - posToClose.entryPrice)) * posToClose.size;
             
             const bot = botManagerService.getBot(posToClose.botId!);
             const botKlines = bot ? bot.klines : [];
@@ -298,44 +301,75 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             botManagerService.addBotLog(posToClose.botId!, `Attempting to close live position for ${posToClose.pair}...`, LogType.Info);
             try {
                 const formattedPair = posToClose.pair.replace('/', '');
-                
-                const liveSymbolInfo = posToClose.mode === TradingMode.USDSM_Futures 
-                    ? await binanceService.getFuturesSymbolInfo(formattedPair) 
-                    : await binanceService.getSymbolInfo(formattedPair);
-    
-                if (!liveSymbolInfo) throw new Error(`Could not fetch symbol info for ${formattedPair} to close position.`);
-    
-                const quantityPrecision = binanceService.getQuantityPrecision(liveSymbolInfo);
                 const closingSide = posToClose.direction === 'LONG' ? 'SELL' : 'BUY';
                 
-                const quantity = parseFloat(posToClose.size.toFixed(quantityPrecision));
-    
-                if (quantity <= 0) {
-                     throw { code: -4003, msg: "Calculated closing quantity is zero or less. Cannot close position." };
-                }
-    
                 let orderResponse: BinanceOrderResponse;
+                
                 switch(posToClose.mode) {
                     case TradingMode.Spot:
-                        orderResponse = await binanceService.createSpotOrder(posToClose.pair, closingSide, quantity);
+                        {
+                            const baseAsset = posToClose.pair.split('/')[0];
+                            const accountInfo = await binanceService.fetchSpotWalletBalance();
+                            const assetBalance = accountInfo.balances.find(b => b.asset === baseAsset);
+                            const liveQuantity = assetBalance ? assetBalance.free : 0;
+                            const feeRate = posToClose.takerFeeRate || constants.TAKER_FEE_RATE;
+
+                            if (liveQuantity <= 0) {
+                                botManagerService.addBotLog(posToClose.botId!, `State Desync: Spot balance for ${baseAsset} is zero. Reconciling state.`, LogType.Info);
+                                const estimatedFees = (posToClose.entryPrice * posToClose.size + (exitPrice || posToClose.entryPrice) * posToClose.size) * feeRate;
+                                await closePositionInState(exitPrice || posToClose.entryPrice, estimatedFees);
+                                return;
+                            }
+
+                            const liveSymbolInfo = await binanceService.getSymbolInfo(formattedPair);
+                            if (!liveSymbolInfo) throw new Error(`Could not fetch symbol info for ${formattedPair} to close position.`);
+                            const quantityPrecision = binanceService.getQuantityPrecision(liveSymbolInfo);
+                            const stepSize = binanceService.getStepSize(liveSymbolInfo);
+                            const quantityToSell = Math.floor(liveQuantity / stepSize) * stepSize;
+                            const quantity = parseFloat(quantityToSell.toFixed(quantityPrecision));
+
+                            if (quantity <= 0) throw { code: -4003, msg: `Calculated closing quantity for ${baseAsset} is zero or less. Cannot close position.` };
+                            
+                            orderResponse = await binanceService.createSpotOrder(posToClose.pair, closingSide, quantity);
+                        }
                         break;
                     case TradingMode.USDSM_Futures:
-                        orderResponse = await binanceService.createFuturesOrder(posToClose.pair, closingSide, quantity, true);
+                        {
+                            const positionRisk = await binanceService.getFuturesPositionRisk(formattedPair);
+                            const livePositionAmt = positionRisk ? parseFloat(positionRisk.positionAmt) : 0;
+                            const feeRate = posToClose.takerFeeRate || constants.TAKER_FEE_RATE;
+
+                            if (Math.abs(livePositionAmt) === 0) {
+                                botManagerService.addBotLog(posToClose.botId!, `State Desync: Position on Binance is already closed. Reconciling state.`, LogType.Info);
+                                const estimatedFees = (posToClose.entryPrice * posToClose.size + (exitPrice || posToClose.entryPrice) * posToClose.size) * feeRate;
+                                await closePositionInState(exitPrice || posToClose.entryPrice, estimatedFees);
+                                return;
+                            }
+                            
+                            const liveSymbolInfo = await binanceService.getFuturesSymbolInfo(formattedPair);
+                            if (!liveSymbolInfo) throw new Error(`Could not fetch symbol info for ${formattedPair} to close position.`);
+                            const quantityPrecision = binanceService.getQuantityPrecision(liveSymbolInfo);
+                            const quantity = parseFloat(Math.abs(livePositionAmt).toFixed(quantityPrecision));
+                            
+                            if (quantity <= 0) throw { code: -4003, msg: "Position size on exchange is zero or less." };
+
+                            orderResponse = await binanceService.createFuturesOrder(posToClose.pair, closingSide, quantity, true);
+                        }
                         break;
                     default:
                         throw new Error(`Unsupported trading mode for closing position: ${posToClose.mode}`);
                 }
                 
                  const executedQuantity = parseFloat(orderResponse.executedQty);
-                 if (Math.abs(executedQuantity - quantity) > 1e-9) {
-                     throw new Error(`Position closure failed: Order only partially filled. Requested ${quantity}, but executed ${executedQuantity}. Please resolve manually on the exchange.`);
+                 if (executedQuantity === 0) {
+                     throw new Error(`Position closure failed: Order executed with zero quantity. Please resolve manually on the exchange.`);
                  }
     
                  botManagerService.addBotLog(posToClose.botId!, `Live position closed successfully via API.`, LogType.Success);
-                 const finalExitPrice = parseFloat(orderResponse.cummulativeQuoteQty) / executedQuantity;
+                 const finalExitPrice = (orderResponse.avgPrice && parseFloat(orderResponse.avgPrice) > 0) ? parseFloat(orderResponse.avgPrice) : parseFloat(orderResponse.cummulativeQuoteQty) / executedQuantity;
                  
                  const entryValue = posToClose.entryPrice * posToClose.size;
-                 const exitValue = finalExitPrice * posToClose.size;
+                 const exitValue = finalExitPrice * posToClose.size; // Use original size for PnL consistency
                  const feeRate = posToClose.takerFeeRate || constants.TAKER_FEE_RATE;
                  const totalFees = (entryValue + exitValue) * feeRate;
     
@@ -413,16 +447,12 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
         let finalEntryPrice: number;
         let finalLiquidationPrice: number | undefined = undefined;
 
-        // Use the entry price from the signal, which is the live price at the time of analysis.
         const tempEntryPrice = execSignal.entryPrice || 0;
         if (tempEntryPrice === 0) {
             botManagerService.notifyTradeExecutionFailed(botId, "No live price was provided by the bot for trade.");
             return;
         }
         
-        // The risk check logic is now fully encapsulated within riskManagementService.
-        // This handler's responsibility is to execute the trade as validated by the service.
-
         if (config.executionMode === 'live') {
             if (!accountInfo) {
                 botManagerService.notifyTradeExecutionFailed(botId, "Live account information is not yet available.");
@@ -561,190 +591,244 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
     }, [accountInfo]);
     
     useEffect(() => {
-        const updateFeeRate = async () => {
-            if (!isApiConnected) { setCurrentFeeRate(constants.TAKER_FEE_RATE); return; }
-            if (tradingMode === TradingMode.Spot) {
-                setCurrentFeeRate(accountInfo?.takerCommission ? accountInfo.takerCommission / 10000 : constants.TAKER_FEE_RATE);
-            } else if (tradingMode === TradingMode.USDSM_Futures) {
-                try {
-                    const commissionInfo = await binanceService.fetchFuturesCommissionRate(displayPair);
-                    setCurrentFeeRate(commissionInfo ? commissionInfo.takerCommissionRate : constants.TAKER_FEE_RATE);
-                } catch (error) {
-                    console.error("Failed to fetch futures commission rate, using default.", error);
-                    setCurrentFeeRate(constants.TAKER_FEE_RATE);
+        // This effect runs once on mount to perform initial setup and sets up the teardown logic.
+        const savedTrades = historyService.loadTrades();
+        setTradeHistory(savedTrades);
+        telegramBotService.start();
+
+        // This cleanup function will only run when the App unmounts.
+        return () => {
+            botManagerService.stopAllBots();
+            telegramBotService.stop();
+        };
+    }, []); // Empty dependency array ensures this runs only once.
+
+    useEffect(() => {
+        // This effect is responsible for keeping the bot manager's handlers up-to-date.
+        // It runs whenever the trade execution or position closing logic changes.
+        // It has no cleanup function, so it won't cause all bots to stop.
+        const updateBotsList = () => setRunningBots(botManagerService.getRunningBots());
+        handlersRef.current = { onExecuteTrade: handleExecuteTrade, onClosePosition: handleClosePosition };
+        botManagerService.setHandlers(handlersRef.current, updateBotsList);
+    }, [handleExecuteTrade, handleClosePosition]);
+
+    const handleLoadMoreChartData = useCallback(async () => {
+        if (isFetchingMoreChartData) return;
+        setIsFetchingMoreChartData(true);
+        try {
+            const firstKlineTime = klines[0]?.time;
+            if (firstKlineTime) {
+                const moreKlines = await binanceService.fetchKlines(
+                    displayPair.replace('/', ''),
+                    chartTimeFrame,
+                    { endTime: firstKlineTime - 1, limit: 100, mode: tradingMode }
+                );
+                if (moreKlines.length > 0) {
+                    setKlines(prevKlines => [...moreKlines, ...prevKlines]);
+                }
+            }
+        } catch (error) {
+            console.error("Failed to load more chart data:", error);
+        } finally {
+            setIsFetchingMoreChartData(false);
+        }
+    }, [isFetchingMoreChartData, klines, displayPair, chartTimeFrame, tradingMode]);
+
+    useEffect(() => {
+        if (!displayPair) return;
+        
+        let isCancelled = false;
+        const fetchData = async () => {
+            setIsChartLoading(true);
+            try {
+                const [klineData, infoData] = await Promise.all([
+                    binanceService.fetchKlines(displayPair.replace('/', ''), chartTimeFrame, { limit: 500, mode: tradingMode }),
+                    tradingMode === TradingMode.USDSM_Futures 
+                        ? binanceService.getFuturesSymbolInfo(displayPair.replace('/', ''))
+                        : binanceService.getSymbolInfo(displayPair.replace('/', '')),
+                ]);
+
+                if (isCancelled) return;
+
+                setKlines(klineData);
+                setSymbolInfo(infoData);
+            } catch (error) {
+                console.error("Failed to fetch initial data:", error);
+            } finally {
+                if (!isCancelled) {
+                    setIsChartLoading(false);
                 }
             }
         };
-        updateFeeRate();
-    }, [tradingMode, displayPair, isApiConnected, accountInfo]);
+
+        fetchData();
+
+        return () => { isCancelled = true; };
+    }, [displayPair, chartTimeFrame, tradingMode, executionMode]);
 
     useEffect(() => {
-        handlersRef.current = { onExecuteTrade: handleExecuteTrade, onClosePosition: handleClosePosition };
-    }, [handleExecuteTrade, handleClosePosition]);
+        const fetchFunding = async () => {
+            if (tradingMode === TradingMode.USDSM_Futures) {
+                const info = await binanceService.fetchFundingRate(displayPair.replace('/', ''));
+                if (info) {
+                    setFundingInfo({
+                        rate: info.fundingRate,
+                        time: info.fundingTime,
+                    });
+                } else {
+                    setFundingInfo(null);
+                }
+            } else {
+                setFundingInfo(null);
+            }
+        };
+        fetchFunding();
+        const interval = setInterval(fetchFunding, 60 * 1000);
+        return () => clearInterval(interval);
+    }, [displayPair, tradingMode]);
+    
+    // --- API & Wallet Sync Effect ---
+    useEffect(() => {
+        let isCancelled = false;
+        const syncApiAndWallet = async () => {
+            if (executionMode === 'paper') {
+                setAvailableBalance(Infinity);
+                return;
+            }
+            
+            setIsWalletLoading(true);
+            setWalletError(null);
+            try {
+                const connected = await binanceService.checkApiConnection();
+                if (isCancelled) return;
+                setIsApiConnected(connected);
+
+                if (connected) {
+                    const walletFetcher = tradingMode === TradingMode.USDSM_Futures 
+                        ? binanceService.fetchFuturesWalletBalance 
+                        : binanceService.fetchSpotWalletBalance;
+                    
+                    const info = await walletFetcher();
+                    if (isCancelled) return;
+                    
+                    setAccountInfo(info);
+                    const quoteAsset = (selectedPairs[0] || 'BTC/USDT').split('/')[1];
+                    const balance = info.balances.find(b => b.asset === quoteAsset);
+                    setAvailableBalance(balance ? balance.free : 0);
+                } else {
+                     setAvailableBalance(0);
+                }
+
+            } catch (e) {
+                if (!isCancelled) {
+                    console.error("Failed to sync wallet:", e);
+                    setWalletError(e instanceof Error ? e.message : 'An unknown error occurred.');
+                }
+            } finally {
+                if (!isCancelled) {
+                    setIsWalletLoading(false);
+                }
+            }
+        };
+
+        syncApiAndWallet();
+        return () => { isCancelled = true; };
+    }, [executionMode, tradingMode, isApiConnected, selectedPairs]);
 
     useEffect(() => {
-        const root = window.document.documentElement;
-        root.classList.remove('light', 'dark'); root.classList.add(theme);
+        document.documentElement.classList.toggle('dark', theme === 'dark');
         localStorage.setItem('theme', theme);
     }, [theme]);
     
     useEffect(() => {
-        const onBotUpdate = () => { setRunningBots(botManagerService.getRunningBots()); };
-        const stableHandlers: BotHandlers = {
-            onExecuteTrade: (...args) => handlersRef.current?.onExecuteTrade(...args) ?? Promise.resolve(),
-            onClosePosition: (...args) => handlersRef.current?.onClosePosition(...args),
-        };
-        botManagerService.setHandlers(stableHandlers, onBotUpdate);
-        binanceService.checkApiConnection().then(setIsApiConnected).catch(() => setIsApiConnected(false));
-        setTradeHistory(historyService.loadTrades());
-        setIsInitialized(true);
-        telegramBotService.start();
-        return () => botManagerService.stopAllBots();
-    }, []);
-
-    useEffect(() => {
-        let isCancelled = false;
-        const fetchAllData = async () => {
-            setIsChartLoading(true);
-            try {
-                const formattedPair = displayPair.replace('/', '');
-                const data = await binanceService.fetchKlines(formattedPair, chartTimeFrame, { limit: 500, mode: tradingMode });
-                if (!isCancelled) {
-                    setKlines(data);
-                }
-            } catch (err) { console.error("Failed to fetch klines:", err); if (!isCancelled) setKlines([]);
-            } finally { if (!isCancelled) setIsChartLoading(false); }
-
-            try {
-                const formattedPair = displayPair.replace('/', '');
-                const info = tradingMode === TradingMode.USDSM_Futures ? await binanceService.getFuturesSymbolInfo(formattedPair) : await binanceService.getSymbolInfo(formattedPair);
-                if (!isCancelled) setSymbolInfo(info);
-                if (tradingMode === TradingMode.USDSM_Futures) {
-                    const funding = await binanceService.fetchFundingRate(formattedPair);
-                    if (!isCancelled) setFundingInfo(funding ? { rate: funding.fundingRate, time: funding.fundingTime } : null);
-                } else { if (!isCancelled) setFundingInfo(null); }
-            } catch (err) {
-                console.error("Failed to fetch symbol info:", err);
-                 if (!isCancelled) { setSymbolInfo(undefined); setFundingInfo(null); }
+        if (!isInitialized && tradeHistory.length > 0) {
+            const lastTrade = tradeHistory[0];
+            const hasRequiredVeto = 'botConfigSnapshot' in lastTrade && lastTrade.botConfigSnapshot && 'isTradeGuardianEnabled' in lastTrade.botConfigSnapshot;
+            if(!hasRequiredVeto) {
+                 if (window.confirm("It looks like you have trade history from a previous version. Clearing this old data is recommended to prevent compatibility issues. Clear now?")) {
+                    historyService.clearTrades();
+                    setTradeHistory([]);
+                 }
             }
-        };
-        fetchAllData();
-
-        const formattedPair = displayPair.replace('/', '');
-        const klineCallback = (data: BinanceKlineStreamData) => {
-             const newKline: Kline = { 
-                 time: data.k.t, 
-                 open: parseToFloat(data.k.o), 
-                 high: parseToFloat(data.k.h), 
-                 low: parseToFloat(data.k.l), 
-                 close: parseToFloat(data.k.c), 
-                 volume: parseToFloat(data.k.v), 
-                 isFinal: data.k.x 
-            };
-             setKlines(prev => {
-                const last = prev[prev.length - 1];
-                if (last && newKline.time === last.time) {
-                    const newKlines = [...prev];
-                    newKlines[newKlines.length - 1] = newKline;
-                    return newKlines;
-                } else if (!last || newKline.time > last.time) {
-                    return [...prev, newKline];
-                }
-                return prev;
-            });
-        };
-        botManagerService.subscribeToKlineUpdates(formattedPair, chartTimeFrame, tradingMode, klineCallback);
-
-        return () => { 
-            isCancelled = true;
-            botManagerService.unsubscribeFromKlineUpdates(formattedPair, chartTimeFrame, tradingMode, klineCallback);
-        };
-    }, [displayPair, chartTimeFrame, tradingMode]);
-
-    useEffect(() => {
-        if (executionMode === 'live' && isApiConnected && configState.walletViewMode) {
-            setIsWalletLoading(true);
-            setWalletError(null);
-            const fetchWallet = configState.walletViewMode === TradingMode.Spot ? binanceService.fetchSpotWalletBalance : binanceService.fetchFuturesWalletBalance;
-            fetchWallet()
-                .then(info => {
-                    setAccountInfo(info);
-                    const quoteAsset = displayPair.split('/')[1];
-                    const balance = info.balances.find(b => b.asset === quoteAsset);
-                    setAvailableBalance(balance ? balance.free : 0);
-                })
-                .catch(err => {
-                    console.error("Failed to fetch wallet:", err);
-                    setWalletError(err.message || 'Could not connect to wallet.');
-                })
-                .finally(() => setIsWalletLoading(false));
-        } else if (executionMode === 'paper') {
-            setAccountInfo(null);
-            setWalletError(null);
-            const paperWallet = configState.walletViewMode === TradingMode.Spot ? constants.MOCK_PAPER_SPOT_WALLET : constants.MOCK_PAPER_FUTURES_WALLET;
-            const quoteAsset = displayPair.split('/')[1];
-            const balance = paperWallet.find(b => b.asset === quoteAsset);
-            setAvailableBalance(balance ? balance.free : 10000);
+            setIsInitialized(true);
         }
-    }, [executionMode, isApiConnected, configState.walletViewMode, displayPair, setAvailableBalance]);
+    }, [tradeHistory, isInitialized]);
 
-    const handleLoadMoreData = useCallback(async () => {
-        if (isFetchingMoreChartData || klines.length === 0) return;
-        setIsFetchingMoreChartData(true);
-        try {
-            const firstKlineTime = klines[0].time;
-            const formattedPair = displayPair.replace('/', '');
-            const moreData = await binanceService.fetchKlines(formattedPair, chartTimeFrame, { endTime: firstKlineTime - 1, limit: 200, mode: tradingMode });
-            if (moreData.length > 0) setKlines(prev => [...moreData, ...prev]);
-        } catch (error) { console.error("Failed to load more chart data:", error);
-        } finally { setIsFetchingMoreChartData(false); }
-    }, [isFetchingMoreChartData, klines, displayPair, chartTimeFrame, tradingMode]);
 
-    if (!isInitialized) {
-        return <div className="flex items-center justify-center h-screen bg-slate-900 text-white"><div className="text-lg font-semibold">Initializing Trading Assistant...</div></div>;
-    }
-    
     return (
-        <div className={`min-h-screen font-sans bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-50 ${theme}`}>
-            <Header isApiConnected={isApiConnected} executionMode={executionMode} theme={theme} setTheme={setTheme} activeView={activeView} setActiveView={setActiveView} />
-            <main className="container mx-auto p-3 lg:p-4">
-              {activeView === 'trading' ? (
-                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-                  <div className="col-span-12 lg:col-span-3 order-last lg:order-first">
-                    <Sidebar
-                        onStartBot={handleStartBot} klines={klines}
-                        botsToCreateCount={botsToCreate.length} selectedPairsCount={selectedPairs.length}
-                        theme={theme} isApiConnected={isApiConnected} pricePrecision={pricePrecision}
-                        accountInfo={accountInfo} isWalletLoading={isWalletLoading} walletError={walletError}
-                    />
-                  </div>
-                  <div className="col-span-12 lg:col-span-9 flex flex-col gap-4">
-                    <ChartComponent
-                        data={klines} pair={displayPair} allPairs={configState.allPairs}
-                        onPairChange={(newPair) => setSelectedPairs([newPair])}
-                        isLoading={isChartLoading} pricePrecision={pricePrecision}
-                        chartTimeFrame={chartTimeFrame} onTimeFrameChange={configActions.setTimeFrame}
-                        onLoadMoreData={handleLoadMoreData} isFetchingMoreData={isFetchingMoreChartData}
-                        theme={theme} fundingInfo={fundingInfo}
-                    />
-                    <RunningBots
-                      bots={runningBots} onClosePosition={handleClosePosition}
-                      onPauseBot={botManagerService.pauseBot} onResumeBot={botManagerService.resumeBot}
-                      onStopBot={botManagerService.stopBot} onDeleteBot={botManagerService.deleteBot}
-                      onUpdateBotConfig={botManagerService.updateBotConfig} onRefreshBotAnalysis={botManagerService.refreshBotAnalysis}
-                    />
-                    <TradingLog tradeHistory={tradeHistory} setTradeHistory={setTradeHistory} theme={theme} />
-                  </div>
-                </div>
-              ) : activeView === 'backtesting' ? (
-                <BacktestingPanel
-                  backtestResult={backtestResult} setBacktestResult={setBacktestResult}
-                  setActiveView={setActiveView} theme={theme}
+        <div className={`min-h-screen font-sans ${theme}`}>
+            <div className="bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-200 min-h-screen transition-colors">
+                <Header 
+                    isApiConnected={isApiConnected} 
+                    executionMode={executionMode}
+                    theme={theme}
+                    setTheme={setTheme}
+                    activeView={activeView}
+                    setActiveView={setActiveView}
                 />
-              ) : (
-                <PreferencesPanel theme={theme} />
-              )}
-            </main>
+                <main className="container mx-auto p-3 lg:p-4">
+                    {activeView === 'trading' && (
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                            <div className="lg:col-span-4 xl:col-span-3">
+                                <Sidebar 
+                                    onStartBot={handleStartBot}
+                                    klines={klines}
+                                    botsToCreateCount={botsToCreate.length}
+                                    selectedPairsCount={selectedPairs.length}
+                                    theme={theme}
+                                    isApiConnected={isApiConnected}
+                                    pricePrecision={pricePrecision}
+                                    accountInfo={accountInfo}
+                                    isWalletLoading={isWalletLoading}
+                                    walletError={walletError}
+                                />
+                            </div>
+                            <div className="lg:col-span-8 xl:col-span-9 flex flex-col gap-4">
+                                <ChartComponent 
+                                    data={klines} 
+                                    pair={displayPair}
+                                    allPairs={configState.allPairs}
+                                    onPairChange={(newPair) => setSelectedPairs([newPair])}
+                                    isLoading={isChartLoading}
+                                    pricePrecision={pricePrecision}
+                                    chartTimeFrame={chartTimeFrame}
+                                    onTimeFrameChange={configActions.setTimeFrame}
+                                    onLoadMoreData={handleLoadMoreChartData}
+                                    isFetchingMoreData={isFetchingMoreChartData}
+                                    theme={theme}
+                                    fundingInfo={fundingInfo}
+                                />
+                                 <RunningBots 
+                                    bots={runningBots}
+                                    onClosePosition={handleClosePosition}
+                                    onPauseBot={botManagerService.pauseBot}
+                                    onResumeBot={botManagerService.resumeBot}
+                                    onStopBot={botManagerService.stopBot}
+                                    onDeleteBot={botManagerService.deleteBot}
+                                    onUpdateBotConfig={botManagerService.updateBotConfig}
+                                    onRefreshBotAnalysis={botManagerService.refreshBotAnalysis}
+                                />
+                                <TradingLog 
+                                    tradeHistory={tradeHistory}
+                                    setTradeHistory={setTradeHistory}
+                                    theme={theme}
+                                />
+                            </div>
+                        </div>
+                    )}
+                    {activeView === 'backtesting' && (
+                         <BacktestingPanel 
+                            backtestResult={backtestResult}
+                            setBacktestResult={setBacktestResult}
+                            setActiveView={setActiveView}
+                            theme={theme}
+                        />
+                    )}
+                    {activeView === 'preferences' && (
+                        <PreferencesPanel theme={theme} />
+                    )}
+                </main>
+            </div>
         </div>
     );
 };

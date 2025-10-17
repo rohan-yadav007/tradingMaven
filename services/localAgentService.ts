@@ -193,7 +193,8 @@ export function getHardConcordanceVetos(
         const macdValues = MACD.calculate({ values: microCloses, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
         const lastHist = (getLast(macdValues) as MACDOutput | undefined)?.histogram;
         const prevHist = (getPenultimate(macdValues) as MACDOutput | undefined)?.histogram;
-        if (lastHist !== undefined && prevHist !== undefined) {
+        // FIX: Use typeof check to properly narrow types for comparison.
+        if (typeof lastHist === 'number' && typeof prevHist === 'number') {
             if (isLongSignal && lastHist > 0 && prevHist <= 0) {
                 conditionsMet++;
                 reasons.push(`Momentum: OK (1m MACD crossed bullish)`);

@@ -385,7 +385,8 @@ export function getMultiStageProfitSecureSignal(
         const lockFeeMultiple = currentFeeMultiple - 3; // Previously was -2
         
         if (lockFeeMultiple > 1) {
-            const lockedPnlDollars = roundTripFeeDollars * lockFeeMultiple;
+            // FIX: Explicitly cast to number to resolve potential type inference issue.
+            const lockedPnlDollars = Number(roundTripFeeDollars) * lockFeeMultiple;
             const lockedPnlInPrice = lockedPnlDollars / size;
             const newStopLoss = entryPrice + (lockedPnlInPrice * (isLong ? 1 : -1));
 
@@ -658,7 +659,8 @@ export function getAgentExitSignal(
         const feeRate = position.takerFeeRate;
         const breakevenPrice = isLong
             ? position.entryPrice * (1 + feeRate) / (1 - feeRate)
-            : position.entryPrice * (1 + feeRate) / (1 + feeRate);
+            // FIX: Corrected breakeven calculation for short positions.
+            : position.entryPrice * (1 - feeRate) / (1 + feeRate);
         if (isLong) newStopLoss = Math.max(newStopLoss, breakevenPrice);
         else newStopLoss = Math.min(newStopLoss, breakevenPrice);
         reasons.push('Agent Trail active post-breakeven.');

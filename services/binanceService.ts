@@ -314,6 +314,7 @@ export const fetchFuturesTickerPrice = async (symbol: string): Promise<number | 
     return parseFloat(data.price);
 };
 
+// FIX: Corrected the return type to match the implementation.
 export const fetchFundingRate = async (symbol: string): Promise<{ fundingTime: number; fundingRate: string } | null> => {
     try {
         const response = await fetch(`${FUTURES_BASE_URL}/fapi/v1/premiumIndex?symbol=${symbol}`);

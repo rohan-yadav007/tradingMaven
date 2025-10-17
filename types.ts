@@ -182,6 +182,11 @@ export interface AgentParams {
     veto_pullback_stochRsiPeriod?: number; // For Pullback mode
     veto_pullback_stochRsiOversold?: number; // For Pullback mode
     veto_pullback_stochRsiOverbought?: number; // For Pullback mode
+
+    // TF-Specific Concordance Veto Parameters
+    concordance_breakout_stochRsiOverbought?: number;
+    concordance_breakout_stochRsiOversold?: number;
+    concordance_breakout_macdHistoDecel?: boolean;
     
     // Agent 9: Quantum Scalper
     qsc_adxPeriod?: number;

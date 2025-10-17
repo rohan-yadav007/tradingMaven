@@ -129,6 +129,11 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     veto_pullback_stochRsiOversold: 30, // For Pullback mode
     veto_pullback_stochRsiOverbought: 70, // For Pullback mode
 
+    // TF-Specific Concordance Veto Parameters
+    concordance_breakout_stochRsiOverbought: 85,
+    concordance_breakout_stochRsiOversold: 15,
+    concordance_breakout_macdHistoDecel: true,
+
 
     // Agent 9: Quantum Scalper
     qsc_adxPeriod: 10,
@@ -282,6 +287,19 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
 
 // --- TIMEFRAME-SPECIFIC PARAMETER OVERRIDES ---
 
+export const CONCORDANCE_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
+    // Stricter on low TFs to avoid chasing
+    '1m':  { concordance_breakout_stochRsiOverbought: 80, concordance_breakout_stochRsiOversold: 20, concordance_breakout_macdHistoDecel: true },
+    '3m':  { concordance_breakout_stochRsiOverbought: 85, concordance_breakout_stochRsiOversold: 15, concordance_breakout_macdHistoDecel: true },
+    '5m':  { concordance_breakout_stochRsiOverbought: 85, concordance_breakout_stochRsiOversold: 15, concordance_breakout_macdHistoDecel: true },
+    // More lenient on higher TFs
+    '15m': { concordance_breakout_stochRsiOverbought: 90, concordance_breakout_stochRsiOversold: 10, concordance_breakout_macdHistoDecel: false },
+    '30m': { concordance_breakout_stochRsiOverbought: 90, concordance_breakout_stochRsiOversold: 10, concordance_breakout_macdHistoDecel: false },
+    '1h':  { concordance_breakout_stochRsiOverbought: 95, concordance_breakout_stochRsiOversold: 5, concordance_breakout_macdHistoDecel: false },
+    '4h':  { concordance_breakout_stochRsiOverbought: 95, concordance_breakout_stochRsiOversold: 5, concordance_breakout_macdHistoDecel: false },
+    '1d':  { concordance_breakout_stochRsiOverbought: 95, concordance_breakout_stochRsiOversold: 5, concordance_breakout_macdHistoDecel: false },
+};
+
 export const VETO_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
     // Scalping (1m, 3m, 5m)
     '1m':  { veto_volumeFilterMultiplier: 1.5, veto_concordanceDivergenceLookback: 8,  veto_atrChaosRatio: 2.0, veto_candlePositionVeto_long: 0.90, veto_candlePositionVeto_short: 0.10, veto_concordanceVolumeMinMultiplier: 1.0 },
@@ -297,9 +315,9 @@ export const VETO_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
 };
 
 export const EXHAUSTION_FILTER_TIMEFRAME_SETTINGS: Record<string, { overbought: number, oversold: number }> = {
-    '1m':  { overbought: 95, oversold: 5 },
-    '3m':  { overbought: 90, oversold: 10 },
-    '5m':  { overbought: 88, oversold: 12 },
+    '1m':  { overbought: 90, oversold: 10 },
+    '3m':  { overbought: 88, oversold: 12 },
+    '5m':  { overbought: 85, oversold: 15 },
     '15m': { overbought: 85, oversold: 15 },
     '30m': { overbought: 82, oversold: 18 },
     '1h':  { overbought: 80, oversold: 20 },
@@ -417,6 +435,7 @@ export const ASTRAX_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
 export const getAgentTimeframeSettings = (agentId: number, timeFrame: string): Partial<AgentParams> => {
     const vetoSettings = VETO_TIMEFRAME_SETTINGS[timeFrame] || {};
     const smcSettings = SMC_VETO_TIMEFRAME_SETTINGS[timeFrame] || {};
+    const concordanceSettings = CONCORDANCE_TIMEFRAME_SETTINGS[timeFrame] || {};
     let agentSettings: Partial<AgentParams> = {};
 
     switch (agentId) {
@@ -430,7 +449,7 @@ export const getAgentTimeframeSettings = (agentId: number, timeFrame: string): P
         case 19: agentSettings = ASTRAX_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
     }
 
-    return { ...vetoSettings, ...smcSettings, ...agentSettings };
+    return { ...vetoSettings, ...smcSettings, ...concordanceSettings, ...agentSettings };
 };
 
 
@@ -458,9 +477,9 @@ export const MAX_MARGIN_LOSS_PERCENT = 6; // Increased slightly for more flexibi
 
 // New, wider ATR multipliers for initial stop loss placement to give trades more "breathing room"
 export const TIMEFRAME_ATR_CONFIG: Record<string, { atrMultiplier: number, riskRewardRatio: number }> = {
-    '1m':  { atrMultiplier: 2.0, riskRewardRatio: 1.5 },
-    '3m':  { atrMultiplier: 2.2, riskRewardRatio: 1.6 },
-    '5m':  { atrMultiplier: 2.5, riskRewardRatio: 1.8 },
+    '1m':  { atrMultiplier: 2.0, riskRewardRatio: 2 },
+    '3m':  { atrMultiplier: 2.2, riskRewardRatio: 2.2 },
+    '5m':  { atrMultiplier: 2.5, riskRewardRatio: 2.4 },
     '15m': { atrMultiplier: 2.5, riskRewardRatio: 2.0 },
     '30m': { atrMultiplier: 2.7, riskRewardRatio: 2.2 },
     '1h':  { atrMultiplier: 2.8, riskRewardRatio: 2.5 },

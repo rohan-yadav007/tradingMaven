@@ -1,3 +1,4 @@
+
 // services/botManagerService.ts
 
 import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, TradingMode, MarketDataContext, AgentParams } from '../types';
@@ -8,7 +9,8 @@ import { telegramBotService } from './telegramBotService';
 import { WebSocketManager } from './webSocketManager';
 import { sharedKlineService } from './sharedKlineService';
 import * as constants from '../constants';
-import { getAstraXRegimeAndDirection, getAdaptiveAnalyticalTimeframes } from './agents/astrax';
+// FIX: Added getAstraXRegimeAndDirection to resolve a missing import error.
+import { getLowerConfluenceTimeframes, getAstraXRegimeAndDirection } from './agents/astrax';
 
 const MAX_LOG_ENTRIES = 100;
 
@@ -40,12 +42,12 @@ export interface BotHandlers {
 class BotInstance {
     public bot: RunningBot;
     public klines: Kline[] = [];
-    private onUpdate: () => void;
+    private onUpdate: (bot: RunningBot) => void;
     private handlers: BotHandlers;
     public subscriptions: { type: 'ticker' | 'kline', pair: string, timeFrame?: string, mode: TradingMode, callback: Function }[] = [];
     private executing = false;
 
-    constructor(config: BotConfig, onUpdate: () => void, handlers: BotHandlers) {
+    constructor(config: BotConfig, onUpdate: (bot: RunningBot) => void, handlers: BotHandlers) {
         this.bot = {
             id: `bot-${Date.now()}-${config.pair.replace('/', '')}`,
             config,
@@ -89,12 +91,12 @@ class BotInstance {
             });
         }
         
-        this.onUpdate(); // Ensure final state is rendered
+        this.onUpdate(this.bot); // Ensure final state is rendered
     }    
 
     public updateState(partialState: Partial<RunningBot>) {
         this.bot = { ...this.bot, ...partialState };
-        this.onUpdate();
+        this.onUpdate(this.bot);
     }
 
     addLog(message: string, type: LogType = LogType.Info) {
@@ -131,7 +133,7 @@ class BotInstance {
         }
         
         if (config.agent.id === 19) {
-            const astraxTfs = getAdaptiveAnalyticalTimeframes(config.timeFrame);
+            const astraxTfs = getLowerConfluenceTimeframes(config.timeFrame);
             astraxTfs.forEach(tf => {
                 if (!dependencies.some(d => d.pair === config.pair && d.timeframe === tf)) {
                     dependencies.push({ pair: config.pair, timeframe: tf, mode: config.mode });
@@ -333,7 +335,7 @@ class BotInstance {
                 this.addLog("Re-evaluating open scalp trade for conviction promotion...", LogType.Info);
                 const { config } = this.bot;
                 
-                const analyticalTimeframes = getAdaptiveAnalyticalTimeframes(config.timeFrame);
+                const analyticalTimeframes = getLowerConfluenceTimeframes(config.timeFrame);
                 
                 const klinePromises = analyticalTimeframes.map(tf => 
                     sharedKlineService.getData(config.pair, tf, config.mode)
@@ -589,7 +591,8 @@ class BotInstance {
 class BotManagerService {
     private bots = new Map<string, BotInstance>();
     private handlers: BotHandlers | null = null;
-    private onBotsListUpdate: (() => void) | null = null;
+    private onBotListChange: (() => void) | null = null;
+    private botUpdateSubscribers = new Map<string, Set<(bot: RunningBot) => void>>();
     private spotWsManager: WebSocketManager;
     private futuresWsManager: WebSocketManager;
 
@@ -599,9 +602,29 @@ class BotManagerService {
         telegramBotService.register(this);
     }
 
-    public setHandlers(handlers: BotHandlers, onBotsListUpdate: () => void) {
+    public setHandlers(handlers: BotHandlers) {
         this.handlers = handlers;
-        this.onBotsListUpdate = onBotsListUpdate;
+    }
+
+    public setOnBotListChange(callback: (() => void) | null) {
+        this.onBotListChange = callback;
+    }
+
+    public subscribeToBotUpdates(botId: string, callback: (bot: RunningBot) => void) {
+        if (!this.botUpdateSubscribers.has(botId)) {
+            this.botUpdateSubscribers.set(botId, new Set());
+        }
+        this.botUpdateSubscribers.get(botId)!.add(callback);
+    }
+
+    public unsubscribeFromBotUpdates(botId: string, callback: (bot: RunningBot) => void) {
+        const subscribers = this.botUpdateSubscribers.get(botId);
+        if (subscribers) {
+            subscribers.delete(callback);
+            if (subscribers.size === 0) {
+                this.botUpdateSubscribers.delete(botId);
+            }
+        }
     }
 
     public getRunningBots(): RunningBot[] {
@@ -612,9 +635,9 @@ class BotManagerService {
         return this.bots.get(botId);
     }
     
-    private notifyUpdate() {
-        if (this.onBotsListUpdate) {
-            this.onBotsListUpdate();
+    private notifyStructuralChange() {
+        if (this.onBotListChange) {
+            this.onBotListChange();
         }
     }
     
@@ -636,10 +659,17 @@ class BotManagerService {
         if (!this.handlers) {
             throw new Error("BotManagerService handlers not set. Call setHandlers first.");
         }
-        const onUpdate = () => this.notifyUpdate();
+
+        const onUpdate = (updatedBot: RunningBot) => {
+            const subscribers = this.botUpdateSubscribers.get(updatedBot.id);
+            if (subscribers) {
+                subscribers.forEach(cb => cb(updatedBot));
+            }
+        };
+
         const newBotInstance = new BotInstance(config, onUpdate, this.handlers);
         this.bots.set(newBotInstance.bot.id, newBotInstance);
-        this.notifyUpdate();
+        this.notifyStructuralChange();
 
         this.initializeBot(newBotInstance);
         
@@ -710,7 +740,7 @@ class BotManagerService {
             this.releaseBotData(bot.bot.config);
             this.unsubscribeFromBotData(bot);
             this.bots.delete(botId);
-            this.notifyUpdate();
+            this.notifyStructuralChange();
         } else if (bot) {
             bot.addLog("Cannot delete a running bot. Please stop it first.", LogType.Error);
         }

@@ -367,6 +367,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         isExhaustionFilterEnabled, isInitialRiskVetoEnabled, isAdaptiveTpEnabled,
         aggressiveTrailMode, isSmcVetoEnabled, isSrAnalysisEnabled,
         isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
+        isSupertrendConfirmationEnabled,
         isMarketBreadthFilterEnabled, isLiquidationFilterEnabled,
         isConfirmationCandleEnabled, isMomentumConcordanceEnabled, isTradeGuardianEnabled
     } = config;
@@ -382,6 +383,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setIsVwapConfirmationEnabled, setIsBtcConfirmationEnabled, setIsBtcCorrelationVetoEnabled, setBtcConfirmationThreshold, setIsVolumeFilterEnabled, setIsAdxFilterEnabled,
         setIsExhaustionFilterEnabled, setIsInitialRiskVetoEnabled, setIsAdaptiveTpEnabled, setAggressiveTrailMode,
         setIsSmcVetoEnabled, setIsSrAnalysisEnabled, setIsCandlestickConfirmationEnabled, setIsMarketStructureVetoEnabled,
+        setIsSupertrendConfirmationEnabled,
         setIsMarketBreadthFilterEnabled, setIsLiquidationFilterEnabled, setIsConfirmationCandleEnabled, setIsMomentumConcordanceEnabled,
         setIsTradeGuardianEnabled
     } = actions;
@@ -521,7 +523,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     pricePrecision: 8, quantityPrecision: 8, stepSize: 0.00000001, takerFeeRate: constants.TAKER_FEE_RATE, entryTiming: entryTiming,
                     isAdaptiveTpEnabled: isAdaptiveTpEnabled, aggressiveTrailMode: aggressiveTrailMode, isSmcVetoEnabled: isSmcVetoEnabled,
                     isSrAnalysisEnabled: isSrAnalysisEnabled, isCandlestickConfirmationEnabled: isCandlestickConfirmationEnabled,
-                    isMarketStructureVetoEnabled: isMarketStructureVetoEnabled, isMarketBreadthFilterEnabled: isMarketBreadthFilterEnabled,
+                    isMarketStructureVetoEnabled: isMarketStructureVetoEnabled, isSupertrendConfirmationEnabled: isSupertrendConfirmationEnabled,
+                    isMarketBreadthFilterEnabled: isMarketBreadthFilterEnabled,
                     isLiquidationFilterEnabled: isLiquidationFilterEnabled, isConfirmationCandleEnabled: isConfirmationCandleEnabled,
                     isMomentumConcordanceEnabled: isMomentumConcordanceEnabled, isTradeGuardianEnabled: isTradeGuardianEnabled,
                 };
@@ -550,7 +553,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled,
         isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
-        isAdaptiveTpEnabled, aggressiveTrailMode, entryTiming,
+        isSupertrendConfirmationEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, entryTiming,
         isMarketBreadthFilterEnabled, isLiquidationFilterEnabled,
         isConfirmationCandleEnabled, isMomentumConcordanceEnabled, isTradeGuardianEnabled
     ]);
@@ -1097,6 +1100,25 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     <ToggleSwitch
                         checked={isMarketStructureVetoEnabled}
                         onChange={setIsMarketStructureVetoEnabled}
+                    />
+                </div>
+            </div>
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                        <label htmlFor="supertrend-confirmation-toggle" className={formLabelClass}>
+                            Supertrend Confirmation
+                        </label>
+                         <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                A universal trend filter. Only allows LONGs if price is above the Supertrend and SHORTs if price is below it.
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch
+                        checked={isSupertrendConfirmationEnabled}
+                        onChange={setIsSupertrendConfirmationEnabled}
                     />
                 </div>
             </div>

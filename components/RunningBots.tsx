@@ -1,8 +1,11 @@
+
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, LogType } from '../types';
 import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, InfoIcon, ZapIcon, RefreshIcon } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
 import { TAKER_FEE_RATE } from '../constants';
+import { botManagerService } from '../services/botManagerService';
 
 
 interface RunningBotsProps {
@@ -423,7 +426,6 @@ const BotLog: React.FC<{ log: BotLogEntry[] }> = ({ log }) => {
     );
 };
 
-
 const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots'> }> = ({ bot, actions }) => {
     const [isExpanded, setIsExpanded] = useState(false);
     
@@ -596,7 +598,40 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
 };
 
 
-export const RunningBots: React.FC<RunningBotsProps> = ({ bots, ...actions }) => {
+const useBotListState = (initialBots: RunningBot[]) => {
+    const [bots, setBots] = useState(initialBots);
+
+    useEffect(() => {
+        setBots(initialBots);
+    }, [initialBots]);
+
+    useEffect(() => {
+        const handleUpdate = (updatedBot: RunningBot) => {
+            setBots(currentBots => 
+                currentBots.map(b => b.id === updatedBot.id ? updatedBot : b)
+            );
+        };
+
+        const subscriptions: { botId: string; handler: (bot: RunningBot) => void }[] = [];
+
+        initialBots.forEach(bot => {
+            botManagerService.subscribeToBotUpdates(bot.id, handleUpdate);
+            subscriptions.push({ botId: bot.id, handler: handleUpdate });
+        });
+
+        return () => {
+            subscriptions.forEach(sub => {
+                botManagerService.unsubscribeFromBotUpdates(sub.botId, sub.handler);
+            });
+        };
+    }, [initialBots]);
+
+    return bots;
+}
+
+
+export const RunningBots: React.FC<RunningBotsProps> = ({ bots: initialBots, ...actions }) => {
+    const bots = useBotListState(initialBots);
     const { onClosePosition } = actions;
     const [activeTab, setActiveTab] = useState<'open' | 'monitoring'>('open');
 

@@ -1,6 +1,6 @@
 // services/agents/conductor.ts
 
-// Fix: Add missing import for AgentParams from ../../types to resolve type error.
+// FIX: Added AgentParams to the import from types to resolve a missing type error.
 import { Kline, BotConfig, MarketDataContext, TradeSignal, ConductorAnalysis, ADXOutput, MACDOutput, AgentParams } from '../../types';
 import { RSI, ATR, MACD, SMA, ADX, EMA } from 'technicalindicators';
 import { getLast, recognizeCandlestickPattern, detectRsiDivergence, analyzeMicroMarketStructure } from './agentUtils';

@@ -434,6 +434,7 @@ export interface BotConfig {
     isSrAnalysisEnabled?: boolean;
     isCandlestickConfirmationEnabled?: boolean;
     isMarketStructureVetoEnabled?: boolean;
+    isSupertrendConfirmationEnabled?: boolean;
     isAdaptiveTpEnabled: boolean;
     aggressiveTrailMode: 'distance' | 'pnl';
     agentParams: AgentParams;
@@ -471,6 +472,7 @@ export interface BotConfigSnapshot {
     isSrAnalysisEnabled?: boolean;
     isCandlestickConfirmationEnabled?: boolean;
     isMarketStructureVetoEnabled?: boolean;
+    isSupertrendConfirmationEnabled?: boolean;
     htfTimeFrame?: 'auto' | string;
     entryTiming?: 'immediate' | 'onNextCandle';
     isAdaptiveTpEnabled?: boolean;

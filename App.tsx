@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -56,6 +57,7 @@ const AppContent: React.FC = () => {
         isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, isInitialRiskVetoEnabled,
         isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
+        isSupertrendConfirmationEnabled,
         isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled,
         isTradeGuardianEnabled
     } = configState;
@@ -157,6 +159,7 @@ const AppContent: React.FC = () => {
                     isSrAnalysisEnabled,
                     isCandlestickConfirmationEnabled,
                     isMarketStructureVetoEnabled,
+                    isSupertrendConfirmationEnabled,
                     isAdaptiveTpEnabled,
                     aggressiveTrailMode,
                     agentParams,
@@ -189,7 +192,7 @@ const AppContent: React.FC = () => {
         isAgentTrailEnabled, isBreakevenTrailEnabled, isMarketCohesionEnabled, isVwapConfirmationEnabled,
         isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, 
-        isMarketStructureVetoEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, isMarketBreadthFilterEnabled,
+        isMarketStructureVetoEnabled, isSupertrendConfirmationEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, isMarketBreadthFilterEnabled,
         isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled, isTradeGuardianEnabled,
     ]);
 
@@ -551,6 +554,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 isSrAnalysisEnabled: config.isSrAnalysisEnabled,
                 isCandlestickConfirmationEnabled: config.isCandlestickConfirmationEnabled,
                 isMarketStructureVetoEnabled: config.isMarketStructureVetoEnabled,
+                isSupertrendConfirmationEnabled: config.isSupertrendConfirmationEnabled,
                 htfTimeFrame: config.htfTimeFrame,
                 entryTiming: config.entryTiming,
                 isAdaptiveTpEnabled: config.isAdaptiveTpEnabled,
@@ -591,25 +595,28 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
     }, [accountInfo]);
     
     useEffect(() => {
-        // This effect runs once on mount to perform initial setup and sets up the teardown logic.
         const savedTrades = historyService.loadTrades();
         setTradeHistory(savedTrades);
         telegramBotService.start();
 
-        // This cleanup function will only run when the App unmounts.
+        const onBotListChange = () => setRunningBots(botManagerService.getRunningBots());
+        botManagerService.setOnBotListChange(onBotListChange);
+        
+        // Call it once to get the initial list
+        onBotListChange();
+
         return () => {
             botManagerService.stopAllBots();
             telegramBotService.stop();
+            botManagerService.setOnBotListChange(null); // Clean up the listener
         };
-    }, []); // Empty dependency array ensures this runs only once.
+    }, []);
 
     useEffect(() => {
-        // This effect is responsible for keeping the bot manager's handlers up-to-date.
-        // It runs whenever the trade execution or position closing logic changes.
-        // It has no cleanup function, so it won't cause all bots to stop.
-        const updateBotsList = () => setRunningBots(botManagerService.getRunningBots());
+        // This effect solely manages the trade handlers for the bot manager.
+        // It runs less frequently now, only when its dependency functions change.
         handlersRef.current = { onExecuteTrade: handleExecuteTrade, onClosePosition: handleClosePosition };
-        botManagerService.setHandlers(handlersRef.current, updateBotsList);
+        botManagerService.setHandlers(handlersRef.current);
     }, [handleExecuteTrade, handleClosePosition]);
 
     const handleLoadMoreChartData = useCallback(async () => {

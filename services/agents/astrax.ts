@@ -20,51 +20,28 @@ export interface AstraXRegime {
 }
 
 /**
- * Dynamically determines the four most relevant analytical timeframes based on a primary timeframe.
- * It selects the primary, one higher, and two lower timeframes to build a contextual view.
+ * Dynamically determines the relevant analytical timeframes based on a primary timeframe,
+ * using a bottom-up confluence model. It selects the primary timeframe and all standard
+ * timeframes below it.
  * @param primaryTf The timeframe selected by the user for the bot.
- * @returns An array of four timeframe strings, sorted from highest to lowest.
+ * @returns An array of timeframe strings, sorted from highest to lowest.
  */
-export const getAdaptiveAnalyticalTimeframes = (primaryTf: string): string[] => {
+export const getLowerConfluenceTimeframes = (primaryTf: string): string[] => {
     const allTfs = constants.TIME_FRAMES;
     const primaryIndex = allTfs.indexOf(primaryTf);
 
     if (primaryIndex === -1) {
-        // Fallback to original TFs if an unknown timeframe is provided
-        return ['4h', '1h', '15m', '3m'];
+        // Fallback for an unknown timeframe, though this shouldn't happen
+        return [primaryTf];
     }
 
-    const analyticalTfs = new Set<string>();
-    analyticalTfs.add(primaryTf);
-
-    // Add one higher TF
-    if (primaryIndex < allTfs.length - 1) {
-        analyticalTfs.add(allTfs[primaryIndex + 1]);
-    }
-
-    // Add two lower TFs
-    if (primaryIndex > 0) {
-        analyticalTfs.add(allTfs[primaryIndex - 1]);
-    }
-    if (primaryIndex > 1) {
-        analyticalTfs.add(allTfs[primaryIndex - 2]);
-    }
-
-    // Ensure we have 4 timeframes, filling with more lower/higher if at the edges of the spectrum
-    let lowerCursor = 3;
-    while(analyticalTfs.size < 4 && primaryIndex - lowerCursor >= 0) {
-        analyticalTfs.add(allTfs[primaryIndex - lowerCursor]);
-        lowerCursor++;
-    }
-    let higherCursor = 2;
-    while(analyticalTfs.size < 4 && primaryIndex + higherCursor < allTfs.length) {
-        analyticalTfs.add(allTfs[primaryIndex + higherCursor]);
-        higherCursor++;
-    }
-
-    // Convert to array and sort it from highest to lowest TF for consistent weighting
-    return Array.from(analyticalTfs).sort((a, b) => allTfs.indexOf(b) - allTfs.indexOf(a));
+    // Get all timeframes from the lowest up to and including the primary
+    const lowerTfs = allTfs.slice(0, primaryIndex + 1);
+    
+    // Sort from highest to lowest timeframe for consistent weighting logic
+    return lowerTfs.sort((a, b) => allTfs.indexOf(b) - allTfs.indexOf(a));
 };
+
 
 /**
  * Computes a comprehensive set of metrics for a single timeframe as per the AstraX blueprint.
@@ -169,14 +146,27 @@ function _getMultiTfScoresAndRegime(
         regime = 'Choppy Market';
     }
 
-    let baseWeights: { [key: string]: number };
+    const N = analyticalTimeframes.length;
+    let weights: number[];
+
     if (regime === 'Strong Trend') {
-        baseWeights = { [analyticalTimeframes[0]]: 0.50, [analyticalTimeframes[1]]: 0.35, [analyticalTimeframes[2]]: 0.10, [analyticalTimeframes[3]]: 0.05 };
+        // Emphasize higher TFs: N^2, (N-1)^2, ...
+        weights = Array.from({ length: N }, (_, i) => Math.pow(N - i, 2));
     } else if (regime === 'Choppy Market') {
-        baseWeights = { [analyticalTimeframes[0]]: 0.10, [analyticalTimeframes[1]]: 0.20, [analyticalTimeframes[2]]: 0.45, [analyticalTimeframes[3]]: 0.25 };
+        // Emphasize lower TFs: 1, 2, ... (since TFs are high-to-low, this is reversed)
+        weights = Array.from({ length: N }, (_, i) => i + 1).reverse();
     } else { // Developing Trend
-        baseWeights = { [analyticalTimeframes[0]]: 0.40, [analyticalTimeframes[1]]: 0.30, [analyticalTimeframes[2]]: 0.20, [analyticalTimeframes[3]]: 0.10 };
+        // Linear emphasis on higher TFs: N, N-1, ...
+        weights = Array.from({ length: N }, (_, i) => N - i);
     }
+
+    const totalInitialWeight = weights.reduce((sum, w) => sum + w, 0);
+    const normalizedWeights = totalInitialWeight > 0 ? weights.map(w => w / totalInitialWeight) : [];
+    
+    const baseWeights: { [key: string]: number } = {};
+    analyticalTimeframes.forEach((tf, index) => {
+        baseWeights[tf] = normalizedWeights[index] || 0;
+    });
     
     const timeframes = analyticalTimeframes.map(tf => ({ name: tf, klines: klinesMap.get(tf), baseWeight: baseWeights[tf] || 0 }));
     const tfMetrics = timeframes.map(tf => ({ ...tf, metrics: computeTimeframeMetrics(tf.klines) }));
@@ -277,7 +267,7 @@ function getAstraXScalpSignal(config: BotConfig, scalpKlines: Kline[] | undefine
 export const getAstraXSignal = async (config: BotConfig, immediateKlines?: Kline[], livePrice?: number, fundingRate?: number): Promise<TradeSignal> => {
     const params = config.agentParams as Required<AgentParams>;
     const reasons: string[] = [];
-    const analyticalTimeframes = getAdaptiveAnalyticalTimeframes(config.timeFrame);
+    const analyticalTimeframes = getLowerConfluenceTimeframes(config.timeFrame);
     
     const klinePromises = analyticalTimeframes.map(tf => sharedKlineService.getData(config.pair, tf, config.mode));
     const allFetchedKlines = await Promise.all(klinePromises);

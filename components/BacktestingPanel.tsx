@@ -278,6 +278,7 @@ export type BacktestConfig = {
     isSrAnalysisEnabled: boolean;
     isCandlestickConfirmationEnabled: boolean;
     isMarketStructureVetoEnabled: boolean;
+    isSupertrendConfirmationEnabled: boolean;
     isMarketBreadthFilterEnabled: boolean;
     isLiquidationFilterEnabled: boolean;
     isConfirmationCandleEnabled: boolean;
@@ -336,6 +337,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         isSrAnalysisEnabled: globalConfig.isSrAnalysisEnabled,
         isCandlestickConfirmationEnabled: globalConfig.isCandlestickConfirmationEnabled,
         isMarketStructureVetoEnabled: globalConfig.isMarketStructureVetoEnabled,
+        isSupertrendConfirmationEnabled: globalConfig.isSupertrendConfirmationEnabled,
         isMarketBreadthFilterEnabled: globalConfig.isMarketBreadthFilterEnabled,
         isLiquidationFilterEnabled: globalConfig.isLiquidationFilterEnabled,
         isConfirmationCandleEnabled: globalConfig.isConfirmationCandleEnabled,
@@ -573,6 +575,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                          {isFiltersOpen && (
                             <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-3">
                                 <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400">Entry Filters</h4>
+                                <div className="flex items-center justify-between"><label className={formLabelClass}>Supertrend Confirmation</label><ToggleSwitch checked={config.isSupertrendConfirmationEnabled} onChange={v => updateConfig('isSupertrendConfirmationEnabled', v)} /></div>
                                 <div className="flex items-center justify-between"><label className={formLabelClass}>Momentum Concordance</label><ToggleSwitch checked={config.isMomentumConcordanceEnabled} onChange={v => updateConfig('isMomentumConcordanceEnabled', v)} /></div>
                                 <div className="flex items-center justify-between"><label className={formLabelClass}>Liquidation Cascade Veto</label><ToggleSwitch checked={config.isLiquidationFilterEnabled} onChange={v => updateConfig('isLiquidationFilterEnabled', v)} /></div>
                                 <div className="flex items-center justify-between"><label className={formLabelClass}>Market Breadth Filter</label><ToggleSwitch checked={config.isMarketBreadthFilterEnabled} onChange={v => updateConfig('isMarketBreadthFilterEnabled', v)} /></div>

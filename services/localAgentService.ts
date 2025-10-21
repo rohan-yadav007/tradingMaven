@@ -18,7 +18,7 @@ export { captureMarketContext } from './agents/agentUtils';
 // Imports for getTradingSignal orchestration
 import { Agent, Kline, TradeSignal, BotConfig, MarketDataContext, AgentParams, TradingMode, StochasticRSIOutput, ADXOutput, BollingerBandsOutput, MACDOutput } from '../types';
 import { btcConfirmationService } from './btcConfirmationService';
-import { applyTimeframeSettings, captureMarketContext as _captureMarketContext, calculateHeikinAshi, isMarketCohesive, getLast, getPenultimate, detectRsiDivergence } from './agents/agentUtils';
+import { applyTimeframeSettings, captureMarketContext as _captureMarketContext, calculateHeikinAshi, isMarketCohesive, getLast, getPenultimate, detectRsiDivergence, Supertrend } from './agents/agentUtils';
 import { SMA, RSI, ATR, StochasticRSI, ADX, EMA, BollingerBands, MACD } from 'technicalindicators';
 import * as binanceService from './binanceService';
 import { getMicroTimeframe } from '../constants';
@@ -286,6 +286,34 @@ export async function getTradingSignal(
         if (!cohesionCheck.cohesive) return { signal: 'HOLD', reasons: [...reasons, cohesionCheck.reason] };
         reasons.push(cohesionCheck.reason);
     }
+    
+    if (config.isSupertrendConfirmationEnabled) {
+        const stParams = {
+            period: constants.DEFAULT_AGENT_PARAMS.qsc_superTrendPeriod,
+            multiplier: constants.DEFAULT_AGENT_PARAMS.qsc_superTrendMultiplier
+        };
+        const supertrendValues = Supertrend.calculate({
+            high: klines.map(k => k.high),
+            low: klines.map(k => k.low),
+            close: klines.map(k => k.close),
+            period: stParams.period,
+            multiplier: stParams.multiplier
+        });
+        const lastSupertrend = getLast(supertrendValues) as number | undefined;
+
+        if (lastSupertrend) {
+            if (agentSignal.signal === 'BUY' && currentPrice < lastSupertrend) {
+                return { signal: 'HOLD', reasons: [...reasons, `❌ VETO: Price is below Supertrend.`] };
+            }
+            if (agentSignal.signal === 'SELL' && currentPrice > lastSupertrend) {
+                return { signal: 'HOLD', reasons: [...reasons, `❌ VETO: Price is above Supertrend.`] };
+            }
+            reasons.push('✅ Supertrend: Confirmed');
+        } else {
+            reasons.push('⚠️ Supertrend: Could not calculate.');
+        }
+    }
+
 
     if (config.isVolumeFilterEnabled && config.agent.id !== 14) {
         const volumes = klines.map(k => k.volume || 0);

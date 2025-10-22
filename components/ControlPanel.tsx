@@ -61,8 +61,10 @@ const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) =>
 
 const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParamsChange: (p: AgentParams) => void, isAdxFilterEnabled: boolean, timeFrame: string}> = ({ agent, params, onParamsChange, isAdxFilterEnabled, timeFrame }) => {
     const [isExitVetoOpen, setIsExitVetoOpen] = useState(false);
-    const [isScalpingOpen, setIsScalpingOpen] = useState(false);
-    const [isPillarWeightsOpen, setIsPillarWeightsOpen] = useState(false);
+    const [isAstraX_PillarWeightsOpen, setIsAstraX_PillarWeightsOpen] = useState(false);
+    const [isAstraX_ContextWeightsOpen, setIsAstraX_ContextWeightsOpen] = useState(false);
+    const [isAstraX_AdaptiveThresholdsOpen, setIsAstraX_AdaptiveThresholdsOpen] = useState(true);
+    const [isAstraX_SetupTriggerOpen, setIsAstraX_SetupTriggerOpen] = useState(false);
 
     const allParams = useMemo(() => {
         const timeframeDefaults = constants.getAgentTimeframeSettings(agent.id, timeFrame);
@@ -72,29 +74,33 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
     const updateParam = (key: keyof AgentParams, value: number | boolean | string) => { onParamsChange({ ...params, [key]: value }); };
     switch (agent.id) {
         case 19: return (<div className="space-y-4">
-            <div className={formGroupClass}>
-                <label className={formLabelClass}>Execution Mode</label>
-                <div className="flex items-center gap-1 p-1 bg-slate-200 dark:bg-slate-900/70 rounded-md mt-1">
-                    <button 
-                        onClick={() => updateParam('astraX_executionMode', 'conviction')} 
-                        className={`flex-1 text-center text-xs font-semibold p-1.5 rounded-md transition-colors ${ (allParams.astraX_executionMode ?? 'conviction') === 'conviction' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
-                    >
-                        Conviction
-                    </button>
-                    <button 
-                        onClick={() => updateParam('astraX_executionMode', 'scalp')}
-                        className={`flex-1 text-center text-xs font-semibold p-1.5 rounded-md transition-colors ${ allParams.astraX_executionMode === 'scalp' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
-                    >
-                        Scalp
-                    </button>
-                </div>
-            </div>
-             <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
-                <button onClick={() => setIsPillarWeightsOpen(!isPillarWeightsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
-                    <span>Pillar Weights (Conviction Mode)</span>
-                    {isPillarWeightsOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+            
+            {/* --- ADAPTIVE THRESHOLDS --- */}
+            <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
+                <button onClick={() => setIsAstraX_AdaptiveThresholdsOpen(!isAstraX_AdaptiveThresholdsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
+                    <span>Adaptive Thresholds</span>
+                    {isAstraX_AdaptiveThresholdsOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                 </button>
-                {isPillarWeightsOpen && (
+                {isAstraX_AdaptiveThresholdsOpen && (
+                    <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
+                        <ParamSlider label="Base Entry Threshold" value={allParams.astraX_baseThreshold!} onChange={v => updateParam('astraX_baseThreshold', v)} min={25} max={75} step={1} />
+                        <ParamSlider label="Strong Trend ADX" value={allParams.astraX_strongTrendAdx!} onChange={v => updateParam('astraX_strongTrendAdx', v)} min={25} max={40} step={1} />
+                        <ParamSlider label="Chop Market ADX" value={allParams.astraX_chopAdx!} onChange={v => updateParam('astraX_chopAdx', v)} min={15} max={25} step={1} />
+                        <ParamSlider label="Strong Trend Threshold" value={allParams.astraX_strongTrendThreshold!} onChange={v => updateParam('astraX_strongTrendThreshold', v)} min={50} max={85} step={1} />
+                        <ParamSlider label="Chop Market Threshold" value={allParams.astraX_chopThreshold!} onChange={v => updateParam('astraX_chopThreshold', v)} min={60} max={95} step={1} />
+                        <ParamSlider label="Strong Trend Multiplier" value={allParams.astraX_regimeMultiplier_strong!} onChange={v => updateParam('astraX_regimeMultiplier_strong', v)} min={0.5} max={1.0} step={0.05} valueDisplay={v => `${v.toFixed(2)}x`} />
+                        <ParamSlider label="Chop Market Multiplier" value={allParams.astraX_regimeMultiplier_chop!} onChange={v => updateParam('astraX_regimeMultiplier_chop', v)} min={1.0} max={1.5} step={0.05} valueDisplay={v => `${v.toFixed(2)}x`} />
+                    </div>
+                )}
+            </div>
+
+            {/* --- PILLAR WEIGHTS --- */}
+             <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
+                <button onClick={() => setIsAstraX_PillarWeightsOpen(!isAstraX_PillarWeightsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
+                    <span>Pillar Weights</span>
+                    {isAstraX_PillarWeightsOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                </button>
+                {isAstraX_PillarWeightsOpen && (
                     <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
                         <ParamSlider label="Structure Weight" value={allParams.astraX_weights_structure!} onChange={v => updateParam('astraX_weights_structure', v)} min={0} max={100} step={5} valueDisplay={v => `${v}%`} />
                         <ParamSlider label="Momentum Weight" value={allParams.astraX_weights_momentum!} onChange={v => updateParam('astraX_weights_momentum', v)} min={0} max={100} step={5} valueDisplay={v => `${v}%`} />
@@ -103,65 +109,46 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                     </div>
                 )}
             </div>
-             <ParamSlider label="Base Conviction Threshold" value={allParams.astraX_baseThreshold!} onChange={v => updateParam('astraX_baseThreshold', v)} min={25} max={75} step={1} />
-             <ParamSlider label="Strong Trend ADX" value={allParams.astraX_strongTrendAdx!} onChange={v => updateParam('astraX_strongTrendAdx', v)} min={25} max={40} step={1} />
-             <ParamSlider label="Chop Market ADX" value={allParams.astraX_chopAdx!} onChange={v => updateParam('astraX_chopAdx', v)} min={15} max={25} step={1} />
-             <ParamSlider label="Strong Trend Multiplier" value={allParams.astraX_regimeMultiplier_strong!} onChange={v => updateParam('astraX_regimeMultiplier_strong', v)} min={0.5} max={1.0} step={0.05} valueDisplay={v => `${v.toFixed(2)}x`} />
-             <ParamSlider label="Chop Market Multiplier" value={allParams.astraX_regimeMultiplier_chop!} onChange={v => updateParam('astraX_regimeMultiplier_chop', v)} min={1.0} max={1.5} step={0.05} valueDisplay={v => `${v.toFixed(2)}x`} />
-             <ParamSlider label="Structure Lookback" value={allParams.astraX_structureLookback!} onChange={v => updateParam('astraX_structureLookback', v)} min={5} max={15} step={1} />
-             <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-3 border-t border-slate-200 dark:border-slate-700">Advanced Adjustments</h4>
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                    <label className={formLabelClass}>Use VWAP as Hard Veto</label>
-                    <div className="relative group">
-                        <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
-                        <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
-                            If enabled, prevents LONGs below VWAP and SHORTs above it, overriding the conviction score.
-                        </div>
+
+            {/* --- CONTEXT PILLAR WEIGHTS --- */}
+             <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
+                <button onClick={() => setIsAstraX_ContextWeightsOpen(!isAstraX_ContextWeightsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
+                    <span>Context Pillar Weights</span>
+                    {isAstraX_ContextWeightsOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                </button>
+                {isAstraX_ContextWeightsOpen && (
+                    <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
+                        <ParamSlider label="VWAP Weight" value={allParams.astraX_context_vwapWeight!} onChange={v => updateParam('astraX_context_vwapWeight', v)} min={0} max={100} step={5} valueDisplay={v => `${v}%`} />
+                        <ParamSlider label="Volatility Weight" value={allParams.astraX_context_volatilityWeight!} onChange={v => updateParam('astraX_context_volatilityWeight', v)} min={0} max={100} step={5} valueDisplay={v => `${v}%`} />
+                        <ParamSlider label="Market Breadth Weight" value={allParams.astraX_context_marketBreadthWeight!} onChange={v => updateParam('astraX_context_marketBreadthWeight', v)} min={0} max={100} step={5} valueDisplay={v => `${v}%`} />
+                        <ParamSlider label="Liquidation Weight" value={allParams.astraX_context_liquidationWeight!} onChange={v => updateParam('astraX_context_liquidationWeight', v)} min={0} max={100} step={5} valueDisplay={v => `${v}%`} />
                     </div>
-                </div>
-                <ToggleSwitch checked={allParams.astraX_useVwapAsHardVeto!} onChange={v => updateParam('astraX_useVwapAsHardVeto', v)} />
+                )}
             </div>
-             <ParamSlider label="Funding Rate Multiplier" value={allParams.astraX_fundingRateMultiplier!} onChange={v => updateParam('astraX_fundingRateMultiplier', v)} min={0} max={50} step={1} />
-             <ParamSlider label="Expected Holding Period" value={allParams.astraX_holdingPeriodHours!} onChange={v => updateParam('astraX_holdingPeriodHours', v)} min={1} max={48} step={1} valueDisplay={v => `${v} hrs`} />
-             
-             {(allParams.astraX_executionMode ?? 'conviction') === 'conviction' && (
-                <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
-                    <button onClick={() => setIsScalpingOpen(!isScalpingOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
-                        <span>Fallback Scalping Module (Conviction Mode)</span>
-                        {isScalpingOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-                    </button>
-                    {isScalpingOpen && (
-                        <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
-                            <div className="flex items-center justify-between">
-                                 <div className="flex items-center gap-1.5">
-                                    <label className={formLabelClass}>Enable Scalping in Chop</label>
-                                     <div className="relative group">
-                                        <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
-                                        <div className="absolute bottom-full mb-2 w-52 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
-                                            If enabled, the agent will attempt to take mean-reversion scalp trades when the primary timeframe is in a choppy market regime.
-                                        </div>
-                                    </div>
-                                 </div>
-                                <ToggleSwitch checked={allParams.astraX_scalp_enabledInChop!} onChange={v => updateParam('astraX_scalp_enabledInChop', v)} />
-                            </div>
-                            <div className="flex items-center justify-between">
-                                 <div className="flex items-center gap-1.5">
-                                    <label className={formLabelClass}>Use Retest Confirmation</label>
-                                 </div>
-                                <ToggleSwitch checked={allParams.astraX_scalp_useRetestConfirmation!} onChange={v => updateParam('astraX_scalp_useRetestConfirmation', v)} />
-                            </div>
-                            {allParams.astraX_scalp_useRetestConfirmation && (
-                                <>
-                                    <ParamSlider label="Retest EMA Period" value={allParams.astraX_scalp_retestEmaPeriod!} onChange={v => updateParam('astraX_scalp_retestEmaPeriod', v)} min={5} max={20} step={1} />
-                                    <ParamSlider label="Retest Candle Lookback" value={allParams.astraX_scalp_retestCandleLookback!} onChange={v => updateParam('astraX_scalp_retestCandleLookback', v)} min={2} max={10} step={1} />
-                                </>
-                            )}
-                             <ParamSlider label="Scalp Volume Multiplier" value={allParams.astraX_scalp_volumeMultiplier!} onChange={v => updateParam('astraX_scalp_volumeMultiplier', v)} min={1.0} max={3.0} step={0.1} valueDisplay={v => `${v.toFixed(1)}x`} />
-                        </div>
-                    )}
-                </div>
-            )}
+
+            {/* --- SETUP & TRIGGER LOGIC --- */}
+            <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
+                <button onClick={() => setIsAstraX_SetupTriggerOpen(!isAstraX_SetupTriggerOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
+                    <span>Setup & Trigger Logic</span>
+                    {isAstraX_SetupTriggerOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                </button>
+                {isAstraX_SetupTriggerOpen && (
+                    <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
+                        <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400">Pullback Setup (Trend)</h4>
+                        <ParamSlider label="Pullback EMA Period" value={allParams.astraX_scalp_retestEmaPeriod!} onChange={v => updateParam('astraX_scalp_retestEmaPeriod', v)} min={5} max={20} step={1} />
+                        
+                        <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-3 border-t border-slate-200 dark:border-slate-700">Mean Reversion Setup (Chop)</h4>
+                        <ParamSlider label="Bollinger Bands Period" value={allParams.astraX_scalp_bbPeriod!} onChange={v => updateParam('astraX_scalp_bbPeriod', v)} min={15} max={30} step={1} />
+                        <ParamSlider label="Bollinger Bands StdDev" value={allParams.astraX_scalp_bbStdDev!} onChange={v => updateParam('astraX_scalp_bbStdDev', v)} min={1.8} max={2.5} step={0.1} valueDisplay={v => v.toFixed(1)} />
+                        
+                        <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-3 border-t border-slate-200 dark:border-slate-700">Trigger Confirmation</h4>
+                        <ParamSlider label="Structure Lookback" value={allParams.astraX_structureLookback!} onChange={v => updateParam('astraX_structureLookback', v)} min={5} max={15} step={1} />
+                        <ParamSlider label="Min Volume Multiplier" value={allParams.astraX_confirmation_minVolumeMultiplier!} onChange={v => updateParam('astraX_confirmation_minVolumeMultiplier', v)} min={0.8} max={2.0} step={0.1} valueDisplay={v => `${v.toFixed(1)}x`} />
+                        <ParamSlider label="Min Candle Body Ratio" value={allParams.astraX_confirmation_candleBodyMinRatio!} onChange={v => updateParam('astraX_confirmation_candleBodyMinRatio', v)} min={0.1} max={0.7} step={0.05} valueDisplay={v => `${(v * 100).toFixed(0)}%`} />
+                    </div>
+                )}
+            </div>
+
             </div>);
         case 9: return (<div className="space-y-4">
             <div className="flex flex-col gap-1.5">

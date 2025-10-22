@@ -1,11 +1,12 @@
 
 
+
 import React from 'react';
 import { useState, useEffect, useMemo } from 'react';
 import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, OptimizationResultItem } from '../types';
 import * as constants from '../constants';
 import * as binanceService from './../services/binanceService';
-import { runBacktest, runOptimization } from '../services/backtestingService';
+import { runBacktest, runOptimization } from '../services/workerService';
 import { FlaskIcon, ChevronUp, ChevronDown, SparklesIcon, InfoIcon } from './icons';
 import { useTradingConfigState, useTradingConfigActions } from '../contexts/TradingConfigContext';
 import { SearchableDropdown } from './SearchableDropdown';

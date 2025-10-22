@@ -6,6 +6,9 @@ import { calculateDailyVwap, getLast, getPenultimate } from './agentUtils';
 import { findSwingPoints, analyzeMarketStructure } from '../chartAnalysisService';
 import { sharedKlineService } from '../sharedKlineService';
 import * as constants from '../../constants';
+import { marketBreadthService } from '../marketBreadthService';
+import { liquidationAnalysisService } from '../liquidationAnalysisService';
+
 
 interface TimeframeMetrics {
     bullScore: number;
@@ -201,69 +204,6 @@ export function getAstraXRegimeAndDirection(
     return { regime, direction };
 }
 
-function getAstraXScalpSignal(config: BotConfig, scalpKlines: Kline[] | undefined, oneMinKlines: Kline[] | undefined, livePrice?: number): TradeSignal {
-    const params = config.agentParams as Required<AgentParams>;
-    const reasons: string[] = [];
-
-    if (!scalpKlines || scalpKlines.length < params.astraX_scalp_bbPeriod! + 2) {
-        reasons.push(`❌ Scalp: Insufficient data on scalp timeframe.`);
-        return { signal: 'HOLD', reasons };
-    }
-
-    const scalpCloses = scalpKlines.map(k => k.close);
-    const bb = getLast(BollingerBands.calculate({ period: params.astraX_scalp_bbPeriod!, stdDev: params.astraX_scalp_bbStdDev!, values: scalpCloses })) as BollingerBandsOutput | undefined;
-    const volumeSma = getLast(SMA.calculate({ period: 20, values: scalpKlines.map(k => k.volume || 0) })) as number | undefined;
-    const stochRsiValues = StochasticRSI.calculate({ values: scalpCloses, rsiPeriod: params.astraX_scalp_stochRsiPeriod!, stochasticPeriod: params.astraX_scalp_stochRsiPeriod!, kPeriod: 3, dPeriod: 3 });
-
-    if (params.astraX_scalp_useRetestConfirmation) {
-        const retestEma = EMA.calculate({ period: params.astraX_scalp_retestEmaPeriod!, values: scalpCloses });
-        const confirmationCandle = scalpKlines[scalpKlines.length - 1];
-        
-        const lookbackLimit = Math.max(0, scalpKlines.length - 1 - params.astraX_scalp_retestCandleLookback!);
-        for (let i = scalpKlines.length - 2; i >= lookbackLimit; i--) {
-            const setupCandle = scalpKlines[i];
-            const bbForSetup = BollingerBands.calculate({ period: params.astraX_scalp_bbPeriod!, stdDev: params.astraX_scalp_bbStdDev!, values: scalpCloses.slice(0, i + 1) }).pop();
-
-            if (!bbForSetup) continue;
-
-            const isBullishRejection = setupCandle.low <= bbForSetup.lower && setupCandle.close > bbForSetup.lower;
-            if (isBullishRejection) {
-                const emaForRetest = retestEma[i];
-                const isRetest = emaForRetest && confirmationCandle.low <= emaForRetest;
-                if (isRetest) {
-                     const lastStoch = getLast(stochRsiValues.slice(0, i+2)) as StochasticRSIOutput;
-                     const volumeConfirms = (confirmationCandle.volume || 0) > (volumeSma! * params.astraX_scalp_volumeMultiplier!);
-                     const isBullishTrigger = confirmationCandle.close > confirmationCandle.open;
-
-                     if (isBullishTrigger && lastStoch && lastStoch.k < params.astraX_scalp_stochRsiOversold! && volumeConfirms) {
-                        reasons.push(`✅ Scalp: Bullish retest confirmed.`);
-                        return { signal: 'BUY', reasons, tradeType: 'scalp' };
-                     }
-                }
-            }
-
-            const isBearishRejection = setupCandle.high >= bbForSetup.upper && setupCandle.close < bbForSetup.upper;
-            if (isBearishRejection) {
-                const emaForRetest = retestEma[i];
-                const isRetest = emaForRetest && confirmationCandle.high >= emaForRetest;
-                 if (isRetest) {
-                    const lastStoch = getLast(stochRsiValues.slice(0, i+2)) as StochasticRSIOutput;
-                    const volumeConfirms = (confirmationCandle.volume || 0) > (volumeSma! * params.astraX_scalp_volumeMultiplier!);
-                    const isBearishTrigger = confirmationCandle.close < confirmationCandle.open;
-                    
-                    if (isBearishTrigger && lastStoch && lastStoch.k > params.astraX_scalp_stochRsiOverbought! && volumeConfirms) {
-                        reasons.push(`✅ Scalp: Bearish retest confirmed.`);
-                        return { signal: 'SELL', reasons, tradeType: 'scalp' };
-                    }
-                }
-            }
-        }
-    }
-    
-    reasons.push('ℹ️ No scalp setup found.');
-    return { signal: 'HOLD', reasons };
-}
-
 export const getAstraXSignal = async (config: BotConfig, immediateKlines?: Kline[], livePrice?: number, fundingRate?: number): Promise<TradeSignal> => {
     const params = config.agentParams as Required<AgentParams>;
     const reasons: string[] = [];
@@ -275,36 +215,71 @@ export const getAstraXSignal = async (config: BotConfig, immediateKlines?: Kline
     const klinesMap = new Map<string, Kline[]>();
     analyticalTimeframes.forEach((tf, index) => klinesMap.set(tf, allFetchedKlines[index]));
 
-    const oneMinKlines = immediateKlines ? immediateKlines : await sharedKlineService.getData(config.pair, '1m', config.mode);
-    
-    if (params.astraX_executionMode === 'scalp') {
-        const allTfs = constants.TIME_FRAMES;
-        const primaryIndex = allTfs.indexOf(config.timeFrame);
-        const scalpTf = primaryIndex > 0 ? allTfs[primaryIndex - 1] : (config.timeFrame === '1m' ? '1m' : null);
-        
-        if (!scalpTf) {
-            return { signal: 'HOLD', reasons: [`❌ Scalp mode not available for timeframe ${config.timeFrame}`] };
-        }
-
-        const scalpKlines = klinesMap.get(scalpTf);
-        return getAstraXScalpSignal(config, scalpKlines, oneMinKlines, livePrice);
-    }
-    
-    // --- CONVICTION MODE ---
     const primaryKlines = klinesMap.get(config.timeFrame);
     if (!primaryKlines || primaryKlines.length < 200) {
         return { signal: 'HOLD', reasons: [`ℹ️ Insufficient primary TF data for AstraX.`] };
     }
     
-    const currentPrice = livePrice || getLast(primaryKlines.map(k=>k.close));
-    if(!currentPrice) return { signal: 'HOLD', reasons: [`ℹ️ Could not determine current price.`] };
-
+    // =================================================================================
+    // LEVEL 1: THE THESIS - Determine high-level bias and market regime.
+    // =================================================================================
     const { regime, multiTfBullish, multiTfBearish } = _getMultiTfScoresAndRegime(config, klinesMap, analyticalTimeframes);
-    let convictionThreshold = params.astraX_baseThreshold;
-    if (regime === 'Strong Trend') convictionThreshold *= params.astraX_regimeMultiplier_strong;
-    else if (regime === 'Choppy Market') convictionThreshold *= params.astraX_regimeMultiplier_chop;
+    const directionalBias = multiTfBullish > multiTfBearish ? 'Bullish' : multiTfBullish < multiTfBearish ? 'Bearish' : 'Neutral';
+    
+    reasons.push(`ℹ️ Thesis: ${directionalBias} Bias in a ${regime} market.`);
+    if (directionalBias === 'Neutral') {
+        return { signal: 'HOLD', reasons: [...reasons, `❌ No directional bias.`] };
+    }
+    
+    // =================================================================================
+    // LEVEL 2: THE SETUP - Find a high-probability entry pattern matching the thesis.
+    // =================================================================================
+    let setupFound = false;
+    let setupType: 'Pullback' | 'Mean Reversion' | null = null;
+    const lastKline = primaryKlines[primaryKlines.length-1];
+    
+    if (regime === 'Strong Trend' || regime === 'Developing Trend') {
+        // Look for a pullback to a short-term EMA
+        const retestEma = EMA.calculate({ period: params.astraX_scalp_retestEmaPeriod, values: primaryKlines.map(k=>k.close) });
+        const lastEma = getLast(retestEma) as number | undefined;
 
-    reasons.push(`ℹ️ Regime: ${regime} | Entry Threshold: ±${convictionThreshold.toFixed(0)}`);
+        if (lastEma) {
+            if (directionalBias === 'Bullish' && lastKline.low <= lastEma && lastKline.close > lastEma) {
+                setupFound = true;
+                setupType = 'Pullback';
+                reasons.push(`✅ Setup: Bullish pullback to ${params.astraX_scalp_retestEmaPeriod}-EMA.`);
+            }
+            if (directionalBias === 'Bearish' && lastKline.high >= lastEma && lastKline.close < lastEma) {
+                setupFound = true;
+                setupType = 'Pullback';
+                reasons.push(`✅ Setup: Bearish pullback to ${params.astraX_scalp_retestEmaPeriod}-EMA.`);
+            }
+        }
+    } else { // Choppy Market
+        // Look for mean reversion from BB extremes, using the retest confirmation logic
+        const bb = getLast(BollingerBands.calculate({ period: params.astraX_scalp_bbPeriod, stdDev: params.astraX_scalp_bbStdDev, values: primaryKlines.map(k=>k.close) })) as BollingerBandsOutput;
+        if (bb) {
+            if (directionalBias === 'Bullish' && lastKline.low <= bb.lower && lastKline.close > bb.lower) {
+                setupFound = true;
+                setupType = 'Mean Reversion';
+                reasons.push(`✅ Setup: Bullish mean reversion from lower Bollinger Band.`);
+            }
+            if (directionalBias === 'Bearish' && lastKline.high >= bb.upper && lastKline.close < bb.upper) {
+                setupFound = true;
+                setupType = 'Mean Reversion';
+                reasons.push(`✅ Setup: Bearish mean reversion from upper Bollinger Band.`);
+            }
+        }
+    }
+
+    if (!setupFound) {
+        return { signal: 'HOLD', reasons: [...reasons, `❌ No valid setup found.`] };
+    }
+
+    // =================================================================================
+    // LEVEL 3: THE TRIGGER - Confirm the entry with final pillar scores.
+    // =================================================================================
+    const convictionThreshold = regime === 'Strong Trend' ? params.astraX_strongTrendThreshold : params.astraX_chopAdx;
     
     // --- Pillar 1: Structure ---
     const swingPoints = findSwingPoints(primaryKlines, params.astraX_structureLookback);
@@ -315,50 +290,55 @@ export const getAstraXSignal = async (config: BotConfig, immediateKlines?: Kline
     if (structureAnalysis.lastSignal === 'ChoCH_Bullish') structureBullish = 80;
     if (structureAnalysis.lastSignal === 'ChoCH_Bearish') structureBearish = 80;
 
-    // --- Pillar 2: Momentum ---
-    // (This is the multiTfBullish/multiTfBearish score)
-    
+    // --- Pillar 2: Momentum (is our Thesis) ---
+    const momentumBullish = multiTfBullish;
+    const momentumBearish = multiTfBearish;
+
     // --- Pillar 3: Context ---
-    let contextBullish = 0, contextBearish = 0;
-    // A. VWAP Context
     const vwap = getLast(calculateDailyVwap(primaryKlines));
-    if (vwap && vwap > 0) {
-        if (currentPrice > vwap) contextBullish += 50;
-        else contextBearish += 50;
-    }
-    // B. Volatility Context
     const primaryMetrics = computeTimeframeMetrics(primaryKlines);
     const atrPercentile = primaryMetrics.atrPercentile;
-    // Reward healthy volatility, penalize extremes
-    if (atrPercentile > 30 && atrPercentile < 80) {
-        contextBullish += 50; contextBearish += 50;
+    let contextBullish = 0, contextBearish = 0;
+
+    if (vwap) {
+        contextBullish += (lastKline.close > vwap ? 1 : 0) * 35;
+        contextBearish += (lastKline.close < vwap ? 1 : 0) * 35;
+    }
+    contextBullish += (atrPercentile > 20 && atrPercentile < 85 ? 1 : -1) * 15;
+    contextBearish += (atrPercentile > 20 && atrPercentile < 85 ? 1 : -1) * 15;
+    
+    // Integrated Market Breadth check
+    const breadthVeto = marketBreadthService.getMarketBreadthVeto(directionalBias === 'Bullish' ? 'BUY' : 'SELL');
+    contextBullish += (!breadthVeto.veto ? 1 : -1) * 25;
+    contextBearish += (!breadthVeto.veto ? 1 : -1) * 25;
+    
+    // Integrated Liquidation check
+    if (config.mode === TradingMode.USDSM_Futures) {
+        const liqVeto = liquidationAnalysisService.getLiquidationVeto(directionalBias === 'Bullish' ? 'BUY' : 'SELL', config.pair, config);
+        contextBullish += (!liqVeto.veto ? 1 : -1) * 25;
+        contextBearish += (!liqVeto.veto ? 1 : -1) * 25;
     } else {
-        contextBullish -= 25; contextBearish -= 25;
+        contextBullish += 25; contextBearish += 25;
     }
 
     // --- Pillar 4: Confirmation ---
     let confirmationBullish = 0, confirmationBearish = 0;
-    const lastKline = primaryKlines[primaryKlines.length - 1];
-    const volumeSma20 = getLast(SMA.calculate({ period: 20, values: primaryKlines.map(k => k.volume || 0) })) as number | undefined;
-    if (lastKline.volume && volumeSma20 && lastKline.volume > volumeSma20 * params.astraX_confirmation_minVolumeMultiplier) {
-        const bodySize = Math.abs(lastKline.close - lastKline.open);
-        const totalRange = lastKline.high - lastKline.low;
-        if (totalRange > 0 && bodySize / totalRange > params.astraX_confirmation_candleBodyMinRatio) {
-            if (lastKline.close > lastKline.open) confirmationBullish = 100;
-            if (lastKline.close < lastKline.open) confirmationBearish = 100;
-        }
+    const volumeSma = getLast(SMA.calculate({ period: 20, values: primaryKlines.map(k => k.volume || 0) })) as number | undefined;
+    if (lastKline.volume && volumeSma && lastKline.volume > volumeSma * params.astraX_confirmation_minVolumeMultiplier) {
+        if (lastKline.close > lastKline.open) confirmationBullish = 100;
+        else confirmationBearish = 100;
     }
 
     // --- Final Score Calculation ---
     const finalBullishScore = 
         (structureBullish * (params.astraX_weights_structure / 100)) +
-        (multiTfBullish * (params.astraX_weights_momentum / 100)) +
+        (momentumBullish * (params.astraX_weights_momentum / 100)) +
         (contextBullish * (params.astraX_weights_context / 100)) +
         (confirmationBullish * (params.astraX_weights_confirmation / 100));
 
     const finalBearishScore = 
         (structureBearish * (params.astraX_weights_structure / 100)) +
-        (multiTfBearish * (params.astraX_weights_momentum / 100)) +
+        (momentumBearish * (params.astraX_weights_momentum / 100)) +
         (contextBearish * (params.astraX_weights_context / 100)) +
         (confirmationBearish * (params.astraX_weights_confirmation / 100));
 
@@ -369,53 +349,22 @@ export const getAstraXSignal = async (config: BotConfig, immediateKlines?: Kline
         finalBullishScore, finalBearishScore,
         scores: {
             structure: { bull: structureBullish, bear: structureBearish, weight: params.astraX_weights_structure },
-            momentum: { bull: multiTfBullish, bear: multiTfBearish, weight: params.astraX_weights_momentum },
+            momentum: { bull: momentumBullish, bear: momentumBearish, weight: params.astraX_weights_momentum },
             context: { bull: contextBullish, bear: contextBearish, weight: params.astraX_weights_context },
             confirmation: { bull: confirmationBullish, bear: confirmationBearish, weight: params.astraX_weights_confirmation },
         }
     };
     
     let signal: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
-    if (conviction >= convictionThreshold) signal = 'BUY';
-    else if (conviction <= -convictionThreshold) signal = 'SELL';
-
-    // --- VWAP Hard Veto (if enabled) ---
-    if (params.astraX_useVwapAsHardVeto && vwap && vwap > 0) {
-        if (signal === 'BUY' && currentPrice < vwap) {
-            reasons.push(`❌ VETO: Price is below VWAP (Hard Veto enabled).`);
-            signal = 'HOLD';
-        }
-        if (signal === 'SELL' && currentPrice > vwap) {
-            reasons.push(`❌ VETO: Price is above VWAP (Hard Veto enabled).`);
-            signal = 'HOLD';
-        }
+    if (directionalBias === 'Bullish' && conviction >= convictionThreshold) {
+        signal = 'BUY';
+        reasons.push(`✅ Trigger: Final conviction score ${conviction.toFixed(0)} meets threshold.`);
+    } else if (directionalBias === 'Bearish' && conviction <= -convictionThreshold) {
+        signal = 'SELL';
+        reasons.push(`✅ Trigger: Final conviction score ${conviction.toFixed(0)} meets threshold.`);
+    } else {
+        reasons.push(`❌ Trigger: Final conviction score ${conviction.toFixed(0)} did not meet threshold.`);
     }
 
-    if (signal !== 'HOLD') {
-        reasons.push(`✅ Conviction Met: Score ${conviction.toFixed(0)} vs Threshold ${convictionThreshold.toFixed(0)}`);
-        return { signal, reasons, astraXAnalysis: analysis, tradeType: 'conviction' };
-    }
-    
-    if (Math.abs(conviction) < convictionThreshold) {
-        reasons.push(`❌ Conviction Unmet: Score ${conviction.toFixed(0)} within threshold.`);
-    }
-
-    // Fallback to scalp logic if in conviction mode and market is choppy
-    if (params.astraX_scalp_enabledInChop && regime === 'Choppy Market') {
-        reasons.push(`ℹ️ Conviction unmet. Checking for fallback scalp trade...`);
-        const allTfs = constants.TIME_FRAMES;
-        const primaryIndex = allTfs.indexOf(config.timeFrame);
-        const scalpTf = primaryIndex > 0 ? allTfs[primaryIndex - 1] : (config.timeFrame === '1m' ? '1m' : null);
-        if (scalpTf) {
-            const scalpKlines = klinesMap.get(scalpTf);
-            const scalpSignal = getAstraXScalpSignal(config, scalpKlines, oneMinKlines, livePrice);
-            if (scalpSignal.signal !== 'HOLD') {
-                return { ...scalpSignal, astraXAnalysis: analysis };
-            }
-        }
-    } else if (regime === 'Choppy Market') {
-        reasons.push(`ℹ️ Fallback scalping in chop is disabled.`);
-    }
-
-    return { signal: 'HOLD', reasons, astraXAnalysis: analysis };
+    return { signal, reasons, astraXAnalysis: analysis, tradeType: setupType === 'Pullback' ? 'conviction' : 'scalp' };
 };

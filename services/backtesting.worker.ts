@@ -1,11 +1,21 @@
 // services/backtesting.worker.ts
 
-
-
-import { Kline, BotConfig, BacktestResult, Trade, AgentParams, Position, TradingMode, OptimizationResultItem, BotConfigSnapshot } from '../types';
-import { getTradingSignal, getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getTradeGuardianSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext, getAdaptiveTakeProfit } from './localAgentService';
+import { Kline, BotConfig, BacktestResult, Trade, AgentParams, Position, TradingMode, OptimizationResultItem, Agent, TradeSignal } from '../types';
+import { getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getTradeGuardianSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, getAdaptiveTakeProfit } from './riskManagementService';
 import * as constants from '../constants';
 import { ATR } from 'technicalindicators';
+import { getQuantumScalperSignal } from './agents/quantumScalper';
+import { getHistoricExpertSignal } from './agents/historicExpert';
+import { getChameleonSignal } from './agents/chameleon';
+import { getTheSentinelSignal } from './agents/sentinel';
+import { getIchimokuTrendRiderSignal } from './agents/ichimokuTrendRider';
+import { getMomentumSwingTraderSignal } from './agents/momentumSwingTrader';
+import { getTheConductorSignal } from './agents/conductor';
+import { getAstraXSignal } from './agents/astrax';
+import { applyTimeframeSettings, captureMarketContext, calculateHeikinAshi, isMarketCohesive } from './agents/agentUtils';
+import { Supertrend } from './agents/agentUtils';
+import { calculateSupportResistance } from './chartAnalysisService';
+import { detectSmcReversalPattern } from './vetoService';
 
 // --- Worker-local Helper Functions ---
 
@@ -18,7 +28,7 @@ const getTimeframeDuration = (timeframe: string): number => {
     switch (unit) {
         case 'm': return value * 60 * 1000;
         case 'h': return value * 60 * 60 * 1000;
-        case 'd': return value * 24 * 60 * 60 * 1000;
+        case 'd': return value * 24 * 60 * 1000;
         default: return 0;
     }
 };
@@ -78,6 +88,102 @@ function formatDuration(ms: number): string {
     if (hours > 0) return `${hours}h ${minutes}m`;
     if (minutes > 0) return `${minutes}m ${seconds}s`;
     return `${seconds}s`;
+}
+
+
+async function runFullAnalysisInWorker(
+    agent: Agent,
+    klines: Kline[],
+    originalConfig: BotConfig,
+    htfKlines?: Kline[],
+    immediateKlines?: Kline[],
+    ltfKlines?: Kline[],
+    ethBtcKlines?: Kline[],
+    livePrice?: number,
+): Promise<TradeSignal> {
+    const config = applyTimeframeSettings(originalConfig);
+    const reasons: string[] = [];
+
+    const htfContext = htfKlines && htfKlines.length > 0 ? captureMarketContext([], htfKlines) : undefined;
+
+    let agentSignal: TradeSignal;
+
+    if (agent.id === 19) {
+        agentSignal = await getAstraXSignal(config, immediateKlines, livePrice);
+    } else {
+        switch (agent.id) {
+            case 9: agentSignal = getQuantumScalperSignal(klines, config, htfContext); break;
+            case 11: agentSignal = getHistoricExpertSignal(klines, config, htfContext); break;
+            case 13: agentSignal = getChameleonSignal(klines, config, htfContext); break;
+            case 14: agentSignal = getTheSentinelSignal(klines, config, htfContext); break;
+            case 16: agentSignal = getIchimokuTrendRiderSignal(klines, config, htfContext); break;
+            case 17: agentSignal = getMomentumSwingTraderSignal(klines, config, htfContext); break;
+            case 18: agentSignal = getTheConductorSignal(klines, config, htfContext, ltfKlines); break;
+            default: agentSignal = { signal: 'HOLD', reasons: ['Agent not found'] };
+        }
+    }
+    
+    reasons.push(...agentSignal.reasons);
+
+    if (agentSignal.signal === 'HOLD') {
+        return agentSignal;
+    }
+
+    const lastKline = klines[klines.length-1];
+    const currentPrice = livePrice || lastKline?.close;
+    if (!currentPrice || currentPrice <= 0) {
+        return { signal: 'HOLD', reasons: ['Could not get current price for validation.'] };
+    }
+
+    if (!lastKline) return { signal: 'HOLD', reasons: ['No kline data for filters.'] };
+
+    if (config.isMarketCohesionEnabled) {
+        const haKlines = calculateHeikinAshi(klines);
+        const cohesionCheck = isMarketCohesive(haKlines, agentSignal.signal, config.timeFrame, 2);
+        if (!cohesionCheck.cohesive) return { signal: 'HOLD', reasons: [...reasons, cohesionCheck.reason] };
+        reasons.push(cohesionCheck.reason);
+    }
+    
+    if (config.isSupertrendConfirmationEnabled) {
+        const stParams = {
+            period: constants.DEFAULT_AGENT_PARAMS.qsc_superTrendPeriod,
+            multiplier: constants.DEFAULT_AGENT_PARAMS.qsc_superTrendMultiplier
+        };
+        const supertrendValues = Supertrend.calculate({
+            high: klines.map(k => k.high),
+            low: klines.map(k => k.low),
+            close: klines.map(k => k.close),
+            period: stParams.period,
+            multiplier: stParams.multiplier
+        });
+        const lastSupertrend = getLast(supertrendValues) as number | undefined;
+
+        if (lastSupertrend) {
+            if (agentSignal.signal === 'BUY' && currentPrice < lastSupertrend) {
+                return { signal: 'HOLD', reasons: [...reasons, `❌ VETO: Price is below Supertrend.`] };
+            }
+            if (agentSignal.signal === 'SELL' && currentPrice > lastSupertrend) {
+                return { signal: 'HOLD', reasons: [...reasons, `❌ VETO: Price is above Supertrend.`] };
+            }
+            reasons.push('✅ Supertrend: Confirmed');
+        } else {
+            reasons.push('⚠️ Supertrend: Could not calculate.');
+        }
+    }
+
+    const { stopLossPrice, takeProfitPrice, agentStopLoss } = getInitialAgentTargets(klines, currentPrice, agentSignal.signal === 'BUY' ? 'LONG' : 'SHORT', config);
+    const profitabilityValidation = validateTradeProfitability(currentPrice, agentStopLoss, takeProfitPrice, agentSignal.signal === 'BUY' ? 'LONG' : 'SHORT', config);
+    if (!profitabilityValidation.isValid) {
+        return { signal: 'HOLD', reasons: [...reasons, profitabilityValidation.reason] };
+    }
+    reasons.push(profitabilityValidation.reason);
+
+    return { 
+        ...agentSignal, 
+        reasons,
+        stopLossPrice: stopLossPrice,
+        takeProfitPrice: takeProfitPrice
+    };
 }
 
 
@@ -189,7 +295,7 @@ async function simulateBot(baseKlines: Kline[], config: BotConfig, htfKlines?: K
         if (!openPosition) {
             // Note: In backtesting, we can't use immediateKlines or ltfKlines in getTradingSignal
             // as it would be looking into the future. We can only use the data up to the current candle `i`.
-            const signal = await getTradingSignal(config.agent, klinesForAnalysis, config, currentHtfKlines, undefined, undefined, undefined, currentPrice);
+            const signal = await runFullAnalysisInWorker(config.agent, klinesForAnalysis, config, currentHtfKlines, undefined, undefined, undefined, currentPrice);
             if (signal.signal !== 'HOLD') {
                 const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(klinesForAnalysis, currentPrice, signal.signal === 'BUY' ? 'LONG' : 'SHORT', config);
                 
@@ -332,6 +438,19 @@ const runBacktestInWorker = async (id: number, payload: { klines: Kline[], confi
     }
 };
 
+const runLiveAnalysisInWorker = async (id: number, payload: { 
+    agent: Agent, klines: Kline[], config: BotConfig, htfKlines?: Kline[], 
+    immediateKlines?: Kline[], ltfKlines?: Kline[], ethBtcKlines?: Kline[], livePrice?: number 
+}) => {
+    try {
+        const { agent, klines, config, htfKlines, immediateKlines, ltfKlines, ethBtcKlines, livePrice } = payload;
+        const result = await runFullAnalysisInWorker(agent, klines, config, htfKlines, immediateKlines, ltfKlines, ethBtcKlines, livePrice);
+        postMessage({ type: 'result', id, payload: result });
+    } catch (e: any) {
+        postMessage({ type: 'error', id, error: e.message });
+    }
+};
+
 const runOptimizationInWorker = (id: number, payload: { klines: Kline[], config: BotConfig, htfKlines?: Kline[] }) => {
     // This is a placeholder for a real optimization function.
     // A real implementation would generate parameter combinations and run simulateBot for each.
@@ -346,6 +465,9 @@ self.onmessage = (event: MessageEvent) => {
     switch (type) {
         case 'runBacktest':
             runBacktestInWorker(id, payload);
+            break;
+        case 'runLiveAnalysis':
+            runLiveAnalysisInWorker(id, payload);
             break;
         case 'runOptimization':
             runOptimizationInWorker(id, payload);

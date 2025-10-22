@@ -1,3 +1,5 @@
+
+
 import { Agent, AgentParams, WalletBalance } from './types';
 
 export const TRADING_PAIRS: string[] = [
@@ -229,43 +231,35 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     conductor_entryTrigger_candleVelocity: 0.75, // Requires close in top/bottom 25% of range
     conductor_entryTrigger_rsiHookPeriod: 3,
 
-    // Agent 19: AstraX Super-Agent
-    astraX_executionMode: 'conviction',
+    // Agent 19: AstraX Super-Agent (Re-architected)
     astraX_baseThreshold: 45,
     astraX_strongTrendAdx: 30,
     astraX_chopAdx: 20,
     astraX_regimeMultiplier_strong: 0.7,
     astraX_regimeMultiplier_chop: 1.3,
+    astraX_strongTrendThreshold: 65,
+    astraX_chopThreshold: 80,
     astraX_structureLookback: 10,
-    astraX_microTfLookback: 3,
-    astraX_vwapDistanceMultiplier: 10,
-    astraX_liquiditySweepMultiplier: 2.5,
-    astraX_fundingRateMultiplier: 25,
-    astraX_holdingPeriodHours: 8,
-    astraX_confirmation_volumeMultiplier: 1.2,
-    astraX_useVwapAsHardVeto: false,
-    // New scalping module parameters
-    astraX_scalp_bbPeriod: 20,
-    astraX_scalp_bbStdDev: 2,
-    astraX_scalp_stochRsiPeriod: 14,
-    astraX_scalp_stochRsiOversold: 20,
-    astraX_scalp_stochRsiOverbought: 80,
-    astraX_scalp_volumeMultiplier: 1.7,
-    astraX_scalp_useRetestConfirmation: true,
-    astraX_scalp_retestEmaPeriod: 9,
-    astraX_scalp_retestCandleLookback: 3,
-    astraX_scalp_enabledInChop: false,
-    // New 4-pillar system parameters
+    // --- Pillar Weights ---
     astraX_weights_structure: 35,
     astraX_weights_momentum: 35,
     astraX_weights_context: 15,
     astraX_weights_confirmation: 15,
+    // --- Context Pillar Weights ---
+    astraX_context_vwapWeight: 35,
+    astraX_context_volatilityWeight: 15,
+    astraX_context_marketBreadthWeight: 25,
+    astraX_context_liquidationWeight: 25,
+    // --- Confirmation/Trigger ---
     astraX_confirmation_minVolumeMultiplier: 1.1,
     astraX_confirmation_candleBodyMinRatio: 0.3,
-    astraX_context_btcFlowWeight: 0,
-    astraX_context_volatilityWeight: 30,
-    astraX_smc_divergenceLookback: 14,
-
+    // --- Setup/Tactical ---
+    astraX_scalp_retestEmaPeriod: 9,
+    astraX_scalp_bbPeriod: 20,
+    astraX_scalp_bbStdDev: 2,
+    // FIX: Add default values for new AstraX properties.
+    astraX_executionMode: 'hybrid',
+    astraX_scalp_enabledInChop: true,
 
     // SMC Reversal Veto
     smc_divergenceLookback: 12,
@@ -412,17 +406,22 @@ export const MOMENTUM_SWING_TRADER_TIMEFRAME_SETTINGS: Record<string, Partial<Ag
 };
 
 export const ASTRAX_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    // Scalping: More sensitive StochRSI, wider BBs for volatility, higher volume confirmation
-    '1m':  { astraX_scalp_bbStdDev: 2.2, astraX_scalp_stochRsiOversold: 15, astraX_scalp_stochRsiOverbought: 85, astraX_scalp_volumeMultiplier: 1.8 },
-    '3m':  { astraX_scalp_bbStdDev: 2.1, astraX_scalp_stochRsiOversold: 18, astraX_scalp_stochRsiOverbought: 82, astraX_scalp_volumeMultiplier: 1.7 },
-    '5m':  { astraX_scalp_bbStdDev: 2.0, astraX_scalp_stochRsiOversold: 20, astraX_scalp_stochRsiOverbought: 80, astraX_scalp_volumeMultiplier: 1.7 },
-    // Day Trading: Balanced settings (defaults)
-    '15m': { astraX_scalp_bbStdDev: 2.0, astraX_scalp_stochRsiOversold: 20, astraX_scalp_stochRsiOverbought: 80, astraX_scalp_volumeMultiplier: 1.7 },
-    '30m': { astraX_scalp_bbStdDev: 2.0, astraX_scalp_stochRsiOversold: 22, astraX_scalp_stochRsiOverbought: 78, astraX_scalp_volumeMultiplier: 1.4 },
-    '1h':  { astraX_scalp_bbStdDev: 2.0, astraX_scalp_stochRsiOversold: 25, astraX_scalp_stochRsiOverbought: 75, astraX_scalp_volumeMultiplier: 1.3 },
-    // Swing Trading: Less sensitive StochRSI, tighter BBs, lower volume confirmation threshold
-    '4h':  { astraX_scalp_bbStdDev: 1.9, astraX_scalp_stochRsiOversold: 25, astraX_scalp_stochRsiOverbought: 75, astraX_scalp_volumeMultiplier: 1.2 },
-    '1d':  { astraX_scalp_bbStdDev: 1.9, astraX_scalp_stochRsiOversold: 28, astraX_scalp_stochRsiOverbought: 72, astraX_scalp_volumeMultiplier: 1.1 },
+    // --- SCALPING (1m, 3m, 5m) ---
+    // Goal: High conviction, quick reaction, noise filtering.
+    '1m':  { astraX_structureLookback: 5, astraX_strongTrendAdx: 32, astraX_chopAdx: 22, astraX_strongTrendThreshold: 70, astraX_chopThreshold: 85, astraX_scalp_retestEmaPeriod: 8, astraX_scalp_bbStdDev: 2.2, astraX_confirmation_minVolumeMultiplier: 1.5, astraX_confirmation_candleBodyMinRatio: 0.4, astraX_context_vwapWeight: 50 },
+    '3m':  { astraX_structureLookback: 7, astraX_strongTrendAdx: 30, astraX_chopAdx: 22, astraX_strongTrendThreshold: 70, astraX_chopThreshold: 85, astraX_scalp_retestEmaPeriod: 9, astraX_scalp_bbStdDev: 2.1, astraX_confirmation_minVolumeMultiplier: 1.3, astraX_confirmation_candleBodyMinRatio: 0.35, astraX_context_vwapWeight: 45 },
+    '5m':  { astraX_structureLookback: 8, astraX_strongTrendAdx: 30, astraX_chopAdx: 20, astraX_strongTrendThreshold: 68, astraX_chopThreshold: 82, astraX_scalp_retestEmaPeriod: 9, astraX_scalp_bbStdDev: 2.0, astraX_confirmation_minVolumeMultiplier: 1.2, astraX_confirmation_candleBodyMinRatio: 0.3, astraX_context_vwapWeight: 40 },
+    
+    // --- DAY TRADING (15m, 30m, 1h) ---
+    // Goal: Balanced approach, capturing intraday trends.
+    '15m': { astraX_structureLookback: 10, astraX_strongTrendAdx: 28, astraX_chopAdx: 20, astraX_strongTrendThreshold: 65, astraX_chopThreshold: 80, astraX_scalp_retestEmaPeriod: 9, astraX_scalp_bbStdDev: 2.0, astraX_confirmation_minVolumeMultiplier: 1.1, astraX_confirmation_candleBodyMinRatio: 0.3, astraX_context_vwapWeight: 35 },
+    '30m': { astraX_structureLookback: 10, astraX_strongTrendAdx: 28, astraX_chopAdx: 20, astraX_strongTrendThreshold: 65, astraX_chopThreshold: 80, astraX_scalp_retestEmaPeriod: 12, astraX_scalp_bbStdDev: 2.0, astraX_confirmation_minVolumeMultiplier: 1.1, astraX_confirmation_candleBodyMinRatio: 0.3, astraX_context_vwapWeight: 30 },
+    '1h':  { astraX_structureLookback: 12, astraX_strongTrendAdx: 25, astraX_chopAdx: 18, astraX_strongTrendThreshold: 62, astraX_chopThreshold: 78, astraX_scalp_retestEmaPeriod: 12, astraX_scalp_bbStdDev: 2.0, astraX_confirmation_minVolumeMultiplier: 1.0, astraX_confirmation_candleBodyMinRatio: 0.25, astraX_context_vwapWeight: 25 },
+    
+    // --- SWING TRADING (4h, 1d) ---
+    // Goal: Patience, riding major trends, ignoring noise.
+    '4h':  { astraX_structureLookback: 12, astraX_strongTrendAdx: 25, astraX_chopAdx: 18, astraX_strongTrendThreshold: 60, astraX_chopThreshold: 75, astraX_scalp_retestEmaPeriod: 15, astraX_scalp_bbPeriod: 25, astraX_scalp_bbStdDev: 1.9, astraX_confirmation_minVolumeMultiplier: 1.0, astraX_confirmation_candleBodyMinRatio: 0.25, astraX_context_vwapWeight: 10, astraX_context_volatilityWeight: 25 },
+    '1d':  { astraX_structureLookback: 15, astraX_strongTrendAdx: 25, astraX_chopAdx: 18, astraX_strongTrendThreshold: 60, astraX_chopThreshold: 75, astraX_scalp_retestEmaPeriod: 15, astraX_scalp_bbPeriod: 25, astraX_scalp_bbStdDev: 1.9, astraX_confirmation_minVolumeMultiplier: 1.0, astraX_confirmation_candleBodyMinRatio: 0.25, astraX_context_vwapWeight: 5, astraX_context_volatilityWeight: 30 },
 };
 
 /**
@@ -477,14 +476,14 @@ export const MAX_MARGIN_LOSS_PERCENT = 6; // Increased slightly for more flexibi
 
 // New, wider ATR multipliers for initial stop loss placement to give trades more "breathing room"
 export const TIMEFRAME_ATR_CONFIG: Record<string, { atrMultiplier: number, riskRewardRatio: number }> = {
-    '1m':  { atrMultiplier: 2.0, riskRewardRatio: 2 },
-    '3m':  { atrMultiplier: 2.2, riskRewardRatio: 2.2 },
-    '5m':  { atrMultiplier: 2.5, riskRewardRatio: 2.4 },
-    '15m': { atrMultiplier: 2.5, riskRewardRatio: 2.0 },
-    '30m': { atrMultiplier: 2.7, riskRewardRatio: 2.2 },
-    '1h':  { atrMultiplier: 2.8, riskRewardRatio: 2.5 },
-    '4h':  { atrMultiplier: 3.2, riskRewardRatio: 2.8 },
-    '1d':  { atrMultiplier: 3.8, riskRewardRatio: 3.0 },
+    '1m':  { atrMultiplier: 2.0, riskRewardRatio: 1.6 },
+    '3m':  { atrMultiplier: 2.1, riskRewardRatio: 1.8 },
+    '5m':  { atrMultiplier: 2.2, riskRewardRatio: 2.0 },
+    '15m': { atrMultiplier: 2.4, riskRewardRatio: 2.2 },
+    '30m': { atrMultiplier: 2.5, riskRewardRatio: 2.5 },
+    '1h':  { atrMultiplier: 2.7, riskRewardRatio: 2.8 },
+    '4h':  { atrMultiplier: 3.0, riskRewardRatio: 3.0 },
+    '1d':  { atrMultiplier: 3.5, riskRewardRatio: 3.5 },
 };
 
 /**

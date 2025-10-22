@@ -1,5 +1,6 @@
+// services/workerService.ts
 
-import { Kline, BotConfig, BacktestResult, OptimizationResultItem } from '../types';
+import { Kline, BotConfig, BacktestResult, OptimizationResultItem, TradeSignal, Agent } from '../types';
 
 // Use a dynamic import for the worker to support module syntax
 const worker = new Worker(new URL('./backtesting.worker.ts', import.meta.url), {
@@ -33,7 +34,7 @@ worker.onmessage = (event: MessageEvent) => {
 };
 
 worker.onerror = (error) => {
-    console.error('Error in backtesting worker:', error);
+    console.error('Error in worker service:', error);
     requestResolvers.forEach(resolver => resolver.reject(new Error('Worker encountered an unrecoverable error.')));
     requestResolvers.clear();
 };
@@ -53,6 +54,28 @@ export function runBacktest(
         });
     });
 }
+
+export function runLiveAnalysis(
+    agent: Agent,
+    klines: Kline[],
+    config: BotConfig,
+    htfKlines?: Kline[],
+    immediateKlines?: Kline[],
+    ltfKlines?: Kline[],
+    ethBtcKlines?: Kline[],
+    livePrice?: number,
+): Promise<TradeSignal> {
+     return new Promise((resolve, reject) => {
+        const id = requestIdCounter++;
+        requestResolvers.set(id, { resolve, reject });
+        worker.postMessage({
+            type: 'runLiveAnalysis',
+            id,
+            payload: { agent, klines, config, htfKlines, immediateKlines, ltfKlines, ethBtcKlines, livePrice },
+        });
+    });
+}
+
 
 export function runOptimization(
     klines: Kline[],

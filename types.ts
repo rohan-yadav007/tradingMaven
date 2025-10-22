@@ -283,43 +283,36 @@ export interface AgentParams {
     conductor_entryTrigger_candleVelocity?: number;
     conductor_entryTrigger_rsiHookPeriod?: number;
     
-    // Agent 19: AstraX Super-Agent
-    astraX_executionMode?: 'conviction' | 'scalp';
+    // Agent 19: AstraX Super-Agent (Re-architected)
     astraX_baseThreshold?: number;
     astraX_strongTrendAdx?: number;
     astraX_chopAdx?: number;
     astraX_regimeMultiplier_strong?: number;
     astraX_regimeMultiplier_chop?: number;
+    astraX_strongTrendThreshold?: number;
+    astraX_chopThreshold?: number;
     astraX_structureLookback?: number;
-    astraX_microTfLookback?: number;
-    astraX_vwapDistanceMultiplier?: number;
-    astraX_liquiditySweepMultiplier?: number;
-    astraX_fundingRateMultiplier?: number;
-    astraX_holdingPeriodHours?: number;
-    astraX_confirmation_volumeMultiplier?: number;
-    astraX_useVwapAsHardVeto?: boolean;
-    // New scalping module parameters
-    astraX_scalp_bbPeriod?: number;
-    astraX_scalp_bbStdDev?: number;
-    astraX_scalp_stochRsiPeriod?: number;
-    astraX_scalp_stochRsiOversold?: number;
-    astraX_scalp_stochRsiOverbought?: number;
-    astraX_scalp_volumeMultiplier?: number;
-    astraX_scalp_useRetestConfirmation?: boolean;
-    astraX_scalp_retestEmaPeriod?: number;
-    astraX_scalp_retestCandleLookback?: number;
-    astraX_scalp_enabledInChop?: boolean;
-    // New 4-pillar system parameters
+    // --- Pillar Weights ---
     astraX_weights_structure?: number;
     astraX_weights_momentum?: number;
     astraX_weights_context?: number;
     astraX_weights_confirmation?: number;
+    // --- Context Pillar Weights ---
+    astraX_context_vwapWeight?: number;
+    astraX_context_volatilityWeight?: number;
+    astraX_context_marketBreadthWeight?: number;
+    astraX_context_liquidationWeight?: number;
+    // --- Confirmation/Trigger Pillar ---
     astraX_confirmation_minVolumeMultiplier?: number;
     astraX_confirmation_candleBodyMinRatio?: number;
-    astraX_context_btcFlowWeight?: number;
-    astraX_context_volatilityWeight?: number;
-    astraX_smc_divergenceLookback?: number;
-
+    // --- Setup/Tactical Pillar ---
+    astraX_scalp_retestEmaPeriod?: number;
+    astraX_scalp_bbPeriod?: number;
+    astraX_scalp_bbStdDev?: number;
+    // FIX: Add missing properties for AstraX agent to resolve type errors.
+    astraX_executionMode?: 'conviction' | 'scalp' | 'hybrid';
+    astraX_scalp_enabledInChop?: boolean;
+    
     // SMC Reversal Veto
     smc_divergenceLookback?: number;
     smc_volumeMultiplier?: number;

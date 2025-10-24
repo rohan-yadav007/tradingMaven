@@ -142,7 +142,7 @@ const ConductorAnalysisDisplay: React.FC<{ analysis: ConductorAnalysis }> = ({ a
 };
 
 const AstraXAnalysisDisplay: React.FC<{ analysis: AstraXAnalysis }> = ({ analysis }) => {
-    const { conviction, threshold, regime, scores, adjustments } = analysis;
+    const { conviction, threshold, regime, scores, adjustments, volatilityRegime } = analysis;
     const isBullish = conviction > 0;
     
     const barPercent = (conviction + 100) / 2;
@@ -165,7 +165,7 @@ const AstraXAnalysisDisplay: React.FC<{ analysis: AstraXAnalysis }> = ({ analysi
                     </div>
                 </div>
                  <div className="text-xs text-center mt-1.5 text-slate-500 dark:text-slate-400">
-                    Regime: <b>{regime}</b> | Entry Threshold: <b>±{threshold.toFixed(0)}</b>
+                    Regime: <b>{regime}</b> | Volatility: <b>{volatilityRegime || 'Normal'}</b> | Entry Threshold: <b>±{threshold.toFixed(0)}</b>
                 </div>
             </div>
 

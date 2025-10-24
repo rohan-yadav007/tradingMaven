@@ -258,6 +258,24 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     // FIX: Add default values for new AstraX properties.
     astraX_executionMode: 'hybrid',
     astraX_scalp_enabledInChop: true,
+    // -- Volatility-Adaptive Parameters --
+    astraX_volatility_atrPeriod: 14,
+    astraX_volatility_atrSmaPeriod: 100,
+    astraX_volatility_highThreshold: 1.5,
+    astraX_volatility_lowThreshold: 0.6,
+    astraX_volatility_high_lookback_factor: 1.5,
+    astraX_volatility_low_lookback_factor: 0.7,
+    astraX_volatility_high_ema_factor: 1.4,
+    astraX_volatility_low_ema_factor: 0.8,
+    astraX_volatility_high_bb_factor: 1.1,
+    astraX_volatility_low_bb_factor: 0.9,
+    // -- Exhaustion Filter --
+    astraX_exhaustion_rsiPeriod: 14,
+    astraX_exhaustion_stochRsiPeriod: 14,
+    astraX_exhaustion_rsiOverbought: 80,
+    astraX_exhaustion_rsiOversold: 20,
+    astraX_exhaustion_stochRsiOverbought: 90,
+    astraX_exhaustion_stochRsiOversold: 10,
 
     // SMC Reversal Veto
     smc_divergenceLookback: 12,
@@ -315,6 +333,17 @@ export const EXHAUSTION_FILTER_TIMEFRAME_SETTINGS: Record<string, { overbought: 
     '1h':  { overbought: 80, oversold: 20 },
     '4h':  { overbought: 80, oversold: 20 },
     '1d':  { overbought: 80, oversold: 20 },
+};
+
+export const ASTRAX_EXHAUSTION_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
+    '1m':  { astraX_exhaustion_rsiOverbought: 90, astraX_exhaustion_rsiOversold: 10, astraX_exhaustion_stochRsiOverbought: 95, astraX_exhaustion_stochRsiOversold: 5 },
+    '3m':  { astraX_exhaustion_rsiOverbought: 90, astraX_exhaustion_rsiOversold: 10, astraX_exhaustion_stochRsiOverbought: 95, astraX_exhaustion_stochRsiOversold: 5 },
+    '5m':  { astraX_exhaustion_rsiOverbought: 88, astraX_exhaustion_rsiOversold: 12, astraX_exhaustion_stochRsiOverbought: 92, astraX_exhaustion_stochRsiOversold: 8 },
+    '15m': { astraX_exhaustion_rsiOverbought: 85, astraX_exhaustion_rsiOversold: 15, astraX_exhaustion_stochRsiOverbought: 90, astraX_exhaustion_stochRsiOversold: 10 },
+    '30m': { astraX_exhaustion_rsiOverbought: 82, astraX_exhaustion_rsiOversold: 18, astraX_exhaustion_stochRsiOverbought: 90, astraX_exhaustion_stochRsiOversold: 10 },
+    '1h':  { astraX_exhaustion_rsiOverbought: 80, astraX_exhaustion_rsiOversold: 20, astraX_exhaustion_stochRsiOverbought: 88, astraX_exhaustion_stochRsiOversold: 12 },
+    '4h':  { astraX_exhaustion_rsiOverbought: 80, astraX_exhaustion_rsiOversold: 20, astraX_exhaustion_stochRsiOverbought: 88, astraX_exhaustion_stochRsiOversold: 12 },
+    '1d':  { astraX_exhaustion_rsiOverbought: 78, astraX_exhaustion_rsiOversold: 22, astraX_exhaustion_stochRsiOverbought: 85, astraX_exhaustion_stochRsiOversold: 15 },
 };
 
 export const SMC_VETO_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
@@ -539,7 +568,11 @@ export const getAgentTimeframeSettings = (agentId: number, timeFrame: string): P
         case 16: agentSettings = ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 17: agentSettings = MOMENTUM_SWING_TRADER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 18: agentSettings = CONDUCTOR_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
-        case 19: agentSettings = ASTRAX_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+        case 19: 
+            const astraxBaseSettings = ASTRAX_TIMEFRAME_SETTINGS[timeFrame] || {};
+            const astraxExhaustionSettings = ASTRAX_EXHAUSTION_TIMEFRAME_SETTINGS[timeFrame] || {};
+            agentSettings = { ...astraxBaseSettings, ...astraxExhaustionSettings };
+            break;
     }
 
     return { ...vetoSettings, ...smcSettings, ...concordanceSettings, ...agentSettings };

@@ -131,9 +131,10 @@ function computeTimeframeMetrics(klines: Kline[] | undefined): TimeframeMetrics 
 function _getMultiTfScoresAndRegime(
     config: BotConfig,
     klinesMap: Map<string, Kline[]>,
-    analyticalTimeframes: string[]
+    analyticalTimeframes: string[],
+    paramsOverride?: Required<AgentParams>
 ) {
-    const params = config.agentParams as Required<AgentParams>;
+    const params = paramsOverride || config.agentParams as Required<AgentParams>;
     const primaryKlines = klinesMap.get(config.timeFrame);
     
     if (!primaryKlines || primaryKlines.length < 200) {
@@ -211,7 +212,7 @@ export const getAstraXSignal = async (
     fundingRate?: number,
     ltfKlines?: Kline[]
 ): Promise<TradeSignal> => {
-    const params = config.agentParams as Required<AgentParams>;
+    const initialParams = config.agentParams as Required<AgentParams>;
     const reasons: string[] = [];
     const analyticalTimeframes = getLowerConfluenceTimeframes(config.timeFrame);
     
@@ -227,9 +228,47 @@ export const getAstraXSignal = async (
     }
     
     // =================================================================================
+    // VOLATILITY ADAPTATION: Adjust params based on current market volatility
+    // =================================================================================
+    const highs = primaryKlines.map(k => k.high);
+    const lows = primaryKlines.map(k => k.low);
+    const closes = primaryKlines.map(k => k.close);
+
+    const atrValues = ATR.calculate({ high: highs, low: lows, close: closes, period: initialParams.astraX_volatility_atrPeriod! });
+    const currentAtr = getLast(atrValues) as number | undefined;
+    
+    let volatilityRegime: 'High' | 'Low' | 'Normal' = 'Normal';
+    let params = { ...initialParams }; // This will be the adjusted params object
+
+    if (currentAtr && atrValues.length > initialParams.astraX_volatility_atrSmaPeriod!) {
+        const atrSmaValues = SMA.calculate({ period: initialParams.astraX_volatility_atrSmaPeriod!, values: atrValues as number[] });
+        const atrSma = getLast(atrSmaValues) as number | undefined;
+
+        if (atrSma && atrSma > 0) {
+            const volatilityRatio = currentAtr / atrSma;
+
+            if (volatilityRatio > initialParams.astraX_volatility_highThreshold!) {
+                volatilityRegime = 'High';
+                params.astraX_structureLookback = Math.round(initialParams.astraX_structureLookback! * initialParams.astraX_volatility_high_lookback_factor!);
+                params.astraX_scalp_retestEmaPeriod = Math.round(initialParams.astraX_scalp_retestEmaPeriod! * initialParams.astraX_volatility_high_ema_factor!);
+                params.astraX_scalp_bbStdDev = parseFloat((initialParams.astraX_scalp_bbStdDev! * initialParams.astraX_volatility_high_bb_factor!).toFixed(2));
+                reasons.push(`ℹ️ Volatility: High (Adapting to be more patient)`);
+            } else if (volatilityRatio < initialParams.astraX_volatility_lowThreshold!) {
+                volatilityRegime = 'Low';
+                params.astraX_structureLookback = Math.max(3, Math.round(initialParams.astraX_structureLookback! * initialParams.astraX_volatility_low_lookback_factor!));
+                params.astraX_scalp_retestEmaPeriod = Math.max(3, Math.round(initialParams.astraX_scalp_retestEmaPeriod! * initialParams.astraX_volatility_low_ema_factor!));
+                params.astraX_scalp_bbStdDev = parseFloat((initialParams.astraX_scalp_bbStdDev! * initialParams.astraX_volatility_low_bb_factor!).toFixed(2));
+                reasons.push(`ℹ️ Volatility: Low (Adapting to be more sensitive)`);
+            } else {
+                 reasons.push(`ℹ️ Volatility: Normal`);
+            }
+        }
+    }
+    
+    // =================================================================================
     // LEVEL 1: THE THESIS - Determine high-level bias and market regime.
     // =================================================================================
-    const { regime, multiTfBullish, multiTfBearish } = _getMultiTfScoresAndRegime(config, klinesMap, analyticalTimeframes);
+    const { regime, multiTfBullish, multiTfBearish } = _getMultiTfScoresAndRegime(config, klinesMap, analyticalTimeframes, params);
     const directionalBias = multiTfBullish > multiTfBearish ? 'Bullish' : multiTfBullish < multiTfBearish ? 'Bearish' : 'Neutral';
     
     reasons.push(`ℹ️ Thesis: ${directionalBias} Bias in a ${regime} market.`);
@@ -238,48 +277,103 @@ export const getAstraXSignal = async (
     }
     
     // =================================================================================
+    // LEVEL 1.5: EXHAUSTION VETO - Check for over-extended conditions.
+    // =================================================================================
+    const stochRsi = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: params.astraX_exhaustion_stochRsiPeriod!, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
+    const rsi = getLast(RSI.calculate({ period: params.astraX_exhaustion_rsiPeriod!, values: closes })) as number | undefined;
+
+    if (stochRsi && rsi) {
+        const isRsiExhausted = (directionalBias === 'Bullish' && rsi > params.astraX_exhaustion_rsiOverbought!) || (directionalBias === 'Bearish' && rsi < params.astraX_exhaustion_rsiOversold!);
+        const isStochExhausted = (directionalBias === 'Bullish' && stochRsi.k > params.astraX_exhaustion_stochRsiOverbought! && stochRsi.k < stochRsi.d) || (directionalBias === 'Bearish' && stochRsi.k < params.astraX_exhaustion_stochRsiOversold! && stochRsi.k > stochRsi.d);
+        
+        if (isRsiExhausted) {
+            reasons.push(`❌ Veto: Market is in an extreme overbought/oversold state (RSI: ${rsi.toFixed(1)}).`);
+            return { signal: 'HOLD', reasons, astraXAnalysis: { conviction: 0, regime, volatilityRegime, threshold: 0, finalBullishScore: 0, finalBearishScore: 0 } };
+        }
+        if (isStochExhausted) {
+            reasons.push(`❌ Veto: Momentum is exhausted and reversing in StochRSI (K: ${stochRsi.k.toFixed(1)}).`);
+            return { signal: 'HOLD', reasons, astraXAnalysis: { conviction: 0, regime, volatilityRegime, threshold: 0, finalBullishScore: 0, finalBearishScore: 0 } };
+        }
+        reasons.push(`✅ Exhaustion Filter: Passed`);
+    }
+
+    // =================================================================================
     // LEVEL 2: THE SETUP - Find a high-probability entry pattern matching the thesis.
     // =================================================================================
     let setupFound = false;
     let setupType: 'Pullback' | 'Mean Reversion' | null = null;
-    const lastKline = primaryKlines[primaryKlines.length-1];
-    
+    const lastKline = primaryKlines[primaryKlines.length - 1];
+
     if (regime === 'Strong Trend' || regime === 'Developing Trend') {
         // Look for a pullback to a short-term EMA
-        const retestEma = EMA.calculate({ period: params.astraX_scalp_retestEmaPeriod, values: primaryKlines.map(k=>k.close) });
+        const retestEma = EMA.calculate({ period: params.astraX_scalp_retestEmaPeriod, values: primaryKlines.map(k => k.close) });
         const lastEma = getLast(retestEma) as number | undefined;
 
         if (lastEma) {
-            if (directionalBias === 'Bullish' && lastKline.low <= lastEma && lastKline.close > lastEma) {
-                setupFound = true;
-                setupType = 'Pullback';
-                reasons.push(`✅ Setup: Bullish pullback to ${params.astraX_scalp_retestEmaPeriod}-EMA.`);
+            if (directionalBias === 'Bullish') {
+                if (lastKline.low <= lastEma && lastKline.close > lastEma) {
+                    setupFound = true;
+                    setupType = 'Pullback';
+                    reasons.push(`✅ Setup: Bullish pullback to ${params.astraX_scalp_retestEmaPeriod}-EMA.`);
+                } else {
+                    if (lastKline.low > lastEma) {
+                        reasons.push(`❌ Setup: Awaiting pullback to the ${params.astraX_scalp_retestEmaPeriod}-EMA.`);
+                    } else if (lastKline.close <= lastEma) {
+                        reasons.push(`❌ Setup: Price closed below EMA, invalidating pullback.`);
+                    }
+                }
+            } else if (directionalBias === 'Bearish') {
+                if (lastKline.high >= lastEma && lastKline.close < lastEma) {
+                    setupFound = true;
+                    setupType = 'Pullback';
+                    reasons.push(`✅ Setup: Bearish pullback to ${params.astraX_scalp_retestEmaPeriod}-EMA.`);
+                } else {
+                    if (lastKline.high < lastEma) {
+                        reasons.push(`❌ Setup: Awaiting pullback to the ${params.astraX_scalp_retestEmaPeriod}-EMA.`);
+                    } else if (lastKline.close >= lastEma) {
+                        reasons.push(`❌ Setup: Price closed above EMA, invalidating pullback.`);
+                    }
+                }
             }
-            if (directionalBias === 'Bearish' && lastKline.high >= lastEma && lastKline.close < lastEma) {
-                setupFound = true;
-                setupType = 'Pullback';
-                reasons.push(`✅ Setup: Bearish pullback to ${params.astraX_scalp_retestEmaPeriod}-EMA.`);
-            }
+        } else {
+            reasons.push(`❌ Setup: Could not calculate pullback EMA.`);
         }
     } else { // Choppy Market
         // Look for mean reversion from BB extremes, using the retest confirmation logic
-        const bb = getLast(BollingerBands.calculate({ period: params.astraX_scalp_bbPeriod, stdDev: params.astraX_scalp_bbStdDev, values: primaryKlines.map(k=>k.close) })) as BollingerBandsOutput;
+        const bb = getLast(BollingerBands.calculate({ period: params.astraX_scalp_bbPeriod, stdDev: params.astraX_scalp_bbStdDev, values: primaryKlines.map(k => k.close) })) as BollingerBandsOutput;
         if (bb) {
-            if (directionalBias === 'Bullish' && lastKline.low <= bb.lower && lastKline.close > bb.lower) {
-                setupFound = true;
-                setupType = 'Mean Reversion';
-                reasons.push(`✅ Setup: Bullish mean reversion from lower Bollinger Band.`);
+            if (directionalBias === 'Bullish') {
+                if (lastKline.low <= bb.lower && lastKline.close > bb.lower) {
+                    setupFound = true;
+                    setupType = 'Mean Reversion';
+                    reasons.push(`✅ Setup: Bullish mean reversion from lower Bollinger Band.`);
+                } else {
+                    if (lastKline.low > bb.lower) {
+                        reasons.push(`❌ Setup: Awaiting price to test lower Bollinger Band.`);
+                    } else if (lastKline.close <= bb.lower) {
+                        reasons.push(`❌ Setup: Price closed outside lower BB, no reversion signal.`);
+                    }
+                }
+            } else if (directionalBias === 'Bearish') {
+                if (lastKline.high >= bb.upper && lastKline.close < bb.upper) {
+                    setupFound = true;
+                    setupType = 'Mean Reversion';
+                    reasons.push(`✅ Setup: Bearish mean reversion from upper Bollinger Band.`);
+                } else {
+                    if (lastKline.high < bb.upper) {
+                        reasons.push(`❌ Setup: Awaiting price to test upper Bollinger Band.`);
+                    } else if (lastKline.close >= bb.upper) {
+                        reasons.push(`❌ Setup: Price closed outside upper BB, no reversion signal.`);
+                    }
+                }
             }
-            if (directionalBias === 'Bearish' && lastKline.high >= bb.upper && lastKline.close < bb.upper) {
-                setupFound = true;
-                setupType = 'Mean Reversion';
-                reasons.push(`✅ Setup: Bearish mean reversion from upper Bollinger Band.`);
-            }
+        } else {
+            reasons.push(`❌ Setup: Could not calculate Bollinger Bands.`);
         }
     }
 
     if (!setupFound) {
-        return { signal: 'HOLD', reasons: [...reasons, `❌ No valid setup found.`] };
+        return { signal: 'HOLD', reasons };
     }
 
     // =================================================================================
@@ -410,7 +504,7 @@ export const getAstraXSignal = async (
     let conviction = finalBullishScore - finalBearishScore;
     
     const analysis: AstraXAnalysis = { 
-        conviction, regime, threshold: convictionThreshold, 
+        conviction, regime, volatilityRegime, threshold: convictionThreshold, 
         finalBullishScore, finalBearishScore,
         scores: {
             structure: { bull: structureBullish, bear: structureBearish, weight: params.astraX_weights_structure },

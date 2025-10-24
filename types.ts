@@ -312,6 +312,24 @@ export interface AgentParams {
     // FIX: Add missing properties for AstraX agent to resolve type errors.
     astraX_executionMode?: 'conviction' | 'scalp' | 'hybrid';
     astraX_scalp_enabledInChop?: boolean;
+    // -- Volatility-Adaptive Parameters --
+    astraX_volatility_atrPeriod?: number;
+    astraX_volatility_atrSmaPeriod?: number;
+    astraX_volatility_highThreshold?: number;
+    astraX_volatility_lowThreshold?: number;
+    astraX_volatility_high_lookback_factor?: number;
+    astraX_volatility_low_lookback_factor?: number;
+    astraX_volatility_high_ema_factor?: number;
+    astraX_volatility_low_ema_factor?: number;
+    astraX_volatility_high_bb_factor?: number;
+    astraX_volatility_low_bb_factor?: number;
+    // -- Exhaustion Filter --
+    astraX_exhaustion_rsiPeriod?: number;
+    astraX_exhaustion_stochRsiPeriod?: number;
+    astraX_exhaustion_rsiOverbought?: number;
+    astraX_exhaustion_rsiOversold?: number;
+    astraX_exhaustion_stochRsiOverbought?: number;
+    astraX_exhaustion_stochRsiOversold?: number;
     
     // SMC Reversal Veto
     smc_divergenceLookback?: number;
@@ -362,6 +380,7 @@ export interface MarketDataContext {
 export interface AstraXAnalysis {
     conviction: number; // -100 to 100
     regime: 'Strong Trend' | 'Developing Trend' | 'Choppy Market';
+    volatilityRegime?: 'High' | 'Low' | 'Normal';
     threshold: number;
     finalBullishScore: number;
     finalBearishScore: number;

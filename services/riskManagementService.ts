@@ -213,6 +213,20 @@ export function validateTradeProfitability(
         (!isLong && (agentStopLossPrice <= entryPrice || takeProfitPrice >= entryPrice))) {
         return { isValid: false, reason: "❌ VETO: SL/TP targets are on the wrong side of the entry price." };
     }
+    
+    // --- True Initial Risk Veto Implementation ---
+    if (config.isInitialRiskVetoEnabled) {
+        const maxLossInDollars = config.investmentAmount * (config.maxMarginLossPercent / 100);
+        const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
+        const tradeSize = (entryPrice > 0) ? positionValue / entryPrice : 0;
+        
+        if (tradeSize > 0) {
+            const agentRiskInDollars = Math.abs(entryPrice - agentStopLossPrice) * tradeSize;
+            if (agentRiskInDollars > maxLossInDollars) {
+                return { isValid: false, reason: `❌ VETO: Agent's risk ($${agentRiskInDollars.toFixed(2)}) exceeds max setting of $${maxLossInDollars.toFixed(2)}.` };
+            }
+        }
+    }
 
     const positionValue = config.investmentAmount * (config.mode === TradingMode.USDSM_Futures ? config.leverage : 1);
     const tradeSize = (entryPrice > 0) ? positionValue / entryPrice : 0;
@@ -565,9 +579,10 @@ export function getAgentExitSignal(
                 const psar = getLast(PSAR.calculate(psarInput)) as number | undefined;
                 if (psar) {
                     const atrValues = ATR.calculate({ high: highs, low: lows, close: closes, period: 14 });
+                    // FIX: Type 'unknown' is not assignable to type 'number'.
                     const lastAtr = (getLast(atrValues) as number | undefined) || 0;
                     const buffer = lastAtr * 0.1;
-                    newStopLoss = isLong ? psar - buffer : psar + buffer;
+                    newStopLoss = isLong ? (psar as number) - buffer : (psar as number) + buffer;
                 }
             }
             break;
@@ -641,10 +656,12 @@ export function getAgentExitSignal(
                 }
         
                 const macd = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false })) as MACDOutput | undefined;
-                if ((isLong && macd?.histogram && macd.histogram < 0) || (!isLong && macd?.histogram && macd.histogram > 0)) {
+                // FIX: Use `typeof` check to safely access `histogram` which might be `unknown` or `undefined`.
+                if ((isLong && typeof macd?.histogram === 'number' && macd.histogram < 0) || (!isLong && typeof macd?.histogram === 'number' && macd.histogram > 0)) {
                     const fastEma = getLast(EMA.calculate({ period: 9, values: closes }));
                     if (fastEma) {
-                        newStopLoss = fastEma;
+                        // FIX: Cast `fastEma` to number on assignment as `getLast` may return `unknown`.
+                        newStopLoss = fastEma as number;
                         reasons.push('AstraX Tier 1: Momentum faded, trailing with fast EMA.');
                     }
                 }

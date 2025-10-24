@@ -2,7 +2,7 @@
 
 import { Kline, BotConfig, TradeSignal, AstraXAnalysis, AgentParams, ADXOutput, MACDOutput, TradingMode, BollingerBandsOutput, StochasticRSIOutput } from '../../types';
 import { RSI, MACD, ATR, ADX, BollingerBands, SMA, EMA, StochasticRSI } from 'technicalindicators';
-import { calculateDailyVwap, getLast, getPenultimate } from './agentUtils';
+import { calculateDailyVwap, getLast, getPenultimate, Supertrend, analyzeMicroMarketStructure } from './agentUtils';
 import { findSwingPoints, analyzeMarketStructure } from '../chartAnalysisService';
 import { sharedKlineService } from '../sharedKlineService';
 import * as constants from '../../constants';
@@ -204,7 +204,13 @@ export function getAstraXRegimeAndDirection(
     return { regime, direction };
 }
 
-export const getAstraXSignal = async (config: BotConfig, immediateKlines?: Kline[], livePrice?: number, fundingRate?: number): Promise<TradeSignal> => {
+export const getAstraXSignal = async (
+    config: BotConfig, 
+    immediateKlines?: Kline[], 
+    livePrice?: number, 
+    fundingRate?: number,
+    ltfKlines?: Kline[]
+): Promise<TradeSignal> => {
     const params = config.agentParams as Required<AgentParams>;
     const reasons: string[] = [];
     const analyticalTimeframes = getLowerConfluenceTimeframes(config.timeFrame);
@@ -279,7 +285,9 @@ export const getAstraXSignal = async (config: BotConfig, immediateKlines?: Kline
     // =================================================================================
     // LEVEL 3: THE TRIGGER - Confirm the entry with final pillar scores.
     // =================================================================================
-    const convictionThreshold = regime === 'Strong Trend' ? params.astraX_strongTrendThreshold : params.astraX_chopAdx;
+    const convictionThreshold = regime === 'Strong Trend' 
+        ? params.astraX_strongTrendThreshold 
+        : (regime === 'Choppy Market' ? params.astraX_chopThreshold : params.astraX_baseThreshold);
     
     // --- Pillar 1: Structure ---
     const swingPoints = findSwingPoints(primaryKlines, params.astraX_structureLookback);
@@ -323,11 +331,68 @@ export const getAstraXSignal = async (config: BotConfig, immediateKlines?: Kline
 
     // --- Pillar 4: Confirmation ---
     let confirmationBullish = 0, confirmationBearish = 0;
+
+    // A. Volume Confirmation (34 points)
     const volumeSma = getLast(SMA.calculate({ period: 20, values: primaryKlines.map(k => k.volume || 0) })) as number | undefined;
     if (lastKline.volume && volumeSma && lastKline.volume > volumeSma * params.astraX_confirmation_minVolumeMultiplier) {
-        if (lastKline.close > lastKline.open) confirmationBullish = 100;
-        else confirmationBearish = 100;
+        if (lastKline.close > lastKline.open) {
+            confirmationBullish += 34;
+        } else {
+            confirmationBearish += 34;
+        }
     }
+
+    // B. Supertrend Confirmation (33 points)
+    const supertrendValues = Supertrend.calculate({
+        high: primaryKlines.map(k => k.high),
+        low: primaryKlines.map(k => k.low),
+        close: primaryKlines.map(k => k.close),
+        period: params.qsc_superTrendPeriod,
+        multiplier: params.qsc_superTrendMultiplier
+    });
+    const lastSupertrend = getLast(supertrendValues) as number | undefined;
+    if (lastSupertrend) {
+        if (lastKline.close > lastSupertrend) {
+            confirmationBullish += 33;
+        } else if (lastKline.close < lastSupertrend) {
+            confirmationBearish += 33;
+        }
+    }
+    
+    // C. Momentum Concordance (33 points)
+    let concordanceBullish = 0;
+    let concordanceBearish = 0;
+    
+    // C.1 Candle Position
+    const candleRange = lastKline.high - lastKline.low;
+    if (candleRange > 0) {
+        const closePosition = (lastKline.close - lastKline.low) / candleRange;
+        if (closePosition < params.veto_candlePositionVeto_long) concordanceBullish += 17;
+        if (closePosition > params.veto_candlePositionVeto_short) concordanceBearish += 17;
+    } else {
+        concordanceBullish += 8;
+        concordanceBearish += 8;
+    }
+    
+    // C.2 Micro-Momentum
+    if (ltfKlines) {
+        const microStructure = analyzeMicroMarketStructure(ltfKlines);
+        if (microStructure) {
+            if (microStructure !== 'descending') concordanceBullish += 16;
+            if (microStructure !== 'ascending') concordanceBearish += 16;
+        } else {
+            concordanceBullish += 8;
+            concordanceBearish += 8;
+        }
+    } else {
+        concordanceBullish += 8;
+        concordanceBearish += 8;
+    }
+    
+    confirmationBullish += concordanceBullish;
+    confirmationBearish += concordanceBearish;
+    reasons.push(`✅ Confirmation: Vol(${confirmationBullish > 0 ? '✓' : '✗'}), ST(${confirmationBullish > 34 ? '✓' : '✗'}), Concordance(${concordanceBullish > 0 ? '✓' : '✗'})`);
+
 
     // --- Final Score Calculation ---
     const finalBullishScore = 

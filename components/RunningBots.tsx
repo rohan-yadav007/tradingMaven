@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, LogType } from '../types';
 import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, InfoIcon, ZapIcon, RefreshIcon } from './icons';
@@ -18,6 +16,8 @@ interface RunningBotsProps {
     onUpdateBotConfig: (botId: string, partialConfig: Partial<BotConfig>) => void;
     onRefreshBotAnalysis: (botId: string) => void;
 }
+
+// --- Helper Components & Hooks for BotCard ---
 
 const InfoItem: React.FC<{ label: string; value: React.ReactNode; valueClassName?: string, labelClassName?: string }> = ({ label, value, valueClassName, labelClassName }) => (
     <div>
@@ -426,14 +426,32 @@ const BotLog: React.FC<{ log: BotLogEntry[] }> = ({ log }) => {
     );
 };
 
-const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots'> }> = ({ bot, actions }) => {
+// --- BotCard (Refactored for Performance) ---
+
+const useBotState = (botId: string) => {
+    const [bot, setBot] = useState<RunningBot | undefined>(() => botManagerService.getBot(botId)?.bot);
+    useEffect(() => {
+        if (!botId) return;
+        const handleUpdate = (updatedBot: RunningBot) => {
+            setBot(updatedBot);
+        };
+        botManagerService.subscribeToBotUpdates(botId, handleUpdate);
+        return () => {
+            botManagerService.unsubscribeFromBotUpdates(botId, handleUpdate);
+        };
+    }, [botId]);
+    return bot;
+};
+
+const BotCard: React.FC<{ botId: string; actions: Omit<RunningBotsProps, 'bots'> }> = ({ botId, actions }) => {
+    const bot = useBotState(botId);
     const [isExpanded, setIsExpanded] = useState(false);
     
     const [priceChange, setPriceChange] = useState<'up' | 'down' | 'none'>('none');
-    const prevPriceRef = useRef(bot.livePrice);
+    const prevPriceRef = useRef(bot?.livePrice);
 
     useEffect(() => {
-        const currentPrice = bot.livePrice || 0;
+        const currentPrice = bot?.livePrice || 0;
         const prevPrice = prevPriceRef.current || 0;
         
         if (currentPrice > prevPrice) {
@@ -446,9 +464,14 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
         
         const timeout = setTimeout(() => setPriceChange('none'), 500);
         return () => clearTimeout(timeout);
-    }, [bot.livePrice]);
+    }, [bot?.livePrice]);
 
-    const duration = useDuration(bot);
+    const duration = useDuration(bot!); // Assume bot exists for duration calculation
+    
+    if (!bot) {
+        return <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-4 animate-pulse h-48"></div>; // Or a skeleton loader
+    }
+
     const statusInfo = getStatusInfo(bot.status);
     const position = bot.openPosition;
     const pnlIsProfit = bot.totalPnl >= 0;
@@ -597,8 +620,12 @@ const BotCard: React.FC<{ bot: RunningBot; actions: Omit<RunningBotsProps, 'bots
     );
 };
 
+// --- State Management Hooks for RunningBots ---
 
-const useBotListState = (initialBots: RunningBot[]) => {
+/**
+ * Hook to get the full state of all bots, for components that need frequent updates on all bots (e.g., kill switches).
+ */
+const useAllBotStates = (initialBots: RunningBot[]) => {
     const [bots, setBots] = useState(initialBots);
 
     useEffect(() => {
@@ -612,11 +639,10 @@ const useBotListState = (initialBots: RunningBot[]) => {
             );
         };
 
-        const subscriptions: { botId: string; handler: (bot: RunningBot) => void }[] = [];
-
-        initialBots.forEach(bot => {
-            botManagerService.subscribeToBotUpdates(bot.id, handleUpdate);
-            subscriptions.push({ botId: bot.id, handler: handleUpdate });
+        const subscriptions = initialBots.map(bot => {
+            const handler = (b: RunningBot) => handleUpdate(b);
+            botManagerService.subscribeToBotUpdates(bot.id, handler);
+            return { botId: bot.id, handler };
         });
 
         return () => {
@@ -630,31 +656,64 @@ const useBotListState = (initialBots: RunningBot[]) => {
 }
 
 
-export const RunningBots: React.FC<RunningBotsProps> = ({ bots: initialBots, ...actions }) => {
-    const bots = useBotListState(initialBots);
-    const { onClosePosition } = actions;
-    const [activeTab, setActiveTab] = useState<'open' | 'monitoring'>('open');
+/**
+ * Hook to get only structural information (id, status) for bots.
+ * This is optimized to only trigger updates when a bot's status changes,
+ * preventing re-renders of the main list for simple price updates.
+ */
+type BotStructure = { id: string; status: BotStatus };
+const useBotStructures = (initialBots: RunningBot[]): BotStructure[] => {
+    const [structures, setStructures] = useState<BotStructure[]>(() =>
+        initialBots.map(b => ({ id: b.id, status: b.status }))
+    );
 
-    const { openPositionBots, monitoringBots } = useMemo(() => {
-        const open: RunningBot[] = [];
-        const monitoring: RunningBot[] = [];
-        bots.forEach(bot => {
-            if (bot.status === BotStatus.PositionOpen || bot.status === BotStatus.FlipPending) {
-                open.push(bot);
-            } else {
-                monitoring.push(bot);
-            }
+    useEffect(() => {
+        setStructures(initialBots.map(b => ({ id: b.id, status: b.status })));
+    
+        const handleUpdate = (updatedBot: RunningBot) => {
+            setStructures(currentStructures => {
+                const index = currentStructures.findIndex(s => s.id === updatedBot.id);
+                if (index === -1) return currentStructures;
+                
+                const existing = currentStructures[index];
+                if (existing.status === updatedBot.status) {
+                    return currentStructures; // No structural change, don't update state
+                }
+                
+                const newStructures = [...currentStructures];
+                newStructures[index] = { id: updatedBot.id, status: updatedBot.status };
+                return newStructures;
+            });
+        };
+
+        const subscriptions = initialBots.map(bot => {
+            const handler = (b: RunningBot) => handleUpdate(b);
+            botManagerService.subscribeToBotUpdates(bot.id, handler);
+            return { botId: bot.id, handler };
         });
-        return { openPositionBots: open, monitoringBots: monitoring };
-    }, [bots]);
+
+        return () => {
+            subscriptions.forEach(sub => {
+                botManagerService.unsubscribeFromBotUpdates(sub.botId, sub.handler);
+            });
+        };
+    }, [initialBots]);
+
+    return structures;
+}
+
+// --- Emergency Close Panel Component ---
+
+const EmergencyClosePanel: React.FC<{ bots: RunningBot[], onClosePosition: RunningBotsProps['onClosePosition'] }> = ({ bots, onClosePosition }) => {
+    const liveBots = useAllBotStates(bots);
 
     const { allOpenPositions, profitablePositions, losingPositions } = useMemo(() => {
         const allOpen: Position[] = [];
         const profitable: Position[] = [];
         const losing: Position[] = [];
 
-        openPositionBots.forEach(bot => {
-            if (bot.openPosition && bot.livePrice) {
+        liveBots.forEach(bot => {
+            if (bot.status === BotStatus.PositionOpen && bot.openPosition && bot.livePrice) {
                 const isLong = bot.openPosition.direction === 'LONG';
                 const unrealizedPnl = (bot.livePrice - bot.openPosition.entryPrice) * bot.openPosition.size * (isLong ? 1 : -1);
                 
@@ -668,13 +727,13 @@ export const RunningBots: React.FC<RunningBotsProps> = ({ bots: initialBots, ...
             }
         });
         return { allOpenPositions: allOpen, profitablePositions: profitable, losingPositions: losing };
-    }, [openPositionBots]);
+    }, [liveBots]);
 
     const handleCloseAll = () => {
         if (allOpenPositions.length === 0) return;
         if (window.confirm(`Are you sure you want to close all ${allOpenPositions.length} open positions immediately?`)) {
             allOpenPositions.forEach(pos => {
-                const bot = bots.find(b => b.openPositionId === pos.id);
+                const bot = liveBots.find(b => b.openPositionId === pos.id);
                 if (bot) {
                     onClosePosition(pos, 'Kill Switch: Close All', bot.livePrice);
                 }
@@ -686,7 +745,7 @@ export const RunningBots: React.FC<RunningBotsProps> = ({ bots: initialBots, ...
         if (profitablePositions.length === 0) return;
         if (window.confirm(`Are you sure you want to close all ${profitablePositions.length} profitable positions immediately?`)) {
             profitablePositions.forEach(pos => {
-                const bot = bots.find(b => b.openPositionId === pos.id);
+                const bot = liveBots.find(b => b.openPositionId === pos.id);
                 if (bot) {
                     onClosePosition(pos, 'Kill Switch: Close Profitable', bot.livePrice);
                 }
@@ -698,16 +757,75 @@ export const RunningBots: React.FC<RunningBotsProps> = ({ bots: initialBots, ...
         if (losingPositions.length === 0) return;
         if (window.confirm(`Are you sure you want to close all ${losingPositions.length} losing positions immediately?`)) {
             losingPositions.forEach(pos => {
-                const bot = bots.find(b => b.openPositionId === pos.id);
+                const bot = liveBots.find(b => b.openPositionId === pos.id);
                 if (bot) {
                     onClosePosition(pos, 'Kill Switch: Close Losing', bot.livePrice);
                 }
             });
         }
     };
+    
+    if (liveBots.filter(b => b.status === BotStatus.PositionOpen).length === 0) {
+        return null;
+    }
+
+    return (
+        <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-rose-600 dark:text-rose-400 hidden sm:inline">Emergency Close:</span>
+            <button
+                onClick={handleCloseAll}
+                disabled={allOpenPositions.length === 0}
+                className="px-2.5 py-1 text-xs bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300 font-bold rounded-md hover:bg-rose-200 dark:hover:bg-rose-900 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                title={`Close all ${allOpenPositions.length} positions`}
+            >
+                <ZapIcon className="w-3.5 h-3.5" />
+                All ({allOpenPositions.length})
+            </button>
+            <button
+                onClick={handleCloseProfitable}
+                disabled={profitablePositions.length === 0}
+                className="px-2.5 py-1 text-xs bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300 font-bold rounded-md hover:bg-emerald-200 dark:hover:bg-emerald-900 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                title={`Close ${profitablePositions.length} profitable positions`}
+            >
+                <ZapIcon className="w-3.5 h-3.5" />
+                Profits ({profitablePositions.length})
+            </button>
+            <button
+                onClick={handleCloseLosing}
+                disabled={losingPositions.length === 0}
+                className="px-2.5 py-1 text-xs bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300 font-bold rounded-md hover:bg-rose-200 dark:hover:bg-rose-900 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                title={`Close ${losingPositions.length} losing positions`}
+            >
+                <ZapIcon className="w-3.5 h-3.5" />
+                Losses ({losingPositions.length})
+            </button>
+        </div>
+    );
+};
+
+
+// --- Main RunningBots Component (Refactored for Performance) ---
+
+export const RunningBots: React.FC<RunningBotsProps> = ({ bots: initialBots, ...actions }) => {
+    const { onClosePosition } = actions;
+    const botStructures = useBotStructures(initialBots);
+    const [activeTab, setActiveTab] = useState<'open' | 'monitoring'>('open');
+
+    const { openPositionBots, monitoringBots } = useMemo(() => {
+        const open: BotStructure[] = [];
+        const monitoring: BotStructure[] = [];
+        botStructures.forEach(bot => {
+            if (bot.status === BotStatus.PositionOpen || bot.status === BotStatus.FlipPending) {
+                open.push(bot);
+            } else {
+                monitoring.push(bot);
+            }
+        });
+        return { openPositionBots: open, monitoringBots: monitoring };
+    }, [botStructures]);
 
     const botsToDisplay = activeTab === 'open' ? openPositionBots : monitoringBots;
-    const activeBotsCount = openPositionBots.length + monitoringBots.length;
+    const activeBotsCount = botStructures.length;
 
     return (
         <div className="flex flex-col gap-4">
@@ -719,38 +837,7 @@ export const RunningBots: React.FC<RunningBotsProps> = ({ bots: initialBots, ...
                 </h2>
                 
                 <div className="flex items-center gap-4">
-                     {allOpenPositions.length > 0 && (
-                         <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-rose-600 dark:text-rose-400 hidden sm:inline">Emergency Close:</span>
-                            <button
-                                onClick={handleCloseAll}
-                                disabled={allOpenPositions.length === 0}
-                                className="px-2.5 py-1 text-xs bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300 font-bold rounded-md hover:bg-rose-200 dark:hover:bg-rose-900 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
-                                title={`Close all ${allOpenPositions.length} positions`}
-                            >
-                                <ZapIcon className="w-3.5 h-3.5" />
-                                All ({allOpenPositions.length})
-                            </button>
-                            <button
-                                onClick={handleCloseProfitable}
-                                disabled={profitablePositions.length === 0}
-                                className="px-2.5 py-1 text-xs bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300 font-bold rounded-md hover:bg-emerald-200 dark:hover:bg-emerald-900 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
-                                title={`Close ${profitablePositions.length} profitable positions`}
-                            >
-                                <ZapIcon className="w-3.5 h-3.5" />
-                                Profits ({profitablePositions.length})
-                            </button>
-                            <button
-                                onClick={handleCloseLosing}
-                                disabled={losingPositions.length === 0}
-                                className="px-2.5 py-1 text-xs bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300 font-bold rounded-md hover:bg-rose-200 dark:hover:bg-rose-900 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
-                                title={`Close ${losingPositions.length} losing positions`}
-                            >
-                                <ZapIcon className="w-3.5 h-3.5" />
-                                Losses ({losingPositions.length})
-                            </button>
-                        </div>
-                    )}
+                     <EmergencyClosePanel bots={initialBots} onClosePosition={onClosePosition} />
                     <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-lg">
                         <button
                             onClick={() => setActiveTab('open')}
@@ -768,9 +855,9 @@ export const RunningBots: React.FC<RunningBotsProps> = ({ bots: initialBots, ...
                 </div>
             </div>
 
-            {bots.length > 0 ? (
+            {initialBots.length > 0 ? (
                 <div className="flex flex-col gap-4">
-                    {botsToDisplay.map(bot => <BotCard key={bot.id} bot={bot} actions={actions} />)}
+                    {botsToDisplay.map(bot => <BotCard key={bot.id} botId={bot.id} actions={actions} />)}
                     {botsToDisplay.length === 0 && (
                         <div className="text-center p-8 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-lg text-slate-500 dark:text-slate-400">
                            {activeTab === 'open' ? 'No bots currently have an open position.' : 'No bots are currently monitoring for new trades.'}

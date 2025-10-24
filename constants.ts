@@ -1,5 +1,3 @@
-
-
 import { Agent, AgentParams, WalletBalance } from './types';
 
 export const TRADING_PAIRS: string[] = [
@@ -232,7 +230,7 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     conductor_entryTrigger_rsiHookPeriod: 3,
 
     // Agent 19: AstraX Super-Agent (Re-architected)
-    astraX_baseThreshold: 45,
+    astraX_baseThreshold: 35,
     astraX_strongTrendAdx: 30,
     astraX_chopAdx: 20,
     astraX_regimeMultiplier_strong: 0.7,
@@ -407,21 +405,117 @@ export const MOMENTUM_SWING_TRADER_TIMEFRAME_SETTINGS: Record<string, Partial<Ag
 
 export const ASTRAX_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
     // --- SCALPING (1m, 3m, 5m) ---
-    // Goal: High conviction, quick reaction, noise filtering.
-    '1m':  { astraX_structureLookback: 5, astraX_strongTrendAdx: 32, astraX_chopAdx: 22, astraX_strongTrendThreshold: 70, astraX_chopThreshold: 85, astraX_scalp_retestEmaPeriod: 8, astraX_scalp_bbStdDev: 2.2, astraX_confirmation_minVolumeMultiplier: 1.5, astraX_confirmation_candleBodyMinRatio: 0.4, astraX_context_vwapWeight: 50 },
-    '3m':  { astraX_structureLookback: 7, astraX_strongTrendAdx: 30, astraX_chopAdx: 22, astraX_strongTrendThreshold: 70, astraX_chopThreshold: 85, astraX_scalp_retestEmaPeriod: 9, astraX_scalp_bbStdDev: 2.1, astraX_confirmation_minVolumeMultiplier: 1.3, astraX_confirmation_candleBodyMinRatio: 0.35, astraX_context_vwapWeight: 45 },
-    '5m':  { astraX_structureLookback: 8, astraX_strongTrendAdx: 30, astraX_chopAdx: 20, astraX_strongTrendThreshold: 68, astraX_chopThreshold: 82, astraX_scalp_retestEmaPeriod: 9, astraX_scalp_bbStdDev: 2.0, astraX_confirmation_minVolumeMultiplier: 1.2, astraX_confirmation_candleBodyMinRatio: 0.3, astraX_context_vwapWeight: 40 },
+    // Goal: High selectivity, quick reaction, strong noise filtering.
+    '1m': {
+        astraX_baseThreshold: 50,
+        astraX_strongTrendAdx: 32, astraX_chopAdx: 22,
+        astraX_strongTrendThreshold: 70, astraX_chopThreshold: 85,
+        astraX_weights_structure: 25, astraX_weights_momentum: 35, astraX_weights_context: 20, astraX_weights_confirmation: 20,
+        astraX_context_vwapWeight: 50, astraX_context_volatilityWeight: 10, astraX_context_marketBreadthWeight: 20, astraX_context_liquidationWeight: 20,
+        astraX_structureLookback: 5,
+        astraX_scalp_retestEmaPeriod: 8,
+        astraX_scalp_bbPeriod: 20,
+        astraX_scalp_bbStdDev: 2.2,
+        astraX_confirmation_minVolumeMultiplier: 1.8,
+        astraX_confirmation_candleBodyMinRatio: 0.4
+    },
+    '3m': {
+        astraX_baseThreshold: 48,
+        astraX_strongTrendAdx: 30, astraX_chopAdx: 22,
+        astraX_strongTrendThreshold: 70, astraX_chopThreshold: 85,
+        astraX_weights_structure: 25, astraX_weights_momentum: 35, astraX_weights_context: 20, astraX_weights_confirmation: 20,
+        astraX_context_vwapWeight: 45, astraX_context_volatilityWeight: 15, astraX_context_marketBreadthWeight: 20, astraX_context_liquidationWeight: 20,
+        astraX_structureLookback: 6,
+        astraX_scalp_retestEmaPeriod: 8,
+        astraX_scalp_bbPeriod: 20,
+        astraX_scalp_bbStdDev: 2.1,
+        astraX_confirmation_minVolumeMultiplier: 1.6,
+        astraX_confirmation_candleBodyMinRatio: 0.35
+    },
+    '5m': {
+        astraX_baseThreshold: 45,
+        astraX_strongTrendAdx: 30, astraX_chopAdx: 20,
+        astraX_strongTrendThreshold: 68, astraX_chopThreshold: 82,
+        astraX_weights_structure: 30, astraX_weights_momentum: 40, astraX_weights_context: 15, astraX_weights_confirmation: 15,
+        astraX_context_vwapWeight: 40, astraX_context_volatilityWeight: 15, astraX_context_marketBreadthWeight: 25, astraX_context_liquidationWeight: 20,
+        astraX_structureLookback: 8,
+        astraX_scalp_retestEmaPeriod: 9,
+        astraX_scalp_bbPeriod: 20,
+        astraX_scalp_bbStdDev: 2.1,
+        astraX_confirmation_minVolumeMultiplier: 1.4,
+        astraX_confirmation_candleBodyMinRatio: 0.3
+    },
     
     // --- DAY TRADING (15m, 30m, 1h) ---
     // Goal: Balanced approach, capturing intraday trends.
-    '15m': { astraX_structureLookback: 10, astraX_strongTrendAdx: 28, astraX_chopAdx: 20, astraX_strongTrendThreshold: 65, astraX_chopThreshold: 80, astraX_scalp_retestEmaPeriod: 9, astraX_scalp_bbStdDev: 2.0, astraX_confirmation_minVolumeMultiplier: 1.1, astraX_confirmation_candleBodyMinRatio: 0.3, astraX_context_vwapWeight: 35 },
-    '30m': { astraX_structureLookback: 10, astraX_strongTrendAdx: 28, astraX_chopAdx: 20, astraX_strongTrendThreshold: 65, astraX_chopThreshold: 80, astraX_scalp_retestEmaPeriod: 12, astraX_scalp_bbStdDev: 2.0, astraX_confirmation_minVolumeMultiplier: 1.1, astraX_confirmation_candleBodyMinRatio: 0.3, astraX_context_vwapWeight: 30 },
-    '1h':  { astraX_structureLookback: 12, astraX_strongTrendAdx: 25, astraX_chopAdx: 18, astraX_strongTrendThreshold: 62, astraX_chopThreshold: 78, astraX_scalp_retestEmaPeriod: 12, astraX_scalp_bbStdDev: 2.0, astraX_confirmation_minVolumeMultiplier: 1.0, astraX_confirmation_candleBodyMinRatio: 0.25, astraX_context_vwapWeight: 25 },
+    '15m': {
+        astraX_baseThreshold: 40,
+        astraX_strongTrendAdx: 28, astraX_chopAdx: 20,
+        astraX_strongTrendThreshold: 65, astraX_chopThreshold: 80,
+        astraX_weights_structure: 35, astraX_weights_momentum: 35, astraX_weights_context: 15, astraX_weights_confirmation: 15,
+        astraX_context_vwapWeight: 35, astraX_context_volatilityWeight: 15, astraX_context_marketBreadthWeight: 25, astraX_context_liquidationWeight: 25,
+        astraX_structureLookback: 10,
+        astraX_scalp_retestEmaPeriod: 10,
+        astraX_scalp_bbPeriod: 20,
+        astraX_scalp_bbStdDev: 2.0,
+        astraX_confirmation_minVolumeMultiplier: 1.2,
+        astraX_confirmation_candleBodyMinRatio: 0.3
+    },
+    '30m': {
+        astraX_baseThreshold: 40,
+        astraX_strongTrendAdx: 28, astraX_chopAdx: 20,
+        astraX_strongTrendThreshold: 65, astraX_chopThreshold: 80,
+        astraX_weights_structure: 35, astraX_weights_momentum: 35, astraX_weights_context: 15, astraX_weights_confirmation: 15,
+        astraX_context_vwapWeight: 30, astraX_context_volatilityWeight: 20, astraX_context_marketBreadthWeight: 25, astraX_context_liquidationWeight: 25,
+        astraX_structureLookback: 12,
+        astraX_scalp_retestEmaPeriod: 12,
+        astraX_scalp_bbPeriod: 20,
+        astraX_scalp_bbStdDev: 2.0,
+        astraX_confirmation_minVolumeMultiplier: 1.1,
+        astraX_confirmation_candleBodyMinRatio: 0.3
+    },
+    '1h':  {
+        astraX_baseThreshold: 35,
+        astraX_strongTrendAdx: 25, astraX_chopAdx: 18,
+        astraX_strongTrendThreshold: 62, astraX_chopThreshold: 78,
+        astraX_weights_structure: 40, astraX_weights_momentum: 40, astraX_weights_context: 10, astraX_weights_confirmation: 10,
+        astraX_context_vwapWeight: 25, astraX_context_volatilityWeight: 25, astraX_context_marketBreadthWeight: 25, astraX_context_liquidationWeight: 25,
+        astraX_structureLookback: 14,
+        astraX_scalp_retestEmaPeriod: 14,
+        astraX_scalp_bbPeriod: 20,
+        astraX_scalp_bbStdDev: 2.0,
+        astraX_confirmation_minVolumeMultiplier: 1.0,
+        astraX_confirmation_candleBodyMinRatio: 0.25
+    },
     
     // --- SWING TRADING (4h, 1d) ---
-    // Goal: Patience, riding major trends, ignoring noise.
-    '4h':  { astraX_structureLookback: 12, astraX_strongTrendAdx: 25, astraX_chopAdx: 18, astraX_strongTrendThreshold: 60, astraX_chopThreshold: 75, astraX_scalp_retestEmaPeriod: 15, astraX_scalp_bbPeriod: 25, astraX_scalp_bbStdDev: 1.9, astraX_confirmation_minVolumeMultiplier: 1.0, astraX_confirmation_candleBodyMinRatio: 0.25, astraX_context_vwapWeight: 10, astraX_context_volatilityWeight: 25 },
-    '1d':  { astraX_structureLookback: 15, astraX_strongTrendAdx: 25, astraX_chopAdx: 18, astraX_strongTrendThreshold: 60, astraX_chopThreshold: 75, astraX_scalp_retestEmaPeriod: 15, astraX_scalp_bbPeriod: 25, astraX_scalp_bbStdDev: 1.9, astraX_confirmation_minVolumeMultiplier: 1.0, astraX_confirmation_candleBodyMinRatio: 0.25, astraX_context_vwapWeight: 5, astraX_context_volatilityWeight: 30 },
+    // Goal: Patience, riding major trends, ignoring single-candle noise.
+    '4h':  {
+        astraX_baseThreshold: 30,
+        astraX_strongTrendAdx: 25, astraX_chopAdx: 18,
+        astraX_strongTrendThreshold: 60, astraX_chopThreshold: 75,
+        astraX_weights_structure: 40, astraX_weights_momentum: 40, astraX_weights_context: 10, astraX_weights_confirmation: 10,
+        astraX_context_vwapWeight: 10, astraX_context_volatilityWeight: 30, astraX_context_marketBreadthWeight: 30, astraX_context_liquidationWeight: 30,
+        astraX_structureLookback: 16,
+        astraX_scalp_retestEmaPeriod: 16,
+        astraX_scalp_bbPeriod: 25,
+        astraX_scalp_bbStdDev: 1.9,
+        astraX_confirmation_minVolumeMultiplier: 1.0,
+        astraX_confirmation_candleBodyMinRatio: 0.25
+    },
+    '1d':  {
+        astraX_baseThreshold: 30,
+        astraX_strongTrendAdx: 25, astraX_chopAdx: 18,
+        astraX_strongTrendThreshold: 60, astraX_chopThreshold: 75,
+        astraX_weights_structure: 45, astraX_weights_momentum: 45, astraX_weights_context: 5, astraX_weights_confirmation: 5,
+        astraX_context_vwapWeight: 5, astraX_context_volatilityWeight: 35, astraX_context_marketBreadthWeight: 30, astraX_context_liquidationWeight: 30,
+        astraX_structureLookback: 20,
+        astraX_scalp_retestEmaPeriod: 20,
+        astraX_scalp_bbPeriod: 25,
+        astraX_scalp_bbStdDev: 1.9,
+        astraX_confirmation_minVolumeMultiplier: 0.9,
+        astraX_confirmation_candleBodyMinRatio: 0.25
+    },
 };
 
 /**

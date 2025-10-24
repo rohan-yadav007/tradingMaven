@@ -111,11 +111,10 @@ export const getPenultimate = <T>(arr: T[] | undefined): T | undefined => arr &&
 export const isObvTrending = (obvValues: number[], direction: 'bullish' | 'bearish', period: number = 20): boolean => {
     if (obvValues.length < period) return false;
     const obvSma = SMA.calculate({ period, values: obvValues });
-    const lastObv = getLast(obvValues);
-    const lastSma = getLast(obvSma);
+    const lastObv = getLast(obvValues) as number | undefined;
+    const lastSma = getLast(obvSma) as number | undefined;
     if (lastObv === undefined || lastSma === undefined) return false;
-    // FIX: Explicitly cast to number for comparison
-    return direction === 'bullish' ? (lastObv as number) > (lastSma as number) : (lastObv as number) < (lastSma as number);
+    return direction === 'bullish' ? lastObv > lastSma : lastObv < lastSma;
 };
 
 export function calculateDailyVwap(klines: Kline[]): (number | undefined)[] {
@@ -259,13 +258,10 @@ export function detectRsiDivergence(klines: Kline[], rsiValues: number[], positi
     return false;
 }
 
-/**
- * Tweak #4: New utility to analyze micro-timeframe market structure.
- */
 export function analyzeMicroMarketStructure(microKlines: Kline[]): 'ascending' | 'descending' | 'ranging' | null {
     if (microKlines.length < 20) return null;
 
-    const swingPoints = findSwingPoints(microKlines, 3); // Use a shorter lookback for micro TFs
+    const swingPoints = findSwingPoints(microKlines, 3);
     
     const recentHighs = swingPoints.filter(p => p.type === 'high').slice(-3);
     if (recentHighs.length === 3) {
@@ -325,7 +321,6 @@ export function captureMarketContext(klines: Kline[], htfKlines?: Kline[]): Part
         for (const key in htfCtxRaw) (context as any)[`htf_${key}`] = (htfCtxRaw as any)[key];
         if(htfKlines.length >= 200) {
             const lastClose = getLast(htfKlines.map(x => x.close))!;
-            // FIX: Explicitly cast results to number for comparison
             const ema50 = getLast(EMA.calculate({ period: 50, values: htfKlines.map(x => x.close) })) as number;
             const ema200 = getLast(EMA.calculate({ period: 200, values: htfKlines.map(x => x.close) })) as number;
             if (lastClose > ema50 && ema50 > ema200) context.htf_trend = 'bullish';

@@ -12,7 +12,7 @@ import { getIchimokuTrendRiderSignal } from './agents/ichimokuTrendRider';
 import { getMomentumSwingTraderSignal } from './agents/momentumSwingTrader';
 import { getTheConductorSignal } from './agents/conductor';
 import { getAstraXSignal } from './agents/astrax';
-import { applyTimeframeSettings, captureMarketContext, calculateHeikinAshi, isMarketCohesive } from './agents/agentUtils';
+import { applyTimeframeSettings, captureMarketContext, calculateHeikinAshi, isMarketCohesive, analyzeMicroMarketStructure } from './agents/agentUtils';
 import { Supertrend } from './agents/agentUtils';
 import { calculateSupportResistance } from './chartAnalysisService';
 import { detectSmcReversalPattern } from './vetoService';
@@ -28,7 +28,7 @@ const getTimeframeDuration = (timeframe: string): number => {
     switch (unit) {
         case 'm': return value * 60 * 1000;
         case 'h': return value * 60 * 60 * 1000;
-        case 'd': return value * 24 * 60 * 1000;
+        case 'd': return value * 24 * 60 * 60 * 1000;
         default: return 0;
     }
 };
@@ -102,6 +102,7 @@ async function runFullAnalysisInWorker(
     livePrice?: number,
 ): Promise<TradeSignal> {
     const config = applyTimeframeSettings(originalConfig);
+    const params = config.agentParams as Required<AgentParams>;
     const reasons: string[] = [];
 
     const htfContext = htfKlines && htfKlines.length > 0 ? captureMarketContext([], htfKlines) : undefined;
@@ -109,7 +110,7 @@ async function runFullAnalysisInWorker(
     let agentSignal: TradeSignal;
 
     if (agent.id === 19) {
-        agentSignal = await getAstraXSignal(config, immediateKlines, livePrice);
+        agentSignal = await getAstraXSignal(config, immediateKlines, livePrice, undefined, ltfKlines);
     } else {
         switch (agent.id) {
             case 9: agentSignal = getQuantumScalperSignal(klines, config, htfContext); break;
@@ -136,6 +137,52 @@ async function runFullAnalysisInWorker(
     }
 
     if (!lastKline) return { signal: 'HOLD', reasons: ['No kline data for filters.'] };
+
+    if (config.isSrAnalysisEnabled) {
+        const srLevels = calculateSupportResistance(klines);
+        const currentAtr = (getLast(ATR.calculate({ high: klines.map(k=>k.high), low: klines.map(k=>k.low), close: klines.map(k=>k.close), period: 14 })) as number | undefined) || 0;
+        const buffer = currentAtr * params.veto_srZoneAtrBuffer;
+        
+        if (agentSignal.signal === 'BUY') {
+            const nextResistance = srLevels.resistances.find(r => r.price > currentPrice);
+            if (nextResistance && (nextResistance.price - currentPrice) < buffer) {
+                return { signal: 'HOLD', reasons: [...reasons, `❌ VETO: Entry is too close to a resistance zone.`] };
+            }
+        } else { // SELL
+            const nextSupport = srLevels.supports.find(s => s.price < currentPrice);
+            if (nextSupport && (currentPrice - nextSupport.price) < buffer) {
+                return { signal: 'HOLD', reasons: [...reasons, `❌ VETO: Entry is too close to a support zone.`] };
+            }
+        }
+        reasons.push('✅ S/R Zone: Clear');
+    }
+
+    if (config.isMomentumConcordanceEnabled && agent.id !== 19) {
+        // Veto 1: Candle Position Veto (Anti-Chase)
+        const candleRange = lastKline.high - lastKline.low;
+        if (candleRange > 0) {
+            const closePosition = (lastKline.close - lastKline.low) / candleRange;
+            if (agentSignal.signal === 'BUY' && closePosition > params.veto_candlePositionVeto_long) {
+                return { signal: 'HOLD', reasons: [...reasons, `❌ VETO: Price is too high in candle range (>${(params.veto_candlePositionVeto_long * 100).toFixed(0)}%).`] };
+            }
+            if (agentSignal.signal === 'SELL' && closePosition < params.veto_candlePositionVeto_short) {
+                return { signal: 'HOLD', reasons: [...reasons, `❌ VETO: Price is too low in candle range (<${(params.veto_candlePositionVeto_short * 100).toFixed(0)}%).`] };
+            }
+            reasons.push('✅ Candle Position: OK');
+        }
+
+        // Veto 2: Micro-Timeframe Momentum Confirmation
+        const microStructure = ltfKlines ? analyzeMicroMarketStructure(ltfKlines) : null;
+        if (microStructure) {
+            if (agentSignal.signal === 'BUY' && microStructure === 'descending') {
+                return { signal: 'HOLD', reasons: [...reasons, `❌ VETO: Micro-timeframe momentum is bearish.`] };
+            }
+            if (agentSignal.signal === 'SELL' && microStructure === 'ascending') {
+                return { signal: 'HOLD', reasons: [...reasons, `❌ VETO: Micro-timeframe momentum is bullish.`] };
+            }
+            reasons.push(`✅ Micro-Momentum: Confirmed (${microStructure})`);
+        }
+    }
 
     if (config.isMarketCohesionEnabled) {
         const haKlines = calculateHeikinAshi(klines);
@@ -374,7 +421,7 @@ async function simulateBot(baseKlines: Kline[], config: BotConfig, htfKlines?: K
                             finalEntryFailSafe: config.finalEntryFailSafe,
                         },
                         entryContext: captureMarketContext(klinesForAnalysis, currentHtfKlines),
-                        // FIX: Explicitly cast result to number to satisfy the type checker.
+                        // FIX: Explicitly cast to number to satisfy the type checker.
                         entryAtr: getLast(ATR.calculate({high: klinesForAnalysis.map(k=>k.high), low: klinesForAnalysis.map(k=>k.low), close: klinesForAnalysis.map(k=>k.close), period: 14})) as number | undefined,
                     };
                 }

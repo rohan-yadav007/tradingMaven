@@ -324,6 +324,21 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                  <ParamSlider label="Choppy Market Threshold" value={allParams.conductor_choppyTrendThreshold!} onChange={v => updateParam('conductor_choppyTrendThreshold', v)} min={70} max={95} step={1} valueDisplay={v => `${v}%`} />
                  <ParamSlider label="Structure Weight Multiplier" value={allParams.conductor_structureWeightMultiplier!} onChange={v => updateParam('conductor_structureWeightMultiplier', v)} min={1.0} max={2.0} step={0.05} valueDisplay={v => `${v.toFixed(2)}x`} />
             </div>);
+        case 20: return (<div className="space-y-4">
+            <ParamSlider 
+                label="ATR Period" 
+                value={allParams.stf_atrPeriod!} 
+                onChange={v => updateParam('stf_atrPeriod', v)} 
+                min={5} max={20} step={1} 
+            />
+            <ParamSlider 
+                label="ATR Multiplier" 
+                value={allParams.stf_atrMultiplier!} 
+                onChange={v => updateParam('stf_atrMultiplier', v)} 
+                min={1.0} max={5.0} step={0.1} 
+                valueDisplay={v => v.toFixed(1)}
+            />
+        </div>);
         default: return <p className="text-sm text-slate-500">This agent does not have any customizable parameters.</p>;
     }
 };
@@ -796,6 +811,11 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     </div>
                 )}
                 {selectedAgent.id === 19 && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
+                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
+                    </div>
+                )}
+                {selectedAgent.id === 20 && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
                         <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
                     </div>

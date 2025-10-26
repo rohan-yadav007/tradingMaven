@@ -38,6 +38,12 @@ export const getHigherTimeframe = (timeframe: string): string | undefined => {
 
 
 export const AGENTS: Agent[] = [
+     {
+        id: 20,
+        name: 'Supertrend Flipper',
+        description: "A pure trend-following agent that uses Supertrend flips to enter and reverse positions. It aims to always be in the market, capturing the majority of a trend.",
+        indicators: ["Supertrend"],
+    },
     {
         id: 19,
         name: 'AstraX Super-Agent',
@@ -259,6 +265,10 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     astraX_executionMode: 'hybrid',
     astraX_scalp_enabledInChop: true,
 
+    // Agent 20: Supertrend Flipper
+    stf_atrPeriod: 10,
+    stf_atrMultiplier: 3.0,
+
     // SMC Reversal Veto
     smc_divergenceLookback: 12,
     smc_volumeMultiplier: 2.0,
@@ -278,6 +288,17 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
 
 
 // --- TIMEFRAME-SPECIFIC PARAMETER OVERRIDES ---
+
+export const SUPERTREND_FLIPPER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
+    '1m':  { stf_atrPeriod: 10, stf_atrMultiplier: 2.0 },
+    '3m':  { stf_atrPeriod: 10, stf_atrMultiplier: 2.0 },
+    '5m':  { stf_atrPeriod: 10, stf_atrMultiplier: 2.5 },
+    '15m': { stf_atrPeriod: 12, stf_atrMultiplier: 3.0 },
+    '30m': { stf_atrPeriod: 12, stf_atrMultiplier: 3.0 },
+    '1h':  { stf_atrPeriod: 12, stf_atrMultiplier: 3.0 },
+    '4h':  { stf_atrPeriod: 14, stf_atrMultiplier: 3.5 },
+    '1d':  { stf_atrPeriod: 14, stf_atrMultiplier: 3.5 },
+};
 
 export const CONCORDANCE_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
     // Stricter on low TFs to avoid chasing
@@ -540,6 +561,7 @@ export const getAgentTimeframeSettings = (agentId: number, timeFrame: string): P
         case 17: agentSettings = MOMENTUM_SWING_TRADER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 18: agentSettings = CONDUCTOR_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 19: agentSettings = ASTRAX_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+        case 20: agentSettings = SUPERTREND_FLIPPER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
     }
 
     return { ...vetoSettings, ...smcSettings, ...concordanceSettings, ...agentSettings };

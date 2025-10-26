@@ -12,6 +12,7 @@ import { getIchimokuTrendRiderSignal } from './agents/ichimokuTrendRider';
 import { getMomentumSwingTraderSignal } from './agents/momentumSwingTrader';
 import { getTheConductorSignal } from './agents/conductor';
 import { getAstraXSignal } from './agents/astrax';
+import { getSupertrendFlipperSignal } from './agents/supertrendFlipper';
 import { applyTimeframeSettings, captureMarketContext, calculateHeikinAshi, isMarketCohesive, analyzeMicroMarketStructure } from './agents/agentUtils';
 import { Supertrend } from './agents/agentUtils';
 import { calculateSupportResistance } from './chartAnalysisService';
@@ -120,6 +121,7 @@ async function runFullAnalysisInWorker(
             case 16: agentSignal = getIchimokuTrendRiderSignal(klines, config, htfContext); break;
             case 17: agentSignal = getMomentumSwingTraderSignal(klines, config, htfContext); break;
             case 18: agentSignal = getTheConductorSignal(klines, config, htfContext, ltfKlines); break;
+            case 20: agentSignal = getSupertrendFlipperSignal(klines, config); break;
             default: agentSignal = { signal: 'HOLD', reasons: ['Agent not found'] };
         }
     }

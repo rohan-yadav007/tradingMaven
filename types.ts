@@ -313,6 +313,10 @@ export interface AgentParams {
     astraX_executionMode?: 'conviction' | 'scalp' | 'hybrid';
     astraX_scalp_enabledInChop?: boolean;
     
+    // Agent 20: Supertrend Flipper
+    stf_atrPeriod?: number;
+    stf_atrMultiplier?: number;
+    
     // SMC Reversal Veto
     smc_divergenceLookback?: number;
     smc_volumeMultiplier?: number;

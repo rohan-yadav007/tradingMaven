@@ -1,4 +1,3 @@
-
 // services/botManagerService.ts
 
 import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, TradingMode, MarketDataContext, AgentParams } from '../types';
@@ -46,6 +45,7 @@ class BotInstance {
     private handlers: BotHandlers;
     public subscriptions: { type: 'ticker' | 'kline', pair: string, timeFrame?: string, mode: TradingMode, callback: Function }[] = [];
     private executing = false;
+    private initialSignalIgnored: boolean = false;
 
     constructor(config: BotConfig, onUpdate: (bot: RunningBot) => void, handlers: BotHandlers) {
         this.bot = {
@@ -79,6 +79,10 @@ class BotInstance {
         this.klines = initialKlines;
         this.bot.klinesLoaded = this.klines.length;
         this.addLog(`Initialized with ${this.klines.length} ${this.bot.config.timeFrame} klines.`, LogType.Success);
+        
+        if (this.bot.config.agent.id === 20) { // Supertrend Flipper
+            this.addLog(`Flip strategy enabled. Awaiting first trend change to enter.`, LogType.Info);
+        }
     
         this.addLog("Performing initial analysis on startup.", LogType.Info);
         const executeOnStart = this.bot.config.entryTiming === 'immediate';
@@ -200,45 +204,50 @@ class BotInstance {
             
             this.updateState({ analysis: signal });
 
-            const isForEntry = !this.bot.openPosition && (this.bot.status === BotStatus.Monitoring || this.bot.status === BotStatus.Starting);
-            
-            if (isForEntry && options.execute) {
-                const isAstraXOnNextCandle = this.bot.config.agent.id === 19 && this.bot.config.entryTiming === 'onNextCandle';
-                const isTickTrigger = options.reason.includes('Tick');
-
-                // This is the standard execution path for immediate entries or candle-close entries.
-                const isStandardExecution = this.bot.config.entryTiming === 'immediate' || !isTickTrigger;
-
-                if (isStandardExecution) {
-                    if (signal.signal !== 'HOLD') {
-                        this.updateState({ status: BotStatus.ExecutingTrade });
-                        await this.executeTrade(signal, klinesForAnalysis);
-                    } else if (!this.bot.openPosition && this.bot.config.entryTiming === 'onNextCandle') {
-                        this.addLog(`Analysis Result (Reason: ${options.reason}): HOLD`, LogType.Info);
-                        const titleLine = `Analysis Result: HOLD`;
-                        const reasonLines = signal.reasons.map(reason => {
-                            let logType = LogType.Info;
-                            if (reason.startsWith('✅')) logType = LogType.Success;
-                            else if (reason.startsWith('❌')) logType = LogType.Error;
-                            else if (reason.startsWith('⚠️')) logType = LogType.Status;
-                            
-                            const message = `- ${reason.substring(2).trim()}`;
-                            return { message, logType };
-                        });
-                        
-                        this.addLog(titleLine, LogType.Info);
-                        reasonLines.forEach(line => this.addLog(line.message, line.logType));
+            if (options.execute && signal.signal !== 'HOLD') {
+                const isFlipper = this.bot.config.agent.id === 20;
+    
+                if (this.bot.openPosition) {
+                    // Position is open, only flipper agent can take action here
+                    if (isFlipper) {
+                        const currentPosition = this.bot.openPosition!;
+                        const isOpposite = (signal.signal === 'BUY' && currentPosition.direction === 'SHORT') || (signal.signal === 'SELL' && currentPosition.direction === 'LONG');
+                        if (isOpposite) {
+                            this.addLog(`Flip Signal: ${signal.signal}. Closing current ${currentPosition.direction}.`, LogType.Action);
+                            this.updateState({ status: BotStatus.FlipPending });
+                            this.handlers.onClosePosition(currentPosition, `Flip to ${signal.signal}`);
+                        }
                     }
-                } 
-                // This is the special path for AstraX scalps on tick when in onNextCandle mode.
-                else if (isAstraXOnNextCandle && isTickTrigger) {
-                    if (signal.tradeType === 'scalp' && signal.signal !== 'HOLD') {
-                        this.updateState({ status: BotStatus.ExecutingTrade });
-                        await this.executeTrade(signal, klinesForAnalysis);
+                } else { // No position is open
+                    if (this.bot.status === BotStatus.Monitoring || this.bot.status === BotStatus.Starting) {
+                        if (isFlipper && !this.initialSignalIgnored) {
+                            this.addLog(`Ignoring first Supertrend signal (${signal.signal}). Bot is now armed.`, LogType.Info);
+                            this.initialSignalIgnored = true;
+                            // Update analysis to HOLD to prevent accidental execution by other logic paths
+                            this.updateState({ analysis: { ...signal, signal: 'HOLD', reasons: [`ℹ️ First signal ignored.`] } });
+                        } else {
+                            this.updateState({ status: BotStatus.ExecutingTrade });
+                            await this.executeTrade(signal, klinesForAnalysis);
+                        }
                     }
-                    // If it's not a scalp, do nothing. Conviction trades will be handled by onMainKlineUpdate.
                 }
+            } else if (signal.signal === 'HOLD' && !this.bot.openPosition && this.bot.config.entryTiming === 'onNextCandle') {
+                this.addLog(`Analysis Result (Reason: ${options.reason}): HOLD`, LogType.Info);
+                const titleLine = `Analysis Result: HOLD`;
+                const reasonLines = signal.reasons.map(reason => {
+                    let logType = LogType.Info;
+                    if (reason.startsWith('✅')) logType = LogType.Success;
+                    else if (reason.startsWith('❌')) logType = LogType.Error;
+                    else if (reason.startsWith('⚠️')) logType = LogType.Status;
+                    
+                    const message = `- ${reason.substring(2).trim()}`;
+                    return { message, logType };
+                });
+                
+                this.addLog(titleLine, LogType.Info);
+                reasonLines.forEach(line => this.addLog(line.message, line.logType));
             }
+
         } catch (error) {
             this.addLog(`Error during analysis: ${error}`, LogType.Error);
             this.updateState({ analysis: { signal: 'HOLD', reasons: [`Analysis Error: ${error}`] } });
@@ -378,7 +387,7 @@ class BotInstance {
             }
 
             if (this.bot.openPosition) {
-                await this.runAnalysis({ execute: false, reason: "Position Management (New Candle)" });
+                await this.runAnalysis({ execute: true, reason: "Position Management (New Candle)" });
             }
         }
     }

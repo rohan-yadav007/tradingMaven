@@ -43,7 +43,14 @@ export function getInitialAgentTargets(
     const timeframeConfig = TIMEFRAME_ATR_CONFIG[timeFrame] || TIMEFRAME_ATR_CONFIG['5m'];
     let atrMultiplier = timeframeConfig.atrMultiplier;
 
-    if (timeframeCategory === 'scalping') {
+    if (agent.id === 20) { // Supertrend Flipper logic
+        const stValues = Supertrend.calculate({
+            high: highs, low: lows, close: closes,
+            period: params.stf_atrPeriod!, multiplier: params.stf_atrMultiplier!
+        });
+        const lastSt = getLast(stValues) as number | undefined;
+        agentStopLoss = lastSt || (isLong ? entryPrice - (currentAtr * atrMultiplier) : entryPrice + (currentAtr * atrMultiplier));
+    } else if (timeframeCategory === 'scalping') {
         // SCALPING LOGIC: Prioritize tight, invalidation-based stops near recent price action.
         const lastKline = klines[klines.length - 1];
         const prevKline = klines[klines.length - 2];
@@ -142,32 +149,15 @@ export function getInitialAgentTargets(
         }
     }
 
-    // --- Step 4: Apply Hard Cap as the FINAL, non-negotiable limit ---
+    // --- Step 4: No Hard Cap. The stop loss is the agent's calculated stop loss. ---
+    // The veto for this risk is now handled exclusively in validateTradeProfitability.
     let finalStopLoss = stopLossAfterInitialChecks;
-    let slReason: 'Agent Logic' | 'Hard Cap' = 'Agent Logic';
-
-    const maxLossInDollars = config.investmentAmount * (config.maxMarginLossPercent / 100);
-    const positionValue = mode === TradingMode.USDSM_Futures ? config.investmentAmount * leverage : config.investmentAmount;
-    const positionSize = (entryPrice > 0) ? positionValue / entryPrice : 0;
-
-    if (positionSize > 0) {
-        const priceDistanceForMaxLoss = maxLossInDollars / positionSize;
-        const hardCapStopLossPrice = isLong
-            ? entryPrice - priceDistanceForMaxLoss
-            : entryPrice + priceDistanceForMaxLoss;
-            
-        const currentSlIsRiskier = isLong
-            ? finalStopLoss < hardCapStopLossPrice
-            : finalStopLoss > hardCapStopLossPrice;
-
-        if (currentSlIsRiskier) {
-            finalStopLoss = hardCapStopLossPrice;
-            slReason = 'Hard Cap';
-        }
-    }
+    const slReason: 'Agent Logic' | 'Hard Cap' = 'Agent Logic';
 
     // --- Step 5: CRITICAL FINAL SAFETY CHECKS ---
     let finalTakeProfit = suggestedTakeProfit;
+    const positionValue = mode === TradingMode.USDSM_Futures ? investmentAmount * leverage : investmentAmount;
+    const positionSize = (entryPrice > 0) ? positionValue / entryPrice : 0;
 
     if (positionSize > 0) {
         const roundTripFee = positionValue * config.takerFeeRate * 2;
@@ -665,6 +655,16 @@ export function getAgentExitSignal(
                         reasons.push('AstraX Tier 1: Momentum faded, trailing with fast EMA.');
                     }
                 }
+            }
+            break;
+            
+        case 20: // Supertrend Flipper uses its own line as a natural trail
+            newStopLoss = getLast(Supertrend.calculate({
+                high: highs, low: lows, close: closes,
+                period: params.stf_atrPeriod!, multiplier: params.stf_atrMultiplier!
+            })) as number | undefined;
+            if (newStopLoss) {
+                reasons.push('Agent Supertrend Trail');
             }
             break;
 

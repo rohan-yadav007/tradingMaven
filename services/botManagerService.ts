@@ -45,7 +45,7 @@ class BotInstance {
     private handlers: BotHandlers;
     public subscriptions: { type: 'ticker' | 'kline', pair: string, timeFrame?: string, mode: TradingMode, callback: Function }[] = [];
     private executing = false;
-    private initialSignalIgnored: boolean = false;
+    private isInitialized: boolean = false;
 
     constructor(config: BotConfig, onUpdate: (bot: RunningBot) => void, handlers: BotHandlers) {
         this.bot = {
@@ -80,14 +80,17 @@ class BotInstance {
         this.bot.klinesLoaded = this.klines.length;
         this.addLog(`Initialized with ${this.klines.length} ${this.bot.config.timeFrame} klines.`, LogType.Success);
         
-        if (this.bot.config.agent.id === 20) { // Supertrend Flipper
-            this.addLog(`Flip strategy enabled. Awaiting first trend change to enter.`, LogType.Info);
+        if ([20, 21].includes(this.bot.config.agent.id) && this.bot.config.entryTiming !== 'immediate') {
+             this.addLog(`Flipper agent active. Awaiting first live trend change to enter.`, LogType.Info);
         }
     
+        this.isInitialized = false; // Mark that we are in the startup phase
         this.addLog("Performing initial analysis on startup.", LogType.Info);
         const executeOnStart = this.bot.config.entryTiming === 'immediate';
         await this.runAnalysis({ execute: executeOnStart, reason: 'Initial Analysis' });
         
+        this.isInitialized = true; // Mark startup phase as complete
+
         if (this.bot.status === BotStatus.Starting) {
             this.updateState({ 
                 status: BotStatus.Monitoring, 
@@ -203,10 +206,21 @@ class BotInstance {
             const signal = await getTradingSignal(this.bot.config.agent, klinesForAnalysis, this.bot.config, htfKlines, immediateKlines, ltfKlines, ethBtcKlines, this.bot.livePrice);
             
             this.updateState({ analysis: signal });
+            
+            const isFlipper = [20, 21].includes(this.bot.config.agent.id);
+
+            // Gatekeeper for flipper agents on startup with 'onNextCandle' mode.
+            if (
+                isFlipper &&
+                this.bot.config.entryTiming === 'onNextCandle' &&
+                !this.isInitialized && // Crucially, check if this is the startup analysis
+                signal.signal !== 'HOLD'
+            ) {
+                this.addLog(`Ignoring startup signal (${signal.signal}) to await first live flip.`, LogType.Info);
+                return; // Do not proceed to execution logic
+            }
 
             if (options.execute && signal.signal !== 'HOLD') {
-                const isFlipper = this.bot.config.agent.id === 20;
-    
                 if (this.bot.openPosition) {
                     // Position is open, only flipper agent can take action here
                     if (isFlipper) {
@@ -220,15 +234,8 @@ class BotInstance {
                     }
                 } else { // No position is open
                     if (this.bot.status === BotStatus.Monitoring || this.bot.status === BotStatus.Starting) {
-                        if (isFlipper && !this.initialSignalIgnored) {
-                            this.addLog(`Ignoring first Supertrend signal (${signal.signal}). Bot is now armed.`, LogType.Info);
-                            this.initialSignalIgnored = true;
-                            // Update analysis to HOLD to prevent accidental execution by other logic paths
-                            this.updateState({ analysis: { ...signal, signal: 'HOLD', reasons: [`ℹ️ First signal ignored.`] } });
-                        } else {
-                            this.updateState({ status: BotStatus.ExecutingTrade });
-                            await this.executeTrade(signal, klinesForAnalysis);
-                        }
+                        this.updateState({ status: BotStatus.ExecutingTrade });
+                        await this.executeTrade(signal, klinesForAnalysis);
                     }
                 }
             } else if (signal.signal === 'HOLD' && !this.bot.openPosition && this.bot.config.entryTiming === 'onNextCandle') {
@@ -423,13 +430,15 @@ class BotInstance {
         const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(klinesForExecution, currentPrice, isLong ? 'LONG' : 'SHORT', config);
         
         const validation = validateTradeProfitability(currentPrice, agentStopLoss, takeProfitPrice, isLong ? 'LONG' : 'SHORT', this.bot.config);
-        if (!validation.isValid) {
+        if (!validation.isValid && config.agent.id !== 20) { // Bypass validation for flipper agent
             this.notifyTradeExecutionFailed(validation.reason);
             return;
         }
 
         this.addLog(`Executing ${signal.signal} at ~${currentPrice.toFixed(config.pricePrecision)}. SL: ${stopLossPrice.toFixed(config.pricePrecision)} (${slReason}), TP: ${takeProfitPrice.toFixed(config.pricePrecision)}`, LogType.Action);
-        this.addLog(validation.reason, LogType.Success);
+        if (config.agent.id !== 20) {
+            this.addLog(validation.reason, LogType.Success);
+        }
 
         const execSignal: TradeSignal = { ...signal, entryPrice: currentPrice, takeProfitPrice, stopLossPrice };
         const entryContext = captureMarketContext(klinesForExecution);
@@ -456,6 +465,12 @@ class BotInstance {
     private async managePositionOnTick(currentPrice: number) {
         if (!this.bot.openPosition) return;
 
+        // For Supertrend Flipper agents, exits are ONLY handled by flip signals from runAnalysis.
+        // Bypass all tick-based trailing logic (Trade Guardian, profit trails, etc.).
+        if ([20, 21].includes(this.bot.config.agent.id)) {
+            return;
+        }
+    
         const guardianConfig = this.bot.openPosition.botConfigSnapshot;
         if (guardianConfig?.isTradeGuardianEnabled) {
             try {

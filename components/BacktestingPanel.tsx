@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { useState, useEffect, useMemo } from 'react';
 import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, OptimizationResultItem } from '../types';
@@ -236,14 +237,92 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                 onChange={v => updateParam('stf_atrPeriod', v)} 
                 min={5} max={20} step={1} 
             />
-            <ParamSlider 
-                label="ATR Multiplier" 
-                value={allParams.stf_atrMultiplier!} 
-                onChange={v => updateParam('stf_atrMultiplier', v)} 
-                min={1.0} max={5.0} step={0.1} 
-                valueDisplay={v => v.toFixed(1)}
-            />
+            {!allParams.stf_enableDynamicMultiplier && (
+                <ParamSlider 
+                    label="ATR Multiplier" 
+                    value={allParams.stf_atrMultiplier!} 
+                    onChange={v => updateParam('stf_atrMultiplier', v)} 
+                    min={1.0} max={5.0} step={0.1} 
+                    valueDisplay={v => v.toFixed(1)}
+                />
+            )}
+            
+            <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                        <label className={formLabelClass}>Dynamic Multiplier</label>
+                        <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" title="Adjusts ATR multiplier based on market volatility."/>
+                    </div>
+                    <ToggleSwitch checked={allParams.stf_enableDynamicMultiplier!} onChange={v => updateParam('stf_enableDynamicMultiplier', v)} />
+                </div>
+            </div>
+
+            {allParams.stf_enableDynamicMultiplier && (
+                <div className="pl-2 border-l-2 border-sky-500/30 space-y-4 mt-2">
+                    <ParamSlider 
+                        label="Low Vol Multiplier" 
+                        value={allParams.stf_multiplier_low!} 
+                        onChange={v => updateParam('stf_multiplier_low', v)} 
+                        min={1.0} max={3.0} step={0.1} 
+                        valueDisplay={v => v.toFixed(1)}
+                    />
+                     <ParamSlider 
+                        label="Normal Vol Multiplier" 
+                        value={allParams.stf_multiplier_normal!} 
+                        onChange={v => updateParam('stf_multiplier_normal', v)} 
+                        min={1.5} max={5.0} step={0.1} 
+                        valueDisplay={v => v.toFixed(1)}
+                    />
+                     <ParamSlider 
+                        label="High Vol Multiplier" 
+                        value={allParams.stf_multiplier_high!} 
+                        onChange={v => updateParam('stf_multiplier_high', v)} 
+                        min={3.0} max={7.0} step={0.1} 
+                        valueDisplay={v => v.toFixed(1)}
+                    />
+                    <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700">
+                        <ParamSlider 
+                            label="Volatility Lookback" 
+                            value={allParams.stf_volatilityPeriod!} 
+                            onChange={v => updateParam('stf_volatilityPeriod', v)} 
+                            min={50} max={250} step={10}
+                        />
+                         <ParamSlider 
+                            label="Low/High Threshold" 
+                            value={allParams.stf_volatilityThreshold_low!} 
+                            onChange={v => {
+                                updateParam('stf_volatilityThreshold_low', v);
+                                updateParam('stf_volatilityThreshold_high', 100 - v);
+                            }}
+                            min={10} max={40} step={1}
+                            valueDisplay={v => `${v}% / ${100-v}%`}
+                        />
+                    </div>
+                </div>
+            )}
         </div>);
+        case 21: // Pivot Point SuperTrend
+            return (<div className="space-y-4">
+                <ParamSlider 
+                   label="Pivot Point Period"
+                   value={allParams.pps_pivotPeriod!}
+                   onChange={(v) => updateParam('pps_pivotPeriod', v)}
+                   min={1} max={50} step={1}
+               />
+               <ParamSlider 
+                   label="ATR Period"
+                   value={allParams.pps_atrPeriod!}
+                   onChange={(v) => updateParam('pps_atrPeriod', v)}
+                   min={1} max={50} step={1}
+               />
+               <ParamSlider 
+                   label="ATR Factor"
+                   value={allParams.pps_atrFactor!}
+                   onChange={(v) => updateParam('pps_atrFactor', v)}
+                   min={1.0} max={10.0} step={0.1}
+                   valueDisplay={v => v.toFixed(1)}
+               />
+            </div>);
         default: return <p className="text-sm text-slate-500">This agent does not have any customizable parameters.</p>;
     }
 };
@@ -297,6 +376,7 @@ export type BacktestConfig = {
     isConfirmationCandleEnabled: boolean;
     isMomentumConcordanceEnabled: boolean;
     isTradeGuardianEnabled: boolean;
+    isHeikinAshiEnabled: boolean;
 };
 
 const getTimeframeDuration = (timeframe: string): number => {
@@ -356,6 +436,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         isConfirmationCandleEnabled: globalConfig.isConfirmationCandleEnabled,
         isMomentumConcordanceEnabled: globalConfig.isMomentumConcordanceEnabled,
         isTradeGuardianEnabled: globalConfig.isTradeGuardianEnabled,
+        isHeikinAshiEnabled: globalConfig.isHeikinAshiEnabled,
     });
 
     const [backtestDays, setBacktestDays] = useState(3);
@@ -443,7 +524,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     const handleRunOptimization = async () => {
         setIsLoading(true); setLoadingMessage('Fetching historical data...'); setError(null);
         setBacktestResult(null); setOptimizationResults(null);
-        const onProgress = (progress: { percent: number, combinations: number }) => {
+        const onProgress = (progress: { percent: number; combinations: number }) => {
             setLoadingMessage(`Optimizing... ${progress.percent.toFixed(0)}% of ${progress.combinations}`);
         };
         try {
@@ -566,6 +647,22 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                         <select value={config.selectedAgent.id} onChange={e => updateConfig('selectedAgent', constants.AGENTS.find(a => a.id === Number(e.target.value))!)} className={formInputClass}>
                             {constants.AGENTS.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
                         </select>
+                         {config.selectedAgent.id === 20 && (
+                            <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700">
+                                <div className="flex items-center justify-between">
+                                     <div className="flex items-center gap-1.5">
+                                        <label htmlFor="heikin-ashi-toggle-backtest" className={formLabelClass}>
+                                            Use Heikin Ashi Candles
+                                        </label>
+                                        <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" title="Calculates Supertrend signals using smoothed Heikin Ashi candles instead of regular candles to filter noise." />
+                                    </div>
+                                    <ToggleSwitch
+                                        checked={config.isHeikinAshiEnabled}
+                                        onChange={v => updateConfig('isHeikinAshiEnabled', v)}
+                                    />
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
@@ -574,118 +671,199 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                             {isParamsOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                         </button>
                         {isParamsOpen && (
-                            <div className="p-3 border-t border-slate-200 dark:border-slate-600">
+                            <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
                                 <AgentParameterEditor agent={config.selectedAgent} params={config.agentParams} onParamsChange={(p) => updateConfig('agentParams', p)} isAdxFilterEnabled={config.isAdxFilterEnabled} timeFrame={config.chartTimeFrame} />
                             </div>
                         )}
                     </div>
-                    
+
+                    {/* FIX: The broken JSX has been restructured into a proper collapsible section for agent filters. */}
                     <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
                         <button onClick={() => setIsFiltersOpen(!isFiltersOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
-                            <span>Universal Filters & Rules</span>
+                            <span>Customize Agent Filters</span>
                             {isFiltersOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                         </button>
-                         {isFiltersOpen && (
+                        {isFiltersOpen && (
                             <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-3">
-                                <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400">Entry Filters</h4>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>Supertrend Confirmation</label><ToggleSwitch checked={config.isSupertrendConfirmationEnabled} onChange={v => updateConfig('isSupertrendConfirmationEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>Momentum Concordance</label><ToggleSwitch checked={config.isMomentumConcordanceEnabled} onChange={v => updateConfig('isMomentumConcordanceEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>Liquidation Cascade Veto</label><ToggleSwitch checked={config.isLiquidationFilterEnabled} onChange={v => updateConfig('isLiquidationFilterEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>Market Breadth Filter</label><ToggleSwitch checked={config.isMarketBreadthFilterEnabled} onChange={v => updateConfig('isMarketBreadthFilterEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>Capital Flow Veto</label><ToggleSwitch checked={config.isBtcCorrelationVetoEnabled} onChange={v => updateConfig('isBtcCorrelationVetoEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>Market Cohesion Filter</label><ToggleSwitch checked={config.isMarketCohesionEnabled} onChange={v => updateConfig('isMarketCohesionEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>Exhaustion Filter</label><ToggleSwitch checked={config.isExhaustionFilterEnabled} onChange={v => updateConfig('isExhaustionFilterEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>Candlestick Veto</label><ToggleSwitch checked={config.isCandlestickConfirmationEnabled} onChange={v => updateConfig('isCandlestickConfirmationEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>Initial Risk Veto</label><ToggleSwitch checked={config.isInitialRiskVetoEnabled} onChange={v => updateConfig('isInitialRiskVetoEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>Market Structure Veto</label><ToggleSwitch checked={config.isMarketStructureVetoEnabled} onChange={v => updateConfig('isMarketStructureVetoEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>SMC Reversal Veto</label><ToggleSwitch checked={config.isSmcVetoEnabled} onChange={v => updateConfig('isSmcVetoEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>ADX Trend Filter</label><ToggleSwitch checked={config.isAdxFilterEnabled} onChange={v => updateConfig('isAdxFilterEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>BTC Trend Confirmation</label><ToggleSwitch checked={config.isBtcConfirmationEnabled} onChange={v => updateConfig('isBtcConfirmationEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>VWAP Confirmation</label><ToggleSwitch checked={config.isVwapConfirmationEnabled} onChange={v => updateConfig('isVwapConfirmationEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>HTF Confirmation</label><ToggleSwitch checked={config.isHtfConfirmationEnabled} onChange={v => updateConfig('isHtfConfirmationEnabled', v)} /></div>
-                                {config.isHtfConfirmationEnabled && higherTimeFrames.length > 0 && (<select value={config.htfTimeFrame} onChange={e => updateConfig('htfTimeFrame', e.target.value)} className={formInputClass}><option value="auto">Auto</option>{higherTimeFrames.map(tf => <option key={tf} value={tf}>{tf}</option>)}</select>)}
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>Universal Volume Filter</label><ToggleSwitch checked={config.isVolumeFilterEnabled} onChange={v => updateConfig('isVolumeFilterEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>S/R Zone Analysis</label><ToggleSwitch checked={config.isSrAnalysisEnabled} onChange={v => updateConfig('isSrAnalysisEnabled', v)} /></div>
-
-                                <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-3 border-t border-slate-200 dark:border-slate-700">Trade Management</h4>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>Trade Guardian</label><ToggleSwitch checked={config.isTradeGuardianEnabled} onChange={v => updateConfig('isTradeGuardianEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>Agent Indicator Trail</label><ToggleSwitch checked={config.isAgentTrailEnabled} onChange={v => updateConfig('isAgentTrailEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>Mandatory Breakeven</label><ToggleSwitch checked={config.isBreakevenTrailEnabled} onChange={v => updateConfig('isBreakevenTrailEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>Universal Profit Trail</label><ToggleSwitch checked={config.isUniversalProfitTrailEnabled} onChange={v => updateConfig('isUniversalProfitTrailEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>Adaptive Take Profit</label><ToggleSwitch checked={config.isAdaptiveTpEnabled} onChange={v => updateConfig('isAdaptiveTpEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>Confirmation Candle Veto</label><ToggleSwitch checked={config.isConfirmationCandleEnabled} onChange={v => updateConfig('isConfirmationCandleEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>Minimum R:R Veto</label><ToggleSwitch checked={config.isMinRrEnabled} onChange={v => updateConfig('isMinRrEnabled', v)} /></div>
-                                <div className="flex items-center justify-between"><label className={formLabelClass}>Immediate Entry</label><ToggleSwitch checked={config.entryTiming === 'immediate'} onChange={v => updateConfig('entryTiming', v ? 'immediate' : 'onNextCandle')} /></div>
-                                 <div className={formGroupClass}>
-                                    <label htmlFor="aggressive-trail-mode" className={formLabelClass}>Aggressive Trail Mode</label>
-                                    <select id="aggressive-trail-mode" value={config.aggressiveTrailMode} onChange={e => updateConfig('aggressiveTrailMode', e.target.value as 'distance' | 'pnl')} className={formInputClass}>
-                                        <option value="distance">Distance to TP</option>
-                                        <option value="pnl">PNL %</option>
-                                    </select>
+                                <div className="flex items-center justify-between">
+                                    <label className={formLabelClass}>Higher TF Confirmation</label>
+                                    <ToggleSwitch checked={config.isHtfConfirmationEnabled} onChange={v => updateConfig('isHtfConfirmationEnabled', v)} />
                                 </div>
-                                <div className={formGroupClass}>
-                                    <label htmlFor="invalidation-sensitivity" className={formLabelClass}>Invalidation Sensitivity</label>
-                                    <select id="invalidation-sensitivity" value={config.invalidationSensitivity} onChange={e => updateConfig('invalidationSensitivity', e.target.value as 'low' | 'medium' | 'high')} className={formInputClass}>
-                                        <option value="low">Low</option>
-                                        <option value="medium">Medium</option>
-                                        <option value="high">High</option>
-                                    </select>
+                                {config.isHtfConfirmationEnabled && higherTimeFrames.length > 0 && (
+                                    <div className="flex flex-col gap-1.5 mt-2">
+                                        <label className={formLabelClass}>Confirmation Timeframe</label>
+                                        <select value={config.htfTimeFrame} onChange={e => updateConfig('htfTimeFrame', e.target.value)} className={formInputClass}>
+                                            <option value="auto">Auto</option>
+                                            {higherTimeFrames.map(tf => <option key={tf} value={tf}>{tf}</option>)}
+                                        </select>
+                                    </div>
+                                )}
+                                <div className="flex items-center justify-between">
+                                    <label className={formLabelClass}>Momentum Concordance</label>
+                                    <ToggleSwitch checked={config.isMomentumConcordanceEnabled} onChange={v => updateConfig('isMomentumConcordanceEnabled', v)} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <label className={formLabelClass}>Liquidation Cascade Veto</label>
+                                    <ToggleSwitch checked={config.isLiquidationFilterEnabled} onChange={v => updateConfig('isLiquidationFilterEnabled', v)} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <label className={formLabelClass}>ADX Trend Filter</label>
+                                    <ToggleSwitch checked={config.isAdxFilterEnabled} onChange={v => updateConfig('isAdxFilterEnabled', v)} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <label className={formLabelClass}>Market Breadth Filter</label>
+                                    <ToggleSwitch checked={config.isMarketBreadthFilterEnabled} onChange={v => updateConfig('isMarketBreadthFilterEnabled', v)} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <label className={formLabelClass}>BTC Trend Confirmation</label>
+                                    <ToggleSwitch checked={config.isBtcConfirmationEnabled} onChange={v => updateConfig('isBtcConfirmationEnabled', v)} />
+                                </div>
+                                {config.isBtcConfirmationEnabled && (
+                                    <ParamSlider 
+                                        label="BTC Trend Threshold"
+                                        value={config.btcConfirmationThreshold}
+                                        onChange={v => updateConfig('btcConfirmationThreshold', v)}
+                                        min={50} max={85} step={5}
+                                        valueDisplay={(v) => `${v}%`}
+                                    />
+                                )}
+                                <div className="flex items-center justify-between">
+                                    <label className={formLabelClass}>Capital Flow Veto</label>
+                                    <ToggleSwitch checked={config.isBtcCorrelationVetoEnabled} onChange={v => updateConfig('isBtcCorrelationVetoEnabled', v)} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <label className={formLabelClass}>VWAP Confirmation</label>
+                                    <ToggleSwitch checked={config.isVwapConfirmationEnabled} onChange={v => updateConfig('isVwapConfirmationEnabled', v)} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <label className={formLabelClass}>Universal Volume Filter</label>
+                                    <ToggleSwitch checked={config.isVolumeFilterEnabled} onChange={v => updateConfig('isVolumeFilterEnabled', v)} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <label className={formLabelClass}>Market Cohesion Filter</label>
+                                    <ToggleSwitch checked={config.isMarketCohesionEnabled} onChange={v => updateConfig('isMarketCohesionEnabled', v)} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <label className={formLabelClass}>Exhaustion Filter</label>
+                                    <ToggleSwitch checked={config.isExhaustionFilterEnabled} onChange={v => updateConfig('isExhaustionFilterEnabled', v)} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <label className={formLabelClass}>SMC Reversal Veto</label>
+                                    <ToggleSwitch checked={config.isSmcVetoEnabled} onChange={v => updateConfig('isSmcVetoEnabled', v)} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <label className={formLabelClass}>Market Structure Veto</label>
+                                    <ToggleSwitch checked={config.isMarketStructureVetoEnabled} onChange={v => updateConfig('isMarketStructureVetoEnabled', v)} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <label className={formLabelClass}>Supertrend Confirmation</label>
+                                    <ToggleSwitch checked={config.isSupertrendConfirmationEnabled} onChange={v => updateConfig('isSupertrendConfirmationEnabled', v)} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <label className={formLabelClass}>S/R Zone Analysis</label>
+                                    <ToggleSwitch checked={config.isSrAnalysisEnabled} onChange={v => updateConfig('isSrAnalysisEnabled', v)} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <label className={formLabelClass}>Candlestick Veto</label>
+                                    <ToggleSwitch checked={config.isCandlestickConfirmationEnabled} onChange={v => updateConfig('isCandlestickConfirmationEnabled', v)} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <label className={formLabelClass}>Confirmation Candle Veto</label>
+                                    <ToggleSwitch checked={config.isConfirmationCandleEnabled} onChange={v => updateConfig('isConfirmationCandleEnabled', v)} />
                                 </div>
                             </div>
                         )}
                     </div>
 
-                    <div className="flex gap-2 pt-2">
-                        <button onClick={handleRunBacktest} disabled={isLoading} className={`${buttonClass} bg-sky-600 hover:bg-sky-700 disabled:bg-slate-400 dark:disabled:bg-slate-600`}>
-                            <FlaskIcon className="w-4 h-4" /> Run Backtest
+
+                    <div className="flex gap-4">
+                        <button onClick={handleRunBacktest} disabled={isLoading} className={primaryButtonClass}>
+                            <FlaskIcon className="w-5 h-5"/>
+                            Run Backtest
                         </button>
-                         {canOptimize && (
-                            <button onClick={handleRunOptimization} disabled={isLoading} className={`${buttonClass} bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 dark:disabled:bg-slate-600`}>
-                                <SparklesIcon className="w-4 h-4" /> Optimize
-                            </button>
-                        )}
+                        <button onClick={handleRunOptimization} disabled={isLoading || !canOptimize} className={`${primaryButtonClass} bg-indigo-600 hover:bg-indigo-700`}>
+                            <SparklesIcon className="w-5 h-5"/>
+                            Optimize
+                        </button>
                     </div>
                 </div>
             </div>
 
             {/* --- Results Column --- */}
             <div className="lg:col-span-9">
-                 {isLoading ? (
-                    <div className="flex items-center justify-center h-full bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
+                {isLoading ? (
+                     <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 h-full flex items-center justify-center">
                         <div className="text-center">
-                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500 mx-auto"></div>
-                            <p className="mt-4 text-lg font-semibold">{loadingMessage}</p>
+                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500 mx-auto"></div>
+                             <p className="mt-4 text-slate-500 dark:text-slate-400">{loadingMessage}</p>
                         </div>
                     </div>
                 ) : error ? (
-                    <div className="flex items-center justify-center h-full bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
-                        <div className="text-center text-rose-600 dark:text-rose-400">
-                            <h3 className="text-lg font-bold mb-2">Backtest Failed</h3>
-                            <p>{error}</p>
-                            <button onClick={handleRunBacktest} className={`${primaryButtonClass} mt-4`}>Try Again</button>
-                        </div>
+                    <div className="bg-rose-100 dark:bg-rose-900/50 border-l-4 border-rose-500 text-rose-700 dark:text-rose-300 p-4 rounded-r-lg h-full flex flex-col justify-center">
+                        <h3 className="font-bold text-lg mb-2">An Error Occurred</h3>
+                        <p>{error}</p>
+                        <button onClick={() => setError(null)} className="mt-4 text-sm font-semibold text-rose-800 dark:text-rose-200 underline">Try again</button>
                     </div>
                 ) : backtestResult ? (
                     <BacktestResultDisplay 
-                        result={backtestResult}
+                        result={backtestResult} 
                         onReset={() => { setBacktestResult(null); setOptimizationResults(null); }}
-                        onApplyAndSwitchView={() => handleApplyAndSwitch(config.agentParams)}
+                        onApplyAndSwitchView={() => {
+                            globalActions.setTradingMode(config.tradingMode);
+                            globalActions.setSelectedPairs([config.selectedPair]);
+                            globalActions.setTimeFrame(config.chartTimeFrame);
+                            globalActions.setSelectedAgent(config.selectedAgent);
+                            globalActions.setInvestmentAmount(config.investmentAmount);
+                            globalActions.setMaxMarginLossPercent(config.maxMarginLossPercent);
+                            globalActions.setIsInitialRiskVetoEnabled(config.isInitialRiskVetoEnabled);
+                            globalActions.setIsHtfConfirmationEnabled(config.isHtfConfirmationEnabled);
+                            globalActions.setIsUniversalProfitTrailEnabled(config.isUniversalProfitTrailEnabled);
+                            globalActions.setHtfTimeFrame(config.htfTimeFrame);
+                            globalActions.setAgentParams(config.agentParams);
+                            globalActions.setLeverage(config.leverage);
+                            globalActions.setMarginType(config.marginType);
+                            globalActions.setIsMinRrEnabled(config.isMinRrEnabled);
+                            globalActions.setInvalidationSensitivity(config.invalidationSensitivity);
+                            globalActions.setIsAgentTrailEnabled(config.isAgentTrailEnabled);
+                            globalActions.setIsBreakevenTrailEnabled(config.isBreakevenTrailEnabled);
+                            globalActions.setIsMarketCohesionEnabled(config.isMarketCohesionEnabled);
+                            globalActions.setIsExhaustionFilterEnabled(config.isExhaustionFilterEnabled);
+                            globalActions.setIsSmcVetoEnabled(config.isSmcVetoEnabled);
+                            globalActions.setEntryTiming(config.entryTiming);
+                            globalActions.setIsAdaptiveTpEnabled(config.isAdaptiveTpEnabled);
+                            globalActions.setAggressiveTrailMode(config.aggressiveTrailMode);
+                            globalActions.setIsVwapConfirmationEnabled(config.isVwapConfirmationEnabled);
+                            globalActions.setIsBtcConfirmationEnabled(config.isBtcConfirmationEnabled);
+                            globalActions.setIsBtcCorrelationVetoEnabled(config.isBtcCorrelationVetoEnabled);
+                            globalActions.setBtcConfirmationThreshold(config.btcConfirmationThreshold);
+                            globalActions.setIsVolumeFilterEnabled(config.isVolumeFilterEnabled);
+                            globalActions.setIsAdxFilterEnabled(config.isAdxFilterEnabled);
+                            globalActions.setIsSrAnalysisEnabled(config.isSrAnalysisEnabled);
+                            globalActions.setIsCandlestickConfirmationEnabled(config.isCandlestickConfirmationEnabled);
+                            globalActions.setIsMarketStructureVetoEnabled(config.isMarketStructureVetoEnabled);
+                            globalActions.setIsSupertrendConfirmationEnabled(config.isSupertrendConfirmationEnabled);
+                            globalActions.setIsMarketBreadthFilterEnabled(config.isMarketBreadthFilterEnabled);
+                            globalActions.setIsLiquidationFilterEnabled(config.isLiquidationFilterEnabled);
+                            globalActions.setIsConfirmationCandleEnabled(config.isConfirmationCandleEnabled);
+                            globalActions.setIsMomentumConcordanceEnabled(config.isMomentumConcordanceEnabled);
+                            globalActions.setIsTradeGuardianEnabled(config.isTradeGuardianEnabled);
+                            globalActions.setIsHeikinAshiEnabled(config.isHeikinAshiEnabled);
+                            setActiveView('trading');
+                        }}
                     />
                 ) : optimizationResults ? (
                     <OptimizationResults 
-                        results={optimizationResults} 
-                        onApplyAndSwitchView={handleApplyAndSwitch} 
+                        results={optimizationResults}
                         onReset={() => { setBacktestResult(null); setOptimizationResults(null); }}
-                        pricePrecision={2}
+                        onApplyAndSwitchView={handleApplyAndSwitch}
+                        pricePrecision={8} // TODO: pass this down dynamically
                     />
                 ) : (
-                    <div className="flex items-center justify-center h-full bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 text-center">
-                        <div>
-                            <FlaskIcon className="w-12 h-12 text-slate-400 dark:text-slate-500 mx-auto mb-4" />
-                            <h3 className="text-xl font-bold">Backtesting & Optimization</h3>
-                            <p className="text-slate-500 dark:text-slate-400 mt-2 max-w-md mx-auto">
-                                Configure your bot, select a time period, and run a simulation on historical data to evaluate its performance before going live.
-                            </p>
+                     <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 h-full flex items-center justify-center">
+                        <div className="text-center">
+                            <FlaskIcon className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-4"/>
+                            <h3 className="font-bold text-lg">Run a Backtest or Optimization</h3>
+                            <p className="text-slate-500 dark:text-slate-400">Configure your parameters on the left and start a simulation to see the results here.</p>
                         </div>
                     </div>
                 )}

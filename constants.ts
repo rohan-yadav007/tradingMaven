@@ -45,6 +45,12 @@ export const AGENTS: Agent[] = [
         indicators: ["Supertrend"],
     },
     {
+        id: 21,
+        name: 'Pivot Point SuperTrend',
+        description: "A trend-following agent using a custom SuperTrend calculation based on a weighted average of recent pivot points to generate signals.",
+        indicators: ["Pivot Points", "ATR", "SuperTrend"],
+    },
+    {
         id: 19,
         name: 'AstraX Super-Agent',
         description: "A TF-agnostic, multi-pair, long-running agent that derives a unified market state from multiple timeframes to determine directional conviction and adaptive risk.",
@@ -268,6 +274,19 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     // Agent 20: Supertrend Flipper
     stf_atrPeriod: 10,
     stf_atrMultiplier: 3.0,
+    // -- Dynamic Multiplier --
+    stf_enableDynamicMultiplier: true,
+    stf_volatilityPeriod: 100,
+    stf_volatilityThreshold_low: 30,
+    stf_volatilityThreshold_high: 70,
+    stf_multiplier_low: 1.8,
+    stf_multiplier_normal: 3.0,
+    stf_multiplier_high: 4.5,
+
+    // Agent 21: Pivot Point SuperTrend
+    pps_pivotPeriod: 2,
+    pps_atrFactor: 3.0,
+    pps_atrPeriod: 10,
 
     // SMC Reversal Veto
     smc_divergenceLookback: 12,
@@ -290,14 +309,57 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
 // --- TIMEFRAME-SPECIFIC PARAMETER OVERRIDES ---
 
 export const SUPERTREND_FLIPPER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '1m':  { stf_atrPeriod: 10, stf_atrMultiplier: 2.0 },
-    '3m':  { stf_atrPeriod: 10, stf_atrMultiplier: 2.0 },
-    '5m':  { stf_atrPeriod: 10, stf_atrMultiplier: 2.5 },
-    '15m': { stf_atrPeriod: 12, stf_atrMultiplier: 3.0 },
-    '30m': { stf_atrPeriod: 12, stf_atrMultiplier: 3.0 },
-    '1h':  { stf_atrPeriod: 12, stf_atrMultiplier: 3.0 },
-    '4h':  { stf_atrPeriod: 14, stf_atrMultiplier: 3.5 },
-    '1d':  { stf_atrPeriod: 14, stf_atrMultiplier: 3.5 },
+    '1m':  { 
+        stf_atrPeriod: 10, stf_atrMultiplier: 2.0, 
+        stf_volatilityPeriod: 100, stf_volatilityThreshold_low: 35, stf_volatilityThreshold_high: 65,
+        stf_multiplier_low: 1.5, stf_multiplier_normal: 2.2, stf_multiplier_high: 3.5
+    },
+    '3m':  { 
+        stf_atrPeriod: 10, stf_atrMultiplier: 2.2,
+        stf_volatilityPeriod: 100, stf_volatilityThreshold_low: 35, stf_volatilityThreshold_high: 65,
+        stf_multiplier_low: 1.8, stf_multiplier_normal: 2.5, stf_multiplier_high: 4.0
+    },
+    '5m':  { 
+        stf_atrPeriod: 10, stf_atrMultiplier: 2.5,
+        stf_volatilityPeriod: 120, stf_volatilityThreshold_low: 30, stf_volatilityThreshold_high: 70,
+        stf_multiplier_low: 1.8, stf_multiplier_normal: 2.8, stf_multiplier_high: 4.5
+    },
+    '15m': { 
+        stf_atrPeriod: 12, stf_atrMultiplier: 3.0,
+        stf_volatilityPeriod: 150, stf_volatilityThreshold_low: 30, stf_volatilityThreshold_high: 70,
+        stf_multiplier_low: 2.0, stf_multiplier_normal: 3.0, stf_multiplier_high: 5.0
+    },
+    '30m': { 
+        stf_atrPeriod: 12, stf_atrMultiplier: 3.0,
+        stf_volatilityPeriod: 150, stf_volatilityThreshold_low: 30, stf_volatilityThreshold_high: 70,
+        stf_multiplier_low: 2.2, stf_multiplier_normal: 3.2, stf_multiplier_high: 5.5
+    },
+    '1h':  { 
+        stf_atrPeriod: 12, stf_atrMultiplier: 3.2,
+        stf_volatilityPeriod: 200, stf_volatilityThreshold_low: 25, stf_volatilityThreshold_high: 75,
+        stf_multiplier_low: 2.5, stf_multiplier_normal: 3.5, stf_multiplier_high: 6.0
+    },
+    '4h':  { 
+        stf_atrPeriod: 14, stf_atrMultiplier: 3.5,
+        stf_volatilityPeriod: 200, stf_volatilityThreshold_low: 25, stf_volatilityThreshold_high: 75,
+        stf_multiplier_low: 2.8, stf_multiplier_normal: 4.0, stf_multiplier_high: 6.5
+    },
+    '1d':  { 
+        stf_atrPeriod: 14, stf_atrMultiplier: 3.5,
+        stf_volatilityPeriod: 250, stf_volatilityThreshold_low: 20, stf_volatilityThreshold_high: 80,
+        stf_multiplier_low: 3.0, stf_multiplier_normal: 4.5, stf_multiplier_high: 7.0
+    },
+};
+
+export const PIVOT_POINT_SUPERTREND_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
+    '1m':  { pps_pivotPeriod: 5, pps_atrFactor: 3.5, pps_atrPeriod: 10 },
+    '3m':  { pps_pivotPeriod: 4, pps_atrFactor: 3.0, pps_atrPeriod: 10 },
+    '5m':  { pps_pivotPeriod: 3, pps_atrFactor: 3.0, pps_atrPeriod: 10 },
+    '15m': { pps_pivotPeriod: 2, pps_atrFactor: 3.0, pps_atrPeriod: 10 },
+    '30m': { pps_pivotPeriod: 2, pps_atrFactor: 3.0, pps_atrPeriod: 10 },
+    '1h':  { pps_pivotPeriod: 2, pps_atrFactor: 3.0, pps_atrPeriod: 12 },
+    '4h':  { pps_pivotPeriod: 2, pps_atrFactor: 3.5, pps_atrPeriod: 14 },
+    '1d':  { pps_pivotPeriod: 2, pps_atrFactor: 3.5, pps_atrPeriod: 14 },
 };
 
 export const CONCORDANCE_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
@@ -562,6 +624,7 @@ export const getAgentTimeframeSettings = (agentId: number, timeFrame: string): P
         case 18: agentSettings = CONDUCTOR_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 19: agentSettings = ASTRAX_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 20: agentSettings = SUPERTREND_FLIPPER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+        case 21: agentSettings = PIVOT_POINT_SUPERTREND_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
     }
 
     return { ...vetoSettings, ...smcSettings, ...concordanceSettings, ...agentSettings };

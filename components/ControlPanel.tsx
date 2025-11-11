@@ -331,14 +331,95 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                 onChange={v => updateParam('stf_atrPeriod', v)} 
                 min={5} max={20} step={1} 
             />
-            <ParamSlider 
-                label="ATR Multiplier" 
-                value={allParams.stf_atrMultiplier!} 
-                onChange={v => updateParam('stf_atrMultiplier', v)} 
-                min={1.0} max={5.0} step={0.1} 
-                valueDisplay={v => v.toFixed(1)}
-            />
+            {!allParams.stf_enableDynamicMultiplier && (
+                <ParamSlider 
+                    label="ATR Multiplier" 
+                    value={allParams.stf_atrMultiplier!} 
+                    onChange={v => updateParam('stf_atrMultiplier', v)} 
+                    min={1.0} max={5.0} step={0.1} 
+                    valueDisplay={v => v.toFixed(1)}
+                />
+            )}
+            <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                        <label className={formLabelClass}>Dynamic Multiplier</label>
+                        <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                Adjusts ATR multiplier based on market volatility percentile to reduce whipsaws in high volatility and react faster in low volatility.
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch checked={allParams.stf_enableDynamicMultiplier!} onChange={v => updateParam('stf_enableDynamicMultiplier', v)} />
+                </div>
+            </div>
+            {allParams.stf_enableDynamicMultiplier && (
+                <div className="pl-2 border-l-2 border-sky-500/30 space-y-4 mt-2">
+                    <ParamSlider 
+                        label="Low Vol Multiplier" 
+                        value={allParams.stf_multiplier_low!} 
+                        onChange={v => updateParam('stf_multiplier_low', v)} 
+                        min={1.0} max={3.0} step={0.1} 
+                        valueDisplay={v => v.toFixed(1)}
+                    />
+                     <ParamSlider 
+                        label="Normal Vol Multiplier" 
+                        value={allParams.stf_multiplier_normal!} 
+                        onChange={v => updateParam('stf_multiplier_normal', v)} 
+                        min={1.5} max={5.0} step={0.1} 
+                        valueDisplay={v => v.toFixed(1)}
+                    />
+                     <ParamSlider 
+                        label="High Vol Multiplier" 
+                        value={allParams.stf_multiplier_high!} 
+                        onChange={v => updateParam('stf_multiplier_high', v)} 
+                        min={3.0} max={7.0} step={0.1} 
+                        valueDisplay={v => v.toFixed(1)}
+                    />
+                    <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700">
+                        <ParamSlider 
+                            label="Volatility Lookback" 
+                            value={allParams.stf_volatilityPeriod!} 
+                            onChange={v => updateParam('stf_volatilityPeriod', v)} 
+                            min={50} max={250} step={10}
+                        />
+                         <ParamSlider 
+                            label="Low/High Threshold" 
+                            value={allParams.stf_volatilityThreshold_low!} 
+                            onChange={v => {
+                                updateParam('stf_volatilityThreshold_low', v);
+                                updateParam('stf_volatilityThreshold_high', 100 - v);
+                            }}
+                            min={10} max={40} step={1}
+                            valueDisplay={v => `${v}% / ${100-v}%`}
+                        />
+                    </div>
+                </div>
+            )}
         </div>);
+        case 21: // Pivot Point SuperTrend
+            return (<div className="space-y-4">
+                <ParamSlider 
+                   label="Pivot Point Period"
+                   value={allParams.pps_pivotPeriod!}
+                   onChange={(v) => updateParam('pps_pivotPeriod', v)}
+                   min={1} max={50} step={1}
+               />
+               <ParamSlider 
+                   label="ATR Period"
+                   value={allParams.pps_atrPeriod!}
+                   onChange={(v) => updateParam('pps_atrPeriod', v)}
+                   min={1} max={50} step={1}
+               />
+               <ParamSlider 
+                   label="ATR Factor"
+                   value={allParams.pps_atrFactor!}
+                   onChange={(v) => updateParam('pps_atrFactor', v)}
+                   min={1.0} max={10.0} step={0.1}
+                   valueDisplay={v => v.toFixed(1)}
+               />
+            </div>);
         default: return <p className="text-sm text-slate-500">This agent does not have any customizable parameters.</p>;
     }
 };
@@ -371,7 +452,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
         isSupertrendConfirmationEnabled,
         isMarketBreadthFilterEnabled, isLiquidationFilterEnabled,
-        isConfirmationCandleEnabled, isMomentumConcordanceEnabled, isTradeGuardianEnabled
+        isConfirmationCandleEnabled, isMomentumConcordanceEnabled, isTradeGuardianEnabled,
+        isHeikinAshiEnabled
     } = config;
 
 
@@ -387,7 +469,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setIsSmcVetoEnabled, setIsSrAnalysisEnabled, setIsCandlestickConfirmationEnabled, setIsMarketStructureVetoEnabled,
         setIsSupertrendConfirmationEnabled,
         setIsMarketBreadthFilterEnabled, setIsLiquidationFilterEnabled, setIsConfirmationCandleEnabled, setIsMomentumConcordanceEnabled,
-        setIsTradeGuardianEnabled
+        setIsTradeGuardianEnabled, setIsHeikinAshiEnabled
     } = actions;
     
     const [livePrice, setLivePrice] = useState(0);
@@ -529,6 +611,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     isMarketBreadthFilterEnabled: isMarketBreadthFilterEnabled,
                     isLiquidationFilterEnabled: isLiquidationFilterEnabled, isConfirmationCandleEnabled: isConfirmationCandleEnabled,
                     isMomentumConcordanceEnabled: isMomentumConcordanceEnabled, isTradeGuardianEnabled: isTradeGuardianEnabled,
+                    isHeikinAshiEnabled: isHeikinAshiEnabled,
                 };
 
                 const signal = await getTradingSignal(selectedAgent, previewKlines, previewConfig, htfKlines);
@@ -557,7 +640,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
         isSupertrendConfirmationEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, entryTiming,
         isMarketBreadthFilterEnabled, isLiquidationFilterEnabled,
-        isConfirmationCandleEnabled, isMomentumConcordanceEnabled, isTradeGuardianEnabled
+        isConfirmationCandleEnabled, isMomentumConcordanceEnabled, isTradeGuardianEnabled, isHeikinAshiEnabled,
     ]);
 
     useEffect(() => {
@@ -775,6 +858,27 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     {constants.AGENTS.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
                 </select>
                 <p className="text-xs text-slate-500 dark:text-slate-400">{selectedAgent.description}</p>
+                {selectedAgent.id === 20 && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700">
+                        <div className="flex items-center justify-between">
+                             <div className="flex items-center gap-1.5">
+                                <label htmlFor="heikin-ashi-toggle" className={formLabelClass}>
+                                    Use Heikin Ashi Candles
+                                </label>
+                                 <div className="relative group">
+                                    <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                                    <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                        Calculates Supertrend signals using smoothed Heikin Ashi candles instead of regular candles to filter noise.
+                                    </div>
+                                </div>
+                            </div>
+                            <ToggleSwitch
+                                checked={isHeikinAshiEnabled}
+                                onChange={setIsHeikinAshiEnabled}
+                            />
+                        </div>
+                    </div>
+                )}
                  {selectedAgent.id === 9 && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-4">
                         <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
@@ -816,6 +920,11 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     </div>
                 )}
                 {selectedAgent.id === 20 && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
+                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
+                    </div>
+                )}
+                {selectedAgent.id === 21 && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
                         <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
                     </div>

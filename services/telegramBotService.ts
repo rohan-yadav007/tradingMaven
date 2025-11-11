@@ -194,6 +194,8 @@ ID: \`${bot.id}\``;
                     isConfirmationCandleEnabled: constants.IS_CONFIRMATION_CANDLE_ENABLED,
                     isMomentumConcordanceEnabled: constants.IS_MOMENTUM_CONCORDANCE_ENABLED,
                     isTradeGuardianEnabled: true,
+                    // FIX: Added missing 'isHeikinAshiEnabled' property to satisfy the BotConfig type.
+                    isHeikinAshiEnabled: false,
                 };
                 
                 const newBot = _botManagerService.startBot(config);

@@ -26,10 +26,33 @@ export function getInitialAgentTargets(
     const { timeFrame, agent, investmentAmount, mode, leverage } = config;
     const params = config.agentParams as Required<AgentParams>;
 
+    const isLong = direction === 'LONG';
+    
+    // Special handling for Supertrend Flipper agent
+    if (agent.id === 20) {
+        // For the flipper, the trade runs until the next flip signal.
+        // We set a very wide, "virtual" SL and TP that are highly unlikely to be hit.
+        // The actual exit is handled by the flip logic in the bot manager.
+        const virtualStopDistance = entryPrice * 0.95; // A 95% stop loss.
+        const virtualTpDistance = entryPrice * 100;   // A 10,000% take profit.
+
+        const stopLossPrice = isLong ? entryPrice - virtualStopDistance : entryPrice + virtualStopDistance;
+        const takeProfitPrice = isLong ? entryPrice + virtualTpDistance : entryPrice - virtualTpDistance;
+
+        return {
+            stopLossPrice,
+            takeProfitPrice,
+            slReason: 'Agent Logic',
+            agentStopLoss: stopLossPrice,
+        };
+    }
+
+    // Leverage Factor: Use a square root scale to provide more room for leveraged trades without being excessive.
+    const leverageFactor = mode === TradingMode.USDSM_Futures && leverage > 1 ? Math.sqrt(leverage) : 1;
+
     const closes = klines.map(k => k.close);
     const highs = klines.map(k => k.high);
     const lows = klines.map(k => k.low);
-    const isLong = direction === 'LONG';
     
     const timeframeCategory = ['1m', '3m', '5m'].includes(timeFrame) ? 'scalping'
         : ['15m', '30m', '1h'].includes(timeFrame) ? 'day'
@@ -43,18 +66,11 @@ export function getInitialAgentTargets(
     const timeframeConfig = TIMEFRAME_ATR_CONFIG[timeFrame] || TIMEFRAME_ATR_CONFIG['5m'];
     let atrMultiplier = timeframeConfig.atrMultiplier;
 
-    if (agent.id === 20) { // Supertrend Flipper logic
-        const stValues = Supertrend.calculate({
-            high: highs, low: lows, close: closes,
-            period: params.stf_atrPeriod!, multiplier: params.stf_atrMultiplier!
-        });
-        const lastSt = getLast(stValues) as number | undefined;
-        agentStopLoss = lastSt || (isLong ? entryPrice - (currentAtr * atrMultiplier) : entryPrice + (currentAtr * atrMultiplier));
-    } else if (timeframeCategory === 'scalping') {
+    if (timeframeCategory === 'scalping') {
         // SCALPING LOGIC: Prioritize tight, invalidation-based stops near recent price action.
         const lastKline = klines[klines.length - 1];
         const prevKline = klines[klines.length - 2];
-        const atrBuffer = currentAtr * 0.25;
+        const atrBuffer = currentAtr * 0.25 * leverageFactor; // Apply leverage factor
 
         let stopCandidate: number;
         if (isLong) {
@@ -75,13 +91,17 @@ export function getInitialAgentTargets(
                 const bbValues = BollingerBands.calculate({ period: params.qsc_bbPeriod, stdDev: params.qsc_bbStdDev, values: closes });
                 const bb = getLast(bbValues) as BollingerBandsOutput | undefined;
                 if (bb) {
-                    agentStopLoss = isLong ? bb.lower - currentAtr * 0.2 : bb.upper + currentAtr * 0.2;
+                    agentStopLoss = isLong ? bb.lower - (currentAtr * 0.2 * leverageFactor) : bb.upper + (currentAtr * 0.2 * leverageFactor);
                 }
             }
         }
     } else { // DAY TRADING & SWING TRADING
         // Start with a standard ATR-based volatility stop as the default safe option.
-        const volatilityStop = isLong ? entryPrice - (currentAtr * atrMultiplier) : entryPrice + (currentAtr * atrMultiplier);
+        const stopDistance = agent.id === 21
+            ? currentAtr * atrMultiplier // No leverageFactor for Pivot Point Supertrend
+            : currentAtr * atrMultiplier * leverageFactor; // Default logic for others
+
+        const volatilityStop = isLong ? entryPrice - stopDistance : entryPrice + stopDistance;
         agentStopLoss = volatilityStop;
 
         // Now, calculate a structural stop as a potential *tighter* alternative.
@@ -93,7 +113,7 @@ export function getInitialAgentTargets(
                 const swingPoints = findSwingPoints(klines, params.conductor_swingLookback);
                 const lastSwing = isLong ? swingPoints.filter(p => p.type === 'low').pop() : swingPoints.filter(p => p.type === 'high').pop();
                 if (lastSwing) {
-                    const atrBuffer = currentAtr * (agent.id === 19 ? 0.25 : params.conductor_slAtrMultiplier);
+                    const atrBuffer = currentAtr * (agent.id === 19 ? 0.25 : params.conductor_slAtrMultiplier) * leverageFactor;
                     structuralStop = isLong ? lastSwing.price - atrBuffer : lastSwing.price + atrBuffer;
                 }
                 break;
@@ -569,10 +589,10 @@ export function getAgentExitSignal(
                 const psar = getLast(PSAR.calculate(psarInput)) as number | undefined;
                 if (psar) {
                     const atrValues = ATR.calculate({ high: highs, low: lows, close: closes, period: 14 });
-                    // FIX: Type 'unknown' is not assignable to type 'number'.
+                    // FIX: Type 'unknown' is not assignable to type 'number'. Corrected to handle potential 'undefined' and ensure it's a number for arithmetic operation.
                     const lastAtr = (getLast(atrValues) as number | undefined) || 0;
                     const buffer = lastAtr * 0.1;
-                    newStopLoss = isLong ? (psar as number) - buffer : (psar as number) + buffer;
+                    newStopLoss = isLong ? psar - buffer : psar + buffer;
                 }
             }
             break;

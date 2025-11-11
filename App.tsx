@@ -59,7 +59,8 @@ const AppContent: React.FC = () => {
         isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
         isSupertrendConfirmationEnabled,
         isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled,
-        isTradeGuardianEnabled
+        isTradeGuardianEnabled,
+        isHeikinAshiEnabled
     } = configState;
 
     const {
@@ -175,6 +176,7 @@ const AppContent: React.FC = () => {
                     isMomentumConcordanceEnabled,
                     isTradeGuardianEnabled,
                     finalEntryFailSafe: executionMode === 'live' ? 'fail-closed' : 'fail-open',
+                    isHeikinAshiEnabled,
                 };
 
                 botManagerService.startBot(botConfig);
@@ -193,7 +195,7 @@ const AppContent: React.FC = () => {
         isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, 
         isMarketStructureVetoEnabled, isSupertrendConfirmationEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, isMarketBreadthFilterEnabled,
-        isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled, isTradeGuardianEnabled,
+        isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled, isTradeGuardianEnabled, isHeikinAshiEnabled,
     ]);
 
     const handleClosePosition = useCallback(async (posToClose: Position, exitReason: string = "Manual Close", exitPriceOverride?: number) => {
@@ -566,6 +568,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 isMomentumConcordanceEnabled: config.isMomentumConcordanceEnabled,
                 isTradeGuardianEnabled: config.isTradeGuardianEnabled,
                 finalEntryFailSafe: config.finalEntryFailSafe,
+                isHeikinAshiEnabled: config.isHeikinAshiEnabled,
             },
             entryContext: executionDetails.entryContext,
             entryAtr: executionDetails.entryContext.atr14,

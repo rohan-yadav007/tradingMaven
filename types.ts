@@ -316,7 +316,20 @@ export interface AgentParams {
     // Agent 20: Supertrend Flipper
     stf_atrPeriod?: number;
     stf_atrMultiplier?: number;
+    // -- Dynamic Multiplier --
+    stf_enableDynamicMultiplier?: boolean;
+    stf_volatilityPeriod?: number; // ATR period for volatility calculation
+    stf_volatilityThreshold_low?: number; // Percentile
+    stf_volatilityThreshold_high?: number; // Percentile
+    stf_multiplier_low?: number;
+    stf_multiplier_normal?: number;
+    stf_multiplier_high?: number;
     
+    // Agent 21: Pivot Point SuperTrend
+    pps_pivotPeriod?: number;
+    pps_atrFactor?: number;
+    pps_atrPeriod?: number;
+
     // SMC Reversal Veto
     smc_divergenceLookback?: number;
     smc_volumeMultiplier?: number;
@@ -448,6 +461,7 @@ export interface BotConfig {
     isMomentumConcordanceEnabled: boolean;
     finalEntryFailSafe?: 'fail-open' | 'fail-closed';
     isTradeGuardianEnabled?: boolean;
+    isHeikinAshiEnabled: boolean;
 }
 
 export interface BotConfigSnapshot {
@@ -481,6 +495,7 @@ export interface BotConfigSnapshot {
     isMomentumConcordanceEnabled?: boolean;
     finalEntryFailSafe?: 'fail-open' | 'fail-closed';
     isTradeGuardianEnabled?: boolean;
+    isHeikinAshiEnabled: boolean;
 }
 
 export interface Position {

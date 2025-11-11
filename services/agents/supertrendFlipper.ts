@@ -1,26 +1,65 @@
 // services/agents/supertrendFlipper.ts
 
 import { Kline, BotConfig, TradeSignal, AgentParams } from '../../types';
-import { Supertrend, getLast, getPenultimate } from './agentUtils';
+import { Supertrend, getLast, getPenultimate, calculateHeikinAshi } from './agentUtils';
+import { ATR } from 'technicalindicators';
 
 export const getSupertrendFlipperSignal = (klines: Kline[], config: BotConfig): TradeSignal => {
     const params = config.agentParams as Required<AgentParams>;
-    const minKlines = (params.stf_atrPeriod || 10) + 2;
+    const minKlines = Math.max((params.stf_atrPeriod || 10) + 2, params.stf_volatilityPeriod || 100);
 
     if (klines.length < minKlines) {
         return { signal: 'HOLD', reasons: [`ℹ️ Insufficient data for Supertrend (${klines.length}/${minKlines})`] };
     }
 
-    const highs = klines.map(k => k.high);
-    const lows = klines.map(k => k.low);
-    const closes = klines.map(k => k.close);
+    const reasons: string[] = [];
+    let processedKlines = klines;
+
+    if (config.isHeikinAshiEnabled) {
+        processedKlines = calculateHeikinAshi(klines);
+        reasons.push('ℹ️ Using Heikin Ashi candles for calculation.');
+    }
+
+    const highs = processedKlines.map(k => k.high);
+    const lows = processedKlines.map(k => k.low);
+    const closes = processedKlines.map(k => k.close);
+
+    // --- DYNAMIC MULTIPLIER LOGIC ---
+    let activeMultiplier = params.stf_atrMultiplier!;
+    if (params.stf_enableDynamicMultiplier) {
+        // FIX: Use the correct variable names `highs`, `lows`, and `closes` for the `high`, `low`, and `close` properties.
+        const atrValues = ATR.calculate({ high: highs, low: lows, close: closes, period: params.stf_volatilityPeriod! });
+        const lastAtr = getLast(atrValues) as number | undefined;
+
+        if (lastAtr && atrValues.length > 2) {
+            const historicalAtr = atrValues.slice(0, -1).filter(v => v !== undefined) as number[];
+            const sortedAtr = [...historicalAtr].sort((a, b) => a - b);
+            const rank = sortedAtr.reduce((acc, val) => (val < lastAtr ? acc + 1 : acc), 0);
+            const percentile = (rank / sortedAtr.length) * 100;
+
+            if (percentile <= params.stf_volatilityThreshold_low!) {
+                activeMultiplier = params.stf_multiplier_low!;
+                reasons.push(`ℹ️ Volatility: Low (Multiplier: ${activeMultiplier})`);
+            } else if (percentile >= params.stf_volatilityThreshold_high!) {
+                activeMultiplier = params.stf_multiplier_high!;
+                reasons.push(`ℹ️ Volatility: High (Multiplier: ${activeMultiplier})`);
+            } else {
+                activeMultiplier = params.stf_multiplier_normal!;
+                reasons.push(`ℹ️ Volatility: Normal (Multiplier: ${activeMultiplier})`);
+            }
+        } else {
+            reasons.push(`⚠️ Could not determine volatility, using default multiplier.`);
+        }
+    }
+    // --- END DYNAMIC MULTIPLIER ---
+
 
     const supertrendValues = Supertrend.calculate({
         high: highs,
         low: lows,
         close: closes,
         period: params.stf_atrPeriod!,
-        multiplier: params.stf_atrMultiplier!
+        multiplier: activeMultiplier
     });
 
     const lastSt = getLast(supertrendValues) as number | undefined;
@@ -30,26 +69,41 @@ export const getSupertrendFlipperSignal = (klines: Kline[], config: BotConfig): 
     const prevClose = getPenultimate(closes) as number | undefined;
 
     if (lastSt === undefined || prevSt === undefined || lastClose === undefined || prevClose === undefined) {
-        return { signal: 'HOLD', reasons: ['ℹ️ Supertrend indicator is still warming up.'] };
+        reasons.push('ℹ️ Supertrend indicator is still warming up.');
+        return { signal: 'HOLD', reasons };
     }
 
-    // Determine the trend direction for the previous and current candle based on price vs. the Supertrend line.
-    const prevTrend = prevClose > prevSt ? 1 : -1; // 1 for bullish, -1 for bearish
-    const lastTrend = lastClose > lastSt ? 1 : -1;
+    const lastTrend = lastClose > lastSt ? 1 : -1; // 1 for bullish, -1 for bearish
+    const currentTrendText = `Current Trend: ${lastTrend === 1 ? 'Bullish' : 'Bearish'}`;
 
-    // A buy signal occurs when the trend flips from bearish (-1) to bullish (1).
+    // --- Immediate Entry Logic ---
+    if (config.entryTiming === 'immediate') {
+        reasons.push('ℹ️ Immediate entry mode enabled.');
+        reasons.push(`✅ ${currentTrendText}`);
+        if (lastTrend === 1) {
+            return { signal: 'BUY', reasons };
+        } else {
+            return { signal: 'SELL', reasons };
+        }
+    }
+
+    // --- Flip-based Entry Logic (default) ---
+    const prevTrend = prevClose > prevSt ? 1 : -1;
+    reasons.push('ℹ️ Flip entry mode enabled.');
+    
     const buySignal = lastTrend === 1 && prevTrend === -1;
-
-    // A sell signal occurs when the trend flips from bullish (1) to bearish (-1).
     const sellSignal = lastTrend === -1 && prevTrend === 1;
 
     if (buySignal) {
-        return { signal: 'BUY', reasons: [`✅ Supertrend flipped to Bullish.`] };
+        reasons.push(`✅ Supertrend flipped to Bullish.`);
+        return { signal: 'BUY', reasons };
     }
 
     if (sellSignal) {
-        return { signal: 'SELL', reasons: [`✅ Supertrend flipped to Bearish.`] };
+        reasons.push(`✅ Supertrend flipped to Bearish.`);
+        return { signal: 'SELL', reasons };
     }
 
-    return { signal: 'HOLD', reasons: [`ℹ️ No Supertrend flip detected. Current Trend: ${lastTrend === 1 ? 'Bullish' : 'Bearish'}`] };
+    reasons.push(`ℹ️ No Supertrend flip detected. ${currentTrendText}`);
+    return { signal: 'HOLD', reasons };
 };

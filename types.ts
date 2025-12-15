@@ -1,3 +1,4 @@
+
 // types.ts
 
 // --- Enums ---
@@ -283,35 +284,47 @@ export interface AgentParams {
     conductor_entryTrigger_candleVelocity?: number;
     conductor_entryTrigger_rsiHookPeriod?: number;
     
-    // Agent 19: AstraX Super-Agent (Re-architected)
+    // Agent 19: AstraX Super-Agent (Setup-First Architecture)
+    astraX_executionMode?: 'conviction' | 'scalp' | 'hybrid';
+    astraX_sweepLookback?: number;
+    astraX_breakoutVolMultiplier?: number;
+    astraX_pullbackEmaPeriod?: number;
+    astraX_adxThreshold?: number;
+    
+    // AstraX Extended Params
     astraX_baseThreshold?: number;
     astraX_strongTrendAdx?: number;
     astraX_chopAdx?: number;
-    astraX_regimeMultiplier_strong?: number;
-    astraX_regimeMultiplier_chop?: number;
     astraX_strongTrendThreshold?: number;
     astraX_chopThreshold?: number;
-    astraX_structureLookback?: number;
-    // --- Pillar Weights ---
+    astraX_regimeMultiplier_strong?: number;
+    astraX_regimeMultiplier_chop?: number;
+    
     astraX_weights_structure?: number;
     astraX_weights_momentum?: number;
     astraX_weights_context?: number;
     astraX_weights_confirmation?: number;
-    // --- Context Pillar Weights ---
+
     astraX_context_vwapWeight?: number;
     astraX_context_volatilityWeight?: number;
     astraX_context_marketBreadthWeight?: number;
     astraX_context_liquidationWeight?: number;
-    // --- Confirmation/Trigger Pillar ---
-    astraX_confirmation_minVolumeMultiplier?: number;
-    astraX_confirmation_candleBodyMinRatio?: number;
-    // --- Setup/Tactical Pillar ---
+
     astraX_scalp_retestEmaPeriod?: number;
     astraX_scalp_bbPeriod?: number;
     astraX_scalp_bbStdDev?: number;
-    // FIX: Add missing properties for AstraX agent to resolve type errors.
-    astraX_executionMode?: 'conviction' | 'scalp' | 'hybrid';
-    astraX_scalp_enabledInChop?: boolean;
+
+    astraX_confirmation_minVolumeMultiplier?: number;
+    astraX_confirmation_candleBodyMinRatio?: number;
+
+    astraX_supertrendPeriod?: number;
+    astraX_supertrendMultiplier?: number;
+
+    // AstraX Timeframe Specific Risk
+    astraX_sl_multiplier_sweep?: number;
+    astraX_sl_multiplier_breakout?: number;
+    astraX_sl_multiplier_pullback?: number;
+    astraX_breakout_candle_max_atr?: number; // Veto if breakout candle is too large (exhaustion)
     
     // Agent 20: Supertrend Flipper
     stf_atrPeriod?: number;
@@ -379,9 +392,10 @@ export interface MarketDataContext {
 export interface AstraXAnalysis {
     conviction: number; // -100 to 100
     regime: 'Strong Trend' | 'Developing Trend' | 'Choppy Market';
-    threshold: number;
-    finalBullishScore: number;
-    finalBearishScore: number;
+    thesis: 'Bullish' | 'Bearish' | 'Neutral';
+    setupName?: string;
+    // Optional legacy fields for backward compatibility if needed
+    threshold?: number;
     scores?: {
         structure: { bull: number, bear: number, weight: number },
         momentum: { bull: number, bear: number, weight: number },
@@ -391,16 +405,23 @@ export interface AstraXAnalysis {
     adjustments?: { reason: string, impact: number }[];
 }
 
+export interface BitcoinState {
+    state: 'CRASH' | 'PUMP' | 'RANGE' | 'TREND_UP' | 'TREND_DOWN' | 'NEUTRAL';
+    reason: string;
+}
+
 export interface TradeSignal {
     signal: 'BUY' | 'SELL' | 'HOLD';
     reasons: string[];
     entryPrice?: number;
     takeProfitPrice?: number;
     stopLossPrice?: number;
+    invalidationPrice?: number; // Critical level that, if hit, invalidates the setup immediately
     sentinelAnalysis?: SentinelAnalysis;
     conductorAnalysis?: ConductorAnalysis;
     astraXAnalysis?: AstraXAnalysis;
     tradeType?: 'conviction' | 'scalp';
+    btcContext?: BitcoinState; // Snapshot of BTC state at signal time
 }
 
 export interface TradeManagementSignal {
@@ -446,7 +467,7 @@ export interface BotConfig {
     isMarketStructureVetoEnabled?: boolean;
     isSupertrendConfirmationEnabled?: boolean;
     isAdaptiveTpEnabled: boolean;
-    aggressiveTrailMode: 'distance' | 'pnl';
+    aggressiveTrailMode: 'distance' | 'pnl' | 'disabled';
     agentParams: AgentParams;
     htfAgentParams?: AgentParams;
     pricePrecision: number;
@@ -487,7 +508,7 @@ export interface BotConfigSnapshot {
     htfTimeFrame?: 'auto' | string;
     entryTiming?: 'immediate' | 'onNextCandle';
     isAdaptiveTpEnabled?: boolean;
-    aggressiveTrailMode?: 'distance' | 'pnl';
+    aggressiveTrailMode?: 'distance' | 'pnl' | 'disabled';
     isInitialRiskVetoEnabled?: boolean;
     isMarketBreadthFilterEnabled?: boolean;
     isLiquidationFilterEnabled?: boolean;
@@ -501,6 +522,7 @@ export interface BotConfigSnapshot {
 export interface Position {
     id: number;
     botId: string | null;
+    agentId?: number; // ID of the agent that opened the position
     orderId: number | null;
     pair: string;
     mode: TradingMode;
@@ -516,6 +538,7 @@ export interface Position {
     agentName: string;
     takeProfitPrice: number;
     stopLossPrice: number;
+    invalidationPrice?: number; // Persisted structural invalidation level for Guardian
     initialTakeProfitPrice: number;
     initialStopLossPrice: number;
     initialRiskInPrice: number;
@@ -543,6 +566,7 @@ export interface Position {
     entryAtr?: number;
     tradeType?: 'conviction' | 'scalp';
     promotedFrom?: 'scalp';
+    btcContext?: BitcoinState; // Snapshot of BTC state at entry
 }
 
 export interface Trade extends Position {
@@ -630,7 +654,7 @@ export interface ADXOutput {
 export interface StochasticRSIOutput {
     k: number;
     d: number;
-}
+    }
 
 export interface VortexIndicatorOutput {
     pdi: number[];

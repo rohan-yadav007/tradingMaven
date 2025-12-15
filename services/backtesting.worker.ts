@@ -1,6 +1,7 @@
+
 // services/backtesting.worker.ts
 
-import { Kline, BotConfig, BacktestResult, Trade, AgentParams, Position, TradingMode, OptimizationResultItem, Agent, TradeSignal } from '../types';
+import { Kline, BotConfig, BacktestResult, OptimizationResultItem, Trade, AgentParams, Position, TradingMode, Agent, TradeSignal } from '../types';
 import { getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getTradeGuardianSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, getAdaptiveTakeProfit } from './riskManagementService';
 import * as constants from '../constants';
 import { ATR } from 'technicalindicators';
@@ -11,7 +12,7 @@ import { getTheSentinelSignal } from './agents/sentinel';
 import { getIchimokuTrendRiderSignal } from './agents/ichimokuTrendRider';
 import { getMomentumSwingTraderSignal } from './agents/momentumSwingTrader';
 import { getTheConductorSignal } from './agents/conductor';
-import { getAstraXSignal } from './agents/astrax';
+import { getAstraXSignal, getConfluenceTimeframes } from './agents/astrax';
 import { getSupertrendFlipperSignal } from './agents/supertrendFlipper';
 import { getPivotPointSupertrendSignal } from './agents/pivotPointSupertrend';
 import { applyTimeframeSettings, captureMarketContext, calculateHeikinAshi, isMarketCohesive, analyzeMicroMarketStructure } from './agents/agentUtils';
@@ -102,6 +103,8 @@ async function runFullAnalysisInWorker(
     ltfKlines?: Kline[],
     ethBtcKlines?: Kline[],
     livePrice?: number,
+    astraXKlinesMap?: Map<string, Kline[]>,
+    btcKlines?: Kline[]
 ): Promise<TradeSignal> {
     const config = applyTimeframeSettings(originalConfig);
     const params = config.agentParams as Required<AgentParams>;
@@ -112,7 +115,19 @@ async function runFullAnalysisInWorker(
     let agentSignal: TradeSignal;
 
     if (agent.id === 19) {
-        agentSignal = await getAstraXSignal(config, immediateKlines, livePrice, undefined, ltfKlines);
+        // Ensure map exists for AstraX and handles serialization edge cases
+        let map = astraXKlinesMap;
+        if (map && !(map instanceof Map)) {
+            // If it comes across as a plain object, reconstruct it
+            map = new Map(Object.entries(map));
+        }
+        if (!map) map = new Map<string, Kline[]>();
+        
+        // If the map is empty (e.g. in basic backtest without aggregation setup), fallback to single TF
+        if (!map.has(config.timeFrame)) {
+            map.set(config.timeFrame, klines);
+        }
+        agentSignal = await getAstraXSignal(config, map, immediateKlines, livePrice, undefined, ltfKlines, btcKlines);
     } else {
         switch (agent.id) {
             case 9: agentSignal = getQuantumScalperSignal(klines, config, htfContext); break;
@@ -222,7 +237,7 @@ async function runFullAnalysisInWorker(
         }
     }
 
-    const { stopLossPrice, takeProfitPrice, agentStopLoss } = getInitialAgentTargets(klines, currentPrice, agentSignal.signal === 'BUY' ? 'LONG' : 'SHORT', config);
+    const { stopLossPrice, takeProfitPrice, agentStopLoss } = getInitialAgentTargets(klines, currentPrice, agentSignal.signal === 'BUY' ? 'LONG' : 'SHORT', config, agentSignal.tradeType);
     const profitabilityValidation = validateTradeProfitability(currentPrice, agentStopLoss, takeProfitPrice, agentSignal.signal === 'BUY' ? 'LONG' : 'SHORT', config);
     if (!profitabilityValidation.isValid) {
         return { signal: 'HOLD', reasons: [...reasons, profitabilityValidation.reason] };
@@ -248,10 +263,29 @@ async function simulateBot(baseKlines: Kline[], config: BotConfig, htfKlines?: K
     const aggregatedKlines = aggregateKlines(baseKlines, config.timeFrame);
     const htfAggregatedKlines = htfKlines ? aggregateKlines(htfKlines, config.htfTimeFrame === 'auto' ? constants.getHigherTimeframe(config.timeFrame) || config.timeFrame : config.htfTimeFrame) : undefined;
 
-    const getHtfKlinesForTimestamp = (timestamp: number) => {
-        if (!htfAggregatedKlines) return undefined;
-        return htfAggregatedKlines.filter(k => k.time <= timestamp);
+    // Preparation for AstraX in Backtesting
+    const isAstraX = config.agent.id === 19;
+    const astraxTfs = isAstraX ? getConfluenceTimeframes(config.timeFrame) : [];
+    
+    // We need to maintain aggregated histories for all required AstraX timeframes
+    const astraxAggregatedData: Map<string, Kline[]> = new Map();
+    // Pre-calculate aggregated arrays for efficiency if needed, or aggregate on the fly. 
+    // For simplicity and correctness in avoiding look-ahead, we will slice the baseKlines up to 'i' and aggregate dynamically or
+    // aggregate everything once and then slice. Aggregating everything once is safer provided we access strictly by timestamp <= current time.
+    if (isAstraX) {
+        astraxTfs.forEach(tf => {
+            astraxAggregatedData.set(tf, aggregateKlines(baseKlines, tf));
+        });
     }
+
+    const getKlinesUntilTimestamp = (sourceKlines: Kline[], timestamp: number) => {
+        // Binary search or simple filter? Filter is O(N), loop is O(N).
+        // Given we iterate forward, we can optimize by maintaining an index, but simple filter is safer for now.
+        // Optimization: Find index where time > timestamp, slice up to there.
+        let idx = sourceKlines.findIndex(k => k.time > timestamp);
+        if (idx === -1) return sourceKlines; // All klines are past
+        return sourceKlines.slice(0, idx);
+    };
     
     // Warm-up period for indicators
     const startIdx = 200;
@@ -263,7 +297,7 @@ async function simulateBot(baseKlines: Kline[], config: BotConfig, htfKlines?: K
         const currentKline = aggregatedKlines[i];
         const klinesForAnalysis = aggregatedKlines.slice(0, i + 1);
         const currentPrice = currentKline.close;
-        const currentHtfKlines = getHtfKlinesForTimestamp(currentKline.time);
+        const currentHtfKlines = htfAggregatedKlines ? getKlinesUntilTimestamp(htfAggregatedKlines, currentKline.time) : undefined;
 
         // --- POSITION MANAGEMENT ---
         if (openPosition) {
@@ -344,11 +378,22 @@ async function simulateBot(baseKlines: Kline[], config: BotConfig, htfKlines?: K
 
         // --- ENTRY LOGIC ---
         if (!openPosition) {
-            // Note: In backtesting, we can't use immediateKlines or ltfKlines in getTradingSignal
-            // as it would be looking into the future. We can only use the data up to the current candle `i`.
-            const signal = await runFullAnalysisInWorker(config.agent, klinesForAnalysis, config, currentHtfKlines, undefined, undefined, undefined, currentPrice);
+            // Build snapshot map for AstraX
+            let snapshotMap: Map<string, Kline[]> | undefined;
+            if (isAstraX) {
+                snapshotMap = new Map();
+                astraxTfs.forEach(tf => {
+                    const fullHistory = astraxAggregatedData.get(tf);
+                    if (fullHistory) {
+                        snapshotMap!.set(tf, getKlinesUntilTimestamp(fullHistory, currentKline.time));
+                    }
+                });
+            }
+
+            const signal = await runFullAnalysisInWorker(config.agent, klinesForAnalysis, config, currentHtfKlines, undefined, undefined, undefined, currentPrice, snapshotMap);
+            
             if (signal.signal !== 'HOLD') {
-                const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(klinesForAnalysis, currentPrice, signal.signal === 'BUY' ? 'LONG' : 'SHORT', config);
+                const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(klinesForAnalysis, currentPrice, signal.signal === 'BUY' ? 'LONG' : 'SHORT', config, signal.tradeType);
                 
                 const validation = validateTradeProfitability(currentPrice, agentStopLoss, takeProfitPrice, signal.signal === 'BUY' ? 'LONG' : 'SHORT', config);
 
@@ -360,6 +405,7 @@ async function simulateBot(baseKlines: Kline[], config: BotConfig, htfKlines?: K
                     openPosition = {
                         id: Date.now() + i,
                         botId: 'backtest',
+                        agentId: config.agent.id, // Populate agentId
                         orderId: null,
                         pair: config.pair,
                         mode: config.mode,
@@ -424,12 +470,11 @@ async function simulateBot(baseKlines: Kline[], config: BotConfig, htfKlines?: K
                             isMomentumConcordanceEnabled: config.isMomentumConcordanceEnabled,
                             isTradeGuardianEnabled: config.isTradeGuardianEnabled,
                             finalEntryFailSafe: config.finalEntryFailSafe,
-                            // FIX: Added missing 'isHeikinAshiEnabled' property to satisfy the BotConfigSnapshot type.
                             isHeikinAshiEnabled: config.isHeikinAshiEnabled,
                         },
                         entryContext: captureMarketContext(klinesForAnalysis, currentHtfKlines),
-                        // FIX: Explicitly cast to number to satisfy the type checker.
                         entryAtr: getLast(ATR.calculate({high: klinesForAnalysis.map(k=>k.high), low: klinesForAnalysis.map(k=>k.low), close: klinesForAnalysis.map(k=>k.close), period: 14})) as number | undefined,
+                        tradeType: signal.tradeType,
                     };
                 }
             }
@@ -494,11 +539,13 @@ const runBacktestInWorker = async (id: number, payload: { klines: Kline[], confi
 
 const runLiveAnalysisInWorker = async (id: number, payload: { 
     agent: Agent, klines: Kline[], config: BotConfig, htfKlines?: Kline[], 
-    immediateKlines?: Kline[], ltfKlines?: Kline[], ethBtcKlines?: Kline[], livePrice?: number 
+    immediateKlines?: Kline[], ltfKlines?: Kline[], ethBtcKlines?: Kline[], livePrice?: number,
+    astraXKlinesMap?: Map<string, Kline[]>,
+    btcKlines?: Kline[]
 }) => {
     try {
-        const { agent, klines, config, htfKlines, immediateKlines, ltfKlines, ethBtcKlines, livePrice } = payload;
-        const result = await runFullAnalysisInWorker(agent, klines, config, htfKlines, immediateKlines, ltfKlines, ethBtcKlines, livePrice);
+        const { agent, klines, config, htfKlines, immediateKlines, ltfKlines, ethBtcKlines, livePrice, astraXKlinesMap, btcKlines } = payload;
+        const result = await runFullAnalysisInWorker(agent, klines, config, htfKlines, immediateKlines, ltfKlines, ethBtcKlines, livePrice, astraXKlinesMap, btcKlines);
         postMessage({ type: 'result', id, payload: result });
     } catch (e: any) {
         postMessage({ type: 'error', id, error: e.message });

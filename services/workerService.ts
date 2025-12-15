@@ -1,3 +1,4 @@
+
 // services/workerService.ts
 
 import { Kline, BotConfig, BacktestResult, OptimizationResultItem, TradeSignal, Agent } from '../types';
@@ -64,6 +65,8 @@ export function runLiveAnalysis(
     ltfKlines?: Kline[],
     ethBtcKlines?: Kline[],
     livePrice?: number,
+    astraXKlinesMap?: Map<string, Kline[]>,
+    btcKlines?: Kline[]
 ): Promise<TradeSignal> {
      return new Promise((resolve, reject) => {
         const id = requestIdCounter++;
@@ -71,7 +74,7 @@ export function runLiveAnalysis(
         worker.postMessage({
             type: 'runLiveAnalysis',
             id,
-            payload: { agent, klines, config, htfKlines, immediateKlines, ltfKlines, ethBtcKlines, livePrice },
+            payload: { agent, klines, config, htfKlines, immediateKlines, ltfKlines, ethBtcKlines, livePrice, astraXKlinesMap, btcKlines },
         });
     });
 }

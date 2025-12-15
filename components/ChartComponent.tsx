@@ -1,3 +1,5 @@
+
+
 import React, { useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react';
 import { type Kline, LiveTicker, TradingMode } from '../types';
 import * as constants from '../constants';
@@ -5,6 +7,7 @@ import { SearchableDropdown } from './SearchableDropdown';
 import { createChart, ColorType, type IChartApi, type ISeriesApi, type CandlestickData, type UTCTimestamp, TickMarkType } from 'lightweight-charts';
 import { botManagerService } from '../services/botManagerService';
 import { useTradingConfigState } from '../contexts/TradingConfigContext';
+import { getSyncedNow } from '../services/binanceService';
 
 interface ChartComponentProps {
     data: Kline[];
@@ -34,34 +37,46 @@ const getTimeframeDurationMs = (timeframe: string): number => {
     }
 };
 
-const CountdownTimer: React.FC<{ lastKline: Kline; timeframe: string }> = ({ lastKline, timeframe }) => {
-    const [countdown, setCountdown] = useState('');
+const CountdownTimer: React.FC<{ timeframe: string }> = ({ timeframe }) => {
+    const [countdown, setCountdown] = useState('--:--');
     const timeframeMs = getTimeframeDurationMs(timeframe);
 
     useEffect(() => {
-        if (!timeframeMs || !lastKline) return;
+        if (!timeframeMs) return;
 
-        const interval = setInterval(() => {
-            const lastTime = lastKline.time;
-            const nextCloseTime = Math.floor(lastTime / timeframeMs) * timeframeMs + timeframeMs;
-            const remaining = nextCloseTime - Date.now();
+        const updateTimer = () => {
+            const now = getSyncedNow();
+            
+            // Calculate the next absolute boundary for this timeframe
+            // e.g. for 5m, boundaries are :00, :05, :10...
+            const nextBoundary = Math.ceil(now / timeframeMs) * timeframeMs;
+            const remaining = nextBoundary - now;
             
             if (remaining <= 0) {
+                // Small buffer to prevent flashing 00:00 for too long or negative
                 setCountdown('00:00');
             } else {
-                const minutes = Math.floor((remaining / 1000) / 60);
-                const seconds = Math.floor((remaining / 1000) % 60);
-                setCountdown(`${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`);
+                const hours = Math.floor((remaining / (1000 * 60 * 60)));
+                const minutes = Math.floor((remaining % (1000 * 60 * 60)) / (1000 * 60));
+                const seconds = Math.floor((remaining % (1000 * 60)) / 1000);
+                
+                if (hours > 0) {
+                    setCountdown(`${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`);
+                } else {
+                    setCountdown(`${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`);
+                }
             }
-        }, 500);
+        };
+
+        // Update immediately then every 100ms for smoothness
+        updateTimer();
+        const interval = setInterval(updateTimer, 100);
 
         return () => clearInterval(interval);
-    }, [lastKline, timeframe, timeframeMs]);
-    
-    if(!lastKline) return null;
+    }, [timeframe, timeframeMs]);
 
     return (
-         <div className="absolute top-4 left-4 z-20 bg-slate-100/80 dark:bg-slate-900/80 backdrop-blur-sm px-2 py-1 rounded-md text-slate-700 dark:text-slate-200 text-xs font-mono">
+         <div className="absolute top-4 left-4 z-20 bg-slate-100/80 dark:bg-slate-900/80 backdrop-blur-sm px-2 py-1 rounded-md text-slate-700 dark:text-slate-200 text-xs font-mono shadow-sm border border-slate-200 dark:border-slate-700">
              Candle closes in: <span className="font-bold">{countdown}</span>
         </div>
     );
@@ -74,7 +89,9 @@ const FundingRateTimer: React.FC<{ fundingInfo: { rate: string; time: number } }
         if (!fundingInfo) return;
 
         const interval = setInterval(() => {
-            const remaining = fundingInfo.time - Date.now();
+            const now = getSyncedNow();
+            const remaining = fundingInfo.time - now;
+            
             if (remaining <= 0) {
                 setCountdown('00:00:00');
             } else {
@@ -358,7 +375,7 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
                     </div>
                 )}
                 <div ref={chartContainerRef} className="w-full h-full" />
-                {data.length > 0 && <CountdownTimer lastKline={data[data.length - 1]} timeframe={chartTimeFrame} />}
+                {data.length > 0 && <CountdownTimer timeframe={chartTimeFrame} />}
             </div>
         </div>
     );

@@ -1,3 +1,4 @@
+
 // services/botManagerService.ts
 
 import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, TradingMode, MarketDataContext, AgentParams } from '../types';
@@ -8,8 +9,7 @@ import { telegramBotService } from './telegramBotService';
 import { WebSocketManager } from './webSocketManager';
 import { sharedKlineService } from './sharedKlineService';
 import * as constants from '../constants';
-// FIX: Added getAstraXRegimeAndDirection to resolve a missing import error.
-import { getLowerConfluenceTimeframes, getAstraXRegimeAndDirection } from './agents/astrax';
+import { getConfluenceTimeframes, getAstraXRegimeAndDirection } from './agents/astrax';
 
 const MAX_LOG_ENTRIES = 100;
 
@@ -41,8 +41,17 @@ export interface BotHandlers {
 class BotInstance {
     public bot: RunningBot;
     public klines: Kline[] = [];
+    
+    // --- Data Dependencies (Shared Pool References) ---
+    public btcKlines: Kline[] | undefined;
+    public htfKlines: Kline[] | undefined;
+    public ltfKlines: Kline[] | undefined;
+    public immediateKlines: Kline[] | undefined;
+    public ethBtcKlines: Kline[] | undefined;
+    public astraXKlinesMap: Map<string, Kline[]> = new Map();
+
     private onUpdate: (bot: RunningBot) => void;
-    private handlers: BotHandlers;
+    public handlers: BotHandlers;
     public subscriptions: { type: 'ticker' | 'kline', pair: string, timeFrame?: string, mode: TradingMode, callback: Function }[] = [];
     private executing = false;
     private isInitialized: boolean = false;
@@ -52,7 +61,7 @@ class BotInstance {
             id: `bot-${Date.now()}-${config.pair.replace('/', '')}`,
             config,
             status: BotStatus.Starting,
-            log: [{ timestamp: new Date(), message: `Bot created for ${config.pair} on ${config.timeFrame}.`, type: LogType.Info }],
+            log: [{ timestamp: new Date(binanceService.getSyncedNow()), message: `Bot created for ${config.pair} on ${config.timeFrame}.`, type: LogType.Info }],
             analysis: null,
             openPositionId: null,
             openPosition: null,
@@ -74,19 +83,27 @@ class BotInstance {
         this.handlers = handlers;
     }
 
-    public async initialize(initialKlines: Kline[]) {
+    public initialize = async (initialKlines: Kline[]) => {
         this.addLog('Initializing with historical data...', LogType.Info);
         this.klines = initialKlines;
         this.bot.klinesLoaded = this.klines.length;
         this.addLog(`Initialized with ${this.klines.length} ${this.bot.config.timeFrame} klines.`, LogType.Success);
         
+        const entryMode = this.bot.config.entryTiming === 'immediate' ? 'Immediate (Tick-based)' : 'On Candle Close';
+        this.addLog(`Entry Timing Mode: ${entryMode}`, LogType.Info);
+
         if ([20, 21].includes(this.bot.config.agent.id) && this.bot.config.entryTiming !== 'immediate') {
              this.addLog(`Flipper agent active. Awaiting first live trend change to enter.`, LogType.Info);
         }
     
         this.isInitialized = false; // Mark that we are in the startup phase
-        this.addLog("Performing initial analysis on startup.", LogType.Info);
+        
+        // Perform initial analysis mainly for UI preview, execute only if Immediate
         const executeOnStart = this.bot.config.entryTiming === 'immediate';
+        if (executeOnStart) {
+             this.addLog("Performing initial analysis (Immediate Mode).", LogType.Info);
+        }
+        
         await this.runAnalysis({ execute: executeOnStart, reason: 'Initial Analysis' });
         
         this.isInitialized = true; // Mark startup phase as complete
@@ -94,64 +111,25 @@ class BotInstance {
         if (this.bot.status === BotStatus.Starting) {
             this.updateState({ 
                 status: BotStatus.Monitoring, 
-                lastResumeTimestamp: Date.now(),
+                lastResumeTimestamp: binanceService.getSyncedNow(),
             });
         }
         
         this.onUpdate(this.bot); // Ensure final state is rendered
     }    
 
-    public updateState(partialState: Partial<RunningBot>) {
+    public updateState = (partialState: Partial<RunningBot>) => {
         this.bot = { ...this.bot, ...partialState };
         this.onUpdate(this.bot);
     }
 
-    addLog(message: string, type: LogType = LogType.Info) {
-        const newLogEntry: BotLogEntry = { timestamp: new Date(), message, type };
+    addLog = (message: string, type: LogType = LogType.Info) => {
+        const newLogEntry: BotLogEntry = { timestamp: new Date(binanceService.getSyncedNow()), message, type };
         const newLog = [newLogEntry, ...this.bot.log].slice(0, MAX_LOG_ENTRIES);
         this.updateState({ log: newLog });
     }
     
-    private getAnalysisDependencies(): { pair: string, timeframe: string, mode: TradingMode }[] {
-        const { config } = this.bot;
-        const dependencies: { pair: string, timeframe: string, mode: TradingMode }[] = [];
-
-        dependencies.push({ pair: config.pair, timeframe: config.timeFrame, mode: config.mode });
-
-        if (config.isHtfConfirmationEnabled) {
-            const htf = config.htfTimeFrame === 'auto'
-                ? TIME_FRAMES[TIME_FRAMES.indexOf(config.timeFrame) + 1]
-                : config.htfTimeFrame;
-            if (htf) {
-                dependencies.push({ pair: config.pair, timeframe: htf, mode: config.mode });
-            }
-        }
-        
-        if (config.isMomentumConcordanceEnabled) {
-             dependencies.push({ pair: config.pair, timeframe: '1m', mode: config.mode });
-             const microTf = getMicroTimeframe(config.timeFrame);
-             if (microTf !== '1m' && !dependencies.some(d => d.timeframe === microTf)) {
-                dependencies.push({ pair: config.pair, timeframe: microTf, mode: config.mode });
-             }
-        }
-
-        if (config.isBtcCorrelationVetoEnabled) {
-            dependencies.push({ pair: 'ETH/BTC', timeframe: config.timeFrame, mode: TradingMode.Spot });
-        }
-        
-        if (config.agent.id === 19) {
-            const astraxTfs = getLowerConfluenceTimeframes(config.timeFrame);
-            astraxTfs.forEach(tf => {
-                if (!dependencies.some(d => d.pair === config.pair && d.timeframe === tf)) {
-                    dependencies.push({ pair: config.pair, timeframe: tf, mode: config.mode });
-                }
-            });
-        }
-
-        return dependencies;
-    }
-
-    public async runAnalysis(options: { execute: boolean, reason: string, klinesOverride?: Kline[] }) {
+    public runAnalysis = async (options: { execute: boolean, reason: string, klinesOverride?: Kline[] }) => {
         const klinesToUse = options.klinesOverride || this.klines;
         if (klinesToUse.length < 50 && this.bot.config.agent.id !== 19) return;
 
@@ -159,6 +137,7 @@ class BotInstance {
             let klinesForAnalysis = klinesToUse;
 
             // Preview logic should only run for immediate mode, when no override is given
+            // This constructs a "virtual" candle using the current live price to allow mid-candle signals
             if (!options.klinesOverride && this.bot.config.entryTiming === 'immediate' && this.bot.livePrice && klinesToUse.length > 0) {
                 const lastKline = klinesToUse[klinesToUse.length - 1];
                 if (!lastKline.isFinal) {
@@ -173,37 +152,18 @@ class BotInstance {
                 }
             }
 
-            let htfKlines: Kline[] | undefined;
-            if (this.bot.config.isHtfConfirmationEnabled) {
-                try {
-                    const htf = this.bot.config.htfTimeFrame === 'auto' 
-                        ? TIME_FRAMES[TIME_FRAMES.indexOf(this.bot.config.timeFrame) + 1] 
-                        : this.bot.config.htfTimeFrame;
-                    if (htf) htfKlines = await sharedKlineService.getData(this.bot.config.pair, htf, this.bot.config.mode);
-                } catch(e) { this.addLog(`Warning: could not fetch HTF klines: ${e}`, LogType.Error); }
-            }
-            
-            let ltfKlines: Kline[] | undefined;
-            if (this.bot.config.isMomentumConcordanceEnabled) {
-                try {
-                    const ltfTimeframe = getMicroTimeframe(this.bot.config.timeFrame);
-                    ltfKlines = await sharedKlineService.getData(this.bot.config.pair, ltfTimeframe, this.bot.config.mode);
-                } catch (e) { this.addLog(`Could not fetch LTF data for concordance check: ${e instanceof Error ? e.message : String(e)}`, LogType.Error); }
-            }
-
-            let immediateKlines: Kline[] | undefined;
-            if (this.bot.config.isMomentumConcordanceEnabled) {
-                try { immediateKlines = await sharedKlineService.getData(this.bot.config.pair, '1m', this.bot.config.mode);
-                } catch (e) { this.addLog(`Could not fetch immediate (1m) data: ${e instanceof Error ? e.message : String(e)}`, LogType.Error); }
-            }
-            
-            let ethBtcKlines: Kline[] | undefined;
-            if (this.bot.config.isBtcCorrelationVetoEnabled) {
-                try { ethBtcKlines = await sharedKlineService.getData('ETH/BTC', this.bot.config.timeFrame, TradingMode.Spot);
-                } catch (e) { this.addLog(`Could not fetch ETH/BTC data: ${e instanceof Error ? e.message : String(e)}`, LogType.Error); }
-            }
-            
-            const signal = await getTradingSignal(this.bot.config.agent, klinesForAnalysis, this.bot.config, htfKlines, immediateKlines, ltfKlines, ethBtcKlines, this.bot.livePrice);
+            const signal = await getTradingSignal(
+                this.bot.config.agent, 
+                klinesForAnalysis, 
+                this.bot.config, 
+                this.htfKlines, 
+                this.immediateKlines, 
+                this.ltfKlines, 
+                this.ethBtcKlines, 
+                this.bot.livePrice,
+                this.astraXKlinesMap,
+                this.btcKlines
+            );
             
             this.updateState({ analysis: signal });
             
@@ -239,20 +199,8 @@ class BotInstance {
                     }
                 }
             } else if (signal.signal === 'HOLD' && !this.bot.openPosition && this.bot.config.entryTiming === 'onNextCandle') {
-                this.addLog(`Analysis Result (Reason: ${options.reason}): HOLD`, LogType.Info);
-                const titleLine = `Analysis Result: HOLD`;
-                const reasonLines = signal.reasons.map(reason => {
-                    let logType = LogType.Info;
-                    if (reason.startsWith('✅')) logType = LogType.Success;
-                    else if (reason.startsWith('❌')) logType = LogType.Error;
-                    else if (reason.startsWith('⚠️')) logType = LogType.Status;
-                    
-                    const message = `- ${reason.substring(2).trim()}`;
-                    return { message, logType };
-                });
-                
-                this.addLog(titleLine, LogType.Info);
-                reasonLines.forEach(line => this.addLog(line.message, line.logType));
+                // Verbose logging for "On Candle Close" mode so the user knows it ran.
+                this.addLog(`Candle Closed. Analysis Result: HOLD`, LogType.Info);
             }
 
         } catch (error) {
@@ -261,29 +209,22 @@ class BotInstance {
         }
     }
     
-    public async updateLivePrice(price: number, tickerData: LiveTicker) {
+    public updateLivePrice = async (price: number, tickerData: LiveTicker) => {
         const expectedPair = this.bot.config.pair.replace('/', '').toLowerCase();
         if (tickerData.pair.toLowerCase() !== expectedPair) return;
     
-        this.updateState({ livePrice: price, liveTicker: tickerData, lastPriceUpdateTimestamp: Date.now() });
+        this.updateState({ livePrice: price, liveTicker: tickerData, lastPriceUpdateTimestamp: binanceService.getSyncedNow() });
     
         if (this.bot.openPosition) {
             await this.managePositionOnTick(price);
             this.checkPriceBoundaries(price);
         } else if (this.bot.status === BotStatus.Monitoring) {
             const { config } = this.bot;
-            // Merge defaults with user overrides to get effective params for the check.
-            const params = { ...constants.DEFAULT_AGENT_PARAMS, ...config.agentParams };
-
-            const isAstraXOnNextCandle = config.agent.id === 19 && config.entryTiming === 'onNextCandle';
-            const isImmediateMode = config.entryTiming === 'immediate';
             
-            // AstraX should only run on ticks if it's in scalp mode or conviction mode with scalp fallback enabled.
-            const isAstraXScalpPossible = isAstraXOnNextCandle && 
-                (params.astraX_executionMode === 'scalp' || params.astraX_scalp_enabledInChop);
-
-            if (isImmediateMode || isAstraXScalpPossible) {
-                const now = Date.now();
+            // STRICT ENFORCEMENT: Only run tick-based entry analysis if 'Immediate Entry' is selected.
+            // This ensures we respect the user's wish to wait for candle close.
+            if (config.entryTiming === 'immediate') {
+                const now = binanceService.getSyncedNow();
                 const lastAnalysis = this.bot.lastAnalysisTimestamp || 0;
                 if (now - lastAnalysis >= 1000) { // Throttle to prevent overwhelming on rapid ticks
                     if (this.executing) {
@@ -292,10 +233,7 @@ class BotInstance {
                     this.updateState({ lastAnalysisTimestamp: now });
                     this.executing = true;
                     try {
-                        const reason = isAstraXScalpPossible 
-                            ? "AstraX Scalp Check (On Tick)" 
-                            : "Immediate Entry Check (On Tick)";
-                        await this.runAnalysis({ execute: true, reason });
+                        await this.runAnalysis({ execute: true, reason: "Immediate Entry Check (On Tick)" });
                     } finally {
                         this.executing = false;
                     }
@@ -304,7 +242,7 @@ class BotInstance {
         }
     }
 
-    public async onMainKlineUpdate(newKline: Kline) {
+    public onMainKlineUpdate = async (newKline: Kline) => {
         const lastKline = this.klines.length > 0 ? this.klines[this.klines.length - 1] : null;
     
         let isNewCandle = false;
@@ -313,13 +251,14 @@ class BotInstance {
         if (lastKline && newKline.time === lastKline.time) {
             this.klines[this.klines.length - 1] = newKline;
         } else if (!lastKline || newKline.time > lastKline.time) {
-            closedCandle = lastKline;
+            closedCandle = lastKline; // The one that just finished
             this.klines.push(newKline);
             isNewCandle = true;
             if (this.klines.length > 501) this.klines.shift();
         }
         this.updateState({ klinesLoaded: this.klines.length });
     
+        // This block handles "Wait for Candle Close" logic.
         if (isNewCandle && closedCandle && this.bot.config.entryTiming === 'onNextCandle' && this.bot.status === BotStatus.Monitoring && !this.bot.openPosition) {
             if (this.executing) {
                 this.addLog('Analysis for new candle skipped, previous execution still in process.', LogType.Info);
@@ -327,8 +266,10 @@ class BotInstance {
             }
             this.executing = true;
             try {
+                // We analyze based on the candle that JUST closed.
                 const klinesForAnalysis = this.klines.slice(0, -1);
-                this.addLog(`New candle started. Re-analyzing closed candle: ${new Date(closedCandle.time).toISOString()}`, LogType.Info);
+                
+                this.addLog(`Candle Closed (${new Date(closedCandle.time).toLocaleTimeString()}). Running Analysis...`, LogType.Info);
                 
                 await this.runAnalysis({
                     execute: true,
@@ -348,28 +289,19 @@ class BotInstance {
             });
 
              if (openPosition.tradeType === 'scalp' && this.bot.config.agent.id === 19) {
-                this.addLog("Re-evaluating open scalp trade for conviction promotion...", LogType.Info);
+                // AstraX Promotion Logic
                 const { config } = this.bot;
-                
-                const analyticalTimeframes = getLowerConfluenceTimeframes(config.timeFrame);
-                
-                const klinePromises = analyticalTimeframes.map(tf => 
-                    sharedKlineService.getData(config.pair, tf, config.mode)
-                );
-                const allFetchedKlines = await Promise.all(klinePromises);
-                
+                const analyticalTimeframes = getConfluenceTimeframes(config.timeFrame);
+                // Use stored references for promotion check as well
                 const klinesMap = new Map<string, Kline[]>();
-                analyticalTimeframes.forEach((tf, index) => {
-                    klinesMap.set(tf, allFetchedKlines[index]);
-                });
-
-                const { regime, direction: convictionDirection } = getAstraXRegimeAndDirection(config, klinesMap, analyticalTimeframes);
+                
+                const { regime, direction: convictionDirection } = getAstraXRegimeAndDirection(config, this.astraXKlinesMap, analyticalTimeframes);
                 const isLong = openPosition.direction === 'LONG';
                 const convictionMatches = (isLong && convictionDirection === 'bullish') || (!isLong && convictionDirection === 'bearish');
 
                 if (regime !== 'Choppy Market' && convictionMatches) {
                     this.addLog(`PROMOTION TRIGGERED: Market shifted to ${regime}. Upgrading scalp to conviction trade.`, LogType.Success);
-                    const { stopLossPrice, takeProfitPrice } = getInitialAgentTargets(this.klines, openPosition.entryPrice, openPosition.direction, config);
+                    const { stopLossPrice, takeProfitPrice } = getInitialAgentTargets(this.klines, openPosition.entryPrice, openPosition.direction, config, 'conviction');
                     const newState: Partial<Position> = {
                         tradeType: 'conviction', promotedFrom: 'scalp', takeProfitPrice, stopLossPrice,
                         profitLockTier: 0, aggressiveTrailTier: 0,
@@ -413,7 +345,7 @@ class BotInstance {
         }
     }
     
-    public notifyTradeExecutionFailed(reason: string) {
+    public notifyTradeExecutionFailed = (reason: string) => {
         this.addLog(`Trade execution failed: ${reason}`, LogType.Error);
         this.updateState({ status: BotStatus.Monitoring });
     }
@@ -427,21 +359,21 @@ class BotInstance {
         
         const isLong = signal.signal === 'BUY';
         const { config } = this.bot;
-        const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(klinesForExecution, currentPrice, isLong ? 'LONG' : 'SHORT', config);
+        const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(klinesForExecution, currentPrice, isLong ? 'LONG' : 'SHORT', config, signal.tradeType, signal.stopLossPrice);
         
-        const validation = validateTradeProfitability(currentPrice, agentStopLoss, takeProfitPrice, isLong ? 'LONG' : 'SHORT', this.bot.config);
+        const validation = validateTradeProfitability(currentPrice, agentStopLoss, takeProfitPrice, isLong ? 'LONG' : 'SHORT', config);
         if (!validation.isValid && config.agent.id !== 20) { // Bypass validation for flipper agent
             this.notifyTradeExecutionFailed(validation.reason);
             return;
         }
 
-        this.addLog(`Executing ${signal.signal} at ~${currentPrice.toFixed(config.pricePrecision)}. SL: ${stopLossPrice.toFixed(config.pricePrecision)} (${slReason}), TP: ${takeProfitPrice.toFixed(config.pricePrecision)}`, LogType.Action);
+        this.addLog(`Executing ${signal.signal} (${signal.tradeType || 'default'}) at ~${currentPrice.toFixed(config.pricePrecision)}. SL: ${stopLossPrice.toFixed(config.pricePrecision)} (${slReason}), TP: ${takeProfitPrice.toFixed(config.pricePrecision)}`, LogType.Action);
         if (config.agent.id !== 20) {
             this.addLog(validation.reason, LogType.Success);
         }
 
         const execSignal: TradeSignal = { ...signal, entryPrice: currentPrice, takeProfitPrice, stopLossPrice };
-        const entryContext = captureMarketContext(klinesForExecution);
+        const entryContext = captureMarketContext(klinesForExecution, undefined, config.agentParams);
         
         await this.handlers.onExecuteTrade(execSignal, this.bot.id, { agentStopLoss, slReason, entryContext });
     }
@@ -474,15 +406,23 @@ class BotInstance {
         const guardianConfig = this.bot.openPosition.botConfigSnapshot;
         if (guardianConfig?.isTradeGuardianEnabled) {
             try {
-                const microTf = getMicroTimeframe(this.bot.config.timeFrame);
-                const microKlines = await sharedKlineService.getData(this.bot.config.pair, microTf, this.bot.config.mode);
-                 const guardianSignal = getTradeGuardianSignal(this.bot.openPosition, this.klines, microKlines, currentPrice);
-                if (guardianSignal.action === 'close') {
-                    this.addLog(guardianSignal.reason!, LogType.Action);
-                    if(this.bot.livePrice) {
-                        this.handlers.onClosePosition(this.bot.openPosition, guardianSignal.reason!, this.bot.livePrice);
+                // Use stored reference if available, otherwise fallback (should be available if initialized)
+                if (this.immediateKlines) {
+                    // FIX: Pass BTC Klines to Guardian for tide check
+                    const guardianSignal = getTradeGuardianSignal(
+                        this.bot.openPosition, 
+                        this.klines, 
+                        this.immediateKlines, 
+                        currentPrice, 
+                        this.btcKlines // Pass BTC Data
+                    );
+                    if (guardianSignal.action === 'close') {
+                        this.addLog(guardianSignal.reason!, LogType.Action);
+                        if(this.bot.livePrice) {
+                            this.handlers.onClosePosition(this.bot.openPosition, guardianSignal.reason!, this.bot.livePrice);
+                        }
+                        return;
                     }
-                    return;
                 }
             } catch (e) {
                  this.addLog(`Error in Trade Guardian: ${e instanceof Error ? e.message : String(e)}`, LogType.Error);
@@ -613,17 +553,17 @@ class BotInstance {
 }
 
 class BotManagerService {
-    private bots = new Map<string, BotInstance>();
-    private handlers: BotHandlers | null = null;
+    private bots: Map<string, BotInstance> = new Map();
     private onBotListChange: (() => void) | null = null;
-    private botUpdateSubscribers = new Map<string, Set<(bot: RunningBot) => void>>();
-    private spotWsManager: WebSocketManager;
-    private futuresWsManager: WebSocketManager;
+    private handlers: BotHandlers | null = null;
+    private tickerSubscriptions: Map<string, Function[]> = new Map();
+    private wsManagerSpot: WebSocketManager;
+    private wsManagerFutures: WebSocketManager;
+    private botUpdateSubscribers: Map<string, ((bot: RunningBot) => void)[]> = new Map();
 
     constructor() {
-        this.spotWsManager = new WebSocketManager(() => '/proxy-spot-ws');
-        this.futuresWsManager = new WebSocketManager(() => '/proxy-futures-ws');
-        telegramBotService.register(this);
+        this.wsManagerSpot = new WebSocketManager(() => '/proxy-spot-ws');
+        this.wsManagerFutures = new WebSocketManager(() => '/proxy-futures-ws');
     }
 
     public setHandlers(handlers: BotHandlers) {
@@ -634,266 +574,400 @@ class BotManagerService {
         this.onBotListChange = callback;
     }
 
-    public subscribeToBotUpdates(botId: string, callback: (bot: RunningBot) => void) {
-        if (!this.botUpdateSubscribers.has(botId)) {
-            this.botUpdateSubscribers.set(botId, new Set());
-        }
-        this.botUpdateSubscribers.get(botId)!.add(callback);
+    private notifyBotListChange() {
+        if (this.onBotListChange) this.onBotListChange();
     }
 
-    public unsubscribeFromBotUpdates(botId: string, callback: (bot: RunningBot) => void) {
-        const subscribers = this.botUpdateSubscribers.get(botId);
+    private notifyBotUpdate(bot: RunningBot) {
+        const subscribers = this.botUpdateSubscribers.get(bot.id);
         if (subscribers) {
-            subscribers.delete(callback);
-            if (subscribers.size === 0) {
-                this.botUpdateSubscribers.delete(botId);
+            subscribers.forEach(cb => cb(bot));
+        }
+    }
+
+    public startBot = (config: BotConfig): RunningBot => {
+        if (!this.handlers) {
+            throw new Error("Bot handlers not set. Cannot start bot.");
+        }
+
+        const onUpdate = (updatedBot: RunningBot) => {
+            this.notifyBotUpdate(updatedBot);
+            this.notifyBotListChange(); 
+        };
+
+        const botInstance = new BotInstance(config, onUpdate, this.handlers);
+        this.bots.set(botInstance.bot.id, botInstance);
+        
+        this.initializeBot(botInstance);
+        
+        this.notifyBotListChange();
+        return botInstance.bot;
+    }
+
+    private async acquireBtcData(timeframe: string, primaryMode: TradingMode): Promise<Kline[]> {
+        try {
+            // Try Futures first (High volume/liquidity)
+            return await sharedKlineService.getData('BTC/USDT', timeframe, TradingMode.USDSM_Futures);
+        } catch (error) {
+            console.warn('BTC Futures data unavailable, attempting fallback to Spot.', error);
+            try {
+                // Fallback to Spot
+                return await sharedKlineService.getData('BTC/USDT', timeframe, TradingMode.Spot);
+            } catch (fallbackError) {
+                console.error('BTC Data completely unavailable.', fallbackError);
+                throw new Error('BTC Data Unavailable');
             }
         }
     }
 
+    private async initializeBot(botInstance: BotInstance) {
+        const { config } = botInstance.bot;
+        
+        try {
+            // 1. Initial Data Fetch (Primary Pair)
+            const klines = await sharedKlineService.getData(config.pair, config.timeFrame, config.mode);
+            
+            // 2. Subscribe to klines (Primary Pair)
+            this.subscribeToKlines(botInstance);
+
+            // 3. Subscribe to Ticker for live price updates
+            const tickerCallback = (data: any) => {
+                 const price = parseFloat(data.c);
+                 const ticker: LiveTicker = {
+                    pair: data.s,
+                    closePrice: price,
+                    highPrice: parseFloat(data.h),
+                    lowPrice: parseFloat(data.l),
+                    volume: parseFloat(data.v),
+                    quoteVolume: parseFloat(data.q)
+                };
+                botInstance.updateLivePrice(price, ticker);
+            };
+            this.subscribeToTickerUpdates(config.pair, config.mode, tickerCallback);
+            botInstance.subscriptions.push({ type: 'ticker', pair: config.pair, mode: config.mode, callback: tickerCallback });
+            
+            // 4. Acquire Dependencies (Shared Pool)
+            // BTC Data (for AstraX or BTC Confirmation)
+            if (config.isBtcConfirmationEnabled || config.agent.id === 19) {
+                try {
+                    botInstance.btcKlines = await this.acquireBtcData(config.timeFrame, config.mode);
+                } catch (e) {
+                    botInstance.addLog(`Warning: BTC Data acquisition failed: ${e}`, LogType.Error);
+                }
+            }
+
+            // HTF Data
+            if (config.isHtfConfirmationEnabled) {
+                const htf = config.htfTimeFrame === 'auto' 
+                    ? TIME_FRAMES[TIME_FRAMES.indexOf(config.timeFrame) + 1] 
+                    : config.htfTimeFrame;
+                if (htf) {
+                    try {
+                        botInstance.htfKlines = await sharedKlineService.getData(config.pair, htf, config.mode);
+                    } catch(e) {
+                        botInstance.addLog(`Warning: HTF data failed: ${e}`, LogType.Error);
+                    }
+                }
+            }
+
+            // LTF / Immediate Data
+            if (config.isMomentumConcordanceEnabled || config.agent.id === 19) {
+                const ltfTimeframe = getMicroTimeframe(config.timeFrame);
+                try {
+                    botInstance.ltfKlines = await sharedKlineService.getData(config.pair, ltfTimeframe, config.mode);
+                    if (ltfTimeframe !== '1m') {
+                        botInstance.immediateKlines = await sharedKlineService.getData(config.pair, '1m', config.mode);
+                    } else {
+                        botInstance.immediateKlines = botInstance.ltfKlines;
+                    }
+                } catch(e) {
+                    botInstance.addLog(`Warning: LTF data failed: ${e}`, LogType.Error);
+                }
+            }
+            
+            // ETH/BTC Correlation
+            if (config.isBtcCorrelationVetoEnabled) {
+                try {
+                    botInstance.ethBtcKlines = await sharedKlineService.getData('ETH/BTC', config.timeFrame, TradingMode.Spot);
+                } catch(e) {
+                    botInstance.addLog(`Warning: ETH/BTC data failed: ${e}`, LogType.Error);
+                }
+            }
+
+            // AstraX Confluence Maps
+            if (config.agent.id === 19) {
+                const astraxTfs = getConfluenceTimeframes(config.timeFrame);
+                await Promise.all(astraxTfs.map(async (tf) => {
+                    try {
+                        const data = await sharedKlineService.getData(config.pair, tf, config.mode);
+                        botInstance.astraXKlinesMap.set(tf, data);
+                    } catch(e) {
+                        botInstance.addLog(`Warning: AstraX TF ${tf} data failed: ${e}`, LogType.Error);
+                    }
+                }));
+            }
+
+            // 5. Start the Bot Logic
+            await botInstance.initialize(klines);
+
+        } catch (e) {
+            botInstance.addLog(`Initialization failed: ${e}`, LogType.Error);
+            botInstance.updateState({ status: BotStatus.Error });
+        }
+    }
+
+    private subscribeToKlines(botInstance: BotInstance) {
+        const { config } = botInstance.bot;
+        const pair = config.pair.replace('/', '').toLowerCase();
+        const streamName = `${pair}@kline_${config.timeFrame}`;
+        const wsManager = config.mode === TradingMode.USDSM_Futures ? this.wsManagerFutures : this.wsManagerSpot;
+
+        const callback = (data: any) => {
+            const kline: Kline = {
+                time: data.k.t, open: parseFloat(data.k.o), high: parseFloat(data.k.h),
+                low: parseFloat(data.k.l), close: parseFloat(data.k.c), volume: parseFloat(data.k.v),
+                isFinal: data.k.x
+            };
+            botInstance.onMainKlineUpdate(kline);
+        };
+
+        wsManager.subscribe(streamName, callback);
+        botInstance.subscriptions.push({ type: 'kline', pair: config.pair, timeFrame: config.timeFrame, mode: config.mode, callback });
+    }
+
+    public stopBot = (botId: string) => {
+        const botInstance = this.bots.get(botId);
+        if (botInstance) {
+            botInstance.updateState({ status: BotStatus.Stopped });
+            this.cleanupBotSubscriptions(botInstance);
+            botInstance.addLog("Bot stopped by user.", LogType.Info);
+        }
+    }
+
+    public pauseBot = (botId: string) => {
+        const botInstance = this.bots.get(botId);
+        if (botInstance) {
+            botInstance.updateState({ status: BotStatus.Paused });
+            botInstance.addLog("Bot paused by user.", LogType.Info);
+        }
+    }
+
+    public resumeBot = (botId: string) => {
+        const botInstance = this.bots.get(botId);
+        if (botInstance) {
+            botInstance.updateState({ status: BotStatus.Monitoring, lastResumeTimestamp: Date.now() });
+            botInstance.addLog("Bot resumed by user.", LogType.Info);
+        }
+    }
+
+    public deleteBot = (botId: string) => {
+        const botInstance = this.bots.get(botId);
+        if (botInstance) {
+            this.cleanupBotSubscriptions(botInstance);
+            this.bots.delete(botId);
+            this.notifyBotListChange();
+        }
+    }
+
+    private cleanupBotSubscriptions(botInstance: BotInstance) {
+        // 1. WS Unsubscriptions
+        botInstance.subscriptions.forEach(sub => {
+            const wsManager = sub.mode === TradingMode.USDSM_Futures ? this.wsManagerFutures : this.wsManagerSpot;
+            const pair = sub.pair.replace('/', '').toLowerCase();
+            
+            if (sub.type === 'kline') {
+                const streamName = `${pair}@kline_${sub.timeFrame}`;
+                wsManager.unsubscribe(streamName, sub.callback);
+            } else if (sub.type === 'ticker') {
+                this.unsubscribeFromTickerUpdates(sub.pair, sub.mode, sub.callback);
+            }
+        });
+        
+        const { config } = botInstance.bot;
+        
+        // 2. Release Data Dependencies
+        sharedKlineService.releaseData(config.pair, config.timeFrame, config.mode);
+        
+        if (botInstance.htfKlines) {
+            const htf = config.htfTimeFrame === 'auto' 
+                ? TIME_FRAMES[TIME_FRAMES.indexOf(config.timeFrame) + 1] 
+                : config.htfTimeFrame;
+            if(htf) sharedKlineService.releaseData(config.pair, htf, config.mode);
+        }
+
+        if (botInstance.btcKlines) {
+             // We don't track which mode BTC was acquired with (spot vs futures) in instance yet, assume config mode for now or check data.
+             // For simplicity, release both potential sources since releaseData is safe if key doesn't exist/count is 0.
+             sharedKlineService.releaseData('BTC/USDT', config.timeFrame, TradingMode.USDSM_Futures);
+             sharedKlineService.releaseData('BTC/USDT', config.timeFrame, TradingMode.Spot);
+        }
+
+        if (botInstance.ltfKlines) {
+             const ltf = getMicroTimeframe(config.timeFrame);
+             sharedKlineService.releaseData(config.pair, ltf, config.mode);
+        }
+        
+        if (botInstance.immediateKlines) {
+             sharedKlineService.releaseData(config.pair, '1m', config.mode);
+        }
+
+        if (botInstance.ethBtcKlines) {
+             sharedKlineService.releaseData('ETH/BTC', config.timeFrame, TradingMode.Spot);
+        }
+
+        botInstance.astraXKlinesMap.forEach((_, tf) => {
+            sharedKlineService.releaseData(config.pair, tf, config.mode);
+        });
+        
+        // Clear references
+        botInstance.btcKlines = undefined;
+        botInstance.htfKlines = undefined;
+        botInstance.ltfKlines = undefined;
+        botInstance.immediateKlines = undefined;
+        botInstance.ethBtcKlines = undefined;
+        botInstance.astraXKlinesMap.clear();
+    }
+
     public getRunningBots(): RunningBot[] {
-        return Array.from(this.bots.values()).map(instance => instance.bot).sort((a, b) => a.id.localeCompare(b.id));
+        return Array.from(this.bots.values()).map(b => b.bot);
     }
 
     public getBot(botId: string): BotInstance | undefined {
         return this.bots.get(botId);
     }
-    
-    private notifyStructuralChange() {
-        if (this.onBotListChange) {
-            this.onBotListChange();
-        }
-    }
-    
-    public addBotLog(botId: string, message: string, type: LogType) {
-        const bot = this.bots.get(botId);
-        if (bot) {
-            bot.addLog(message, type);
-        }
-    }
 
-    public updateBotState(botId: string, partialState: Partial<RunningBot>) {
-        const bot = this.bots.get(botId);
-        if (bot) {
-            bot.updateState(partialState);
-        }
-    }
-    
-    public startBot(config: BotConfig): RunningBot {
-        if (!this.handlers) {
-            throw new Error("BotManagerService handlers not set. Call setHandlers first.");
-        }
-
-        const onUpdate = (updatedBot: RunningBot) => {
-            const subscribers = this.botUpdateSubscribers.get(updatedBot.id);
-            if (subscribers) {
-                subscribers.forEach(cb => cb(updatedBot));
-            }
-        };
-
-        const newBotInstance = new BotInstance(config, onUpdate, this.handlers);
-        this.bots.set(newBotInstance.bot.id, newBotInstance);
-        this.notifyStructuralChange();
-
-        this.initializeBot(newBotInstance);
-        
-        return newBotInstance.bot;
-    }
-
-    private async initializeBot(botInstance: BotInstance) {
-        const { config } = botInstance.bot;
-        try {
-            const klines = await binanceService.fetchKlines(
-                config.pair.replace('/', ''),
-                config.timeFrame,
-                { limit: 501, mode: config.mode }
-            );
-            await botInstance.initialize(klines);
-            this.subscribeToBotData(botInstance);
-        } catch (error) {
-            botInstance.addLog(`Failed to initialize bot: ${error}`, LogType.Error);
-            botInstance.updateState({ status: BotStatus.Error, analysis: {signal: 'HOLD', reasons: [`Initialization failed.`]} });
-        }
-    }
-
-    public pauseBot = (botId: string) => {
-        const bot = this.bots.get(botId);
-        if (bot && bot.bot.status !== BotStatus.Paused) {
-            const accumulatedActiveMs = bot.bot.accumulatedActiveMs + (Date.now() - (bot.bot.lastResumeTimestamp || Date.now()));
-            bot.updateState({ status: BotStatus.Paused, lastResumeTimestamp: null, accumulatedActiveMs });
-            bot.addLog('Bot paused by user.', LogType.Status);
-        }
-    };
-
-    public resumeBot = (botId: string) => {
-        const bot = this.bots.get(botId);
-        if (bot && bot.bot.status === BotStatus.Paused) {
-            bot.updateState({ status: BotStatus.Monitoring, lastResumeTimestamp: Date.now() });
-            bot.addLog('Bot resumed by user.', LogType.Status);
-        }
-    };
-
-    public stopBot = async (botId: string) => {
-        const bot = this.bots.get(botId);
-        if (!bot) return;
-    
-        bot.updateState({ status: BotStatus.Stopping });
-        bot.addLog('Stopping bot...', LogType.Status);
-    
-        if (bot.bot.openPosition) {
-            bot.addLog('Closing open position before stopping...', LogType.Action);
-            try {
-                // Pass undefined; the handler will find the best available price.
-                await this.handlers?.onClosePosition(bot.bot.openPosition, 'Bot Stopped', undefined);
-            } catch (e) {
-                bot.addLog(`Could not close open position: ${e}`, LogType.Error);
-            }
-        }
-        
-        this.releaseBotData(bot.bot.config);
-        
-        const accumulatedActiveMs = bot.bot.accumulatedActiveMs + (Date.now() - (bot.bot.lastResumeTimestamp || Date.now()));
-        bot.updateState({ status: BotStatus.Stopped, lastResumeTimestamp: null, accumulatedActiveMs });
-        this.unsubscribeFromBotData(bot);
-        bot.addLog('Bot stopped.', LogType.Status);
-    };
-
-    public deleteBot = (botId: string) => {
-        const bot = this.bots.get(botId);
-        if (bot && (bot.bot.status === BotStatus.Stopped || bot.bot.status === BotStatus.Error)) {
-            this.releaseBotData(bot.bot.config);
-            this.unsubscribeFromBotData(bot);
-            this.bots.delete(botId);
-            this.notifyStructuralChange();
-        } else if (bot) {
-            bot.addLog("Cannot delete a running bot. Please stop it first.", LogType.Error);
-        }
-    };
-    
     public updateBotConfig = (botId: string, partialConfig: Partial<BotConfig>) => {
-        const bot = this.bots.get(botId);
-        if (bot) {
-            const newConfig = { ...bot.bot.config, ...partialConfig };
-            bot.updateState({ config: newConfig });
-            const changes = Object.keys(partialConfig).join(', ');
-            bot.addLog(`Configuration updated: ${changes}`, LogType.Info);
-            
-            this.refreshBotAnalysis(botId);
+        const botInstance = this.bots.get(botId);
+        if (botInstance) {
+            botInstance.updateState({ config: { ...botInstance.bot.config, ...partialConfig } });
+            botInstance.addLog(`Configuration updated: ${Object.keys(partialConfig).join(', ')}`, LogType.Info);
         }
     }
 
     public refreshBotAnalysis = (botId: string) => {
-        const bot = this.bots.get(botId);
-        if (bot && bot.bot.status !== BotStatus.Paused) {
-            bot.addLog("Manual analysis refresh triggered.", LogType.Info);
-            bot.runAnalysis({ execute: false, reason: "Manual Refresh" });
+        const botInstance = this.bots.get(botId);
+        if (botInstance) {
+            botInstance.runAnalysis({ execute: false, reason: "Manual Refresh" });
         }
-    };
+    }
 
     public stopAllBots() {
         this.bots.forEach(bot => this.stopBot(bot.bot.id));
-        this.spotWsManager.disconnect();
-        this.futuresWsManager.disconnect();
-    }
-    
-    public notifyPositionClosed(botId: string, pnl: number) {
-        const bot = this.bots.get(botId);
-        if (bot && bot.bot.openPosition) {
-            const trade = { ...bot.bot.openPosition, pnl };
-            const isWin = trade.pnl > 0;
-            const wins = bot.bot.wins + (isWin ? 1 : 0);
-            const losses = bot.bot.losses + (!isWin ? 1 : 0);
-
-            bot.updateState({
-                status: BotStatus.Monitoring,
-                openPosition: null,
-                openPositionId: null,
-                closedTradesCount: bot.bot.closedTradesCount + 1,
-                totalPnl: bot.bot.totalPnl + trade.pnl,
-                wins,
-                losses,
-            });
-            bot.addLog(`Position closed. PNL: $${pnl.toFixed(2)}. Resuming monitoring.`, isWin ? LogType.Success : LogType.Error);
-        }
-    }
-    
-    public notifyTradeExecutionFailed(botId: string, reason: string) {
-        const bot = this.bots.get(botId);
-        if (bot) {
-            bot.notifyTradeExecutionFailed(reason);
-        }
-    }
-
-    private releaseBotData(config: BotConfig) {
-        if (config.isHtfConfirmationEnabled) {
-            const htf = config.htfTimeFrame === 'auto' 
-                ? TIME_FRAMES[TIME_FRAMES.indexOf(config.timeFrame) + 1] 
-                : config.htfTimeFrame;
-            if (htf) {
-                sharedKlineService.releaseData(config.pair, htf, config.mode);
-            }
-        }
-        const needsLtfData = config.isMomentumConcordanceEnabled || config.agent.id === 14;
-        if (needsLtfData) {
-            const ltfTimeframe = getMicroTimeframe(config.timeFrame);
-            sharedKlineService.releaseData(config.pair, ltfTimeframe, config.mode);
-        }
-        if (config.agent.id === 14) {
-            sharedKlineService.releaseData(config.pair, '1m', config.mode);
-        }
-        if (config.isBtcCorrelationVetoEnabled) {
-            sharedKlineService.releaseData('ETH/BTC', config.timeFrame, TradingMode.Spot);
-        }
-    }
-
-    private subscribeToBotData(botInstance: BotInstance) {
-        const { pair, timeFrame, mode } = botInstance.bot.config;
-        const formattedPair = pair.replace('/', '').toLowerCase();
-
-        const tickerStream = `${formattedPair}@ticker`;
-        const tickerCallback = (data: any) => {
-             const ticker: LiveTicker = { pair: data.s, closePrice: parseFloat(data.c), highPrice: parseFloat(data.h), lowPrice: parseFloat(data.l), volume: parseFloat(data.v), quoteVolume: parseFloat(data.q) };
-             botInstance.updateLivePrice(parseFloat(data.c), ticker);
-        };
-        this.subscribeToTickerUpdates(formattedPair, mode, tickerCallback);
-        botInstance.subscriptions.push({ type: 'ticker', pair: formattedPair, mode, callback: tickerCallback });
-
-        const klineStream = `${formattedPair}@kline_${timeFrame}`;
-        const klineCallback = (data: any) => {
-             const newKline: Kline = { time: data.k.t, open: parseFloat(data.k.o), high: parseFloat(data.k.h), low: parseFloat(data.k.l), close: parseFloat(data.k.c), volume: parseFloat(data.k.v), isFinal: data.k.x };
-             botInstance.onMainKlineUpdate(newKline);
-        };
-        this.subscribeToKlineUpdates(formattedPair, timeFrame, mode, klineCallback);
-        botInstance.subscriptions.push({ type: 'kline', pair: formattedPair, timeFrame, mode, callback: klineCallback });
-    }
-
-    private unsubscribeFromBotData(botInstance: BotInstance) {
-        botInstance.subscriptions.forEach(sub => {
-            if (sub.type === 'ticker') {
-                this.unsubscribeFromTickerUpdates(sub.pair, sub.mode, sub.callback);
-            } else if (sub.type === 'kline') {
-                this.unsubscribeFromKlineUpdates(sub.pair, sub.timeFrame!, sub.mode, sub.callback);
-            }
-        });
-        botInstance.subscriptions = [];
+        this.wsManagerSpot.disconnect();
+        this.wsManagerFutures.disconnect();
     }
 
     public subscribeToTickerUpdates(pair: string, mode: TradingMode, callback: Function) {
-        const wsManager = mode === TradingMode.USDSM_Futures ? this.futuresWsManager : this.spotWsManager;
-        wsManager.subscribe(`${pair.toLowerCase()}@ticker`, callback);
+        const wsManager = mode === TradingMode.USDSM_Futures ? this.wsManagerFutures : this.wsManagerSpot;
+        const symbol = pair.replace('/', '').toLowerCase();
+        const streamName = `${symbol}@ticker`;
+
+        let callbacks = this.tickerSubscriptions.get(streamName);
+        if (!callbacks) {
+            callbacks = [];
+            this.tickerSubscriptions.set(streamName, callbacks);
+            
+            // Centralized subscription to WS
+            wsManager.subscribe(streamName, (data: any) => {
+                const cbs = this.tickerSubscriptions.get(streamName);
+                if (cbs) cbs.forEach(cb => cb(data));
+            });
+        }
+        callbacks.push(callback);
     }
+
     public unsubscribeFromTickerUpdates(pair: string, mode: TradingMode, callback: Function) {
-        const wsManager = mode === TradingMode.USDSM_Futures ? this.futuresWsManager : this.spotWsManager;
-        wsManager.unsubscribe(`${pair.toLowerCase()}@ticker`, callback);
+        const symbol = pair.replace('/', '').toLowerCase();
+        const streamName = `${symbol}@ticker`;
+        const callbacks = this.tickerSubscriptions.get(streamName);
+        if (callbacks) {
+            const index = callbacks.indexOf(callback);
+            if (index > -1) callbacks.splice(index, 1);
+            if (callbacks.length === 0) {
+                this.tickerSubscriptions.delete(streamName);
+            }
+        }
     }
+    
+    // --- New Public Methods for UI Charting ---
+    
     public subscribeToKlineUpdates(pair: string, timeFrame: string, mode: TradingMode, callback: Function) {
-        const wsManager = mode === TradingMode.USDSM_Futures ? this.futuresWsManager : this.spotWsManager;
-        wsManager.subscribe(`${pair.toLowerCase()}@kline_${timeFrame}`, callback);
+        const wsManager = mode === TradingMode.USDSM_Futures ? this.wsManagerFutures : this.wsManagerSpot;
+        const symbol = pair.replace('/', '').toLowerCase();
+        const streamName = `${symbol}@kline_${timeFrame}`;
+        
+        // Subscribe the callback to the WebSocket manager
+        wsManager.subscribe(streamName, (data: any) => {
+            callback(data);
+        });
     }
+
     public unsubscribeFromKlineUpdates(pair: string, timeFrame: string, mode: TradingMode, callback: Function) {
-        const wsManager = mode === TradingMode.USDSM_Futures ? this.futuresWsManager : this.spotWsManager;
-        wsManager.unsubscribe(`${pair.toLowerCase()}@kline_${timeFrame}`, callback);
+        const wsManager = mode === TradingMode.USDSM_Futures ? this.wsManagerFutures : this.wsManagerSpot;
+        const symbol = pair.replace('/', '').toLowerCase();
+        const streamName = `${symbol}@kline_${timeFrame}`;
+        
+        // Unsubscribe the callback
+        wsManager.unsubscribe(streamName, (data: any) => {
+            callback(data);
+        });
+    }
+    
+    public subscribeToBotUpdates(botId: string, callback: (bot: RunningBot) => void) {
+        let subs = this.botUpdateSubscribers.get(botId);
+        if (!subs) {
+            subs = [];
+            this.botUpdateSubscribers.set(botId, subs);
+        }
+        subs.push(callback);
+    }
+
+    public unsubscribeFromBotUpdates(botId: string, callback: (bot: RunningBot) => void) {
+        const subs = this.botUpdateSubscribers.get(botId);
+        if (subs) {
+            const index = subs.indexOf(callback);
+            if (index > -1) subs.splice(index, 1);
+        }
+    }
+
+    public addBotLog(botId: string, message: string, type: LogType) {
+        const bot = this.bots.get(botId);
+        if (bot) bot.addLog(message, type);
+    }
+
+    public updateBotState(botId: string, state: Partial<RunningBot>) {
+        const bot = this.bots.get(botId);
+        if (bot) bot.updateState(state);
+    }
+
+    public notifyPositionClosed(botId: string, netPnl: number) {
+        const botInstance = this.bots.get(botId);
+        if (botInstance) {
+            const newTotalPnl = botInstance.bot.totalPnl + netPnl;
+            const isWin = netPnl > 0;
+            botInstance.updateState({
+                status: BotStatus.Monitoring,
+                openPosition: null,
+                openPositionId: null,
+                totalPnl: newTotalPnl,
+                wins: botInstance.bot.wins + (isWin ? 1 : 0),
+                losses: botInstance.bot.losses + (isWin ? 0 : 1),
+                closedTradesCount: botInstance.bot.closedTradesCount + 1,
+                totalGrossProfit: botInstance.bot.totalGrossProfit + (isWin ? netPnl : 0),
+                totalGrossLoss: botInstance.bot.totalGrossLoss + (isWin ? 0 : Math.abs(netPnl)),
+                lastProfitableTradeDirection: isWin ? botInstance.bot.openPosition?.direction || null : botInstance.bot.lastProfitableTradeDirection
+            });
+            botInstance.addLog(`Position closed. PNL: ${netPnl.toFixed(2)}`, isWin ? LogType.Success : LogType.Info);
+        }
+    }
+
+    public notifyTradeExecutionFailed(botId: string, reason: string) {
+        const botInstance = this.bots.get(botId);
+        if (botInstance) {
+            botInstance.notifyTradeExecutionFailed(reason);
+        }
     }
 }
 
 export const botManagerService = new BotManagerService();
+telegramBotService.register(botManagerService);

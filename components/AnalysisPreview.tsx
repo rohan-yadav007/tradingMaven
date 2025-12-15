@@ -1,6 +1,8 @@
+
 import React, { useRef, useEffect } from 'react';
-import { Agent, TradeSignal, AgentParams, SentinelAnalysis, ConductorAnalysis, AstraXAnalysis } from '../types';
-import { ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, InfoIcon } from './icons';
+import { Agent, TradeSignal, AgentParams, SentinelAnalysis, ConductorAnalysis, AstraXAnalysis, Kline, MarketDataContext } from '../types';
+import { ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, InfoIcon, SparklesIcon } from './icons';
+import { captureMarketContext } from '../services/localAgentService';
 
 interface AnalysisPreviewProps {
     analysis: TradeSignal | null;
@@ -142,34 +144,54 @@ const ConductorAnalysisDisplay: React.FC<{ analysis: ConductorAnalysis }> = ({ a
 };
 
 const AstraXAnalysisDisplay: React.FC<{ analysis: AstraXAnalysis }> = ({ analysis }) => {
-    const { conviction, threshold, regime, scores, adjustments } = analysis;
-    const isBullish = conviction > 0;
+    const { conviction, regime, thesis, setupName, scores, adjustments } = analysis;
     
-    const barPercent = (conviction + 100) / 2;
-    const thresholdPercent = (threshold / 100);
+    const regimeColor = regime === 'Strong Trend' ? 'text-indigo-600 dark:text-indigo-400' 
+                      : regime === 'Choppy Market' ? 'text-amber-600 dark:text-amber-400' 
+                      : 'text-sky-600 dark:text-sky-400';
+
+    const thesisColor = thesis === 'Bullish' ? 'text-emerald-600 dark:text-emerald-400'
+                      : thesis === 'Bearish' ? 'text-rose-600 dark:text-rose-400'
+                      : 'text-slate-500 dark:text-slate-400';
 
     return (
         <div className="space-y-4 text-sm">
-             <div>
-                <div className="flex justify-between items-baseline mb-1">
-                    <span className="font-bold text-slate-800 dark:text-slate-200">Final Conviction Score</span>
-                    <span className={`font-bold text-lg ${isBullish ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{conviction.toFixed(0)}</span>
+            {/* Market Context Card */}
+            <div className="grid grid-cols-2 gap-3">
+                <div className="bg-slate-50 dark:bg-slate-700/30 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mb-1">Market Regime</p>
+                    <p className={`text-sm font-bold ${regimeColor}`}>{regime}</p>
                 </div>
-                 <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-3 relative" title={`Conviction: ${conviction.toFixed(0)} | Threshold: ±${threshold.toFixed(0)}`}>
-                    <div className="absolute top-0 bottom-0 w-0.5 bg-slate-400 dark:bg-slate-500" style={{ left: '50%' }}></div>
-                    <div className="absolute top-0 bottom-0 h-full bg-slate-300 dark:bg-slate-600/50" style={{ left: `calc(50% - ${thresholdPercent * 50}%)`, width: `${thresholdPercent * 100}%` }}></div>
-                    <div className="h-full rounded-full" style={{ background: 'linear-gradient(to right, #ef4444, #f87171, #fca5a5, #fde4e4, #e4e4e7, #dcfce7, #86efac, #22c55e, #16a34a)' }}>
-                        <div className="h-full w-full relative">
-                            <div className="absolute top-[-2px] bottom-[-2px] w-1 bg-slate-800 dark:bg-white rounded-full border border-white dark:border-slate-800 shadow-lg" style={{ left: `calc(${barPercent}% - 2px)` }}></div>
-                        </div>
-                    </div>
-                </div>
-                 <div className="text-xs text-center mt-1.5 text-slate-500 dark:text-slate-400">
-                    Regime: <b>{regime}</b> | Entry Threshold: <b>±{threshold.toFixed(0)}</b>
+                <div className="bg-slate-50 dark:bg-slate-700/30 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mb-1">Dominant Thesis</p>
+                    <p className={`text-sm font-bold ${thesisColor}`}>{thesis}</p>
                 </div>
             </div>
 
-            {scores && (
+            {/* Setup Detection Card */}
+            <div className={`p-3 rounded-lg border ${setupName ? 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700'}`}>
+                <div className="flex items-start gap-3">
+                    <SparklesIcon className={`w-5 h-5 mt-0.5 ${setupName ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'}`} />
+                    <div>
+                        <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                            {setupName ? 'Setup Identified' : 'Scanning Patterns'}
+                        </p>
+                        <p className={`text-base font-bold ${setupName ? 'text-slate-800 dark:text-slate-100' : 'text-slate-500 italic'}`}>
+                            {setupName || 'No high-probability setup found'}
+                        </p>
+                        {setupName && (
+                            <div className="mt-2 flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                                <span className="px-2 py-0.5 bg-white dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 font-mono">
+                                    Conviction: {conviction}%
+                                </span>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* Legacy Scores Fallback (Only if provided and setup is missing, for compatibility) */}
+            {scores && !setupName && (
                 <div className="space-y-2 pt-3 border-t border-slate-200 dark:border-slate-700">
                     {Object.entries(scores).map(([pillar, pillarScores]) => (
                         <div key={pillar}>
@@ -180,7 +202,6 @@ const AstraXAnalysisDisplay: React.FC<{ analysis: AstraXAnalysis }> = ({ analysi
                                 </span>
                             </div>
                             <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5 relative">
-                                <div className="absolute top-0 bottom-0 w-0.5 bg-slate-400 dark:bg-slate-500" style={{ left: '50%' }}></div>
                                 <div className="h-full bg-emerald-400 rounded-l-full" style={{ width: `${pillarScores.bull / 2}%` }}></div>
                                 <div className="h-full bg-rose-400 rounded-r-full absolute top-0 right-0" style={{ width: `${pillarScores.bear / 2}%` }}></div>
                             </div>

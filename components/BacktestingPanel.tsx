@@ -1,4 +1,6 @@
 
+
+
 import React from 'react';
 import { useState, useEffect, useMemo } from 'react';
 import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, OptimizationResultItem } from '../types';
@@ -360,7 +362,7 @@ export type BacktestConfig = {
     marginType: 'ISOLATED' | 'CROSSED';
     entryTiming: 'immediate' | 'onNextCandle';
     isAdaptiveTpEnabled: boolean;
-    aggressiveTrailMode: 'distance' | 'pnl';
+    aggressiveTrailMode: 'distance' | 'pnl' | 'disabled';
     isVwapConfirmationEnabled: boolean;
     isBtcConfirmationEnabled: boolean;
     isBtcCorrelationVetoEnabled: boolean;
@@ -483,8 +485,9 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         setBacktestResult(null); setOptimizationResults(null);
         try {
             const formattedPair = config.selectedPair.replace('/', '');
-            const startTime = Date.now() - backtestDays * 24 * 60 * 60 * 1000;
-            const backtestKlines = await binanceService.fetchFullKlines(formattedPair, '1m', startTime, Date.now(), config.tradingMode);
+            const now = binanceService.getSyncedNow();
+            const startTime = now - backtestDays * 24 * 60 * 60 * 1000;
+            const backtestKlines = await binanceService.fetchFullKlines(formattedPair, '1m', startTime, now, config.tradingMode);
             if (backtestKlines.length < 200) { throw new Error("Not enough historical data available for a reliable backtest (min 200 candles)."); }
             
             let htfKlines: any[] | undefined = undefined;
@@ -529,8 +532,9 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         };
         try {
             const formattedPair = config.selectedPair.replace('/', '');
-            const startTime = Date.now() - backtestDays * 24 * 60 * 60 * 1000;
-            const backtestKlines = await binanceService.fetchFullKlines(formattedPair, '1m', startTime, Date.now(), config.tradingMode);
+            const now = binanceService.getSyncedNow();
+            const startTime = now - backtestDays * 24 * 60 * 60 * 1000;
+            const backtestKlines = await binanceService.fetchFullKlines(formattedPair, '1m', startTime, now, config.tradingMode);
             if (backtestKlines.length < 200) { throw new Error("Not enough historical data for optimization."); }
             
             let htfKlines: any[] | undefined = undefined;
@@ -677,7 +681,6 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                         )}
                     </div>
 
-                    {/* FIX: The broken JSX has been restructured into a proper collapsible section for agent filters. */}
                     <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
                         <button onClick={() => setIsFiltersOpen(!isFiltersOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
                             <span>Customize Agent Filters</span>
@@ -770,6 +773,22 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                                 <div className="flex items-center justify-between">
                                     <label className={formLabelClass}>Confirmation Candle Veto</label>
                                     <ToggleSwitch checked={config.isConfirmationCandleEnabled} onChange={v => updateConfig('isConfirmationCandleEnabled', v)} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <label className={formLabelClass}>Trade Guardian</label>
+                                    <ToggleSwitch checked={config.isTradeGuardianEnabled} onChange={v => updateConfig('isTradeGuardianEnabled', v)} />
+                                </div>
+                                <div className={formGroupClass}>
+                                    <label className={formLabelClass}>Aggressive Trail Mode</label>
+                                    <select
+                                        value={config.aggressiveTrailMode}
+                                        onChange={e => updateConfig('aggressiveTrailMode', e.target.value as 'distance' | 'pnl' | 'disabled')}
+                                        className={formInputClass}
+                                    >
+                                        <option value="disabled">Disabled</option>
+                                        <option value="distance">Distance to TP</option>
+                                        <option value="pnl">PNL %</option>
+                                    </select>
                                 </div>
                             </div>
                         )}

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { TradingMode, Kline, TradeSignal, AgentParams, BotConfig, Agent, LiveTicker } from '../types';
 import * as constants from '../constants';
@@ -61,10 +62,9 @@ const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) =>
 
 const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParamsChange: (p: AgentParams) => void, isAdxFilterEnabled: boolean, timeFrame: string}> = ({ agent, params, onParamsChange, isAdxFilterEnabled, timeFrame }) => {
     const [isExitVetoOpen, setIsExitVetoOpen] = useState(false);
-    const [isAstraX_PillarWeightsOpen, setIsAstraX_PillarWeightsOpen] = useState(false);
-    const [isAstraX_ContextWeightsOpen, setIsAstraX_ContextWeightsOpen] = useState(false);
-    const [isAstraX_AdaptiveThresholdsOpen, setIsAstraX_AdaptiveThresholdsOpen] = useState(true);
-    const [isAstraX_SetupTriggerOpen, setIsAstraX_SetupTriggerOpen] = useState(false);
+    const [isAstraX_SweepsOpen, setIsAstraX_SweepsOpen] = useState(false);
+    const [isAstraX_BreakoutsOpen, setIsAstraX_BreakoutsOpen] = useState(false);
+    const [isAstraX_PullbacksOpen, setIsAstraX_PullbacksOpen] = useState(true);
 
     const allParams = useMemo(() => {
         const timeframeDefaults = constants.getAgentTimeframeSettings(agent.id, timeFrame);
@@ -74,81 +74,61 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
     const updateParam = (key: keyof AgentParams, value: number | boolean | string) => { onParamsChange({ ...params, [key]: value }); };
     switch (agent.id) {
         case 19: return (<div className="space-y-4">
+            <div className="flex flex-col gap-1.5">
+                <label className={formLabelClass}>Execution Mode</label>
+                <div className="flex items-center gap-1 p-1 bg-slate-200 dark:bg-slate-900/70 rounded-md mt-1">
+                    <button onClick={() => updateParam('astraX_executionMode', 'conviction')} className={`flex-1 text-center text-xs font-semibold p-1.5 rounded-md transition-colors ${(allParams.astraX_executionMode === 'conviction') ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}>Conviction</button>
+                    <button onClick={() => updateParam('astraX_executionMode', 'scalp')} className={`flex-1 text-center text-xs font-semibold p-1.5 rounded-md transition-colors ${(allParams.astraX_executionMode === 'scalp') ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}>Scalp</button>
+                    <button onClick={() => updateParam('astraX_executionMode', 'hybrid')} className={`flex-1 text-center text-xs font-semibold p-1.5 rounded-md transition-colors ${(allParams.astraX_executionMode === 'hybrid') ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}>Hybrid</button>
+                </div>
+            </div>
             
-            {/* --- ADAPTIVE THRESHOLDS --- */}
+            <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                <ParamSlider label="Trend Definition (ADX)" value={allParams.astraX_adxThreshold!} onChange={v => updateParam('astraX_adxThreshold', v)} min={15} max={40} step={1} />
+            </div>
+            
+            {/* --- STRATEGY: LIQUIDITY SWEEPS --- */}
             <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
-                <button onClick={() => setIsAstraX_AdaptiveThresholdsOpen(!isAstraX_AdaptiveThresholdsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
-                    <span>Adaptive Thresholds</span>
-                    {isAstraX_AdaptiveThresholdsOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                <button onClick={() => setIsAstraX_SweepsOpen(!isAstraX_SweepsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
+                    <span>Setup: Liquidity Sweeps</span>
+                    {isAstraX_SweepsOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                 </button>
-                {isAstraX_AdaptiveThresholdsOpen && (
+                {isAstraX_SweepsOpen && (
                     <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
-                        <ParamSlider label="Base Entry Threshold" value={allParams.astraX_baseThreshold!} onChange={v => updateParam('astraX_baseThreshold', v)} min={25} max={75} step={1} />
-                        <ParamSlider label="Strong Trend ADX" value={allParams.astraX_strongTrendAdx!} onChange={v => updateParam('astraX_strongTrendAdx', v)} min={25} max={40} step={1} />
-                        <ParamSlider label="Chop Market ADX" value={allParams.astraX_chopAdx!} onChange={v => updateParam('astraX_chopAdx', v)} min={15} max={25} step={1} />
-                        <ParamSlider label="Strong Trend Threshold" value={allParams.astraX_strongTrendThreshold!} onChange={v => updateParam('astraX_strongTrendThreshold', v)} min={50} max={85} step={1} />
-                        <ParamSlider label="Chop Market Threshold" value={allParams.astraX_chopThreshold!} onChange={v => updateParam('astraX_chopThreshold', v)} min={60} max={95} step={1} />
-                        <ParamSlider label="Strong Trend Multiplier" value={allParams.astraX_regimeMultiplier_strong!} onChange={v => updateParam('astraX_regimeMultiplier_strong', v)} min={0.5} max={1.0} step={0.05} valueDisplay={v => `${v.toFixed(2)}x`} />
-                        <ParamSlider label="Chop Market Multiplier" value={allParams.astraX_regimeMultiplier_chop!} onChange={v => updateParam('astraX_regimeMultiplier_chop', v)} min={1.0} max={1.5} step={0.05} valueDisplay={v => `${v.toFixed(2)}x`} />
+                        <p className="text-xs text-slate-500 dark:text-slate-400">Catches "Stop Hunts" where price takes out a low/high and reverses.</p>
+                        <ParamSlider label="Sweep Lookback" value={allParams.astraX_sweepLookback!} onChange={v => updateParam('astraX_sweepLookback', v)} min={5} max={100} step={1} valueDisplay={v => `${v} candles`} />
                     </div>
                 )}
             </div>
 
-            {/* --- PILLAR WEIGHTS --- */}
+            {/* --- STRATEGY: BREAKOUTS --- */}
              <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
-                <button onClick={() => setIsAstraX_PillarWeightsOpen(!isAstraX_PillarWeightsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
-                    <span>Pillar Weights</span>
-                    {isAstraX_PillarWeightsOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                <button onClick={() => setIsAstraX_BreakoutsOpen(!isAstraX_BreakoutsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
+                    <span>Setup: Momentum Breakouts</span>
+                    {isAstraX_BreakoutsOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                 </button>
-                {isAstraX_PillarWeightsOpen && (
+                {isAstraX_BreakoutsOpen && (
                     <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
-                        <ParamSlider label="Structure Weight" value={allParams.astraX_weights_structure!} onChange={v => updateParam('astraX_weights_structure', v)} min={0} max={100} step={5} valueDisplay={v => `${v}%`} />
-                        <ParamSlider label="Momentum Weight" value={allParams.astraX_weights_momentum!} onChange={v => updateParam('astraX_weights_momentum', v)} min={0} max={100} step={5} valueDisplay={v => `${v}%`} />
-                        <ParamSlider label="Context Weight" value={allParams.astraX_weights_context!} onChange={v => updateParam('astraX_weights_context', v)} min={0} max={100} step={5} valueDisplay={v => `${v}%`} />
-                        <ParamSlider label="Confirmation Weight" value={allParams.astraX_weights_confirmation!} onChange={v => updateParam('astraX_weights_confirmation', v)} min={0} max={100} step={5} valueDisplay={v => `${v}%`} />
+                        <p className="text-xs text-slate-500 dark:text-slate-400">Enters on strong expansion moves confirmed by volume.</p>
+                        <ParamSlider label="Volume Multiplier" value={allParams.astraX_breakoutVolMultiplier!} onChange={v => updateParam('astraX_breakoutVolMultiplier', v)} min={1.2} max={3.0} step={0.1} valueDisplay={v => `${v.toFixed(1)}x Avg`} />
                     </div>
                 )}
             </div>
 
-            {/* --- CONTEXT PILLAR WEIGHTS --- */}
+            {/* --- STRATEGY: PULLBACKS --- */}
              <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
-                <button onClick={() => setIsAstraX_ContextWeightsOpen(!isAstraX_ContextWeightsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
-                    <span>Context Pillar Weights</span>
-                    {isAstraX_ContextWeightsOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                <button onClick={() => setIsAstraX_PullbacksOpen(!isAstraX_PullbacksOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
+                    <span>Setup: Dynamic Pullbacks</span>
+                    {isAstraX_PullbacksOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                 </button>
-                {isAstraX_ContextWeightsOpen && (
+                {isAstraX_PullbacksOpen && (
                     <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
-                        <ParamSlider label="VWAP Weight" value={allParams.astraX_context_vwapWeight!} onChange={v => updateParam('astraX_context_vwapWeight', v)} min={0} max={100} step={5} valueDisplay={v => `${v}%`} />
-                        <ParamSlider label="Volatility Weight" value={allParams.astraX_context_volatilityWeight!} onChange={v => updateParam('astraX_context_volatilityWeight', v)} min={0} max={100} step={5} valueDisplay={v => `${v}%`} />
-                        <ParamSlider label="Market Breadth Weight" value={allParams.astraX_context_marketBreadthWeight!} onChange={v => updateParam('astraX_context_marketBreadthWeight', v)} min={0} max={100} step={5} valueDisplay={v => `${v}%`} />
-                        <ParamSlider label="Liquidation Weight" value={allParams.astraX_context_liquidationWeight!} onChange={v => updateParam('astraX_context_liquidationWeight', v)} min={0} max={100} step={5} valueDisplay={v => `${v}%`} />
+                        <p className="text-xs text-slate-500 dark:text-slate-400">Enters when price retraces to the EMA during a trend.</p>
+                        <ParamSlider label="Pullback EMA Period" value={allParams.astraX_pullbackEmaPeriod!} onChange={v => updateParam('astraX_pullbackEmaPeriod', v)} min={9} max={50} step={1} />
                     </div>
                 )}
             </div>
-
-            {/* --- SETUP & TRIGGER LOGIC --- */}
-            <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
-                <button onClick={() => setIsAstraX_SetupTriggerOpen(!isAstraX_SetupTriggerOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
-                    <span>Setup & Trigger Logic</span>
-                    {isAstraX_SetupTriggerOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-                </button>
-                {isAstraX_SetupTriggerOpen && (
-                    <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
-                        <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400">Pullback Setup (Trend)</h4>
-                        <ParamSlider label="Pullback EMA Period" value={allParams.astraX_scalp_retestEmaPeriod!} onChange={v => updateParam('astraX_scalp_retestEmaPeriod', v)} min={5} max={20} step={1} />
-                        
-                        <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-3 border-t border-slate-200 dark:border-slate-700">Mean Reversion Setup (Chop)</h4>
-                        <ParamSlider label="Bollinger Bands Period" value={allParams.astraX_scalp_bbPeriod!} onChange={v => updateParam('astraX_scalp_bbPeriod', v)} min={15} max={30} step={1} />
-                        <ParamSlider label="Bollinger Bands StdDev" value={allParams.astraX_scalp_bbStdDev!} onChange={v => updateParam('astraX_scalp_bbStdDev', v)} min={1.8} max={2.5} step={0.1} valueDisplay={v => v.toFixed(1)} />
-                        
-                        <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-3 border-t border-slate-200 dark:border-slate-700">Trigger Confirmation</h4>
-                        <ParamSlider label="Structure Lookback" value={allParams.astraX_structureLookback!} onChange={v => updateParam('astraX_structureLookback', v)} min={5} max={15} step={1} />
-                        <ParamSlider label="Min Volume Multiplier" value={allParams.astraX_confirmation_minVolumeMultiplier!} onChange={v => updateParam('astraX_confirmation_minVolumeMultiplier', v)} min={0.8} max={2.0} step={0.1} valueDisplay={v => `${v.toFixed(1)}x`} />
-                        <ParamSlider label="Min Candle Body Ratio" value={allParams.astraX_confirmation_candleBodyMinRatio!} onChange={v => updateParam('astraX_confirmation_candleBodyMinRatio', v)} min={0.1} max={0.7} step={0.05} valueDisplay={v => `${(v * 100).toFixed(0)}%`} />
-                    </div>
-                )}
-            </div>
-
+            
             </div>);
         case 9: return (<div className="space-y-4">
             <div className="flex flex-col gap-1.5">
@@ -340,20 +320,17 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
                     valueDisplay={v => v.toFixed(1)}
                 />
             )}
+            
             <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
                         <label className={formLabelClass}>Dynamic Multiplier</label>
-                        <div className="relative group">
-                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
-                            <div className="absolute bottom-full mb-2 w-48 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
-                                Adjusts ATR multiplier based on market volatility percentile to reduce whipsaws in high volatility and react faster in low volatility.
-                            </div>
-                        </div>
+                        <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" title="Adjusts ATR multiplier based on market volatility."/>
                     </div>
                     <ToggleSwitch checked={allParams.stf_enableDynamicMultiplier!} onChange={v => updateParam('stf_enableDynamicMultiplier', v)} />
                 </div>
             </div>
+
             {allParams.stf_enableDynamicMultiplier && (
                 <div className="pl-2 border-l-2 border-sky-500/30 space-y-4 mt-2">
                     <ParamSlider 
@@ -593,7 +570,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     if (htf) htfKlines = await sharedKlineService.getData(analysisPair, htf, tradingMode);
                 }
                 
-                const marketContext = captureMarketContext(previewKlines, htfKlines);
+                const marketContext = captureMarketContext(previewKlines, htfKlines, agentParams); // Pass agentParams
                 const previewConfig: BotConfig = {
                     pair: analysisPair, mode: tradingMode, executionMode: executionMode, leverage: leverage, marginType: marginType,
                     agent: selectedAgent, timeFrame: timeFrame, investmentAmount: investmentAmount, maxMarginLossPercent: maxMarginLossPercent,
@@ -879,56 +856,9 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                         </div>
                     </div>
                 )}
-                 {selectedAgent.id === 9 && (
-                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-4">
-                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
-                    </div>
-                )}
-                 {selectedAgent.id === 13 && (
-                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
-                         <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
-                    </div>
-                )}
-                 {selectedAgent.id === 14 && (
-                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700">
-                         <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
-                    </div>
-                )}
-                {selectedAgent.id === 11 && (
-                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
-                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
-                    </div>
-                )}
-                 {selectedAgent.id === 16 && (
-                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
-                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
-                    </div>
-                )}
-                {selectedAgent.id === 17 && (
-                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
-                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
-                    </div>
-                )}
-                {selectedAgent.id === 18 && (
-                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
-                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
-                    </div>
-                )}
-                {selectedAgent.id === 19 && (
-                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
-                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
-                    </div>
-                )}
-                {selectedAgent.id === 20 && (
-                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
-                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
-                    </div>
-                )}
-                {selectedAgent.id === 21 && (
-                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2">
-                        <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
-                    </div>
-                )}
+                 <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700">
+                    <AgentParameterEditor agent={selectedAgent} params={agentParams} onParamsChange={setAgentParams} isAdxFilterEnabled={isAdxFilterEnabled} timeFrame={timeFrame} />
+                 </div>
             </div>
             
             <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
@@ -1371,9 +1301,10 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 <select
                     id="aggressive-trail-mode"
                     value={aggressiveTrailMode}
-                    onChange={e => setAggressiveTrailMode(e.target.value as 'distance' | 'pnl')}
+                    onChange={e => setAggressiveTrailMode(e.target.value as 'distance' | 'pnl' | 'disabled')}
                     className={formInputClass}
                 >
+                    <option value="disabled">Disabled</option>
                     <option value="distance">Distance to TP</option>
                     <option value="pnl">PNL %</option>
                 </select>

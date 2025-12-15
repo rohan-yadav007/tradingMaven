@@ -1,435 +1,434 @@
+
 // services/agents/astrax.ts
 
-import { Kline, BotConfig, TradeSignal, AstraXAnalysis, AgentParams, ADXOutput, MACDOutput, TradingMode, BollingerBandsOutput, StochasticRSIOutput } from '../../types';
-import { RSI, MACD, ATR, ADX, BollingerBands, SMA, EMA, StochasticRSI } from 'technicalindicators';
-import { calculateDailyVwap, getLast, getPenultimate, Supertrend, analyzeMicroMarketStructure } from './agentUtils';
-import { findSwingPoints, analyzeMarketStructure } from '../chartAnalysisService';
-import { sharedKlineService } from '../sharedKlineService';
-import * as constants from '../../constants';
-import { marketBreadthService } from '../marketBreadthService';
-import { liquidationAnalysisService } from '../liquidationAnalysisService';
+import { Kline, BotConfig, TradeSignal, AstraXAnalysis, AgentParams, ADXOutput, BollingerBandsOutput, StochasticRSIOutput, MACDOutput } from '../../types';
+import { RSI, ATR, ADX, BollingerBands, SMA, EMA, StochasticRSI, MACD } from 'technicalindicators';
+import { calculateDailyVwap, getLast, getPenultimate, detectLiquiditySweep, calculateRsiSlope, isPriceOverextended, detectVolatilityCompression, Supertrend, analyzeBitcoinState, calculateRVOL, detectRsiDivergence } from './agentUtils';
+import { findSwingPoints, analyzeMarketStructure, calculateSupportResistance } from '../chartAnalysisService';
 
-
-interface TimeframeMetrics {
-    bullScore: number;
-    bearScore: number;
-    adx: number;
-    atrPercentile: number;
-}
-
-export interface AstraXRegime {
-    regime: AstraXAnalysis['regime'];
-    direction: 'bullish' | 'bearish' | 'neutral';
-}
-
-/**
- * Dynamically determines the relevant analytical timeframes based on a primary timeframe,
- * using a bottom-up confluence model. It selects the primary timeframe and all standard
- * timeframes below it.
- * @param primaryTf The timeframe selected by the user for the bot.
- * @returns An array of timeframe strings, sorted from highest to lowest.
- */
-export const getLowerConfluenceTimeframes = (primaryTf: string): string[] => {
-    const allTfs = constants.TIME_FRAMES;
-    const primaryIndex = allTfs.indexOf(primaryTf);
-
-    if (primaryIndex === -1) {
-        // Fallback for an unknown timeframe, though this shouldn't happen
-        return [primaryTf];
-    }
-
-    // Get all timeframes from the lowest up to and including the primary
-    const lowerTfs = allTfs.slice(0, primaryIndex + 1);
+// Helper to determine the dominant trend using Higher Timeframe data
+function getDominantTrend(htfKlines: Kline[] | undefined): 'Bullish' | 'Bearish' | 'Neutral' {
+    if (!htfKlines || htfKlines.length < 50) return 'Neutral';
     
-    // Sort from highest to lowest timeframe for consistent weighting logic
-    return lowerTfs.sort((a, b) => allTfs.indexOf(b) - allTfs.indexOf(a));
+    // Upgrade: Use Market Structure Analysis instead of just EMA
+    // Look back 15 candles on HTF (enough to see a trend)
+    const swingPoints = findSwingPoints(htfKlines, 5);
+    const structure = analyzeMarketStructure(swingPoints);
+    
+    if (structure.structure === 'Uptrend') return 'Bullish';
+    if (structure.structure === 'Downtrend') return 'Bearish';
+    
+    // Fallback to EMA alignment if structure is ranging/indeterminate
+    const closes = htfKlines.map(k => k.close);
+    const ema50 = getLast(EMA.calculate({ period: 50, values: closes }));
+    const ema200 = getLast(EMA.calculate({ period: 200, values: closes }));
+    const lastClose = getLast(closes);
+
+    if (ema50 && ema200 && lastClose) {
+        if (lastClose > ema50 && ema50 > ema200) return 'Bullish';
+        if (lastClose < ema50 && ema50 < ema200) return 'Bearish';
+    }
+    return 'Neutral';
+}
+
+export const getConfluenceTimeframes = (primaryTf: string): string[] => {
+    const mappings: Record<string, string[]> = {
+        '1m':  ['5m'],  // Tightened from 15m to 5m for faster reaction
+        '3m':  ['15m'],
+        '5m':  ['15m'], // Tightened from 1h to 15m (3x ratio)
+        '15m': ['1h'],  // Tightened from 4h to 1h (4x ratio)
+        '30m': ['1h'],  // Tightened from 4h to 1h
+        '1h':  ['4h'],  // Tightened from 1d to 4h (4x ratio)
+        '4h':  ['1d'],
+        '1d':  ['1d'] 
+    };
+    return mappings[primaryTf] || [primaryTf];
 };
 
-
-/**
- * Computes a comprehensive set of metrics for a single timeframe as per the AstraX blueprint.
- */
-function computeTimeframeMetrics(klines: Kline[] | undefined): TimeframeMetrics {
-    if (!klines || klines.length < 200) {
-        return { bullScore: 0, bearScore: 0, adx: 15, atrPercentile: 50 };
-    }
-
-    const closes = klines.map(k => k.close);
-    const highs = klines.map(k => k.high);
-    const lows = klines.map(k => k.low);
-
-    const rsi = getLast(RSI.calculate({ period: 14, values: closes })) as number | undefined;
-    const macdValues = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
-    const macd = getLast(macdValues) as MACDOutput | undefined;
-    const prevMacd = getPenultimate(macdValues) as MACDOutput | undefined;
-    const adxResult = getLast(ADX.calculate({ period: 14, high: highs, low: lows, close: closes })) as ADXOutput;
-    const atrValues = ATR.calculate({ period: 14, high: highs, low: lows, close: closes });
-    const lastAtr = getLast(atrValues) as number | undefined;
-
-    let bull = 0;
-    let bear = 0;
-
-    // --- Momentum Quality Score ---
-    // Part 1: MACD state and acceleration (50 points)
-    if (macd?.histogram && prevMacd?.histogram) {
-        if (macd.histogram > 0) {
-            bull += 25; // In bullish territory
-            if (macd.histogram > prevMacd.histogram) {
-                bull += 25; // Accelerating bullish
-            }
-        }
-        if (macd.histogram < 0) {
-            bear += 25; // In bearish territory
-            if (macd.histogram < prevMacd.histogram) {
-                bear += 25; // Accelerating bearish
-            }
-        }
-    }
-    
-    // Part 2: RSI state and velocity (50 points)
-    const bb = getLast(BollingerBands.calculate({ period: 20, stdDev: 2, values: closes })) as BollingerBandsOutput | undefined;
-    const bbWidth = bb ? (bb.upper - bb.lower) / bb.middle : 0.01;
-    const volatilityFactor = Math.min(1, Math.max(0, (bbWidth - 0.005) / (0.1 - 0.005)));
-    const rsiBullThreshold = 51 + (4 * volatilityFactor);
-    const rsiBearThreshold = 49 - (4 * volatilityFactor);
-    
-    if (rsi) {
-        if (rsi > rsiBullThreshold) {
-            bull += 25; // In bullish control zone
-        }
-        if (rsi < rsiBearThreshold) {
-            bear += 25; // In bearish control zone
-        }
-    }
-    
-    const rsiSma = getLast(SMA.calculate({ period: 3, values: rsi ? [rsi] : [] })) as number | undefined;
-    if (rsi && rsiSma) {
-        if (rsi > rsiSma) {
-            bull += 25; // RSI has upward velocity
-        }
-        if (rsi < rsiSma) {
-            bear += 25; // RSI has downward velocity
-        }
-    }
-    
-    if (!lastAtr) {
-        return { bullScore: bull, bearScore: bear, adx: adxResult.adx, atrPercentile: 50 };
-    }
-    
-    const atrHistory = atrValues.slice(-200).filter(v => v !== undefined) as number[];
-    const sortedAtr = [...atrHistory].sort((a, b) => a - b);
-    const rank = sortedAtr.reduce((acc, val) => (val < lastAtr ? acc + 1 : acc), 0);
-    const percentile = (rank / sortedAtr.length) * 100;
-
-    return { bullScore: bull, bearScore: bear, adx: adxResult.adx, atrPercentile: (isNaN(percentile) || percentile < 0) ? 50 : percentile };
-}
-
-
-/**
- * Internal helper to compute the market regime and multi-timeframe scores.
- */
-function _getMultiTfScoresAndRegime(
-    config: BotConfig,
-    klinesMap: Map<string, Kline[]>,
-    analyticalTimeframes: string[]
-) {
-    const params = config.agentParams as Required<AgentParams>;
-    const primaryKlines = klinesMap.get(config.timeFrame);
-    
-    if (!primaryKlines || primaryKlines.length < 200) {
-        return { regime: 'Choppy Market' as AstraXAnalysis['regime'], multiTfBullish: 50, multiTfBearish: 50, adx: null };
-    }
-    
-    const adx = getLast(ADX.calculate({ high: primaryKlines.map(k=>k.high), low: primaryKlines.map(k=>k.low), close: primaryKlines.map(k => k.close), period: 14 })) as ADXOutput;
-    
-    let regime: AstraXAnalysis['regime'] = 'Developing Trend';
-    if (adx && adx.adx > params.astraX_strongTrendAdx) {
-        regime = 'Strong Trend';
-    } else if (adx && adx.adx < params.astraX_chopAdx) {
-        regime = 'Choppy Market';
-    }
-
-    const N = analyticalTimeframes.length;
-    let weights: number[];
-
-    if (regime === 'Strong Trend') {
-        // Emphasize higher TFs: N^2, (N-1)^2, ...
-        weights = Array.from({ length: N }, (_, i) => Math.pow(N - i, 2));
-    } else if (regime === 'Choppy Market') {
-        // Emphasize lower TFs: 1, 2, ... (since TFs are high-to-low, this is reversed)
-        weights = Array.from({ length: N }, (_, i) => i + 1).reverse();
-    } else { // Developing Trend
-        // Linear emphasis on higher TFs: N, N-1, ...
-        weights = Array.from({ length: N }, (_, i) => N - i);
-    }
-
-    const totalInitialWeight = weights.reduce((sum, w) => sum + w, 0);
-    const normalizedWeights = totalInitialWeight > 0 ? weights.map(w => w / totalInitialWeight) : [];
-    
-    const baseWeights: { [key: string]: number } = {};
-    analyticalTimeframes.forEach((tf, index) => {
-        baseWeights[tf] = normalizedWeights[index] || 0;
-    });
-    
-    const timeframes = analyticalTimeframes.map(tf => ({ name: tf, klines: klinesMap.get(tf), baseWeight: baseWeights[tf] || 0 }));
-    const tfMetrics = timeframes.map(tf => ({ ...tf, metrics: computeTimeframeMetrics(tf.klines) }));
-    
-    let totalWeight = 0;
-    const weightedMetrics = tfMetrics.map(tf => {
-        const activityWeight = (tf.metrics.adx / 50) * (tf.metrics.atrPercentile / 100);
-        const finalWeight = tf.baseWeight * (1 + activityWeight);
-        totalWeight += finalWeight;
-        return { ...tf, finalWeight };
-    });
-
-    let multiTfBullish = 0, multiTfBearish = 0;
-    weightedMetrics.forEach(tf => {
-        if(totalWeight > 0) {
-            const normalizedWeight = tf.finalWeight / totalWeight;
-            multiTfBullish += tf.metrics.bullScore * normalizedWeight;
-            multiTfBearish += tf.metrics.bearScore * normalizedWeight;
-        }
-    });
-
-    return { regime, multiTfBullish, multiTfBearish, adx };
-}
+// Alias for backward compatibility
+export const getLowerConfluenceTimeframes = getConfluenceTimeframes;
 
 export function getAstraXRegimeAndDirection(
     config: BotConfig,
     klinesMap: Map<string, Kline[]>,
     analyticalTimeframes: string[],
-): AstraXRegime {
-    const { regime, multiTfBullish, multiTfBearish } = _getMultiTfScoresAndRegime(config, klinesMap, analyticalTimeframes);
-    const direction = multiTfBullish > multiTfBearish ? 'bullish' : multiTfBullish < multiTfBearish ? 'bearish' : 'neutral';
+): { regime: AstraXAnalysis['regime'], direction: 'bullish' | 'bearish' | 'neutral' } {
+    // Lightweight regime check for external consumers (like BotManager)
+    const primaryKlines = klinesMap.get(config.timeFrame);
+    if (!primaryKlines) return { regime: 'Choppy Market', direction: 'neutral' };
+    
+    const params = config.agentParams || {};
+    const adxPeriod = params.adxPeriod || 14;
+
+    const closes = primaryKlines.map(k => k.close);
+    const ema50 = getLast(EMA.calculate({ period: 50, values: closes }));
+    const lastClose = getLast(closes);
+    
+    let direction: 'bullish' | 'bearish' | 'neutral' = 'neutral';
+    if (ema50 && lastClose) {
+        direction = lastClose > ema50 ? 'bullish' : 'bearish';
+    }
+
+    // Dynamic ADX Period
+    const adx = getLast(ADX.calculate({ period: adxPeriod, high: primaryKlines.map(k=>k.high), low: primaryKlines.map(k=>k.low), close: closes })) as ADXOutput;
+    let regime: AstraXAnalysis['regime'] = 'Choppy Market';
+    if (adx && adx.adx > (config.agentParams?.astraX_adxThreshold || 25)) regime = 'Strong Trend';
+    
     return { regime, direction };
 }
 
 export const getAstraXSignal = async (
     config: BotConfig, 
+    klinesMap: Map<string, Kline[]>,
     immediateKlines?: Kline[], 
     livePrice?: number, 
     fundingRate?: number,
-    ltfKlines?: Kline[]
+    ltfKlines?: Kline[],
+    btcKlines?: Kline[] // Market Tide Input
 ): Promise<TradeSignal> => {
     const params = config.agentParams as Required<AgentParams>;
+    const executionMode = params.astraX_executionMode || 'hybrid';
     const reasons: string[] = [];
-    const analyticalTimeframes = getLowerConfluenceTimeframes(config.timeFrame);
     
-    const klinePromises = analyticalTimeframes.map(tf => sharedKlineService.getData(config.pair, tf, config.mode));
-    const allFetchedKlines = await Promise.all(klinePromises);
-    
-    const klinesMap = new Map<string, Kline[]>();
-    analyticalTimeframes.forEach((tf, index) => klinesMap.set(tf, allFetchedKlines[index]));
+    const adxPeriod = params.adxPeriod || 14;
+    const atrPeriod = params.atrPeriod || 14;
+    const rsiPeriod = params.rsiPeriod || 14;
 
+    // 1. Data Preparation
     const primaryKlines = klinesMap.get(config.timeFrame);
-    if (!primaryKlines || primaryKlines.length < 200) {
-        return { signal: 'HOLD', reasons: [`ℹ️ Insufficient primary TF data for AstraX.`] };
-    }
-    
-    // =================================================================================
-    // LEVEL 1: THE THESIS - Determine high-level bias and market regime.
-    // =================================================================================
-    const { regime, multiTfBullish, multiTfBearish } = _getMultiTfScoresAndRegime(config, klinesMap, analyticalTimeframes);
-    const directionalBias = multiTfBullish > multiTfBearish ? 'Bullish' : multiTfBullish < multiTfBearish ? 'Bearish' : 'Neutral';
-    
-    reasons.push(`ℹ️ Thesis: ${directionalBias} Bias in a ${regime} market.`);
-    if (directionalBias === 'Neutral') {
-        return { signal: 'HOLD', reasons: [...reasons, `❌ No directional bias.`] };
-    }
-    
-    // =================================================================================
-    // LEVEL 2: THE SETUP - Find a high-probability entry pattern matching the thesis.
-    // =================================================================================
-    let setupFound = false;
-    let setupType: 'Pullback' | 'Mean Reversion' | null = null;
-    const lastKline = primaryKlines[primaryKlines.length-1];
-    
-    if (regime === 'Strong Trend' || regime === 'Developing Trend') {
-        // Look for a pullback to a short-term EMA
-        const retestEma = EMA.calculate({ period: params.astraX_scalp_retestEmaPeriod, values: primaryKlines.map(k=>k.close) });
-        const lastEma = getLast(retestEma) as number | undefined;
+    const htfTf = getConfluenceTimeframes(config.timeFrame)[0];
+    const htfKlines = klinesMap.get(htfTf);
 
-        if (lastEma) {
-            if (directionalBias === 'Bullish' && lastKline.low <= lastEma && lastKline.close > lastEma) {
-                setupFound = true;
-                setupType = 'Pullback';
-                reasons.push(`✅ Setup: Bullish pullback to ${params.astraX_scalp_retestEmaPeriod}-EMA.`);
-            }
-            if (directionalBias === 'Bearish' && lastKline.high >= lastEma && lastKline.close < lastEma) {
-                setupFound = true;
-                setupType = 'Pullback';
-                reasons.push(`✅ Setup: Bearish pullback to ${params.astraX_scalp_retestEmaPeriod}-EMA.`);
-            }
-        }
-    } else { // Choppy Market
-        // Look for mean reversion from BB extremes, using the retest confirmation logic
-        const bb = getLast(BollingerBands.calculate({ period: params.astraX_scalp_bbPeriod, stdDev: params.astraX_scalp_bbStdDev, values: primaryKlines.map(k=>k.close) })) as BollingerBandsOutput;
-        if (bb) {
-            if (directionalBias === 'Bullish' && lastKline.low <= bb.lower && lastKline.close > bb.lower) {
-                setupFound = true;
-                setupType = 'Mean Reversion';
-                reasons.push(`✅ Setup: Bullish mean reversion from lower Bollinger Band.`);
-            }
-            if (directionalBias === 'Bearish' && lastKline.high >= bb.upper && lastKline.close < bb.upper) {
-                setupFound = true;
-                setupType = 'Mean Reversion';
-                reasons.push(`✅ Setup: Bearish mean reversion from upper Bollinger Band.`);
-            }
-        }
+    if (!primaryKlines || primaryKlines.length < 100) {
+        return { signal: 'HOLD', reasons: [`ℹ️ Insufficient primary TF data.`] };
     }
 
-    if (!setupFound) {
-        return { signal: 'HOLD', reasons: [...reasons, `❌ No valid setup found.`] };
-    }
-
-    // =================================================================================
-    // LEVEL 3: THE TRIGGER - Confirm the entry with final pillar scores.
-    // =================================================================================
-    const convictionThreshold = regime === 'Strong Trend' 
-        ? params.astraX_strongTrendThreshold 
-        : (regime === 'Choppy Market' ? params.astraX_chopThreshold : params.astraX_baseThreshold);
-    
-    // --- Pillar 1: Structure ---
-    const swingPoints = findSwingPoints(primaryKlines, params.astraX_structureLookback);
-    const structureAnalysis = analyzeMarketStructure(swingPoints);
-    let structureBullish = 0, structureBearish = 0;
-    if (structureAnalysis.structure === 'Uptrend') structureBullish = 100;
-    if (structureAnalysis.structure === 'Downtrend') structureBearish = 100;
-    if (structureAnalysis.lastSignal === 'ChoCH_Bullish') structureBullish = 80;
-    if (structureAnalysis.lastSignal === 'ChoCH_Bearish') structureBearish = 80;
-
-    // --- Pillar 2: Momentum (is our Thesis) ---
-    const momentumBullish = multiTfBullish;
-    const momentumBearish = multiTfBearish;
-
-    // --- Pillar 3: Context ---
-    const vwap = getLast(calculateDailyVwap(primaryKlines));
-    const primaryMetrics = computeTimeframeMetrics(primaryKlines);
-    const atrPercentile = primaryMetrics.atrPercentile;
-    let contextBullish = 0, contextBearish = 0;
-
-    if (vwap) {
-        contextBullish += (lastKline.close > vwap ? 1 : 0) * 35;
-        contextBearish += (lastKline.close < vwap ? 1 : 0) * 35;
-    }
-    contextBullish += (atrPercentile > 20 && atrPercentile < 85 ? 1 : -1) * 15;
-    contextBearish += (atrPercentile > 20 && atrPercentile < 85 ? 1 : -1) * 15;
-    
-    // Integrated Market Breadth check
-    const breadthVeto = marketBreadthService.getMarketBreadthVeto(directionalBias === 'Bullish' ? 'BUY' : 'SELL');
-    contextBullish += (!breadthVeto.veto ? 1 : -1) * 25;
-    contextBearish += (!breadthVeto.veto ? 1 : -1) * 25;
-    
-    // Integrated Liquidation check
-    if (config.mode === TradingMode.USDSM_Futures) {
-        const liqVeto = liquidationAnalysisService.getLiquidationVeto(directionalBias === 'Bullish' ? 'BUY' : 'SELL', config.pair, config);
-        contextBullish += (!liqVeto.veto ? 1 : -1) * 25;
-        contextBearish += (!liqVeto.veto ? 1 : -1) * 25;
+    // --- MARKET TIDE ANALYSIS (Bitcoin State) ---
+    let btcState = { state: 'NEUTRAL', reason: 'BTC Data Unavailable' };
+    if (btcKlines && btcKlines.length > 50) {
+        btcState = analyzeBitcoinState(btcKlines);
     } else {
-        contextBullish += 25; contextBearish += 25;
+        reasons.push(`⚠️ Market Tide: BTC Data Unavailable (Defaulting to Neutral).`);
+    }
+    
+    if (btcState.state !== 'NEUTRAL') {
+         reasons.push(`ℹ️ Market Tide: ${btcState.reason}`);
     }
 
-    // --- Pillar 4: Confirmation ---
-    let confirmationBullish = 0, confirmationBearish = 0;
+    // 2. The Thesis (Structural Flow)
+    const dominantTrend = getDominantTrend(htfKlines);
+    
+    // Local Structure
+    const sweepLookback = params.astraX_sweepLookback || 20;
+    const structureLookback = Math.max(3, Math.floor(sweepLookback / 4));
+    const localStructure = analyzeMarketStructure(findSwingPoints(primaryKlines, structureLookback));
+    
+    let bias: 'Bullish' | 'Bearish' | 'Neutral' = dominantTrend;
+    
+    // Strict Bias Rule: If HTF is Neutral, trust Local. If HTF conflicts with Local, Bias is Neutral (Stand aside).
+    if (dominantTrend === 'Neutral') {
+        if (localStructure.structure === 'Uptrend') bias = 'Bullish';
+        if (localStructure.structure === 'Downtrend') bias = 'Bearish';
+    } else if (dominantTrend === 'Bullish' && localStructure.structure === 'Downtrend') {
+        bias = 'Neutral'; // Conflict
+    } else if (dominantTrend === 'Bearish' && localStructure.structure === 'Uptrend') {
+        bias = 'Neutral'; // Conflict
+    }
 
-    // A. Volume Confirmation (34 points)
-    const volumeSma = getLast(SMA.calculate({ period: 20, values: primaryKlines.map(k => k.volume || 0) })) as number | undefined;
-    if (lastKline.volume && volumeSma && lastKline.volume > volumeSma * params.astraX_confirmation_minVolumeMultiplier) {
-        if (lastKline.close > lastKline.open) {
-            confirmationBullish += 34;
+    reasons.push(`ℹ️ Thesis: ${bias} (HTF: ${dominantTrend}, LTF: ${localStructure.structure})`);
+
+    // 3. Market Condition Filters
+    const closes = primaryKlines.map(k => k.close);
+    const highs = primaryKlines.map(k => k.high);
+    const lows = primaryKlines.map(k => k.low);
+    const volumes = primaryKlines.map(k => k.volume || 0);
+
+    const currentPriceVal = livePrice || getLast(closes)!;
+    const ema50 = getLast(EMA.calculate({ period: 50, values: closes })) || 0;
+    const atr = getLast(ATR.calculate({ period: atrPeriod, high: primaryKlines.map(k=>k.high), low: primaryKlines.map(k=>k.low), close: closes })) || 0;
+    
+    // Volume Velocity (RVOL) - Institutional Footprint Check
+    const rvol = calculateRVOL(primaryKlines, 20);
+    reasons.push(`ℹ️ Vol: RVOL ${rvol.toFixed(1)}x`);
+
+    const isOverextended = isPriceOverextended(currentPriceVal, ema50, atr, 3.5); 
+    const isCompressed = detectVolatilityCompression(primaryKlines, 20, 0.02);
+
+    const adxValues = ADX.calculate({ period: adxPeriod, high: primaryKlines.map(k=>k.high), low: primaryKlines.map(k=>k.low), close: closes });
+    const adx = getLast(adxValues) as ADXOutput;
+    
+    let regime: AstraXAnalysis['regime'] = 'Choppy Market';
+    // Use configured threshold to define chop
+    if (adx && adx.adx > params.astraX_adxThreshold!) {
+        regime = adx.adx > 40 ? 'Strong Trend' : 'Developing Trend';
+    }
+
+    // MODE LOGIC 1: CHOP HANDLING
+    // Scalp Mode is the ONLY mode allowed to trade in pure chop.
+    // Hybrid and Conviction must stand aside.
+    const allowChop = executionMode === 'scalp';
+    if (regime === 'Choppy Market' && !allowChop) {
+        return { signal: 'HOLD', reasons: [...reasons, `ℹ️ Regime: Choppy (ADX ${adx.adx.toFixed(1)}). Mode '${executionMode}' waits for trend.`], astraXAnalysis: { conviction: 0, regime, thesis: bias } };
+    }
+    
+    // VWAP Band (Institutional Value)
+    const vwapValues = calculateDailyVwap(primaryKlines);
+    const vwap = getLast(vwapValues);
+    const priceVsVwap = vwap ? (currentPriceVal > vwap ? 'Above' : 'Below') : 'Unknown';
+    reasons.push(`ℹ️ VWAP: Price is ${priceVsVwap}`);
+
+    // StochRSI & RSI for Timing
+    const stochRsiValues = StochasticRSI.calculate({ values: closes, rsiPeriod: rsiPeriod, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 });
+    const stochRsi = getLast(stochRsiValues) as StochasticRSIOutput | undefined;
+    const prevStochRsi = getPenultimate(stochRsiValues) as StochasticRSIOutput | undefined;
+    const rsiValues = RSI.calculate({ period: rsiPeriod, values: closes });
+    const lastRsi = getLast(rsiValues);
+
+    // Supertrend Armour
+    const stPeriod = params.astraX_supertrendPeriod || 10;
+    const stMult = params.astraX_supertrendMultiplier || 3.0;
+    const stValues = Supertrend.calculate({ high: highs, low: lows, close: closes, period: stPeriod, multiplier: stMult });
+    const currentSt = getLast(stValues);
+    const isStBullish = currentSt !== undefined && currentPriceVal > currentSt;
+    const isStBearish = currentSt !== undefined && currentPriceVal < currentSt;
+
+    // --- SETUP SCANNING ENGINE (Priority Order) ---
+
+    // === SETUP A: LIQUIDITY SWEEP (Mean Reversion / Counter-Trend) ===
+    // This is the most dangerous setup, so Mode rules apply heavily here.
+    const sweep = detectLiquiditySweep(primaryKlines, sweepLookback); 
+    const sweepStopMultiplier = params.astraX_sl_multiplier_sweep || 1.2;
+    
+    if (sweep.bullish) {
+        // Find the actual sweep level (the low that was broken)
+        // detectLiquiditySweep looks back 'sweepLookback' candles.
+        const relevantKlines = primaryKlines.slice(-(sweepLookback + 1), -1);
+        const sweepLevel = Math.min(...relevantKlines.map(k => k.low));
+
+        // MODE LOGIC 2: COUNTER-TREND RULES (LONG)
+        // If Thesis is Bearish, this is a counter-trend trade.
+        const isCounterTrend = bias === 'Bearish';
+        
+        // TIDE PROTECTION
+        // Strict: If BTC is in a Downtrend or Crash, VETO all counter-trend Longs.
+        const isBtcWeak = btcState.state === 'TREND_DOWN' || btcState.state === 'CRASH';
+
+        let veto = false;
+        let vetoReason = '';
+
+        if (executionMode === 'conviction' && isCounterTrend) {
+            veto = true; vetoReason = `❌ VETO (Conviction Mode): Counter-trend trades forbidden.`;
+        } else if ((executionMode === 'hybrid' || executionMode === 'scalp') && isBtcWeak && isCounterTrend) {
+             veto = true; vetoReason = `❌ VETO (${executionMode} Mode): Cannot go Long against BTC weakness (${btcState.state}).`;
+        }
+
+        if (veto) {
+            reasons.push(vetoReason);
         } else {
-            confirmationBearish += 34;
-        }
-    }
+            const hasDiv = detectRsiDivergence(primaryKlines, rsiValues, 'LONG', 14);
+            const extremeVol = rvol > 2.0;
+            // Hybrid Rule: Counter-trend requires DIVERGENCE (higher quality).
+            // Scalp Rule: Just needs Vol or Div.
+            const meetsCriteria = executionMode === 'hybrid' && isCounterTrend 
+                ? hasDiv 
+                : (hasDiv || extremeVol);
 
-    // B. Supertrend Confirmation (33 points)
-    const supertrendValues = Supertrend.calculate({
-        high: primaryKlines.map(k => k.high),
-        low: primaryKlines.map(k => k.low),
-        close: primaryKlines.map(k => k.close),
-        period: params.qsc_superTrendPeriod,
-        multiplier: params.qsc_superTrendMultiplier
-    });
-    const lastSupertrend = getLast(supertrendValues) as number | undefined;
-    if (lastSupertrend) {
-        if (lastKline.close > lastSupertrend) {
-            confirmationBullish += 33;
-        } else if (lastKline.close < lastSupertrend) {
-            confirmationBearish += 33;
+            if (!meetsCriteria) {
+                 if (executionMode === 'hybrid') reasons.push(`❌ VETO (Hybrid Mode): Counter-trend requires RSI Divergence.`);
+                 else reasons.push(`❌ VETO: Insufficient confirmation for sweep.`);
+            } else {
+                const candle = primaryKlines[primaryKlines.length - 1];
+                // STRICTER VALIDATION: Must be a Hammer/Pinbar (Close in top 35% of range)
+                const range = candle.high - candle.low;
+                if (range > 0) {
+                    const closePos = (candle.close - candle.low) / range;
+                    if (closePos > 0.65) { // Strict Hammer (Top 35%)
+                        const preciseSL = candle.low - (atr * sweepStopMultiplier); 
+                        reasons.push(hasDiv ? `✅ Setup: Bullish Sweep + RSI Divergence` : `✅ Setup: Bullish Sweep + Extreme Volume`);
+                        return { 
+                            signal: 'BUY', reasons, stopLossPrice: preciseSL, tradeType: 'scalp',
+                            invalidationPrice: sweepLevel, // CRITICAL: Store the sweep level for Guardian
+                            btcContext: btcState as any,
+                            astraXAnalysis: { conviction: hasDiv ? 90 : 80, regime, thesis: bias, setupName: 'Bullish Liquidity Reversal' }
+                        };
+                    } else {
+                        reasons.push(`❌ VETO: Sweep candle shape invalid (not a hammer).`);
+                    }
+                }
+            }
         }
     }
     
-    // C. Momentum Concordance (33 points)
-    let concordanceBullish = 0;
-    let concordanceBearish = 0;
-    
-    // C.1 Candle Position
-    const candleRange = lastKline.high - lastKline.low;
-    if (candleRange > 0) {
-        const closePosition = (lastKline.close - lastKline.low) / candleRange;
-        if (closePosition < params.veto_candlePositionVeto_long) concordanceBullish += 17;
-        if (closePosition > params.veto_candlePositionVeto_short) concordanceBearish += 17;
-    } else {
-        concordanceBullish += 8;
-        concordanceBearish += 8;
-    }
-    
-    // C.2 Micro-Momentum
-    if (ltfKlines) {
-        const microStructure = analyzeMicroMarketStructure(ltfKlines);
-        if (microStructure) {
-            if (microStructure !== 'descending') concordanceBullish += 16;
-            if (microStructure !== 'ascending') concordanceBearish += 16;
+    if (sweep.bearish) {
+        const relevantKlines = primaryKlines.slice(-(sweepLookback + 1), -1);
+        const sweepLevel = Math.max(...relevantKlines.map(k => k.high));
+
+        // MODE LOGIC 3: COUNTER-TREND RULES (SHORT)
+        const isCounterTrend = bias === 'Bullish';
+        // TIDE PROTECTION
+        const isBtcStrong = btcState.state === 'TREND_UP' || btcState.state === 'PUMP';
+
+        let veto = false;
+        let vetoReason = '';
+
+        if (executionMode === 'conviction' && isCounterTrend) {
+             veto = true; vetoReason = `❌ VETO (Conviction Mode): Counter-trend trades forbidden.`;
+        } else if ((executionMode === 'hybrid' || executionMode === 'scalp') && isBtcStrong && isCounterTrend) {
+             veto = true; vetoReason = `❌ VETO (${executionMode} Mode): Cannot go Short against BTC strength (${btcState.state}).`;
+        }
+
+        if (veto) {
+            reasons.push(vetoReason);
         } else {
-            concordanceBullish += 8;
-            concordanceBearish += 8;
+            const hasDiv = detectRsiDivergence(primaryKlines, rsiValues, 'SHORT', 14);
+            const extremeVol = rvol > 2.0;
+            const meetsCriteria = executionMode === 'hybrid' && isCounterTrend 
+                ? hasDiv 
+                : (hasDiv || extremeVol);
+
+            if (!meetsCriteria) {
+                 if (executionMode === 'hybrid') reasons.push(`❌ VETO (Hybrid Mode): Counter-trend requires RSI Divergence.`);
+                 else reasons.push(`❌ VETO: Insufficient confirmation for sweep.`);
+            } else {
+                const candle = primaryKlines[primaryKlines.length - 1];
+                const range = candle.high - candle.low;
+                if (range > 0) {
+                    const closePos = (candle.close - candle.low) / range;
+                    if (closePos < 0.35) { // Strict Shooting Star (Bottom 35%)
+                        const preciseSL = candle.high + (atr * sweepStopMultiplier);
+                        reasons.push(hasDiv ? `✅ Setup: Bearish Sweep + RSI Divergence` : `✅ Setup: Bearish Sweep + Extreme Volume`);
+                        return { 
+                            signal: 'SELL', reasons, stopLossPrice: preciseSL, tradeType: 'scalp',
+                            invalidationPrice: sweepLevel, // CRITICAL: Store the sweep level for Guardian
+                            btcContext: btcState as any,
+                            astraXAnalysis: { conviction: hasDiv ? 90 : 80, regime, thesis: bias, setupName: 'Bearish Liquidity Reversal' }
+                        };
+                    } else {
+                        reasons.push(`❌ VETO: Sweep candle shape invalid (not a shooting star).`);
+                    }
+                }
+            }
         }
-    } else {
-        concordanceBullish += 8;
-        concordanceBearish += 8;
+    }
+
+    // === SETUP B: MOMENTUM BREAKOUT (Expansion) ===
+    // Breakouts are inherently trend-following.
+    // They are valid in all modes (assuming chop filter passed for Conviction/Hybrid)
+    if (!isOverextended && !isCompressed && regime !== 'Choppy Market') {
+        const breakoutStopMultiplier = params.astraX_sl_multiplier_breakout || 1.5; // Tighter stop for breakouts
+        const requiredVolMult = params.astraX_breakoutVolMultiplier || 2.0;
+        const isHighVolume = rvol >= requiredVolMult;
+
+        // Bullish Breakout
+        if (bias === 'Bullish' && isStBullish) {
+            // Find recent local high
+            const recentHighs = primaryKlines.slice(-10, -1).map(k => k.high);
+            const resistance = Math.max(...recentHighs);
+            
+            // Breakout Condition: Price > Resistance AND High Volume
+            if (currentPriceVal > resistance && isHighVolume) {
+                // Check RSI Exhaustion (Don't buy if already overbought)
+                if (lastRsi && lastRsi > 75) {
+                    reasons.push(`❌ VETO: Bullish Breakout exhausted (RSI > 75).`);
+                } else if (vwap && currentPriceVal < vwap) {
+                    reasons.push(`❌ VETO: Bullish Breakout below VWAP.`);
+                } else if (btcState.state === 'TREND_DOWN' || btcState.state === 'CRASH') {
+                    reasons.push(`❌ VETO: BTC is weak.`);
+                } else {
+                    const preciseSL = resistance - (atr * breakoutStopMultiplier); 
+                    reasons.push(`✅ Setup: Bullish Breakout (Vol: ${rvol.toFixed(1)}x)`);
+                    return {
+                        signal: 'BUY', reasons, stopLossPrice: preciseSL, tradeType: 'conviction',
+                        btcContext: btcState as any,
+                        astraXAnalysis: { conviction: 85, regime, thesis: bias, setupName: 'Bullish Breakout' }
+                    };
+                }
+            }
+        }
+        
+        // Bearish Breakout
+        if (bias === 'Bearish' && isStBearish) {
+            const recentLows = primaryKlines.slice(-10, -1).map(k => k.low);
+            const support = Math.min(...recentLows);
+            
+            if (currentPriceVal < support && isHighVolume) {
+                // Check RSI Exhaustion
+                if (lastRsi && lastRsi < 25) {
+                    reasons.push(`❌ VETO: Bearish Breakout exhausted (RSI < 25).`);
+                } else if (vwap && currentPriceVal > vwap) {
+                    reasons.push(`❌ VETO: Bearish Breakout above VWAP.`);
+                } else if (btcState.state === 'TREND_UP' || btcState.state === 'PUMP') {
+                    reasons.push(`❌ VETO: BTC is strong.`);
+                } else {
+                    const preciseSL = support + (atr * breakoutStopMultiplier);
+                    reasons.push(`✅ Setup: Bearish Breakout (Vol: ${rvol.toFixed(1)}x)`);
+                    return {
+                        signal: 'SELL', reasons, stopLossPrice: preciseSL, tradeType: 'conviction',
+                        btcContext: btcState as any,
+                        astraXAnalysis: { conviction: 85, regime, thesis: bias, setupName: 'Bearish Breakout' }
+                    };
+                }
+            }
+        }
+    }
+
+    // === SETUP C: VWAP PULLBACK (Trend Continuation) ===
+    // Buying the dip in a strong trend. Valid in all modes.
+    const pullbackStopMultiplier = params.astraX_sl_multiplier_pullback || 1.5;
+    
+    if (bias === 'Bullish' && regime === 'Strong Trend' && vwap) {
+        // Price pulled back to near VWAP (within 0.5% or 1 ATR)
+        const distToVwap = Math.abs(currentPriceVal - vwap);
+        const nearVwap = distToVwap < (atr * 1.0);
+        const aboveVwap = currentPriceVal >= vwap * 0.998; // Allow slight wick below
+        
+        if (nearVwap && aboveVwap) {
+            // Trigger: StochRSI Hook from Oversold
+            const isStochHook = stochRsi && prevStochRsi && (stochRsi.k > stochRsi.d) && (prevStochRsi.k <= prevStochRsi.d) && (stochRsi.k < 40);
+            
+            if (isStochHook) {
+                if (btcState.state === 'CRASH') {
+                    reasons.push(`❌ VETO: Pullback rejected (BTC Crash).`);
+                } else {
+                    const preciseSL = vwap - (atr * pullbackStopMultiplier);
+                    reasons.push(`✅ Setup: Bullish VWAP Pullback + Stoch Hook.`);
+                    return {
+                        signal: 'BUY', reasons, stopLossPrice: preciseSL, tradeType: 'conviction',
+                        btcContext: btcState as any,
+                        astraXAnalysis: { conviction: 80, regime, thesis: bias, setupName: `Bullish VWAP Pullback` }
+                    };
+                }
+            }
+        }
     }
     
-    confirmationBullish += concordanceBullish;
-    confirmationBearish += concordanceBearish;
-    reasons.push(`✅ Confirmation: Vol(${confirmationBullish > 0 ? '✓' : '✗'}), ST(${confirmationBullish > 34 ? '✓' : '✗'}), Concordance(${concordanceBullish > 0 ? '✓' : '✗'})`);
-
-
-    // --- Final Score Calculation ---
-    const finalBullishScore = 
-        (structureBullish * (params.astraX_weights_structure / 100)) +
-        (momentumBullish * (params.astraX_weights_momentum / 100)) +
-        (contextBullish * (params.astraX_weights_context / 100)) +
-        (confirmationBullish * (params.astraX_weights_confirmation / 100));
-
-    const finalBearishScore = 
-        (structureBearish * (params.astraX_weights_structure / 100)) +
-        (momentumBearish * (params.astraX_weights_momentum / 100)) +
-        (contextBearish * (params.astraX_weights_context / 100)) +
-        (confirmationBearish * (params.astraX_weights_confirmation / 100));
-
-    let conviction = finalBullishScore - finalBearishScore;
-    
-    const analysis: AstraXAnalysis = { 
-        conviction, regime, threshold: convictionThreshold, 
-        finalBullishScore, finalBearishScore,
-        scores: {
-            structure: { bull: structureBullish, bear: structureBearish, weight: params.astraX_weights_structure },
-            momentum: { bull: momentumBullish, bear: momentumBearish, weight: params.astraX_weights_momentum },
-            context: { bull: contextBullish, bear: contextBearish, weight: params.astraX_weights_context },
-            confirmation: { bull: confirmationBullish, bear: confirmationBearish, weight: params.astraX_weights_confirmation },
+    if (bias === 'Bearish' && regime === 'Strong Trend' && vwap) {
+        const distToVwap = Math.abs(currentPriceVal - vwap);
+        const nearVwap = distToVwap < (atr * 1.0);
+        const belowVwap = currentPriceVal <= vwap * 1.002;
+        
+        if (nearVwap && belowVwap) {
+            const isStochHook = stochRsi && prevStochRsi && (stochRsi.k < stochRsi.d) && (prevStochRsi.k >= prevStochRsi.d) && (stochRsi.k > 60);
+            
+            if (isStochHook) {
+                if (btcState.state === 'PUMP') {
+                    reasons.push(`❌ VETO: Pullback rejected (BTC Pump).`);
+                } else {
+                    const preciseSL = vwap + (atr * pullbackStopMultiplier);
+                    reasons.push(`✅ Setup: Bearish VWAP Pullback + Stoch Hook.`);
+                    return {
+                        signal: 'SELL', reasons, stopLossPrice: preciseSL, tradeType: 'conviction',
+                        btcContext: btcState as any,
+                        astraXAnalysis: { conviction: 80, regime, thesis: bias, setupName: `Bearish VWAP Pullback` }
+                    };
+                }
+            }
         }
+    }
+
+    return { 
+        signal: 'HOLD', 
+        reasons: [...reasons, "No valid high-probability setup detected."], 
+        astraXAnalysis: { conviction: 0, regime, thesis: bias } 
     };
-    
-    let signal: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
-    if (directionalBias === 'Bullish' && conviction >= convictionThreshold) {
-        signal = 'BUY';
-        reasons.push(`✅ Trigger: Final conviction score ${conviction.toFixed(0)} meets threshold.`);
-    } else if (directionalBias === 'Bearish' && conviction <= -convictionThreshold) {
-        signal = 'SELL';
-        reasons.push(`✅ Trigger: Final conviction score ${conviction.toFixed(0)} meets threshold.`);
-    } else {
-        reasons.push(`❌ Trigger: Final conviction score ${conviction.toFixed(0)} did not meet threshold.`);
-    }
-
-    return { signal, reasons, astraXAnalysis: analysis, tradeType: setupType === 'Pullback' ? 'conviction' : 'scalp' };
 };

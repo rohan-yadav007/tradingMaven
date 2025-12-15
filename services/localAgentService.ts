@@ -1,3 +1,4 @@
+
 // services/localAgentService.ts
 
 // Re-export core functionalities to maintain the public API for other services
@@ -34,6 +35,8 @@ export async function getTradingSignal(
     ltfKlines?: Kline[],
     ethBtcKlines?: Kline[],
     livePrice?: number,
+    astraXKlinesMap?: Map<string, Kline[]>, // New parameter for AstraX data
+    btcKlines?: Kline[] // New parameter for Market Tide
 ): Promise<TradeSignal> {
     
     // --- Offload ALL logic to Worker ---
@@ -46,7 +49,9 @@ export async function getTradingSignal(
             immediateKlines,
             ltfKlines,
             ethBtcKlines,
-            livePrice
+            livePrice,
+            astraXKlinesMap,
+            btcKlines
         );
         
         return workerSignal;

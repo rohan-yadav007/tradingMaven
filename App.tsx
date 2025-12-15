@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -263,7 +262,7 @@ const AppContent: React.FC = () => {
             const newTrade: Trade = { 
                 ...posToClose, 
                 exitPrice: finalExitPrice, 
-                exitTime: new Date().toISOString(), 
+                exitTime: new Date(binanceService.getSyncedNow()).toISOString(),
                 pnl: netPnl, 
                 exitReason,
                 mfe,
@@ -523,15 +522,19 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
 
         const newPosition: Position = {
             id: Date.now(),
+            botId,
+            agentId: config.agent.id, // Populate agentId
+            orderId: orderResponse?.orderId ?? null,
             pair: config.pair, mode: config.mode, marginType: config.marginType, executionMode: config.executionMode,
             direction: execSignal.signal === 'BUY' ? 'LONG' : 'SHORT',
             entryPrice: finalEntryPrice, size: tradeSize, investmentAmount: config.investmentAmount,
             leverage: config.mode === TradingMode.USDSM_Futures ? config.leverage : 1,
-            entryTime: new Date().toISOString(), entryReason: execSignal.reasons.join('\n'), agentName: config.agent.name,
+            entryTime: new Date(binanceService.getSyncedNow()).toISOString(), 
+            entryReason: execSignal.reasons.join('\n'), agentName: config.agent.name,
             takeProfitPrice, stopLossPrice, initialTakeProfitPrice: takeProfitPrice, initialStopLossPrice: executionDetails.agentStopLoss,
             initialRiskInPrice: Math.abs(finalEntryPrice - executionDetails.agentStopLoss),
             initialStopLossReason: executionDetails.slReason, activeStopLossReason: executionDetails.slReason,
-            pricePrecision: config.pricePrecision, timeFrame: config.timeFrame, botId, orderId: orderResponse?.orderId ?? null,
+            pricePrecision: config.pricePrecision, timeFrame: config.timeFrame,
             liquidationPrice: finalLiquidationPrice, isBreakevenSet: false, proactiveLossCheckTriggered: false,
             profitLockTier: 0, profitSpikeTier: 0, aggressiveTrailTier: 0,
             peakPrice: finalEntryPrice, troughPrice: finalEntryPrice, candlesSinceEntry: 0, hasBeenProfitable: false,
@@ -573,6 +576,8 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             entryContext: executionDetails.entryContext,
             entryAtr: executionDetails.entryContext.atr14,
             tradeType: execSignal.tradeType,
+            invalidationPrice: execSignal.invalidationPrice, // Persist invalidation price
+            btcContext: execSignal.btcContext, // Persist BTC context
         };
 
         const chatId = config.telegramChatId;
@@ -601,6 +606,9 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
         const savedTrades = historyService.loadTrades();
         setTradeHistory(savedTrades);
         telegramBotService.start();
+        
+        // Initialize Binance time sync
+        binanceService.initializeTimeSync();
 
         const onBotListChange = () => setRunningBots(botManagerService.getRunningBots());
         botManagerService.setOnBotListChange(onBotListChange);

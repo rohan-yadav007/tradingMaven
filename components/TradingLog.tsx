@@ -1,6 +1,7 @@
+
 import React, { useState, useMemo } from 'react';
 import Select, { StylesConfig, GroupBase } from 'react-select';
-import { Trade, TradingMode, AgentParams, MarketDataContext } from '../types';
+import { Trade, TradingMode, AgentParams, MarketDataContext, BitcoinState } from '../types';
 import * as constants from '../constants';
 import { historyService } from '../services/historyService';
 import { HistoryIcon, ChevronDown, ChevronUp, TrashIcon, DownloadIcon } from './icons';
@@ -46,6 +47,23 @@ const ParamDisplay: React.FC<{ params?: AgentParams }> = ({ params }) => {
     );
 };
 
+const BtcContextDisplay: React.FC<{ btcContext?: BitcoinState }> = ({ btcContext }) => {
+    if (!btcContext) return null;
+    const isBullish = btcContext.state === 'TREND_UP' || btcContext.state === 'PUMP';
+    const isBearish = btcContext.state === 'TREND_DOWN' || btcContext.state === 'CRASH';
+    const color = isBullish ? 'text-emerald-500' : isBearish ? 'text-rose-500' : 'text-slate-500';
+
+    return (
+        <div className="p-2 bg-slate-100 dark:bg-slate-900/50 rounded border border-slate-200 dark:border-slate-700 mt-2">
+            <h5 className="font-medium text-slate-700 dark:text-slate-300 text-xs mb-1">BTC Context (At Entry)</h5>
+            <div className={`font-bold text-xs ${color}`}>
+                {btcContext.state}
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400">{btcContext.reason}</p>
+        </div>
+    );
+};
+
 const MarketContextDisplay: React.FC<{ context?: Partial<MarketDataContext>, title: string }> = ({ context, title }) => {
     if (!context || Object.keys(context).length === 0) return (
         <div>
@@ -69,7 +87,7 @@ const MarketContextDisplay: React.FC<{ context?: Partial<MarketDataContext>, tit
     }, [context]);
 
     const formatValue = (key: keyof MarketDataContext, value: any): React.ReactNode => {
-        if (value === null || value === undefined) return 'N/A';
+        if (value === undefined || value === null) return 'N/A';
         if (typeof value === 'number') return value.toFixed(4);
         if (typeof value === 'string') return value;
         if (key === 'adx14' && value.adx) return `ADX: ${value.adx.toFixed(2)}`;
@@ -172,6 +190,7 @@ const TradeRow: React.FC<{ trade: Trade; isOpen: boolean; onToggle: () => void; 
                                         </div>
                                     } />
                                 )}
+                                <BtcContextDisplay btcContext={trade.btcContext} />
                             </div>
                             <div className="space-y-4">
                                <MarketContextDisplay title="Entry Context" context={trade.entryContext} />

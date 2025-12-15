@@ -1,5 +1,6 @@
 
 
+
 import React, { createContext, useState, useContext, useMemo, useEffect, useCallback, ReactNode } from 'react';
 import { TradingMode, Agent, AgentParams, TradingPairList } from '../types';
 import * as constants from '../constants';
@@ -49,7 +50,7 @@ interface TradingConfigState {
     entryTiming: 'immediate' | 'onNextCandle';
     tradingPairLists: TradingPairList[];
     isAdaptiveTpEnabled: boolean;
-    aggressiveTrailMode: 'distance' | 'pnl';
+    aggressiveTrailMode: 'distance' | 'pnl' | 'disabled';
     isMarketBreadthFilterEnabled: boolean;
     isLiquidationFilterEnabled: boolean;
     isConfirmationCandleEnabled: boolean;
@@ -104,7 +105,7 @@ interface TradingConfigActions {
     setIsMultiAssetMode: (isEnabled: boolean) => void;
     setEntryTiming: (timing: 'immediate' | 'onNextCandle') => void;
     setIsAdaptiveTpEnabled: (isEnabled: boolean) => void;
-    setAggressiveTrailMode: (mode: 'distance' | 'pnl') => void;
+    setAggressiveTrailMode: (mode: 'distance' | 'pnl' | 'disabled') => void;
     setIsMarketBreadthFilterEnabled: (isEnabled: boolean) => void;
     setIsLiquidationFilterEnabled: (isEnabled: boolean) => void;
     setIsConfirmationCandleEnabled: (isEnabled: boolean) => void;
@@ -167,7 +168,7 @@ export const TradingConfigProvider: React.FC<{ children: ReactNode }> = ({ child
     const [entryTiming, setEntryTiming] = useState<'immediate' | 'onNextCandle'>('immediate');
     const [tradingPairLists, setTradingPairLists] = useState<TradingPairList[]>([]);
     const [isAdaptiveTpEnabled, setIsAdaptiveTpEnabled] = useState<boolean>(true);
-    const [aggressiveTrailMode, setAggressiveTrailMode] = useState<'distance' | 'pnl'>('distance');
+    const [aggressiveTrailMode, setAggressiveTrailMode] = useState<'distance' | 'pnl' | 'disabled'>('disabled');
     const [isMarketBreadthFilterEnabled, setIsMarketBreadthFilterEnabled] = useState<boolean>(true);
     const [isLiquidationFilterEnabled, setIsLiquidationFilterEnabled] = useState<boolean>(true);
     const [isConfirmationCandleEnabled, setIsConfirmationCandleEnabled] = useState<boolean>(constants.IS_CONFIRMATION_CANDLE_ENABLED);

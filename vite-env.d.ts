@@ -7,8 +7,6 @@ interface ImportMetaEnv {
   readonly VITE_TELEGRAM_CHAT_ID_2: string;
   readonly VITE_TELEGRAM_BOT_TOKEN_3: string;
   readonly VITE_TELEGRAM_CHAT_ID_3: string;
-  readonly PROD: boolean;
-  readonly DEV: boolean;
 }
 
 interface ImportMeta {

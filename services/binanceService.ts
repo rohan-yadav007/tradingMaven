@@ -1,3 +1,4 @@
+
 import { Kline, SymbolInfo, SymbolFilter, WalletBalance, RawWalletBalance, AccountInfo, LeverageBracket, BinanceOrderResponse, TradingMode } from '../types';
 
 // --- Configuration ---
@@ -26,11 +27,8 @@ let leverageBracketCache = new Map<string, { data: any, timestamp: number }>();
 
 /**
  * Translates a Binance API error object or a generic error into a human-readable string.
- * @param error - The error object, which can be from the Binance API (with code/msg) or a standard JS Error.
- * @returns A user-friendly error message.
  */
 export const interpretBinanceError = (error: any): string => {
-    // Check if it's a structured error object from our fetcher
     if (error && typeof error === 'object' && 'code' in error && 'msg' in error) {
         const code = error.code as number;
         const msg = error.msg as string;
@@ -48,7 +46,6 @@ export const interpretBinanceError = (error: any): string => {
             default: return `${msg} (Code: ${code})`;
         }
     }
-    // Fallback for regular JS Error objects
     if (error instanceof Error) {
         return error.message;
     }
@@ -99,11 +96,9 @@ async function fetchSigned(endpoint: string, params: Record<string, any> = {}, m
 
     if (!response.ok) {
         try {
-            // Throw the raw JSON error from Binance to be handled by the caller
             const errorData = await response.json();
             throw errorData;
         } catch (e) {
-            // If parsing fails, throw a generic HTTP error
             throw new Error(`An HTTP error occurred: ${response.status} ${response.statusText}`);
         }
     }
@@ -113,18 +108,37 @@ async function fetchSigned(endpoint: string, params: Record<string, any> = {}, m
 }
 
 
-async function initializeTimeSync() {
-    try {
-        const response = await fetch(`${SPOT_BASE_URL}/api/v3/time`);
-        if (!response.ok) throw new Error('Failed to fetch server time');
-        const data = await response.json();
-        timeOffset = data.serverTime - Date.now();
-        isTimeSynced = true;
-    } catch (error) {
-        console.error("Failed to synchronize time with Binance server:", error);
-        throw new Error("Could not sync time with Binance. API requests will fail.");
+export async function initializeTimeSync(retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const response = await fetch(`${SPOT_BASE_URL}/api/v3/time`);
+            if (!response.ok) throw new Error('Failed to fetch server time');
+            const data = await response.json();
+            const serverTime = data.serverTime;
+            const localTime = Date.now();
+            timeOffset = serverTime - localTime;
+            isTimeSynced = true;
+            console.log(`[BinanceService] Time synced. Offset: ${timeOffset}ms`);
+            return;
+        } catch (error) {
+            console.warn(`[BinanceService] Time sync failed (attempt ${i + 1}/${retries}):`, error);
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s before retry
+        }
     }
+    console.error("[BinanceService] Failed to synchronize time with Binance server after multiple attempts.");
 }
+
+export function getTimeOffset(): number {
+    return timeOffset;
+}
+
+/**
+ * Returns the current timestamp synchronized with Binance server time.
+ * Use this instead of Date.now() for anything related to trade timing or logs.
+ */
+export const getSyncedNow = (): number => {
+    return Date.now() + timeOffset;
+};
 
 // --- Mode-aware Data Fetching ---
 
@@ -314,7 +328,6 @@ export const fetchFuturesTickerPrice = async (symbol: string): Promise<number | 
     return parseFloat(data.price);
 };
 
-// FIX: Corrected the return type to match the implementation.
 export const fetchFundingRate = async (symbol: string): Promise<{ fundingTime: number; fundingRate: string } | null> => {
     try {
         const response = await fetch(`${FUTURES_BASE_URL}/fapi/v1/premiumIndex?symbol=${symbol}`);

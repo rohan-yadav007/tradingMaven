@@ -87,8 +87,8 @@ export const getTheConductorSignal = (
     // B. Acceleration check (short-term momentum signal)
     if (lastMacd?.histogram && macdValues.length > 2) {
         const prevMacd = macdValues[macdValues.length - 2] as MACDOutput;
-        // FIX: Use typeof check to properly narrow types for comparison.
-        if (typeof lastMacd.histogram === 'number' && typeof prevMacd?.histogram === 'number') {
+        // FIX: Use typeof check to properly narrow types for comparison and check for undefined.
+        if (typeof lastMacd.histogram === 'number' && prevMacd && typeof prevMacd.histogram === 'number') {
             if (lastMacd.histogram > 0 && lastMacd.histogram > prevMacd.histogram) {
                 accelBull = 40;
                 reasons.push(`✅ Momentum: Accelerating Bullish`);

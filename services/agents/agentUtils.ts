@@ -1,6 +1,7 @@
+
 // services/agents/agentUtils.ts
 
-import { Kline, BotConfig, AgentParams, MarketDataContext, ADXOutput, StochasticRSIOutput, BollingerBandsOutput, MACDOutput, IchimokuCloudOutput, VortexIndicatorOutput } from '../../types';
+import { Kline, BotConfig, AgentParams, MarketDataContext, ADXOutput, StochasticRSIOutput, BollingerBandsOutput, MACDOutput, IchimokuCloudOutput, VortexIndicatorOutput, BitcoinState } from '../../types';
 import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, IchimokuCloud, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, dragonflydoji, gravestonedoji, hammerpattern, hangingman, morningstar, piercingline, shootingstar, eveningstar } from 'technicalindicators';
 import * as constants from '../../constants';
 import { findSwingPoints } from '../chartAnalysisService';
@@ -150,6 +151,21 @@ export function calculateDailyVwap(klines: Kline[]): (number | undefined)[] {
     return vwapValues;
 }
 
+export function calculateRVOL(klines: Kline[], period: number = 20): number {
+    if (klines.length < period + 1) return 1.0;
+    
+    const volumes = klines.map(k => k.volume || 0);
+    const lastVol = getLast(volumes) || 0;
+    
+    // Slice off the last volume to calculate the average of previous N
+    const previousVolumes = volumes.slice(0, -1).slice(-period);
+    
+    const sum = previousVolumes.reduce((a, b) => a + b, 0);
+    const avg = sum / previousVolumes.length || 1;
+    
+    return lastVol / avg;
+}
+
 export function applyTimeframeSettings(config: BotConfig): BotConfig {
     const { agent, timeFrame, agentParams } = config;
     let finalParams: Required<AgentParams> = { ...constants.DEFAULT_AGENT_PARAMS };
@@ -240,19 +256,21 @@ export function detectRsiDivergence(klines: Kline[], rsiValues: number[], positi
     }
     const getRsi = (idx: number) => rsiValues[idx - rsiStartIndex];
     if (positionDirection === 'LONG') {
-        const highs = pivots.filter(p => p.type === 'high').slice(-2);
-        if (highs.length === 2) {
-            const [prev, last] = highs;
-            const [prevRsi, lastRsi] = [getRsi(prev.index), getRsi(last.index)];
-            if(prevRsi !== undefined && lastRsi !== undefined && last.price > prev.price && lastRsi < prevRsi) return true;
-        }
-    }
-    if (positionDirection === 'SHORT') {
+        // Bullish Divergence: Lower Low in Price, Higher Low in RSI
         const lows = pivots.filter(p => p.type === 'low').slice(-2);
         if (lows.length === 2) {
             const [prev, last] = lows;
             const [prevRsi, lastRsi] = [getRsi(prev.index), getRsi(last.index)];
             if(prevRsi !== undefined && lastRsi !== undefined && last.price < prev.price && lastRsi > prevRsi) return true;
+        }
+    }
+    if (positionDirection === 'SHORT') {
+        // Bearish Divergence: Higher High in Price, Lower High in RSI
+        const highs = pivots.filter(p => p.type === 'high').slice(-2);
+        if (highs.length === 2) {
+            const [prev, last] = highs;
+            const [prevRsi, lastRsi] = [getRsi(prev.index), getRsi(last.index)];
+            if(prevRsi !== undefined && lastRsi !== undefined && last.price > prev.price && lastRsi < prevRsi) return true;
         }
     }
     return false;
@@ -281,18 +299,24 @@ export function analyzeMicroMarketStructure(microKlines: Kline[]): 'ascending' |
 }
 
 
-export function captureMarketContext(klines: Kline[], htfKlines?: Kline[]): Partial<MarketDataContext> {
+export function captureMarketContext(klines: Kline[], htfKlines?: Kline[], params?: AgentParams): Partial<MarketDataContext> {
     const context: Partial<MarketDataContext> = {};
     const calculateIndicators = (k: Kline[]): Partial<Omit<MarketDataContext, 'htf_trend'>> => {
         if (k.length < 2) return {};
         const c = k.map(x => x.close), h = k.map(x => x.high), l = k.map(x => x.low), v = k.map(x => x.volume || 0);
         const res: Partial<MarketDataContext> = {};
-        if (k.length >= 14) {
-            res.rsi14 = getLast(RSI.calculate({ period: 14, values: c }));
-            res.adx14 = getLast(ADX.calculate({ period: 14, high: h, low: l, close: c })) as ADXOutput | undefined;
-            res.atr14 = getLast(ATR.calculate({ period: 14, high: h, low: l, close: c }));
-            res.stochRsi = getLast(StochasticRSI.calculate({ values: c, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
-            const vi14 = VortexIndicator.calculate({ period: 14, high: h, low: l, close: c });
+
+        const rsiPeriod = params?.rsiPeriod || 14;
+        const adxPeriod = params?.adxPeriod || 14;
+        const atrPeriod = params?.atrPeriod || 14;
+        const viPeriod = params?.viPeriod || 14;
+
+        if (k.length >= Math.max(rsiPeriod, adxPeriod, atrPeriod, viPeriod)) {
+            res.rsi14 = getLast(RSI.calculate({ period: rsiPeriod, values: c }));
+            res.adx14 = getLast(ADX.calculate({ period: adxPeriod, high: h, low: l, close: c })) as ADXOutput | undefined;
+            res.atr14 = getLast(ATR.calculate({ period: atrPeriod, high: h, low: l, close: c }));
+            res.stochRsi = getLast(StochasticRSI.calculate({ values: c, rsiPeriod: rsiPeriod, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
+            const vi14 = VortexIndicator.calculate({ period: viPeriod, high: h, low: l, close: c });
             if(getLast(vi14.pdi) !== undefined && getLast(vi14.ndi) !== undefined) res.vi14 = { pdi: getLast(vi14.pdi)!, ndi: getLast(vi14.ndi)! };
         }
         if (k.length >= 20) {
@@ -329,4 +353,208 @@ export function captureMarketContext(klines: Kline[], htfKlines?: Kline[]): Part
         }
     }
     return context;
+}
+
+/**
+ * Identifies a "Liquidity Sweep" or "Stop Hunt" pattern.
+ * A sweep happens when price breaches a recent swing point (taking out liquidity)
+ * but then reverses and closes back inside the range.
+ */
+export function detectLiquiditySweep(klines: Kline[], lookback: number = 10): { bullish: boolean, bearish: boolean } {
+    if (klines.length < lookback + 1) return { bullish: false, bearish: false };
+    
+    const current = klines[klines.length - 1];
+    const previousCandles = klines.slice(-lookback - 1, -1); // Exclude current
+    
+    // Find lowest low and highest high in the lookback period
+    const lowestLow = Math.min(...previousCandles.map(k => k.low));
+    const highestHigh = Math.max(...previousCandles.map(k => k.high));
+    
+    // Bullish Sweep: Price went below the lowest low, but closed above it.
+    const bullishSweep = current.low < lowestLow && current.close > lowestLow;
+    
+    // Bearish Sweep: Price went above the highest high, but closed below it.
+    const bearishSweep = current.high > highestHigh && current.close < highestHigh;
+    
+    return { bullish: bullishSweep, bearish: bearishSweep };
+}
+
+/**
+ * Calculates the slope of the RSI over the last 3 periods to determine if momentum is hooking.
+ * Returns a simple delta: positive for upward slope, negative for downward.
+ */
+export function calculateRsiSlope(rsiValues: number[]): number {
+    if (rsiValues.length < 3) return 0;
+    const last = rsiValues[rsiValues.length - 1];
+    const prev2 = rsiValues[rsiValues.length - 3];
+    // Simple slope over 2 intervals
+    return (last - prev2) / 2; 
+}
+
+export interface FVG {
+    top: number;
+    bottom: number;
+    type: 'bullish' | 'bearish';
+    index: number; // The index of the 1st candle in the 3-candle sequence
+}
+
+/**
+ * Detects active Fair Value Gaps (FVGs) in the recent price data.
+ * An FVG is formed by a 3-candle sequence where there is a gap between Candle 1 and Candle 3.
+ * Checks if the FVG has been invalidated (filled) by subsequent price action.
+ * @param klines Historical klines
+ * @param lookback How far back to look for unfilled FVGs
+ */
+export function findActiveFVGs(klines: Kline[], lookback: number = 50): FVG[] {
+    const fvgs: FVG[] = [];
+    if (klines.length < lookback + 3) return fvgs;
+
+    const startIndex = Math.max(0, klines.length - lookback);
+
+    // 1. Identify all potential FVGs in the window
+    for (let i = startIndex; i < klines.length - 2; i++) {
+        const c1 = klines[i];
+        const c3 = klines[i + 2];
+
+        // Bullish FVG: Candle 1 High < Candle 3 Low
+        if (c1.high < c3.low) {
+            fvgs.push({
+                top: c3.low,
+                bottom: c1.high,
+                type: 'bullish',
+                index: i
+            });
+        }
+        // Bearish FVG: Candle 1 Low > Candle 3 High
+        else if (c1.low > c3.high) {
+            fvgs.push({
+                top: c1.low,
+                bottom: c3.high,
+                type: 'bearish',
+                index: i
+            });
+        }
+    }
+
+    // 2. Filter out filled/invalidated FVGs
+    // An FVG is filled if price subsequently trades completely through it.
+    // For bullish FVG, if price drops below the bottom.
+    // For bearish FVG, if price rises above the top.
+    const activeFVGs: FVG[] = [];
+
+    for (const fvg of fvgs) {
+        let isFilled = false;
+        // Check all candles AFTER the FVG formation (i.e., after Candle 3)
+        for (let j = fvg.index + 3; j < klines.length; j++) {
+            const k = klines[j];
+            if (fvg.type === 'bullish') {
+                // Filled if Low drops below the bottom of the gap
+                if (k.low < fvg.bottom) {
+                    isFilled = true;
+                    break;
+                }
+            } else {
+                // Filled if High rises above the top of the gap
+                if (k.high > fvg.top) {
+                    isFilled = true;
+                    break;
+                }
+            }
+        }
+        if (!isFilled) {
+            activeFVGs.push(fvg);
+        }
+    }
+
+    return activeFVGs;
+}
+
+/**
+ * Checks if price is significantly extended from a mean (EMA), suggesting mean reversion risk.
+ * @param currentPrice 
+ * @param meanPrice (e.g., EMA 50)
+ * @param volatility (e.g., ATR)
+ * @param threshold Multiplier of volatility (e.g., 3x ATR)
+ */
+export function isPriceOverextended(currentPrice: number, meanPrice: number, volatility: number, threshold: number): boolean {
+    if (volatility === 0) return false;
+    return Math.abs(currentPrice - meanPrice) > (volatility * threshold);
+}
+
+/**
+ * Detects if the market is currently in a volatility compression (squeeze) state.
+ * @param klines 
+ * @param length 
+ * @param threshold Bandwidth threshold (e.g. 0.02 for 2%)
+ */
+export function detectVolatilityCompression(klines: Kline[], length: number = 20, threshold: number = 0.02): boolean {
+    if (klines.length < length) return false;
+    const closes = klines.map(k => k.close);
+    const bb = getLast(BollingerBands.calculate({ period: length, stdDev: 2, values: closes })) as BollingerBandsOutput | undefined;
+    if (!bb) return false;
+    const bandwidth = (bb.upper - bb.lower) / bb.middle;
+    return bandwidth < threshold;
+}
+
+// --- BITCOIN MARKET TIDE ANALYSIS ---
+
+export function analyzeBitcoinState(btcKlines: Kline[]): BitcoinState {
+    const minData = 50;
+    if (!btcKlines || btcKlines.length < minData) {
+        return { state: 'NEUTRAL', reason: 'Insufficient BTC Data' };
+    }
+
+    const closes = btcKlines.map(k => k.close);
+    const highs = btcKlines.map(k => k.high);
+    const lows = btcKlines.map(k => k.low);
+    const volumes = btcKlines.map(k => k.volume || 0);
+
+    const ema20 = getLast(EMA.calculate({ period: 20, values: closes })) || 0;
+    const ema50 = getLast(EMA.calculate({ period: 50, values: closes })) || 0;
+    const rsi = getLast(RSI.calculate({ period: 14, values: closes })) || 50;
+    const atr = getLast(ATR.calculate({ period: 14, high: highs, low: lows, close: closes })) || 0;
+    const adx = getLast(ADX.calculate({ period: 14, high: highs, low: lows, close: closes })) as ADXOutput;
+    const volSma = getLast(SMA.calculate({ period: 20, values: volumes })) || 0;
+
+    const lastKline = btcKlines[btcKlines.length - 1];
+    const currentPrice = lastKline.close;
+    const candleBody = Math.abs(lastKline.close - lastKline.open);
+    
+    // 1. CRASH DETECTION (High Priority)
+    const isCrash = 
+        currentPrice < ema50 && 
+        rsi < 35 && 
+        lastKline.close < lastKline.open && // Red candle
+        candleBody > (atr * 2) && // Huge body
+        lastKline.volume! > (volSma * 1.5); // High volume
+        
+    if (isCrash) {
+        return { state: 'CRASH', reason: 'BTC Flash Crash Detected' };
+    }
+
+    // 2. PUMP DETECTION
+    const isPump = 
+        currentPrice > ema50 && 
+        rsi > 70 && 
+        lastKline.close > lastKline.open && // Green candle
+        candleBody > (atr * 2) && 
+        lastKline.volume! > (volSma * 1.5);
+        
+    if (isPump) {
+        return { state: 'PUMP', reason: 'BTC Flash Pump Detected' };
+    }
+
+    // 3. RANGE DETECTION
+    if (adx && adx.adx < 25) {
+        return { state: 'RANGE', reason: `BTC Ranging (ADX ${adx.adx.toFixed(0)})` };
+    }
+
+    // 4. TREND DETECTION
+    if (currentPrice > ema50) {
+        return { state: 'TREND_UP', reason: 'BTC Uptrend' };
+    } else if (currentPrice < ema50) {
+        return { state: 'TREND_DOWN', reason: 'BTC Downtrend' };
+    }
+
+    return { state: 'NEUTRAL', reason: 'BTC Indeterminate' };
 }

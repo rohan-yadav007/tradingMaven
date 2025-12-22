@@ -39,7 +39,13 @@ export const getHigherTimeframe = (timeframe: string): string | undefined => {
 
 
 export const AGENTS: Agent[] = [
-     {
+    {
+        id: 22,
+        name: 'The Matrix Strategist',
+        description: "A context-switching agent that morphs its strategy based on the timeframe. From high-frequency 1m scalping to macro 1d investing, it uses a pre-optimized matrix of indicators and rules for each market environment.",
+        indicators: ["TF Setup Matrix", "Dynamic EMAs", "Time-Decay Exits", "Adaptive RR"],
+    },
+    {
         id: 20,
         name: 'Supertrend Flipper',
         description: "A pure trend-following agent that uses Supertrend flips to enter and reverse positions. It aims to always be in the market, capturing the majority of a trend.",
@@ -275,6 +281,12 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     astraX_sl_multiplier_breakout: 2.0,
     astraX_sl_multiplier_pullback: 1.5,
     astraX_breakout_candle_max_atr: 3.0,
+
+    // AstraX Physics (Defaults)
+    astraX_elasticity_multiplier: 0.8,
+    astraX_ratchet_breakeven: 0.5,
+    astraX_ratchet_secure: 0.8,
+    astraX_ratchet_parabolic: 2.0,
     
     // Agent 20: Supertrend Flipper
     stf_atrPeriod: 10,
@@ -292,6 +304,15 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     pps_pivotPeriod: 2,
     pps_atrFactor: 3.0,
     pps_atrPeriod: 10,
+
+    // Agent 22: Matrix Strategist Defaults
+    ms_1m_emaFast: 9, ms_1m_emaSlow: 21, ms_1m_rsiPeriod: 7, ms_1m_volSpike: 3.0, ms_1m_bbPeriod: 10, ms_1m_bbStd: 1.5,
+    ms_3m_ema1: 12, ms_3m_ema2: 26, ms_3m_ema3: 55, ms_3m_rsiPeriod: 14, ms_3m_volMult: 2.0,
+    ms_5m_ema1: 20, ms_5m_ema2: 50, ms_5m_ema3: 200, ms_5m_stochK: 14, ms_5m_stochD: 3,
+    ms_15m_ema1: 50, ms_15m_ema2: 100, ms_15m_ema3: 200, ms_15m_adxThreshold: 25,
+    ms_30m_ema1: 100, ms_30m_ema2: 200, ms_30m_rsiPeriod: 21,
+    ms_1h_emaPeriod: 200,
+    ms_4h_swingLookback: 10,
 
     // SMC Reversal Veto
     smc_divergenceLookback: 12,
@@ -491,92 +512,145 @@ export const MOMENTUM_SWING_TRADER_TIMEFRAME_SETTINGS: Record<string, Partial<Ag
     '1h':  { mst_emaFastPeriod: 50, mst_emaSlowPeriod: 200 },
 };
 
+export const MATRIX_STRATEGIST_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
+    '1m': { ms_1m_emaFast: 9, ms_1m_emaSlow: 21, ms_1m_rsiPeriod: 7, ms_1m_volSpike: 3.0, ms_1m_bbPeriod: 10, ms_1m_bbStd: 1.5 },
+    '3m': { ms_3m_ema1: 12, ms_3m_ema2: 26, ms_3m_ema3: 55, ms_3m_rsiPeriod: 14, ms_3m_volMult: 2.0 },
+    '5m': { ms_5m_ema1: 20, ms_5m_ema2: 50, ms_5m_ema3: 200, ms_5m_stochK: 14, ms_5m_stochD: 3 },
+    '15m': { ms_15m_ema1: 50, ms_15m_ema2: 100, ms_15m_ema3: 200, ms_15m_adxThreshold: 25 },
+    '30m': { ms_30m_ema1: 100, ms_30m_ema2: 200, ms_30m_rsiPeriod: 21 },
+    '1h': { ms_1h_emaPeriod: 200 },
+    '4h': { ms_4h_swingLookback: 10 },
+    '1d': {}
+};
+
 export const ASTRAX_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    // --- SCALPING ZONE (High Noise, Fast Reactions) ---
-    // Rule: Wider stops to survive noise, but deeper lookbacks to find real structure.
+    // --- SNIPER ZONE (1m, 3m) ---
+    // Looser Elasticity: Allow small deviations since noise is high.
+    // Tighter Ratchet: Lock profits aggressively.
     '1m': {
-        astraX_sweepLookback: 60, // 1 Hour context required to find a real level
-        astraX_breakoutVolMultiplier: 3.0, // Only extreme volume justifies a 1m breakout
-        astraX_pullbackEmaPeriod: 21,
-        astraX_adxThreshold: 30, // Needs VERY strong trend to filter chop
-        astraX_sl_multiplier_sweep: 2.5, // Wide buffer for noise wicks
-        astraX_sl_multiplier_breakout: 1.5,
-        astraX_sl_multiplier_pullback: 2.0,
-        astraX_breakout_candle_max_atr: 4.0
+        astraX_sweepLookback: 20, 
+        astraX_breakoutVolMultiplier: 2.0, 
+        astraX_pullbackEmaPeriod: 50, 
+        astraX_adxThreshold: 20,
+        astraX_sl_multiplier_sweep: 1.5, // Increased from 1.2 to survive wicks
+        astraX_sl_multiplier_breakout: 1.8, 
+        astraX_sl_multiplier_pullback: 1.5,
+        astraX_breakout_candle_max_atr: 4.0,
+        
+        astraX_elasticity_multiplier: 1.2, // Reduced from 1.5 to allow more entries in chop
+        astraX_ratchet_breakeven: 0.25, 
+        astraX_ratchet_secure: 0.5,     
+        astraX_ratchet_parabolic: 1.2,  // Increased from 0.8 to give a bit more room
     },
     '3m': {
-        astraX_sweepLookback: 40, // 2 Hours context
-        astraX_breakoutVolMultiplier: 2.8,
-        astraX_pullbackEmaPeriod: 21,
-        astraX_adxThreshold: 28,
-        astraX_sl_multiplier_sweep: 2.2,
-        astraX_sl_multiplier_breakout: 1.8,
-        astraX_sl_multiplier_pullback: 1.8,
-        astraX_breakout_candle_max_atr: 3.5
-    },
-    '5m': {
-        astraX_sweepLookback: 48, // 4 Hours context
-        astraX_breakoutVolMultiplier: 2.5,
-        astraX_pullbackEmaPeriod: 21,
-        astraX_adxThreshold: 25,
-        astraX_sl_multiplier_sweep: 2.0,
+        astraX_sweepLookback: 30,
+        astraX_breakoutVolMultiplier: 1.8, 
+        astraX_pullbackEmaPeriod: 50,
+        astraX_adxThreshold: 22,
+        astraX_sl_multiplier_sweep: 1.5,
         astraX_sl_multiplier_breakout: 1.8,
         astraX_sl_multiplier_pullback: 1.5,
-        astraX_breakout_candle_max_atr: 3.0
+        astraX_breakout_candle_max_atr: 3.5,
+        
+        astraX_elasticity_multiplier: 1.2, 
+        astraX_ratchet_breakeven: 0.35,
+        astraX_ratchet_secure: 0.6,
+        astraX_ratchet_parabolic: 1.2,
     },
     
-    // --- DAY TRADING ZONE (Balanced, Standard Indicators) ---
-    '15m': {
-        astraX_sweepLookback: 48, // 12 hours
-        astraX_breakoutVolMultiplier: 2.2,
+    // --- DAY TRADING ZONE (5m - 1h) ---
+    '5m': {
+        astraX_sweepLookback: 40,
+        astraX_breakoutVolMultiplier: 2.0,
         astraX_pullbackEmaPeriod: 21,
-        astraX_adxThreshold: 22,
-        astraX_sl_multiplier_sweep: 1.5, // Standard ATR stop
+        astraX_adxThreshold: 20, // Lowered from 25 to catch early trends
+        astraX_sl_multiplier_sweep: 1.5,
+        astraX_sl_multiplier_breakout: 1.8,
+        astraX_sl_multiplier_pullback: 1.5,
+        astraX_breakout_candle_max_atr: 3.0,
+        
+        astraX_elasticity_multiplier: 1.5,
+        astraX_ratchet_breakeven: 0.4,
+        astraX_ratchet_secure: 0.8,
+        astraX_ratchet_parabolic: 1.5,
+    },
+    '15m': {
+        astraX_sweepLookback: 60,
+        astraX_breakoutVolMultiplier: 2.0,
+        astraX_pullbackEmaPeriod: 21,
+        astraX_adxThreshold: 25,
+        astraX_sl_multiplier_sweep: 1.5, 
         astraX_sl_multiplier_breakout: 1.5,
         astraX_sl_multiplier_pullback: 1.5,
-        astraX_breakout_candle_max_atr: 3.0
+        astraX_breakout_candle_max_atr: 3.0,
+        
+        astraX_elasticity_multiplier: 1.2,
+        astraX_ratchet_breakeven: 0.6,
+        astraX_ratchet_secure: 1.0,
+        astraX_ratchet_parabolic: 2.5,
     },
     '30m': {
-        astraX_sweepLookback: 48, // 24 hours
-        astraX_breakoutVolMultiplier: 2.0,
+        astraX_sweepLookback: 50,
+        astraX_breakoutVolMultiplier: 1.8,
+        astraX_pullbackEmaPeriod: 21,
+        astraX_adxThreshold: 25,
+        astraX_sl_multiplier_sweep: 1.5,
+        astraX_sl_multiplier_breakout: 1.5,
+        astraX_sl_multiplier_pullback: 1.5,
+        astraX_breakout_candle_max_atr: 2.8,
+        
+        astraX_elasticity_multiplier: 1.2,
+        astraX_ratchet_breakeven: 0.7,
+        astraX_ratchet_secure: 1.2,
+        astraX_ratchet_parabolic: 3.0,
+    },
+    '1h': {
+        astraX_sweepLookback: 48,
+        astraX_breakoutVolMultiplier: 1.8,
         astraX_pullbackEmaPeriod: 21,
         astraX_adxThreshold: 22,
         astraX_sl_multiplier_sweep: 1.5,
         astraX_sl_multiplier_breakout: 1.5,
         astraX_sl_multiplier_pullback: 1.5,
-        astraX_breakout_candle_max_atr: 2.8
-    },
-    '1h': {
-        astraX_sweepLookback: 48, // 2 days
-        astraX_breakoutVolMultiplier: 2.0,
-        astraX_pullbackEmaPeriod: 21,
-        astraX_adxThreshold: 20, // Trends can start with lower ADX on higher TFs
-        astraX_sl_multiplier_sweep: 1.2, // Tighter stops possible as noise reduces
-        astraX_sl_multiplier_breakout: 1.5,
-        astraX_sl_multiplier_pullback: 1.2,
-        astraX_breakout_candle_max_atr: 2.5
+        astraX_breakout_candle_max_atr: 2.5,
+        
+        astraX_elasticity_multiplier: 1.0,
+        astraX_ratchet_breakeven: 0.8,
+        astraX_ratchet_secure: 1.5,
+        astraX_ratchet_parabolic: 3.5,
     },
     
-    // --- SWING TRADING ZONE (Structural, High Conviction) ---
+    // --- SWING TRADING ZONE (4h, 1d) ---
+    // Stricter Elasticity: 1.0 ATR.
     '4h': {
-        astraX_sweepLookback: 30, // 5 days
-        astraX_breakoutVolMultiplier: 1.8, // Sustained volume matters more than spikes
-        astraX_pullbackEmaPeriod: 21,
+        astraX_sweepLookback: 60,
+        astraX_breakoutVolMultiplier: 1.5,
+        astraX_pullbackEmaPeriod: 50,
         astraX_adxThreshold: 20,
-        astraX_sl_multiplier_sweep: 1.0, // Very tight relative to ATR because structure is clear
+        astraX_sl_multiplier_sweep: 1.2,
         astraX_sl_multiplier_breakout: 1.4,
-        astraX_sl_multiplier_pullback: 1.1,
-        astraX_breakout_candle_max_atr: 2.5
+        astraX_sl_multiplier_pullback: 1.2,
+        astraX_breakout_candle_max_atr: 2.5,
+        
+        astraX_elasticity_multiplier: 1.0,
+        astraX_ratchet_breakeven: 1.5,
+        astraX_ratchet_secure: 3.0,
+        astraX_ratchet_parabolic: 6.0,
     },
     '1d': {
-        astraX_sweepLookback: 20, // 1 month
-        astraX_breakoutVolMultiplier: 1.5,
-        astraX_pullbackEmaPeriod: 21,
+        astraX_sweepLookback: 30,
+        astraX_breakoutVolMultiplier: 1.3,
+        astraX_pullbackEmaPeriod: 50,
         astraX_adxThreshold: 18,
         astraX_sl_multiplier_sweep: 1.0,
         astraX_sl_multiplier_breakout: 1.3,
         astraX_sl_multiplier_pullback: 1.0,
-        astraX_breakout_candle_max_atr: 2.0
+        astraX_breakout_candle_max_atr: 2.0,
+        
+        astraX_elasticity_multiplier: 1.0,
+        astraX_ratchet_breakeven: 2.5,
+        astraX_ratchet_secure: 5.0,
+        astraX_ratchet_parabolic: 10.0,
     },
 };
 
@@ -604,6 +678,7 @@ export const getAgentTimeframeSettings = (agentId: number, timeFrame: string): P
         case 19: agentSettings = ASTRAX_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 20: agentSettings = SUPERTREND_FLIPPER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 21: agentSettings = PIVOT_POINT_SUPERTREND_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+        case 22: agentSettings = MATRIX_STRATEGIST_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
     }
 
     return { ...vetoSettings, ...smcSettings, ...concordanceSettings, ...agentSettings };

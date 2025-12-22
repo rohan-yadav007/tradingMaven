@@ -59,7 +59,8 @@ const AppContent: React.FC = () => {
         isSupertrendConfirmationEnabled,
         isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled,
         isTradeGuardianEnabled,
-        isHeikinAshiEnabled
+        isHeikinAshiEnabled,
+        isDynamicSizingEnabled
     } = configState;
 
     const {
@@ -176,6 +177,7 @@ const AppContent: React.FC = () => {
                     isTradeGuardianEnabled,
                     finalEntryFailSafe: executionMode === 'live' ? 'fail-closed' : 'fail-open',
                     isHeikinAshiEnabled,
+                    isDynamicSizingEnabled,
                 };
 
                 botManagerService.startBot(botConfig);
@@ -194,7 +196,7 @@ const AppContent: React.FC = () => {
         isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, 
         isMarketStructureVetoEnabled, isSupertrendConfirmationEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, isMarketBreadthFilterEnabled,
-        isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled, isTradeGuardianEnabled, isHeikinAshiEnabled,
+        isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled, isTradeGuardianEnabled, isHeikinAshiEnabled, isDynamicSizingEnabled
     ]);
 
     const handleClosePosition = useCallback(async (posToClose: Position, exitReason: string = "Manual Close", exitPriceOverride?: number) => {
@@ -426,6 +428,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             agentStopLoss: number,
             slReason: 'Agent Logic' | 'Hard Cap',
             entryContext: MarketDataContext,
+            convictionSizeMultiplier?: number
         }
     ) => {
         const bot = botManagerService.getBot(botId);
@@ -457,6 +460,20 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             return;
         }
         
+        // --- DYNAMIC SIZING LOGIC ---
+        let sizeMultiplier = 1.0;
+        let sizingLog = '';
+        
+        // Only apply scaling if globally enabled in config AND agent provided a multiplier
+        if (config.isDynamicSizingEnabled && executionDetails.convictionSizeMultiplier) {
+            sizeMultiplier = executionDetails.convictionSizeMultiplier;
+            if (sizeMultiplier < 1.0) {
+                sizingLog = ` (Dynamic Sizing: ${sizeMultiplier * 100}% based on conviction)`;
+            }
+        }
+        
+        const effectiveInvestmentAmount = config.investmentAmount * sizeMultiplier;
+
         if (config.executionMode === 'live') {
             if (!accountInfo) {
                 botManagerService.notifyTradeExecutionFailed(botId, "Live account information is not yet available.");
@@ -473,8 +490,8 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             const balance = accountInfo.balances.find(b => b.asset === quoteAsset);
             const availableBalance = balance ? balance.free : 0;
 
-            if (config.investmentAmount > availableBalance) {
-                botManagerService.notifyTradeExecutionFailed(botId, `Insufficient funds. Required: ${config.investmentAmount.toFixed(2)}, Available: ${availableBalance.toFixed(2)}.`);
+            if (effectiveInvestmentAmount > availableBalance) {
+                botManagerService.notifyTradeExecutionFailed(botId, `Insufficient funds. Required: ${effectiveInvestmentAmount.toFixed(2)}, Available: ${availableBalance.toFixed(2)}.`);
                 return;
             }
 
@@ -484,7 +501,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                     throw new Error("Could not get live price for trade execution.");
                 }
 
-                const rawQuantity = config.mode === TradingMode.USDSM_Futures ? (config.investmentAmount * config.leverage) / entryPriceForOrder : config.investmentAmount / entryPriceForOrder;
+                const rawQuantity = config.mode === TradingMode.USDSM_Futures ? (effectiveInvestmentAmount * config.leverage) / entryPriceForOrder : effectiveInvestmentAmount / entryPriceForOrder;
                 const tempQuantity = Math.floor(rawQuantity / config.stepSize) * config.stepSize;
                 const quantity = parseFloat(tempQuantity.toFixed(config.quantityPrecision));
 
@@ -512,7 +529,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             }
         } else {
             finalEntryPrice = tempEntryPrice;
-            const positionValue = config.mode === TradingMode.USDSM_Futures ? config.investmentAmount * config.leverage : config.investmentAmount;
+            const positionValue = config.mode === TradingMode.USDSM_Futures ? effectiveInvestmentAmount * config.leverage : effectiveInvestmentAmount;
             tradeSize = positionValue / tempEntryPrice;
         }
         
@@ -527,7 +544,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             orderId: orderResponse?.orderId ?? null,
             pair: config.pair, mode: config.mode, marginType: config.marginType, executionMode: config.executionMode,
             direction: execSignal.signal === 'BUY' ? 'LONG' : 'SHORT',
-            entryPrice: finalEntryPrice, size: tradeSize, investmentAmount: config.investmentAmount,
+            entryPrice: finalEntryPrice, size: tradeSize, investmentAmount: effectiveInvestmentAmount,
             leverage: config.mode === TradingMode.USDSM_Futures ? config.leverage : 1,
             entryTime: new Date(binanceService.getSyncedNow()).toISOString(), 
             entryReason: execSignal.reasons.join('\n'), agentName: config.agent.name,
@@ -572,6 +589,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 isTradeGuardianEnabled: config.isTradeGuardianEnabled,
                 finalEntryFailSafe: config.finalEntryFailSafe,
                 isHeikinAshiEnabled: config.isHeikinAshiEnabled,
+                isDynamicSizingEnabled: config.isDynamicSizingEnabled
             },
             entryContext: executionDetails.entryContext,
             entryAtr: executionDetails.entryContext.atr14,
@@ -599,6 +617,8 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
         botManagerService.updateBotState(botId, {
             status: BotStatus.PositionOpen, openPositionId: newPosition.id, openPosition: newPosition,
         });
+        
+        botManagerService.addBotLog(botId, `Executing ${execSignal.signal} (${execSignal.tradeType || 'default'}) at ~${finalEntryPrice.toFixed(config.pricePrecision)}. SL: ${stopLossPrice.toFixed(config.pricePrecision)} (${executionDetails.slReason}), TP: ${takeProfitPrice.toFixed(config.pricePrecision)}${sizingLog}`, LogType.Action);
 
     }, [accountInfo]);
     

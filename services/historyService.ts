@@ -1,3 +1,4 @@
+
 import { Trade } from '../types';
 
 const HISTORY_KEY = 'tradeHistory_v2';
@@ -54,10 +55,30 @@ const removeTrades = (tradeIdsToRemove: number[]): Trade[] => {
     }
 };
 
+const getDailyRealizedPnl = (): number => {
+    try {
+        const trades = loadTrades();
+        const now = new Date();
+        // UTC Midnight timestamp
+        const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).getTime();
+        
+        return trades.reduce((sum, trade) => {
+            if (new Date(trade.exitTime).getTime() >= startOfDay) {
+                return sum + trade.pnl;
+            }
+            return sum;
+        }, 0);
+    } catch (error) {
+        console.error("Failed to calculate daily PnL:", error);
+        return 0;
+    }
+};
+
 
 export const historyService = {
     saveTrade,
     loadTrades,
     clearTrades,
     removeTrades,
+    getDailyRealizedPnl,
 };

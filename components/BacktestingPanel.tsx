@@ -1,6 +1,4 @@
 
-
-
 import React from 'react';
 import { useState, useEffect, useMemo } from 'react';
 import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, OptimizationResultItem } from '../types';
@@ -379,6 +377,7 @@ export type BacktestConfig = {
     isMomentumConcordanceEnabled: boolean;
     isTradeGuardianEnabled: boolean;
     isHeikinAshiEnabled: boolean;
+    isDynamicSizingEnabled: boolean;
 };
 
 const getTimeframeDuration = (timeframe: string): number => {
@@ -439,6 +438,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         isMomentumConcordanceEnabled: globalConfig.isMomentumConcordanceEnabled,
         isTradeGuardianEnabled: globalConfig.isTradeGuardianEnabled,
         isHeikinAshiEnabled: globalConfig.isHeikinAshiEnabled,
+        isDynamicSizingEnabled: globalConfig.isDynamicSizingEnabled,
     });
 
     const [backtestDays, setBacktestDays] = useState(3);
@@ -628,6 +628,26 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                     <div className={formGroupClass}>
                         <label className={formLabelClass}>Investment Amount</label>
                         <input type="number" value={config.investmentAmount} onChange={e => updateConfig('investmentAmount', Number(e.target.value))} className={formInputClass} />
+                    </div>
+                    
+                    <div className={`${formGroupClass} mt-2`}>
+                        <div className="flex items-center justify-between">
+                             <div className="flex items-center gap-1.5">
+                                <label htmlFor="dynamic-sizing-toggle-backtest" className={formLabelClass}>
+                                    Dynamic Conviction Sizing
+                                </label>
+                                 <div className="relative group">
+                                    <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                                    <div className="absolute bottom-full mb-2 w-56 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                        If enabled, the AI will reduce position size for lower conviction setups (e.g., 50% size for low conviction). If disabled, it always uses the full Investment Amount.
+                                    </div>
+                                </div>
+                            </div>
+                            <ToggleSwitch
+                                checked={config.isDynamicSizingEnabled}
+                                onChange={v => updateConfig('isDynamicSizingEnabled', v)}
+                            />
+                        </div>
                     </div>
 
                     {config.tradingMode === TradingMode.USDSM_Futures && (
@@ -867,6 +887,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                             globalActions.setIsMomentumConcordanceEnabled(config.isMomentumConcordanceEnabled);
                             globalActions.setIsTradeGuardianEnabled(config.isTradeGuardianEnabled);
                             globalActions.setIsHeikinAshiEnabled(config.isHeikinAshiEnabled);
+                            globalActions.setIsDynamicSizingEnabled(config.isDynamicSizingEnabled);
                             setActiveView('trading');
                         }}
                     />

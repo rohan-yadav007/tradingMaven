@@ -134,6 +134,14 @@ export interface OrderBook {
     spreadPercentage: number;
 }
 
+export interface OrderBookAnalysis {
+    imbalance: number; // -1 (Bearish) to 1 (Bullish)
+    bidWall: number | null; // Price of nearest significant bid wall
+    askWall: number | null; // Price of nearest significant ask wall
+    spread: number;
+    depthRatio: number; // Ratio of total bid volume to total ask volume in depth scope
+}
+
 // --- Agent & Trading Logic ---
 
 export interface Agent {
@@ -325,6 +333,12 @@ export interface AgentParams {
     astraX_sl_multiplier_breakout?: number;
     astraX_sl_multiplier_pullback?: number;
     astraX_breakout_candle_max_atr?: number; // Veto if breakout candle is too large (exhaustion)
+
+    // AstraX Physics
+    astraX_elasticity_multiplier?: number;
+    astraX_ratchet_breakeven?: number;
+    astraX_ratchet_secure?: number;
+    astraX_ratchet_parabolic?: number;
     
     // Agent 20: Supertrend Flipper
     stf_atrPeriod?: number;
@@ -342,6 +356,39 @@ export interface AgentParams {
     pps_pivotPeriod?: number;
     pps_atrFactor?: number;
     pps_atrPeriod?: number;
+
+    // Agent 22: The Matrix Strategist (TF Setup Matrix)
+    ms_1m_emaFast?: number;
+    ms_1m_emaSlow?: number;
+    ms_1m_rsiPeriod?: number;
+    ms_1m_volSpike?: number;
+    ms_1m_bbPeriod?: number;
+    ms_1m_bbStd?: number;
+    
+    ms_3m_ema1?: number;
+    ms_3m_ema2?: number;
+    ms_3m_ema3?: number;
+    ms_3m_rsiPeriod?: number;
+    ms_3m_volMult?: number;
+    
+    ms_5m_ema1?: number;
+    ms_5m_ema2?: number;
+    ms_5m_ema3?: number;
+    ms_5m_stochK?: number;
+    ms_5m_stochD?: number;
+    
+    ms_15m_ema1?: number;
+    ms_15m_ema2?: number;
+    ms_15m_ema3?: number;
+    ms_15m_adxThreshold?: number;
+    
+    ms_30m_ema1?: number;
+    ms_30m_ema2?: number;
+    ms_30m_rsiPeriod?: number;
+    
+    ms_1h_emaPeriod?: number;
+    
+    ms_4h_swingLookback?: number;
 
     // SMC Reversal Veto
     smc_divergenceLookback?: number;
@@ -387,14 +434,22 @@ export interface MarketDataContext {
     htf_adx14?: ADXOutput;
     htf_stochRsi?: StochasticRSIOutput;
     htf_trend?: 'bullish' | 'bearish' | 'neutral';
+    
+    // New Order Book Context
+    orderBook?: OrderBookAnalysis;
 }
 
 export interface AstraXAnalysis {
     conviction: number; // -100 to 100
-    regime: 'Strong Trend' | 'Developing Trend' | 'Choppy Market';
+    regime: 'Strong Trend' | 'Developing Trend' | 'Choppy Market' | 'Volatile Expansion' | 'Range Bound' | 'Unknown';
     thesis: 'Bullish' | 'Bearish' | 'Neutral';
     setupName?: string;
-    // Optional legacy fields for backward compatibility if needed
+    confidenceMetrics?: {
+      technical: number;
+      volume: number;
+      structure: number;
+      momentum: number;
+    };
     threshold?: number;
     scores?: {
         structure: { bull: number, bear: number, weight: number },
@@ -407,6 +462,9 @@ export interface AstraXAnalysis {
 
 export interface BitcoinState {
     state: 'CRASH' | 'PUMP' | 'RANGE' | 'TREND_UP' | 'TREND_DOWN' | 'NEUTRAL';
+    trend: 'bullish' | 'bearish' | 'neutral';
+    momentum: 'accelerating' | 'decelerating' | 'neutral';
+    rejection: 'resistance' | 'support' | 'none';
     reason: string;
 }
 
@@ -483,6 +541,7 @@ export interface BotConfig {
     finalEntryFailSafe?: 'fail-open' | 'fail-closed';
     isTradeGuardianEnabled?: boolean;
     isHeikinAshiEnabled: boolean;
+    isDynamicSizingEnabled?: boolean; // NEW: Controls whether to use conviction-based sizing
 }
 
 export interface BotConfigSnapshot {
@@ -517,6 +576,7 @@ export interface BotConfigSnapshot {
     finalEntryFailSafe?: 'fail-open' | 'fail-closed';
     isTradeGuardianEnabled?: boolean;
     isHeikinAshiEnabled: boolean;
+    isDynamicSizingEnabled?: boolean;
 }
 
 export interface Position {
@@ -699,4 +759,5 @@ export interface TradingPairList {
 
 export interface UserPreferences {
     tradingPairLists: TradingPairList[];
+    dailyLossLimit?: number; // 0 = disabled, >0 = limit in USD
 }

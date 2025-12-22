@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, LogType } from '../types';
 import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, InfoIcon, ZapIcon, RefreshIcon } from './icons';
@@ -563,6 +564,8 @@ const BotCard: React.FC<{ botId: string; actions: Omit<RunningBotsProps, 'bots'>
                                 </p>
                             </div>
                             <div className="flex items-center gap-4">
+                                <InfoItem label="Invested" value={`$${position.investmentAmount.toFixed(0)}`} />
+                                <InfoItem label="Leverage" value={`${position.leverage}x`} />
                                 {position.liquidationPrice && (
                                     <InfoItem label="Liq. Price" value={formatPrice(position.liquidationPrice, position.pricePrecision)} valueClassName="text-amber-500" />
                                 )}

@@ -1,4 +1,3 @@
-
 // services/agents/agentUtils.ts
 
 import { Kline, BotConfig, AgentParams, MarketDataContext, ADXOutput, StochasticRSIOutput, BollingerBandsOutput, MACDOutput, IchimokuCloudOutput, VortexIndicatorOutput, BitcoinState } from '../../types';
@@ -151,6 +150,22 @@ export function calculateDailyVwap(klines: Kline[]): (number | undefined)[] {
     return vwapValues;
 }
 
+/**
+ * Calculates the slope of Bollinger Bandwidth to detect volatility expansion velocity.
+ */
+export function calculateBandwidthSlope(klines: Kline[], period: number = 20): number {
+    if (klines.length < period + 2) return 0;
+    const closes = klines.map(k => k.close);
+    const bb = BollingerBands.calculate({ period, stdDev: 2, values: closes });
+    const last = bb[bb.length - 1];
+    const prev = bb[bb.length - 2];
+    if (!last || !prev) return 0;
+    
+    const lastBW = (last.upper - last.lower) / last.middle;
+    const prevBW = (prev.upper - prev.lower) / prev.middle;
+    return (lastBW - prevBW) / prevBW;
+}
+
 export function calculateRVOL(klines: Kline[], period: number = 20): number {
     if (klines.length < period + 1) return 1.0;
     
@@ -175,6 +190,93 @@ export function applyTimeframeSettings(config: BotConfig): BotConfig {
     return { ...config, agentParams: finalParams };
 }
 
+/**
+ * Calculates Fibonacci retracement levels based on a given swing.
+ */
+export function calculateFibLevels(high: number, low: number): { [key: string]: number } {
+    const diff = high - low;
+    return {
+        0: high,
+        0.236: high - 0.236 * diff,
+        0.382: high - 0.382 * diff,
+        0.5: high - 0.5 * diff,
+        0.618: high - 0.618 * diff,
+        0.786: high - 0.786 * diff,
+        1: low
+    };
+}
+
+/**
+ * Simplified Value Area (VA) calculator to estimate VAL/VAH.
+ * Finds the price range that contains roughly 70% of the total volume.
+ */
+export function calculateValueArea(klines: Kline[]): { val: number, vah: number, poc: number } {
+    if (klines.length === 0) return { val: 0, vah: 0, poc: 0 };
+    
+    const min = Math.min(...klines.map(k => k.low));
+    const max = Math.max(...klines.map(k => k.high));
+    const range = max - min;
+    const step = range / 50; // 50 price buckets
+
+    const buckets = new Map<number, number>();
+    let totalVolume = 0;
+
+    for (const k of klines) {
+        const bucketIdx = Math.floor((k.close - min) / step);
+        const price = min + bucketIdx * step;
+        const currentVol = buckets.get(price) || 0;
+        buckets.set(price, currentVol + (k.volume || 0));
+        totalVolume += (k.volume || 0);
+    }
+
+    const sortedBuckets = Array.from(buckets.entries()).sort((a, b) => a[0] - b[0]);
+    let pocPrice = 0, maxVol = 0;
+    for (const [price, vol] of sortedBuckets) {
+        if (vol > maxVol) { maxVol = vol; pocPrice = price; }
+    }
+
+    const vaThreshold = totalVolume * 0.7;
+    let currentVaVol = maxVol;
+    let lowIdx = sortedBuckets.findIndex(b => b[0] === pocPrice);
+    let highIdx = lowIdx;
+
+    while (currentVaVol < vaThreshold && (lowIdx > 0 || highIdx < sortedBuckets.length - 1)) {
+        const lowVol = lowIdx > 0 ? sortedBuckets[lowIdx - 1][1] : 0;
+        const highVol = highIdx < sortedBuckets.length - 1 ? sortedBuckets[highIdx + 1][1] : 0;
+
+        if (lowVol >= highVol && lowIdx > 0) {
+            lowIdx--;
+            currentVaVol += lowVol;
+        } else if (highIdx < sortedBuckets.length - 1) {
+            highIdx++;
+            currentVaVol += highVol;
+        } else {
+            break;
+        }
+    }
+
+    return {
+        poc: pocPrice,
+        val: sortedBuckets[lowIdx][0],
+        vah: sortedBuckets[highIdx][0]
+    };
+}
+
+/**
+ * Calculates standard Weekly Pivot Points.
+ */
+export function calculatePivotPoints(high: number, low: number, close: number) {
+    const pivot = (high + low + close) / 3;
+    const r1 = 2 * pivot - low;
+    const s1 = 2 * pivot - high;
+    const r2 = pivot + (high - low);
+    const s2 = pivot - (high - low);
+    const r3 = high + 2 * (pivot - low);
+    const s3 = low - 2 * (high - pivot);
+    return { pivot, r1, s1, r2, s2, r3, s3 };
+}
+
+// Re-using existing logic below
 export function isLastCandleContradictory(
     klines: Kline[],
     signalDirection: 'BUY' | 'SELL'
@@ -182,11 +284,24 @@ export function isLastCandleContradictory(
     if (klines.length < 3) return { veto: false, reason: '' };
     const input = { open: klines.map(k => k.open), high: klines.map(k => k.high), low: klines.map(k => k.low), close: klines.map(k => k.close) };
     if (signalDirection === 'SELL') {
-        const patterns: Record<string, (input: any) => boolean[]> = { 'Bullish Engulfing': bullishengulfingpattern, 'Hammer Pattern': hammerpattern, 'Dragonfly Doji': dragonflydoji, 'Piercing Line': piercingline, 'Morning Star': morningstar };
+        const patterns: Record<string, (input: any) => boolean[]> = { 
+            'Bullish Engulfing': bullishengulfingpattern, 
+            'Hammer Pattern': hammerpattern, 
+            'Dragonfly Doji': dragonflydoji, 
+            'Piercing Line': piercingline, 
+            'Morning Star': morningstar 
+        };
         for (const [name, func] of Object.entries(patterns)) { if (getLast(func(input))) return { veto: true, reason: `❌ VETO: Strong bullish reversal pattern (${name}) detected.` }; }
     }
     if (signalDirection === 'BUY') {
-        const patterns: Record<string, (input: any) => boolean[]> = { 'Bearish Engulfing': bearishengulfingpattern, 'Hanging Man': hangingman, 'Gravestone Doji': gravestonedoji, 'Shooting Star': shootingstar, 'Dark Cloud Cover': darkcloudcover, 'Evening Star': eveningstar };
+        const patterns: Record<string, (input: any) => boolean[]> = { 
+            'Bearish Engulfing': bearishengulfingpattern, 
+            'Hanging Man': hangingman, 
+            'Gravestone Doji': gravestonedoji, 
+            'Shooting Star': shootingstar, 
+            'Dark Cloud Cover': darkcloudcover, 
+            'Evening Star': eveningstar 
+        };
         for (const [name, func] of Object.entries(patterns)) { if (getLast(func(input))) return { veto: true, reason: `❌ VETO: Strong bearish reversal pattern (${name}) detected.` }; }
     }
     return { veto: false, reason: '' };
@@ -256,7 +371,6 @@ export function detectRsiDivergence(klines: Kline[], rsiValues: number[], positi
     }
     const getRsi = (idx: number) => rsiValues[idx - rsiStartIndex];
     if (positionDirection === 'LONG') {
-        // Bullish Divergence: Lower Low in Price, Higher Low in RSI
         const lows = pivots.filter(p => p.type === 'low').slice(-2);
         if (lows.length === 2) {
             const [prev, last] = lows;
@@ -265,7 +379,6 @@ export function detectRsiDivergence(klines: Kline[], rsiValues: number[], positi
         }
     }
     if (positionDirection === 'SHORT') {
-        // Bearish Divergence: Higher High in Price, Lower High in RSI
         const highs = pivots.filter(p => p.type === 'high').slice(-2);
         if (highs.length === 2) {
             const [prev, last] = highs;
@@ -278,26 +391,17 @@ export function detectRsiDivergence(klines: Kline[], rsiValues: number[], positi
 
 export function analyzeMicroMarketStructure(microKlines: Kline[]): 'ascending' | 'descending' | 'ranging' | null {
     if (microKlines.length < 20) return null;
-
     const swingPoints = findSwingPoints(microKlines, 3);
-    
     const recentHighs = swingPoints.filter(p => p.type === 'high').slice(-3);
     if (recentHighs.length === 3) {
-        if (recentHighs[2].price < recentHighs[1].price && recentHighs[1].price < recentHighs[0].price) {
-            return 'descending';
-        }
+        if (recentHighs[2].price < recentHighs[1].price && recentHighs[1].price < recentHighs[0].price) return 'descending';
     }
-    
     const recentLows = swingPoints.filter(p => p.type === 'low').slice(-3);
     if (recentLows.length === 3) {
-        if (recentLows[2].price > recentLows[1].price && recentLows[1].price > recentLows[0].price) {
-            return 'ascending';
-        }
+        if (recentLows[2].price > recentLows[1].price && recentLows[1].price > recentLows[0].price) return 'ascending';
     }
-    
     return 'ranging';
 }
-
 
 export function captureMarketContext(klines: Kline[], htfKlines?: Kline[], params?: AgentParams): Partial<MarketDataContext> {
     const context: Partial<MarketDataContext> = {};
@@ -355,138 +459,29 @@ export function captureMarketContext(klines: Kline[], htfKlines?: Kline[], param
     return context;
 }
 
-/**
- * Identifies a "Liquidity Sweep" or "Stop Hunt" pattern.
- * A sweep happens when price breaches a recent swing point (taking out liquidity)
- * but then reverses and closes back inside the range.
- */
 export function detectLiquiditySweep(klines: Kline[], lookback: number = 10): { bullish: boolean, bearish: boolean } {
     if (klines.length < lookback + 1) return { bullish: false, bearish: false };
-    
     const current = klines[klines.length - 1];
-    const previousCandles = klines.slice(-lookback - 1, -1); // Exclude current
-    
-    // Find lowest low and highest high in the lookback period
+    const previousCandles = klines.slice(-lookback - 1, -1);
     const lowestLow = Math.min(...previousCandles.map(k => k.low));
     const highestHigh = Math.max(...previousCandles.map(k => k.high));
-    
-    // Bullish Sweep: Price went below the lowest low, but closed above it.
     const bullishSweep = current.low < lowestLow && current.close > lowestLow;
-    
-    // Bearish Sweep: Price went above the highest high, but closed below it.
     const bearishSweep = current.high > highestHigh && current.close < highestHigh;
-    
     return { bullish: bullishSweep, bearish: bearishSweep };
 }
 
-/**
- * Calculates the slope of the RSI over the last 3 periods to determine if momentum is hooking.
- * Returns a simple delta: positive for upward slope, negative for downward.
- */
 export function calculateRsiSlope(rsiValues: number[]): number {
     if (rsiValues.length < 3) return 0;
     const last = rsiValues[rsiValues.length - 1];
     const prev2 = rsiValues[rsiValues.length - 3];
-    // Simple slope over 2 intervals
     return (last - prev2) / 2; 
 }
 
-export interface FVG {
-    top: number;
-    bottom: number;
-    type: 'bullish' | 'bearish';
-    index: number; // The index of the 1st candle in the 3-candle sequence
-}
-
-/**
- * Detects active Fair Value Gaps (FVGs) in the recent price data.
- * An FVG is formed by a 3-candle sequence where there is a gap between Candle 1 and Candle 3.
- * Checks if the FVG has been invalidated (filled) by subsequent price action.
- * @param klines Historical klines
- * @param lookback How far back to look for unfilled FVGs
- */
-export function findActiveFVGs(klines: Kline[], lookback: number = 50): FVG[] {
-    const fvgs: FVG[] = [];
-    if (klines.length < lookback + 3) return fvgs;
-
-    const startIndex = Math.max(0, klines.length - lookback);
-
-    // 1. Identify all potential FVGs in the window
-    for (let i = startIndex; i < klines.length - 2; i++) {
-        const c1 = klines[i];
-        const c3 = klines[i + 2];
-
-        // Bullish FVG: Candle 1 High < Candle 3 Low
-        if (c1.high < c3.low) {
-            fvgs.push({
-                top: c3.low,
-                bottom: c1.high,
-                type: 'bullish',
-                index: i
-            });
-        }
-        // Bearish FVG: Candle 1 Low > Candle 3 High
-        else if (c1.low > c3.high) {
-            fvgs.push({
-                top: c1.low,
-                bottom: c3.high,
-                type: 'bearish',
-                index: i
-            });
-        }
-    }
-
-    // 2. Filter out filled/invalidated FVGs
-    // An FVG is filled if price subsequently trades completely through it.
-    // For bullish FVG, if price drops below the bottom.
-    // For bearish FVG, if price rises above the top.
-    const activeFVGs: FVG[] = [];
-
-    for (const fvg of fvgs) {
-        let isFilled = false;
-        // Check all candles AFTER the FVG formation (i.e., after Candle 3)
-        for (let j = fvg.index + 3; j < klines.length; j++) {
-            const k = klines[j];
-            if (fvg.type === 'bullish') {
-                // Filled if Low drops below the bottom of the gap
-                if (k.low < fvg.bottom) {
-                    isFilled = true;
-                    break;
-                }
-            } else {
-                // Filled if High rises above the top of the gap
-                if (k.high > fvg.top) {
-                    isFilled = true;
-                    break;
-                }
-            }
-        }
-        if (!isFilled) {
-            activeFVGs.push(fvg);
-        }
-    }
-
-    return activeFVGs;
-}
-
-/**
- * Checks if price is significantly extended from a mean (EMA), suggesting mean reversion risk.
- * @param currentPrice 
- * @param meanPrice (e.g., EMA 50)
- * @param volatility (e.g., ATR)
- * @param threshold Multiplier of volatility (e.g., 3x ATR)
- */
 export function isPriceOverextended(currentPrice: number, meanPrice: number, volatility: number, threshold: number): boolean {
     if (volatility === 0) return false;
     return Math.abs(currentPrice - meanPrice) > (volatility * threshold);
 }
 
-/**
- * Detects if the market is currently in a volatility compression (squeeze) state.
- * @param klines 
- * @param length 
- * @param threshold Bandwidth threshold (e.g. 0.02 for 2%)
- */
 export function detectVolatilityCompression(klines: Kline[], length: number = 20, threshold: number = 0.02): boolean {
     if (klines.length < length) return false;
     const closes = klines.map(k => k.close);
@@ -496,65 +491,36 @@ export function detectVolatilityCompression(klines: Kline[], length: number = 20
     return bandwidth < threshold;
 }
 
-// --- BITCOIN MARKET TIDE ANALYSIS ---
-
 export function analyzeBitcoinState(btcKlines: Kline[]): BitcoinState {
     const minData = 50;
-    if (!btcKlines || btcKlines.length < minData) {
-        return { state: 'NEUTRAL', reason: 'Insufficient BTC Data' };
-    }
-
-    const closes = btcKlines.map(k => k.close);
-    const highs = btcKlines.map(k => k.high);
-    const lows = btcKlines.map(k => k.low);
-    const volumes = btcKlines.map(k => k.volume || 0);
-
-    const ema20 = getLast(EMA.calculate({ period: 20, values: closes })) || 0;
-    const ema50 = getLast(EMA.calculate({ period: 50, values: closes })) || 0;
-    const rsi = getLast(RSI.calculate({ period: 14, values: closes })) || 50;
-    const atr = getLast(ATR.calculate({ period: 14, high: highs, low: lows, close: closes })) || 0;
-    const adx = getLast(ADX.calculate({ period: 14, high: highs, low: lows, close: closes })) as ADXOutput;
+    if (!btcKlines || btcKlines.length < minData) return { state: 'NEUTRAL', trend: 'neutral', momentum: 'neutral', rejection: 'none', reason: 'Insufficient BTC Data' };
+    const closes = btcKlines.map(k => k.close), highs = btcKlines.map(k => k.high), lows = btcKlines.map(k => k.low), volumes = btcKlines.map(k => k.volume || 0);
+    const ema50 = getLast(EMA.calculate({ period: 50, values: closes })) || 0, rsi = getLast(RSI.calculate({ period: 14, values: closes })) || 50;
+    const atr = getLast(ATR.calculate({ period: 14, high: highs, low: lows, close: closes })) || 0, adx = getLast(ADX.calculate({ period: 14, high: highs, low: lows, close: closes })) as ADXOutput;
     const volSma = getLast(SMA.calculate({ period: 20, values: volumes })) || 0;
-
-    const lastKline = btcKlines[btcKlines.length - 1];
-    const currentPrice = lastKline.close;
-    const candleBody = Math.abs(lastKline.close - lastKline.open);
-    
-    // 1. CRASH DETECTION (High Priority)
-    const isCrash = 
-        currentPrice < ema50 && 
-        rsi < 35 && 
-        lastKline.close < lastKline.open && // Red candle
-        candleBody > (atr * 2) && // Huge body
-        lastKline.volume! > (volSma * 1.5); // High volume
-        
-    if (isCrash) {
-        return { state: 'CRASH', reason: 'BTC Flash Crash Detected' };
+    const macdValues = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
+    const lastMacd = getLast(macdValues) as MACDOutput | undefined, prevMacd = macdValues.length > 1 ? macdValues[macdValues.length - 2] as MACDOutput : undefined;
+    const lastKline = btcKlines[btcKlines.length - 1], currentPrice = lastKline.close, candleBody = Math.abs(lastKline.close - lastKline.open);
+    let state: BitcoinState['state'] = 'NEUTRAL', trend: BitcoinState['trend'] = 'neutral', reasonParts: string[] = [];
+    if (currentPrice > ema50) { trend = 'bullish'; state = 'TREND_UP'; } else if (currentPrice < ema50) { trend = 'bearish'; state = 'TREND_DOWN'; }
+    let momentum: BitcoinState['momentum'] = 'neutral';
+    if (lastMacd?.histogram !== undefined && prevMacd?.histogram !== undefined) {
+        const delta = lastMacd.histogram - prevMacd.histogram;
+        if (trend === 'bullish') momentum = delta > 0 ? 'accelerating' : 'decelerating';
+        else if (trend === 'bearish') momentum = delta < 0 ? 'accelerating' : 'decelerating';
     }
-
-    // 2. PUMP DETECTION
-    const isPump = 
-        currentPrice > ema50 && 
-        rsi > 70 && 
-        lastKline.close > lastKline.open && // Green candle
-        candleBody > (atr * 2) && 
-        lastKline.volume! > (volSma * 1.5);
-        
-    if (isPump) {
-        return { state: 'PUMP', reason: 'BTC Flash Pump Detected' };
-    }
-
-    // 3. RANGE DETECTION
-    if (adx && adx.adx < 25) {
-        return { state: 'RANGE', reason: `BTC Ranging (ADX ${adx.adx.toFixed(0)})` };
-    }
-
-    // 4. TREND DETECTION
-    if (currentPrice > ema50) {
-        return { state: 'TREND_UP', reason: 'BTC Uptrend' };
-    } else if (currentPrice < ema50) {
-        return { state: 'TREND_DOWN', reason: 'BTC Downtrend' };
-    }
-
-    return { state: 'NEUTRAL', reason: 'BTC Indeterminate' };
+    if (momentum === 'decelerating') reasonParts.push('Momentum slowing');
+    if (momentum === 'accelerating') reasonParts.push('Momentum accelerating');
+    let rejection: BitcoinState['rejection'] = 'none';
+    const upperWick = lastKline.high - Math.max(lastKline.close, lastKline.open), lowerWick = Math.min(lastKline.close, lastKline.open) - lastKline.low;
+    const wickThreshold = Math.max(candleBody * 1.5, atr * 0.2);
+    if (upperWick > wickThreshold && upperWick > lowerWick) { rejection = 'resistance'; reasonParts.push('Rejected at Resistance'); }
+    else if (lowerWick > wickThreshold && lowerWick > upperWick) { rejection = 'support'; reasonParts.push('Rejected at Support'); }
+    const isCrash = currentPrice < ema50 && rsi < 35 && lastKline.close < lastKline.open && candleBody > (atr * 2) && lastKline.volume! > (volSma * 1.5);
+    const isPump = currentPrice > ema50 && rsi > 70 && lastKline.close > lastKline.open && candleBody > (atr * 2) && lastKline.volume! > (volSma * 1.5);
+    if (isCrash) { state = 'CRASH'; reasonParts = ['BTC Flash Crash']; }
+    else if (isPump) { state = 'PUMP'; reasonParts = ['BTC Flash Pump']; }
+    else if (adx && adx.adx < 25) { state = 'RANGE'; if (!reasonParts.includes('Ranging')) reasonParts.unshift(`Ranging (ADX ${adx.adx.toFixed(0)})`); }
+    else reasonParts.unshift(state === 'TREND_UP' ? 'BTC Uptrend' : 'BTC Downtrend');
+    return { state, trend, momentum, rejection, reason: reasonParts.join(', ') };
 }

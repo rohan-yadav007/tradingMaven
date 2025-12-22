@@ -1,7 +1,9 @@
 
+// components/TradingLog.tsx
+
 import React, { useState, useMemo } from 'react';
 import Select, { StylesConfig, GroupBase } from 'react-select';
-import { Trade, TradingMode, AgentParams, MarketDataContext, BitcoinState } from '../types';
+import { Trade, TradingMode, AgentParams, MarketDataContext, BitcoinState, OrderBookAnalysis } from '../types';
 import * as constants from '../constants';
 import { historyService } from '../services/historyService';
 import { HistoryIcon, ChevronDown, ChevronUp, TrashIcon, DownloadIcon } from './icons';
@@ -56,10 +58,20 @@ const BtcContextDisplay: React.FC<{ btcContext?: BitcoinState }> = ({ btcContext
     return (
         <div className="p-2 bg-slate-100 dark:bg-slate-900/50 rounded border border-slate-200 dark:border-slate-700 mt-2">
             <h5 className="font-medium text-slate-700 dark:text-slate-300 text-xs mb-1">BTC Context (At Entry)</h5>
-            <div className={`font-bold text-xs ${color}`}>
+            <div className={`font-bold text-xs ${color} flex items-center gap-2`}>
                 {btcContext.state}
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400">{btcContext.reason}</p>
+            {btcContext.momentum && btcContext.momentum !== 'neutral' && (
+                <div className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                    Momentum: <span className="font-semibold text-slate-800 dark:text-slate-200">{btcContext.momentum}</span>
+                </div>
+            )}
+            {btcContext.rejection && btcContext.rejection !== 'none' && (
+                <div className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                    Rejection: <span className="font-semibold text-amber-600 dark:text-amber-400">{btcContext.rejection}</span>
+                </div>
+            )}
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 italic">{btcContext.reason}</p>
         </div>
     );
 };
@@ -88,6 +100,25 @@ const MarketContextDisplay: React.FC<{ context?: Partial<MarketDataContext>, tit
 
     const formatValue = (key: keyof MarketDataContext, value: any): React.ReactNode => {
         if (value === undefined || value === null) return 'N/A';
+        
+        if (key === 'orderBook') {
+            const ob = value as OrderBookAnalysis;
+            const imbPercent = (ob.imbalance * 100).toFixed(1);
+            const imbColor = ob.imbalance > 0 ? 'text-emerald-600 dark:text-emerald-400' : ob.imbalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-600 dark:text-slate-400';
+            
+            return (
+                <span className="flex flex-col gap-0.5 mt-0.5 pl-2 border-l-2 border-slate-300 dark:border-slate-600">
+                    <span className="flex gap-2">
+                        <span>Imb: <span className={imbColor}>{ob.imbalance > 0 ? '+' : ''}{imbPercent}%</span></span>
+                        <span>Spr: {(ob.spread * 100).toFixed(3)}%</span>
+                    </span>
+                    <span className="text-xs opacity-80">
+                        Walls: <span className="text-emerald-600 dark:text-emerald-400">B:{ob.bidWall || '-'}</span> / <span className="text-rose-600 dark:text-rose-400">A:{ob.askWall || '-'}</span>
+                    </span>
+                </span>
+            );
+        }
+
         if (typeof value === 'number') return value.toFixed(4);
         if (typeof value === 'string') return value;
         if (key === 'adx14' && value.adx) return `ADX: ${value.adx.toFixed(2)}`;
@@ -102,9 +133,10 @@ const MarketContextDisplay: React.FC<{ context?: Partial<MarketDataContext>, tit
     };
 
     const renderItem = (key: keyof MarketDataContext, value: any) => {
-        if (value === undefined || value === null || (typeof value === 'object' && Object.keys(value).length === 0)) return null;
+        if (value === undefined || value === null || (typeof value === 'object' && Object.keys(value).length === 0 && key !== 'orderBook')) return null;
+        
         return (
-             <div key={key} className="flex justify-between items-baseline">
+             <div key={key} className={`flex justify-between ${key === 'orderBook' ? 'flex-col items-start' : 'items-baseline'}`}>
                 <span className="text-slate-500 dark:text-slate-400 capitalize">{key.replace(/([A-Z0-9]+)/g, " $1").trim()}:</span>
                 <span className="font-semibold text-slate-800 dark:text-slate-200">{formatValue(key, value)}</span>
             </div>
@@ -162,6 +194,9 @@ const TradeRow: React.FC<{ trade: Trade; isOpen: boolean; onToggle: () => void; 
                 <td className={`px-4 py-3 font-bold align-middle ${isLong ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                     {trade.direction}{trade.mode === TradingMode.USDSM_Futures && ` ${trade.leverage}x`}
                 </td>
+                <td className="px-4 py-3 align-middle font-mono text-slate-600 dark:text-slate-300">
+                    ${trade.investmentAmount ? trade.investmentAmount.toFixed(0) : 'N/A'} / {trade.leverage}x
+                </td>
                 <td className="px-4 py-3 align-middle font-mono">{formatDisplayDate(trade.exitTime)}</td>
                 <td className={`px-4 py-3 font-bold align-middle font-mono ${isProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                     {isProfit ? '+' : ''}{formatPrice(trade.pnl, 2)}
@@ -170,11 +205,18 @@ const TradeRow: React.FC<{ trade: Trade; isOpen: boolean; onToggle: () => void; 
             </tr>
             {isOpen && (
                 <tr className="bg-slate-50 dark:bg-slate-800/20">
-                    <td colSpan={5} className="px-4 py-3">
+                    <td colSpan={6} className="px-4 py-3">
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 text-xs p-2">
                             <div className="space-y-4">
                                 <DetailItem label="Entry" value={<><p className="font-mono">{formatPrice(trade.entryPrice, trade.pricePrecision)}</p><p>{formatDisplayDate(trade.entryTime)}</p></>} />
                                 <DetailItem label="Exit" value={<><p className="font-mono">{formatPrice(trade.exitPrice, trade.pricePrecision)}</p><p>{formatDisplayDate(trade.exitTime)}</p></>} />
+                                <DetailItem label="Position Info" value={
+                                    <div className="font-mono space-y-1">
+                                        <p>Invested: <span className="font-semibold">${trade.investmentAmount?.toFixed(2) ?? 'N/A'}</span></p>
+                                        <p>Leverage: <span className="font-semibold">{trade.leverage}x</span></p>
+                                        <p>Position Size: <span className="font-semibold">{trade.size.toFixed(4)} ({trade.pair.split('/')[0]})</span></p>
+                                    </div>
+                                } />
                                 <DetailItem label="Performance" value={
                                     <div className="font-mono space-y-1">
                                         <p>Initial R:R: <span className="font-semibold">{trade.initialRiskRewardRatio?.toFixed(2) ?? 'N/A'}:1</span></p>
@@ -360,6 +402,7 @@ export const TradingLog: React.FC<TradingLogProps> = ({ tradeHistory, setTradeHi
                         <tr>
                             <th scope="col" className="px-4 py-2 font-medium">Market</th>
                             <th scope="col" className="px-4 py-2 font-medium">Direction</th>
+                            <th scope="col" className="px-4 py-2 font-medium">Inv. / Lev.</th>
                             <th scope="col" className="px-4 py-2 font-medium">Exit Time</th>
                             <th scope="col" className="px-4 py-2 font-medium" title="Profit/Loss after estimated trading fees">Net P/L ($)</th>
                             <th scope="col" className="px-4 py-2 font-medium">Agent</th>
@@ -369,7 +412,7 @@ export const TradingLog: React.FC<TradingLogProps> = ({ tradeHistory, setTradeHi
                         {filteredTrades.length > 0 ? (
                             filteredTrades.map((trade) => <TradeRow key={trade.id} trade={trade} isOpen={expandedRowId === trade.id} onToggle={() => handleToggleRow(trade.id)}/>)
                         ) : (
-                            <tr><td colSpan={5} className="text-center p-8 text-slate-500">No trades match the current filter.</td></tr>
+                            <tr><td colSpan={6} className="text-center p-8 text-slate-500">No trades match the current filter.</td></tr>
                         )}
                     </tbody>
                 </table>

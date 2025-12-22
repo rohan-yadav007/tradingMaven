@@ -1,11 +1,10 @@
-
-
-
 import React, { useState, useMemo, useEffect } from 'react';
 import { useTradingConfigState, useTradingConfigActions } from '../contexts/TradingConfigContext';
-import { TradingMode, TradingPairList } from '../types';
+import { TradingMode, TradingPairList, UserPreferences } from '../types';
 import { SearchableDropdown } from './SearchableDropdown';
-import { SettingsIcon, TrashIcon } from './icons';
+import { SettingsIcon, TrashIcon, ZapIcon } from './icons';
+import { botManagerService } from '../services/botManagerService';
+import { userPreferencesService } from '../services/userPreferencesService';
 
 const formGroupClass = "flex flex-col gap-1.5";
 const formLabelClass = "text-sm font-medium text-slate-700 dark:text-slate-300";
@@ -86,14 +85,26 @@ const ListEditor: React.FC<{
 export const PreferencesPanel: React.FC<{ theme: 'light' | 'dark' }> = ({ theme }) => {
     const { tradingPairLists } = useTradingConfigState();
     const { addTradingPairList, updateTradingPairList, deleteTradingPairList } = useTradingConfigActions();
-    const [activeTab, setActiveTab] = useState<'lists' | 'create'>('lists');
+    const [activeTab, setActiveTab] = useState<'lists' | 'create' | 'risk'>('lists');
     const [listToEdit, setListToEdit] = useState<TradingPairList | null>(null);
+    const [dailyLossLimit, setDailyLossLimit] = useState<number>(0);
 
+    // Initialize risk settings
     useEffect(() => {
-        if (tradingPairLists.length === 0) {
-            setActiveTab('create');
+        const prefs = userPreferencesService.getPreferences();
+        if (prefs && prefs.dailyLossLimit) {
+            setDailyLossLimit(prefs.dailyLossLimit);
+            botManagerService.setDailyLossLimit(prefs.dailyLossLimit);
         }
-    }, [tradingPairLists]);
+    }, []);
+
+    const handleSaveRisk = () => {
+        const current = userPreferencesService.getPreferences();
+        const updated = { ...current, dailyLossLimit };
+        userPreferencesService.savePreferences(updated);
+        botManagerService.setDailyLossLimit(dailyLossLimit);
+        alert('Risk settings saved.');
+    };
 
     const handleEdit = (list: TradingPairList) => {
         setListToEdit(list);
@@ -140,8 +151,13 @@ export const PreferencesPanel: React.FC<{ theme: 'light' | 'dark' }> = ({ theme 
                     </h2>
                     <ul className="space-y-1">
                         <li>
-                            <button className="w-full text-left px-3 py-2 rounded font-semibold bg-sky-100 dark:bg-sky-900/50 text-sky-700 dark:text-sky-300">
+                            <button onClick={() => setActiveTab('lists')} className={`w-full text-left px-3 py-2 rounded font-semibold transition-colors ${activeTab === 'lists' || activeTab === 'create' ? 'bg-sky-100 dark:bg-sky-900/50 text-sky-700 dark:text-sky-300' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'}`}>
                                 Trading Pair Lists
+                            </button>
+                        </li>
+                        <li>
+                            <button onClick={() => setActiveTab('risk')} className={`w-full text-left px-3 py-2 rounded font-semibold transition-colors ${activeTab === 'risk' ? 'bg-rose-100 dark:bg-rose-900/50 text-rose-700 dark:text-rose-300' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'}`}>
+                                Global Risk Settings
                             </button>
                         </li>
                     </ul>
@@ -149,14 +165,55 @@ export const PreferencesPanel: React.FC<{ theme: 'light' | 'dark' }> = ({ theme 
             </div>
             <div className="md:col-span-3">
                 <div className="flex border-b border-slate-200 dark:border-slate-700">
-                    <button onClick={() => setActiveTab('lists')} className={`${tabClass} ${activeTab === 'lists' ? activeTabClass : inactiveTabClass}`}>
-                        Saved Lists ({tradingPairLists.length})
-                    </button>
-                     <button onClick={() => setActiveTab('create')} className={`${tabClass} ${activeTab === 'create' ? activeTabClass : inactiveTabClass}`}>
-                        {listToEdit ? 'Edit List' : 'Create New'}
-                    </button>
+                    {activeTab === 'risk' ? (
+                         <button className={`${tabClass} ${activeTabClass}`}>
+                            Circuit Breaker
+                        </button>
+                    ) : (
+                        <>
+                            <button onClick={() => setActiveTab('lists')} className={`${tabClass} ${activeTab === 'lists' ? activeTabClass : inactiveTabClass}`}>
+                                Saved Lists ({tradingPairLists.length})
+                            </button>
+                             <button onClick={() => setActiveTab('create')} className={`${tabClass} ${activeTab === 'create' ? activeTabClass : inactiveTabClass}`}>
+                                {listToEdit ? 'Edit List' : 'Create New'}
+                            </button>
+                        </>
+                    )}
                 </div>
                  <div className="bg-white dark:bg-slate-800 p-6 rounded-b-lg shadow-sm">
+                    {activeTab === 'risk' && (
+                        <div className="space-y-6">
+                            <div className="flex items-start gap-4 p-4 bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 rounded-lg">
+                                <ZapIcon className="w-6 h-6 text-rose-600 dark:text-rose-400 mt-1 flex-shrink-0" />
+                                <div>
+                                    <h3 className="text-lg font-bold text-rose-700 dark:text-rose-300 mb-1">Global Circuit Breaker</h3>
+                                    <p className="text-sm text-rose-600/80 dark:text-rose-400/80">
+                                        The "Kill Switch" for your portfolio. If your total daily loss (Realized + Unrealized) exceeds this limit, all bots will stop and all positions will be closed immediately.
+                                    </p>
+                                </div>
+                            </div>
+                            
+                            <div className={formGroupClass}>
+                                <label className={formLabelClass}>Daily Loss Limit ($USD)</label>
+                                <div className="relative">
+                                    <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500">$</span>
+                                    <input 
+                                        type="number" 
+                                        value={dailyLossLimit} 
+                                        onChange={e => setDailyLossLimit(Number(e.target.value))} 
+                                        className={`${formInputClass} pl-7`} 
+                                        placeholder="0 (Disabled)"
+                                    />
+                                </div>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">Set to 0 to disable.</p>
+                            </div>
+                            
+                            <button onClick={handleSaveRisk} className={primaryButtonClass}>
+                                Save Risk Settings
+                            </button>
+                        </div>
+                    )}
+
                     {activeTab === 'lists' && (
                         <div>
                              <div className="flex justify-between items-center mb-4">

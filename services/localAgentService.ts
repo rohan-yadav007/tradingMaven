@@ -19,6 +19,7 @@ export { captureMarketContext } from './agents/agentUtils';
 // Imports for getTradingSignal orchestration
 import { Agent, Kline, TradeSignal, BotConfig, MarketDataContext, TradingMode } from '../types';
 import { runLiveAnalysis } from './workerService';
+import { orderBookService } from './orderBookService';
 
 
 /**
@@ -39,6 +40,11 @@ export async function getTradingSignal(
     btcKlines?: Kline[] // New parameter for Market Tide
 ): Promise<TradeSignal> {
     
+    // Fetch live order book data if available.
+    // The worker will receive a snapshot of this data if needed.
+    // We pass config.mode (Spot vs Futures) to ensure we get the correct order book.
+    const obAnalysis = orderBookService.getAnalysis(config.pair, config.mode);
+
     // --- Offload ALL logic to Worker ---
     try {
         const workerSignal = await runLiveAnalysis(
@@ -51,7 +57,8 @@ export async function getTradingSignal(
             ethBtcKlines,
             livePrice,
             astraXKlinesMap,
-            btcKlines
+            btcKlines,
+            obAnalysis // Pass OB Analysis to worker
         );
         
         return workerSignal;

@@ -1,8 +1,9 @@
+// components/AnalysisPreview.tsx
+
 
 import React, { useRef, useEffect } from 'react';
 import { Agent, TradeSignal, AgentParams, SentinelAnalysis, ConductorAnalysis, AstraXAnalysis, Kline, MarketDataContext } from '../types';
 import { ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, InfoIcon, SparklesIcon } from './icons';
-import { captureMarketContext } from '../services/localAgentService';
 
 interface AnalysisPreviewProps {
     analysis: TradeSignal | null;
@@ -69,9 +70,9 @@ const ReasonItem: React.FC<{ reason: string }> = ({ reason }) => {
     return <li className="text-slate-700 dark:text-slate-200">{reason}</li>;
 };
 
-const ProgressBar: React.FC<{ value: number; colorClass: string }> = ({ value, colorClass }) => (
-    <div className="w-full bg-slate-200 dark:bg-slate-600 rounded-full h-2">
-        <div className={`${colorClass} h-2 rounded-full transition-all duration-300`} style={{ width: `${Math.min(value, 100)}%` }}></div>
+const ProgressBar: React.FC<{ value: number; colorClass: string; height?: string }> = ({ value, colorClass, height = "h-2" }) => (
+    <div className={`w-full bg-slate-200 dark:bg-slate-600 rounded-full ${height}`}>
+        <div className={`${colorClass} ${height} rounded-full transition-all duration-300`} style={{ width: `${Math.min(value, 100)}%` }}></div>
     </div>
 );
 
@@ -144,10 +145,11 @@ const ConductorAnalysisDisplay: React.FC<{ analysis: ConductorAnalysis }> = ({ a
 };
 
 const AstraXAnalysisDisplay: React.FC<{ analysis: AstraXAnalysis }> = ({ analysis }) => {
-    const { conviction, regime, thesis, setupName, scores, adjustments } = analysis;
+    const { conviction, regime, thesis, setupName, confidenceMetrics, adjustments } = analysis;
     
     const regimeColor = regime === 'Strong Trend' ? 'text-indigo-600 dark:text-indigo-400' 
                       : regime === 'Choppy Market' ? 'text-amber-600 dark:text-amber-400' 
+                      : regime === 'Volatile Expansion' ? 'text-rose-600 dark:text-rose-400'
                       : 'text-sky-600 dark:text-sky-400';
 
     const thesisColor = thesis === 'Bullish' ? 'text-emerald-600 dark:text-emerald-400'
@@ -159,11 +161,11 @@ const AstraXAnalysisDisplay: React.FC<{ analysis: AstraXAnalysis }> = ({ analysi
             {/* Market Context Card */}
             <div className="grid grid-cols-2 gap-3">
                 <div className="bg-slate-50 dark:bg-slate-700/30 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700">
-                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mb-1">Market Regime</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mb-1">Matrix Engine</p>
                     <p className={`text-sm font-bold ${regimeColor}`}>{regime}</p>
                 </div>
                 <div className="bg-slate-50 dark:bg-slate-700/30 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700">
-                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mb-1">Dominant Thesis</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mb-1">Thesis Alignment</p>
                     <p className={`text-sm font-bold ${thesisColor}`}>{thesis}</p>
                 </div>
             </div>
@@ -174,10 +176,10 @@ const AstraXAnalysisDisplay: React.FC<{ analysis: AstraXAnalysis }> = ({ analysi
                     <SparklesIcon className={`w-5 h-5 mt-0.5 ${setupName ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'}`} />
                     <div>
                         <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                            {setupName ? 'Setup Identified' : 'Scanning Patterns'}
+                            {setupName ? 'Active Archetype' : 'Scanning Archetypes'}
                         </p>
                         <p className={`text-base font-bold ${setupName ? 'text-slate-800 dark:text-slate-100' : 'text-slate-500 italic'}`}>
-                            {setupName || 'No high-probability setup found'}
+                            {setupName || 'Waiting for high-conviction Alpha...'}
                         </p>
                         {setupName && (
                             <div className="mt-2 flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
@@ -190,23 +192,42 @@ const AstraXAnalysisDisplay: React.FC<{ analysis: AstraXAnalysis }> = ({ analysi
                 </div>
             </div>
 
-            {/* Legacy Scores Fallback (Only if provided and setup is missing, for compatibility) */}
-            {scores && !setupName && (
-                <div className="space-y-2 pt-3 border-t border-slate-200 dark:border-slate-700">
-                    {Object.entries(scores).map(([pillar, pillarScores]) => (
-                        <div key={pillar}>
-                            <div className="flex justify-between items-baseline text-xs mb-0.5">
-                                <span className="font-semibold capitalize text-slate-600 dark:text-slate-300">{pillar}</span>
-                                <span className={`font-mono font-bold ${pillarScores.bull > pillarScores.bear ? 'text-emerald-500' : pillarScores.bull < pillarScores.bear ? 'text-rose-500' : 'text-slate-500'}`}>
-                                    {pillarScores.bull.toFixed(0)} / {pillarScores.bear.toFixed(0)}
-                                </span>
-                            </div>
-                            <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5 relative">
-                                <div className="h-full bg-emerald-400 rounded-l-full" style={{ width: `${pillarScores.bull / 2}%` }}></div>
-                                <div className="h-full bg-rose-400 rounded-r-full absolute top-0 right-0" style={{ width: `${pillarScores.bear / 2}%` }}></div>
-                            </div>
+            {/* Multi-Dimensional Confidence Pillars */}
+            {confidenceMetrics && (
+                <div className="space-y-2.5 pt-3 border-t border-slate-200 dark:border-slate-700">
+                    <h5 className="font-bold text-xs text-slate-500 dark:text-slate-400 uppercase tracking-widest">Confidence Pillars</h5>
+                    
+                    <div>
+                        <div className="flex justify-between text-xs mb-1">
+                            <span>Market Structure</span>
+                            <span className="font-bold">{confidenceMetrics.structure}%</span>
                         </div>
-                    ))}
+                        <ProgressBar value={confidenceMetrics.structure} colorClass="bg-sky-500" height="h-1.5" />
+                    </div>
+
+                    <div>
+                        <div className="flex justify-between text-xs mb-1">
+                            <span>Volume Flow (RVOL)</span>
+                            <span className="font-bold">{confidenceMetrics.volume}%</span>
+                        </div>
+                        <ProgressBar value={confidenceMetrics.volume} colorClass="bg-indigo-500" height="h-1.5" />
+                    </div>
+
+                    <div>
+                        <div className="flex justify-between text-xs mb-1">
+                            <span>Technical Validity</span>
+                            <span className="font-bold">{confidenceMetrics.technical}%</span>
+                        </div>
+                        <ProgressBar value={confidenceMetrics.technical} colorClass="bg-emerald-500" height="h-1.5" />
+                    </div>
+
+                    <div>
+                        <div className="flex justify-between text-xs mb-1">
+                            <span>Momentum Quality</span>
+                            <span className="font-bold">{confidenceMetrics.momentum}%</span>
+                        </div>
+                        <ProgressBar value={confidenceMetrics.momentum} colorClass="bg-amber-500" height="h-1.5" />
+                    </div>
                 </div>
             )}
             

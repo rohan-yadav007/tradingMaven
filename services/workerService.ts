@@ -1,7 +1,7 @@
 
 // services/workerService.ts
 
-import { Kline, BotConfig, BacktestResult, OptimizationResultItem, TradeSignal, Agent } from '../types';
+import { Kline, BotConfig, BacktestResult, OptimizationResultItem, TradeSignal, Agent, OrderBookAnalysis } from '../types';
 
 // Use a dynamic import for the worker to support module syntax
 const worker = new Worker(new URL('./backtesting.worker.ts', import.meta.url), {
@@ -66,7 +66,8 @@ export function runLiveAnalysis(
     ethBtcKlines?: Kline[],
     livePrice?: number,
     astraXKlinesMap?: Map<string, Kline[]>,
-    btcKlines?: Kline[]
+    btcKlines?: Kline[],
+    orderBookAnalysis?: OrderBookAnalysis
 ): Promise<TradeSignal> {
      return new Promise((resolve, reject) => {
         const id = requestIdCounter++;
@@ -74,7 +75,7 @@ export function runLiveAnalysis(
         worker.postMessage({
             type: 'runLiveAnalysis',
             id,
-            payload: { agent, klines, config, htfKlines, immediateKlines, ltfKlines, ethBtcKlines, livePrice, astraXKlinesMap, btcKlines },
+            payload: { agent, klines, config, htfKlines, immediateKlines, ltfKlines, ethBtcKlines, livePrice, astraXKlinesMap, btcKlines, orderBookAnalysis },
         });
     });
 }

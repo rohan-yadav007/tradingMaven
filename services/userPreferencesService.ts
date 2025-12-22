@@ -7,14 +7,16 @@ const getPreferences = (): UserPreferences => {
         const stored = localStorage.getItem(PREFERENCES_KEY);
         if (stored) {
             const prefs = JSON.parse(stored);
-            if (prefs && Array.isArray(prefs.tradingPairLists)) {
-                return prefs;
-            }
+            // Ensure defaults
+            return {
+                tradingPairLists: Array.isArray(prefs.tradingPairLists) ? prefs.tradingPairLists : [],
+                dailyLossLimit: typeof prefs.dailyLossLimit === 'number' ? prefs.dailyLossLimit : 0
+            };
         }
     } catch (error) {
         console.error("Failed to load user preferences:", error);
     }
-    return { tradingPairLists: [] };
+    return { tradingPairLists: [], dailyLossLimit: 0 };
 };
 
 const savePreferences = (prefs: UserPreferences): void => {
@@ -55,6 +57,8 @@ const deleteTradingPairList = (listId: string): TradingPairList[] => {
 };
 
 export const userPreferencesService = {
+    getPreferences,
+    savePreferences,
     getTradingPairLists,
     addTradingPairList,
     updateTradingPairList,

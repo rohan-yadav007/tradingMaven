@@ -1,8 +1,10 @@
+// components/ControlPanel.tsx
+
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { TradingMode, Kline, TradeSignal, AgentParams, BotConfig, Agent, LiveTicker } from '../types';
 import * as constants from '../constants';
-import { PlayIcon, CpuIcon, ChevronDown, ChevronUp, InfoIcon } from './icons';
+import { PlayIcon, CpuIcon, ChevronDown, ChevronUp, InfoIcon, ZapIcon } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
 import { getTradingSignal, captureMarketContext } from '../services/localAgentService';
 import { sharedKlineService } from '../services/sharedKlineService';
@@ -72,7 +74,60 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
     }, [agent.id, timeFrame, params]);
 
     const updateParam = (key: keyof AgentParams, value: number | boolean | string) => { onParamsChange({ ...params, [key]: value }); };
+    
     switch (agent.id) {
+        case 22: // Matrix Strategist
+            return (
+                <div className="space-y-4">
+                    <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-200 dark:border-indigo-800 text-xs">
+                         <p className="font-bold text-indigo-700 dark:text-indigo-300 mb-1">Timeframe Context: {timeFrame}</p>
+                         <p className="text-slate-500 dark:text-slate-400">Parameters below are specifically for {timeFrame} market dynamics.</p>
+                    </div>
+
+                    {timeFrame === '1m' && (
+                        <>
+                            <ParamSlider label="EMA Fast" value={allParams.ms_1m_emaFast!} onChange={v => updateParam('ms_1m_emaFast', v)} min={5} max={20} step={1} />
+                            <ParamSlider label="EMA Slow" value={allParams.ms_1m_emaSlow!} onChange={v => updateParam('ms_1m_emaSlow', v)} min={15} max={50} step={1} />
+                            <ParamSlider label="Volume Spike Mult" value={allParams.ms_1m_volSpike!} onChange={v => updateParam('ms_1m_volSpike', v)} min={1.5} max={5.0} step={0.1} valueDisplay={v => `${v}x Avg`} />
+                        </>
+                    )}
+                    
+                    {timeFrame === '3m' && (
+                        <>
+                            <ParamSlider label="EMA Long-Term" value={allParams.ms_3m_ema3!} onChange={v => updateParam('ms_3m_ema3', v)} min={30} max={100} step={5} />
+                            <ParamSlider label="MACD Lookback (RSI)" value={allParams.ms_3m_rsiPeriod!} onChange={v => updateParam('ms_3m_rsiPeriod', v)} min={7} max={21} step={1} />
+                        </>
+                    )}
+
+                    {timeFrame === '5m' && (
+                        <>
+                            <ParamSlider label="Slow EMA" value={allParams.ms_5m_ema3!} onChange={v => updateParam('ms_5m_ema3', v)} min={100} max={300} step={10} />
+                            <ParamSlider label="Stoch Period" value={allParams.ms_5m_stochK!} onChange={v => updateParam('ms_5m_stochK', v)} min={7} max={28} step={1} />
+                        </>
+                    )}
+
+                    {timeFrame === '15m' && (
+                        <>
+                            <ParamSlider label="ADX Sensitivity" value={allParams.ms_15m_adxThreshold!} onChange={v => updateParam('ms_15m_adxThreshold', v)} min={15} max={35} step={1} />
+                        </>
+                    )}
+
+                    <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                         <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Strategy Recommendations</p>
+                         <div className="grid grid-cols-2 gap-2 mt-2">
+                             <div className="p-2 bg-slate-100 dark:bg-slate-900 rounded">
+                                 <p className="text-[10px] text-slate-400">Rec. Leverage</p>
+                                 <p className="text-xs font-bold">{['1m','3m'].includes(timeFrame) ? '8-10x' : ['5m','15m'].includes(timeFrame) ? '3-5x' : '1-2x'}</p>
+                             </div>
+                             <div className="p-2 bg-slate-100 dark:bg-slate-900 rounded">
+                                 <p className="text-[10px] text-slate-400">Risk Profile</p>
+                                 <p className="text-xs font-bold">{['1m','3m'].includes(timeFrame) ? 'High Freq' : 'Structural'}</p>
+                             </div>
+                         </div>
+                    </div>
+                </div>
+            );
+
         case 19: return (<div className="space-y-4">
             <div className="flex flex-col gap-1.5">
                 <label className={formLabelClass}>Execution Mode</label>
@@ -430,7 +485,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         isSupertrendConfirmationEnabled,
         isMarketBreadthFilterEnabled, isLiquidationFilterEnabled,
         isConfirmationCandleEnabled, isMomentumConcordanceEnabled, isTradeGuardianEnabled,
-        isHeikinAshiEnabled
+        isHeikinAshiEnabled, isDynamicSizingEnabled
     } = config;
 
 
@@ -446,7 +501,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         setIsSmcVetoEnabled, setIsSrAnalysisEnabled, setIsCandlestickConfirmationEnabled, setIsMarketStructureVetoEnabled,
         setIsSupertrendConfirmationEnabled,
         setIsMarketBreadthFilterEnabled, setIsLiquidationFilterEnabled, setIsConfirmationCandleEnabled, setIsMomentumConcordanceEnabled,
-        setIsTradeGuardianEnabled, setIsHeikinAshiEnabled
+        setIsTradeGuardianEnabled, setIsHeikinAshiEnabled, setIsDynamicSizingEnabled
     } = actions;
     
     const [livePrice, setLivePrice] = useState(0);
@@ -538,7 +593,16 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         if (htfTimeFrame !== 'auto' && !higherTimeFrames.includes(htfTimeFrame)) {
             setHtfTimeFrame('auto');
         }
-    }, [timeFrame, htfTimeFrame, higherTimeFrames, setHtfTimeFrame]);
+        
+        // SYNC: Adjust recommended leverage when timeframe changes for Matrix Strategist
+        if (selectedAgent.id === 22) {
+            const tfLeverage: Record<string, number> = { '1m': 10, '3m': 8, '5m': 5, '15m': 3, '30m': 2, '1h': 2, '4h': 1, '1d': 1 };
+            setLeverage(tfLeverage[timeFrame] || 1);
+            
+            const tfMaxLoss: Record<string, number> = { '1m': 3, '3m': 4, '5m': 5, '15m': 6, '30m': 8, '1h': 10, '4h': 12, '1d': 15 };
+            setMaxMarginLossPercent(tfMaxLoss[timeFrame] || 6);
+        }
+    }, [timeFrame, htfTimeFrame, higherTimeFrames, setHtfTimeFrame, selectedAgent.id]);
 
     const fetchAnalysis = useCallback(async () => {
         if (analysisInProgress.current) return;
@@ -588,7 +652,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                     isMarketBreadthFilterEnabled: isMarketBreadthFilterEnabled,
                     isLiquidationFilterEnabled: isLiquidationFilterEnabled, isConfirmationCandleEnabled: isConfirmationCandleEnabled,
                     isMomentumConcordanceEnabled: isMomentumConcordanceEnabled, isTradeGuardianEnabled: isTradeGuardianEnabled,
-                    isHeikinAshiEnabled: isHeikinAshiEnabled,
+                    isHeikinAshiEnabled: isHeikinAshiEnabled, isDynamicSizingEnabled: isDynamicSizingEnabled,
                 };
 
                 const signal = await getTradingSignal(selectedAgent, previewKlines, previewConfig, htfKlines);
@@ -617,7 +681,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         isCandlestickConfirmationEnabled, isMarketStructureVetoEnabled,
         isSupertrendConfirmationEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, entryTiming,
         isMarketBreadthFilterEnabled, isLiquidationFilterEnabled,
-        isConfirmationCandleEnabled, isMomentumConcordanceEnabled, isTradeGuardianEnabled, isHeikinAshiEnabled,
+        isConfirmationCandleEnabled, isMomentumConcordanceEnabled, isTradeGuardianEnabled, isHeikinAshiEnabled, isDynamicSizingEnabled
     ]);
 
     useEffect(() => {
@@ -641,6 +705,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
         const plural = botsToCreateCount > 1 ? 's' : '';
         return `Start ${botsToCreateCount} Trading Bot${plural}`;
     };
+
+    const isHighFreq = ['1m', '3m'].includes(timeFrame);
 
     return (
         <div className="flex flex-col gap-4">
@@ -688,6 +754,12 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 <select id="time-frame" value={timeFrame} onChange={e => setTimeFrame(e.target.value)} className={formInputClass}>
                     {constants.TIME_FRAMES.map(tf => <option key={tf} value={tf}>{tf}</option>)}
                 </select>
+                {isHighFreq && (
+                    <div className="flex items-center gap-1.5 mt-1 text-[10px] text-amber-500 font-bold uppercase tracking-tighter">
+                        <ZapIcon className="w-3 h-3"/>
+                        <span>High Frequency Mode: Utility Gating Active</span>
+                    </div>
+                )}
             </div>
 
             <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
@@ -717,6 +789,26 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 {isInvestmentInvalid && (
                     <p className="text-xs text-rose-600 dark:text-rose-400">Investment amount cannot exceed available balance.</p>
                 )}
+            </div>
+            
+            <div className={`${formGroupClass} mt-2`}>
+                <div className="flex items-center justify-between">
+                     <div className="flex items-center gap-1.5">
+                        <label htmlFor="dynamic-sizing-toggle" className={formLabelClass}>
+                            Dynamic Conviction Sizing
+                        </label>
+                         <div className="relative group">
+                            <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                            <div className="absolute bottom-full mb-2 w-56 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
+                                If enabled, the AI will reduce position size for lower conviction setups (e.g., 50% size for low conviction). If disabled, it always uses the full Investment Amount.
+                            </div>
+                        </div>
+                    </div>
+                    <ToggleSwitch
+                        checked={isDynamicSizingEnabled}
+                        onChange={setIsDynamicSizingEnabled}
+                    />
+                </div>
             </div>
             
             <ParamSlider 
@@ -895,7 +987,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                          <div className="relative group">
                             <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
                             <div className="absolute bottom-full mb-2 w-52 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
-                                Performs a 'just-in-time' analysis before entry. Vetoes trades if immediate 1-min momentum is fading or if the entry point is poor within the current candle's structure (e.g., buying the top of a wick).
+                                Performs a 'just-in-time' analysis before entry. Vetoes trades if immediate 1-min momentum is fading or if the entry point is poor within the current candle's structure (e.g., buying the top of a weapon).
                             </div>
                         </div>
                     </div>

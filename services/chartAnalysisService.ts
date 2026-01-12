@@ -1,23 +1,5 @@
 
-import type { Kline } from '../types';
-
-export interface SupportResistance {
-    supports: { price: number; score: number }[];
-    resistances: { price: number; score: number }[];
-}
-
-export interface SwingPoint {
-    index: number;
-    price: number;
-    type: 'high' | 'low';
-}
-
-export interface MarketStructureAnalysis {
-    structure: 'Uptrend' | 'Downtrend' | 'Ranging' | 'Indeterminate';
-    lastSignal: 'HH' | 'HL' | 'LL' | 'LH' | 'ChoCH_Bearish' | 'ChoCH_Bullish' | null;
-    reason: string;
-}
-
+import type { Kline, SupportResistance, SwingPoint, MarketStructureAnalysis } from '../types';
 
 /**
  * Calculates support and resistance levels from k-line data with volume-weighted scoring.

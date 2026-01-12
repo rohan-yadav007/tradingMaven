@@ -1,9 +1,9 @@
 // services/agents/sentinel.ts
 
-import { Kline, BotConfig, MarketDataContext, TradeSignal, SentinelAnalysis, AgentParams, MACDOutput } from '../../types';
+import { Kline, BotConfig, MarketDataContext, TradeSignal, SentinelAnalysis, AgentParams, MACDOutput, MarketStructureAnalysis } from '../../types';
 import { EMA, RSI, MACD, ATR, ADX } from 'technicalindicators';
 import { getLast, detectRsiDivergence } from './agentUtils';
-import { MarketStructureAnalysis, findSwingPoints, analyzeMarketStructure, calculateSupportResistance } from '../chartAnalysisService';
+import { findSwingPoints, analyzeMarketStructure, calculateSupportResistance } from '../chartAnalysisService';
 
 export const getTheSentinelSignal = (
     klines: Kline[], 

@@ -21,8 +21,9 @@ export const getMatrixStrategistSignal = (
     const lows = klines.map(k => k.low);
     const volumes = klines.map(k => k.volume || 0);
     const currentPrice = getLast(closes)!;
+    // FIX: Cast getLast result to number.
     const rsiValues = RSI.calculate({ period: params.ms_1m_rsiPeriod || 14, values: closes });
-    const lastRsi = getLast(rsiValues)!;
+    const lastRsi = getLast(rsiValues) as number | undefined;
 
     // --- 1. GLOBAL MULTI-TIMEFRAME OVERRIDE ---
     // Rule: Rejection Rules: Contradicting 1D trend = no trade regardless of lower signals
@@ -30,8 +31,9 @@ export const getMatrixStrategistSignal = (
     const d1Klines = klinesMap?.get('1d');
     if (d1Klines && d1Klines.length >= 200) {
         const d1Closes = d1Klines.map(k => k.close);
-        const d1Ema200 = getLast(EMA.calculate({ period: 200, values: d1Closes }));
-        if (d1Ema200) {
+        // FIX: Cast getLast result to number for comparison.
+        const d1Ema200 = getLast(EMA.calculate({ period: 200, values: d1Closes })) as number | undefined;
+        if (d1Ema200 !== undefined) {
             tide = getLast(d1Closes)! > d1Ema200 ? 'Bullish' : 'Bearish';
             reasons.push(`ℹ️ Macro Tide (1D): ${tide}`);
         }
@@ -39,25 +41,26 @@ export const getMatrixStrategistSignal = (
 
     // --- 2. SIGNAL REVERSAL / NEUTRAL CONDITIONS ---
     // Rule: Long to Neutral: RSI > 80 OR price below specific EMAs
-    const ema9 = getLast(EMA.calculate({ period: 9, values: closes }));
-    if (lastRsi > 80) reasons.push('ℹ️ Warning: Over-extended momentum (RSI > 80).');
+    if (lastRsi !== undefined && lastRsi > 80) reasons.push('ℹ️ Warning: Over-extended momentum (RSI > 80).');
 
     // --- 3. MARKET REGIME ADAPTATION ---
-    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: 14 })) as ADXOutput;
-    const regime = adx?.adx > 25 ? 'Trending' : adx?.adx < 20 ? 'Ranging' : 'Indeterminate';
-    reasons.push(`ℹ️ Regime: ${regime} (ADX: ${adx?.adx.toFixed(1)})`);
+    // FIX: Cast ADX result to ADXOutput.
+    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: 14 })) as ADXOutput | undefined;
+    const regime = adx && adx.adx > 25 ? 'Trending' : adx && adx.adx < 20 ? 'Ranging' : 'Indeterminate';
+    if (adx) reasons.push(`ℹ️ Regime: ${regime} (ADX: ${adx.adx.toFixed(1)})`);
 
     // --- 4. LOGIC ROUTER ---
     switch (timeframe) {
         case '1m': {
             // SCALPING STRATEGY
-            const ema9 = getLast(EMA.calculate({ period: 9, values: closes }));
-            const ema21 = getLast(EMA.calculate({ period: 21, values: closes }));
-            const rsi7 = getLast(RSI.calculate({ period: 7, values: closes }));
-            const bb = getLast(BollingerBands.calculate({ period: 20, stdDev: 1.5, values: closes })) as BollingerBandsOutput;
+            // FIX: Cast EMA and BollingerBands results.
+            const ema9 = getLast(EMA.calculate({ period: 9, values: closes })) as number | undefined;
+            const ema21 = getLast(EMA.calculate({ period: 21, values: closes })) as number | undefined;
+            const rsi7 = getLast(RSI.calculate({ period: 7, values: closes })) as number | undefined;
+            const bb = getLast(BollingerBands.calculate({ period: 20, stdDev: 1.5, values: closes })) as BollingerBandsOutput | undefined;
             const rvol = calculateRVOL(klines, 20);
 
-            if (!ema9 || !ema21 || !rsi7 || !bb) return { signal: 'HOLD', reasons: ['ℹ️ Scalping indicators warming up...'] };
+            if (ema9 === undefined || ema21 === undefined || rsi7 === undefined || bb === undefined) return { signal: 'HOLD', reasons: ['ℹ️ Scalping indicators warming up...'] };
 
             const isLong = currentPrice > ema9 && ema9 > ema21 && rsi7 > 30 && rvol > 2.0 && currentPrice > bb.middle;
             const isShort = currentPrice < ema9 && ema9 < ema21 && rsi7 < 70 && rvol > 2.0 && currentPrice < bb.middle;
@@ -75,13 +78,13 @@ export const getMatrixStrategistSignal = (
 
         case '3m': {
             // MOMENTUM STRATEGY
-            const ema12 = getLast(EMA.calculate({ period: 12, values: closes }));
-            const ema26 = getLast(EMA.calculate({ period: 26, values: closes }));
-            // FIX: Added missing SimpleMAOscillator and SimpleMASignal for MACD.calculate
-            const macd = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false })) as MACDOutput;
-            const vwap = getLast(calculateDailyVwap(klines));
+            // FIX: Cast indicators and ensure MACD histogram access is safe.
+            const ema12 = getLast(EMA.calculate({ period: 12, values: closes })) as number | undefined;
+            const ema26 = getLast(EMA.calculate({ period: 26, values: closes })) as number | undefined;
+            const macd = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false })) as MACDOutput | undefined;
+            const vwap = getLast(calculateDailyVwap(klines)) as number | undefined;
 
-            if (!ema12 || !ema26 || !macd?.histogram || !vwap) return { signal: 'HOLD', reasons };
+            if (ema12 === undefined || ema26 === undefined || macd?.histogram === undefined || vwap === undefined || lastRsi === undefined) return { signal: 'HOLD', reasons };
 
             const rsiRising = lastRsi > 45 && lastRsi > (getPenultimate(rsiValues) || 0);
             const rsiFalling = lastRsi < 55 && lastRsi < (getPenultimate(rsiValues) || 100);
@@ -99,13 +102,14 @@ export const getMatrixStrategistSignal = (
 
         case '5m': {
             // SWING STRATEGY
-            const ema20 = getLast(EMA.calculate({ period: 20, values: closes }));
-            const ema50 = getLast(EMA.calculate({ period: 50, values: closes }));
-            const bb = getLast(BollingerBands.calculate({ period: 20, stdDev: 2, values: closes })) as BollingerBandsOutput;
+            // FIX: Cast EMA and BollingerBands results.
+            const ema20 = getLast(EMA.calculate({ period: 20, values: closes })) as number | undefined;
+            const ema50 = getLast(EMA.calculate({ period: 50, values: closes })) as number | undefined;
+            const bb = getLast(BollingerBands.calculate({ period: 20, stdDev: 2, values: closes })) as BollingerBandsOutput | undefined;
+
+            if (ema20 === undefined || ema50 === undefined || bb === undefined || adx === undefined || lastRsi === undefined) return { signal: 'HOLD', reasons };
+
             const bbw = (bb.upper - bb.lower) / bb.middle;
-
-            if (!ema20 || !ema50 || !adx) return { signal: 'HOLD', reasons };
-
             const trending = adx.adx > 25;
             const pullbackLong = currentPrice > ema20 && ema20 > ema50 && Math.abs(currentPrice - ema20) / ema20 < 0.002;
             const pullbackShort = currentPrice < ema20 && ema20 < ema50 && Math.abs(currentPrice - ema20) / ema20 < 0.002;
@@ -123,12 +127,13 @@ export const getMatrixStrategistSignal = (
 
         case '15m': {
             // TREND STRATEGY
-            const ema50 = getLast(EMA.calculate({ period: 50, values: closes }));
-            const ema100 = getLast(EMA.calculate({ period: 100, values: closes }));
-            const ema200 = getLast(EMA.calculate({ period: 200, values: closes }));
-            const stoch = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 }));
+            // FIX: Cast EMA and Stochastic RSI results.
+            const ema50 = getLast(EMA.calculate({ period: 50, values: closes })) as number | undefined;
+            const ema100 = getLast(EMA.calculate({ period: 100, values: closes })) as number | undefined;
+            const ema200 = getLast(EMA.calculate({ period: 200, values: closes })) as number | undefined;
+            const stoch = getLast(StochasticRSI.calculate({ values: closes, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
             
-            if (!ema50 || !ema100 || !ema200 || !stoch) return { signal: 'HOLD', reasons };
+            if (ema50 === undefined || ema100 === undefined || ema200 === undefined || stoch === undefined) return { signal: 'HOLD', reasons };
 
             const emaAlignedLong = ema50 > ema100 && ema100 > ema200;
             const emaAlignedShort = ema50 < ema100 && ema100 < ema200;
@@ -146,10 +151,11 @@ export const getMatrixStrategistSignal = (
 
         case '30m': {
             // POSITION STRATEGY
-            const ichi = getLast(IchimokuCloud.calculate({ conversionPeriod: 9, basePeriod: 26, spanPeriod: 52, displacement: 26, high: highs, low: lows }));
+            // FIX: Cast Ichimoku result and ensure property access is safe.
+            const ichi = getLast(IchimokuCloud.calculate({ conversionPeriod: 9, basePeriod: 26, spanPeriod: 52, displacement: 26, high: highs, low: lows })) as IchimokuCloudOutput | undefined;
             const va = calculateValueArea(klines);
 
-            if (!ichi || !va) return { signal: 'HOLD', reasons };
+            if (ichi === undefined || va === undefined || lastRsi === undefined) return { signal: 'HOLD', reasons };
 
             if (currentPrice > ichi.spanA && ichi.conversion > ichi.base && currentPrice < va.val && lastRsi > 50) {
                 reasons.push('✅ Setup: 30m Position (Cloud + VAL Support + RSI)');
@@ -189,7 +195,7 @@ export const getMatrixStrategistSignal = (
             // SWING POSITION STRATEGY
             const fib = calculateFibLevels(Math.max(...highs), Math.min(...lows));
             const obv = OBV.calculate({ close: closes, volume: volumes });
-            const adxStrong = adx?.adx > 30;
+            const adxStrong = adx !== undefined && adx.adx > 30;
 
             // FIX: uses isObvTrending from agentUtils
             if (currentPrice > fib[0.618] && adxStrong && isObvTrending(obv, 'bullish')) {
@@ -205,15 +211,15 @@ export const getMatrixStrategistSignal = (
 
         case '1d': {
             // MACRO INVESTMENT
-            // FIX: Added missing SimpleMAOscillator and SimpleMASignal for MACD.calculate
-            const macdWeekly = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false }));
+            // FIX: Cast MACD result and ensure histogram access is safe.
+            const macdWeekly = getLast(MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false })) as MACDOutput | undefined;
             const rangingSideways = (Math.max(...closes.slice(-30)) - Math.min(...closes.slice(-30))) / currentPrice < 0.10;
 
-            if (macdWeekly && macdWeekly.histogram! > 0 && rangingSideways) {
+            if (macdWeekly && typeof macdWeekly.histogram === 'number' && macdWeekly.histogram > 0 && rangingSideways) {
                 reasons.push('✅ Setup: 1D Investment (Weekly MACD Cross + Side-ways Accumulation)');
                 return { signal: 'BUY', reasons };
             }
-            if (macdWeekly && macdWeekly.histogram! < 0 && rangingSideways) {
+            if (macdWeekly && typeof macdWeekly.histogram === 'number' && macdWeekly.histogram < 0 && rangingSideways) {
                 reasons.push('✅ Setup: 1D Investment (Weekly MACD Cross + Side-ways Distribution)');
                 return { signal: 'SELL', reasons };
             }

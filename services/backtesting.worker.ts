@@ -1,12 +1,10 @@
-
 // services/backtesting.worker.ts
 
-import { Kline, BotConfig, BacktestResult, OptimizationResultItem, Trade, AgentParams, Position, TradingMode, Agent, TradeSignal, OrderBookAnalysis } from '../types';
+import { Kline, BotConfig, BacktestResult, OptimizationResultItem, Trade, AgentParams, Position, TradingMode, Agent, TradeSignal, OrderBookAnalysis, BitcoinState } from '../types';
 import { getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getTradeGuardianSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, getAdaptiveTakeProfit } from './riskManagementService';
 import * as constants from '../constants';
 import { ATR } from 'technicalindicators';
 import { getQuantumScalperSignal } from './agents/quantumScalper';
-// FIX: Corrected imported function name from getHistoricExpertExpertSignal to getHistoricExpertSignal
 import { getHistoricExpertSignal } from './agents/historicExpert';
 import { getChameleonSignal } from './agents/chameleon';
 import { getTheSentinelSignal } from './agents/sentinel';
@@ -17,7 +15,8 @@ import { getAstraXSignal, getConfluenceTimeframes } from './agents/astrax';
 import { getSupertrendFlipperSignal } from './agents/supertrendFlipper';
 import { getPivotPointSupertrendSignal } from './agents/pivotPointSupertrend';
 import { getMatrixStrategistSignal } from './agents/matrixStrategist';
-import { applyTimeframeSettings, captureMarketContext, calculateHeikinAshi, isMarketCohesive, analyzeMicroMarketStructure } from './agents/agentUtils';
+import { getOmegaSignal } from './agents/omega';
+import { applyTimeframeSettings, captureMarketContext, calculateHeikinAshi, isMarketCohesive, analyzeMicroMarketStructure, analyzeBitcoinState } from './agents/agentUtils';
 import { Supertrend } from './agents/agentUtils';
 import { calculateSupportResistance } from './chartAnalysisService';
 import { detectSmcReversalPattern } from './vetoService';
@@ -38,45 +37,6 @@ const getTimeframeDuration = (timeframe: string): number => {
     }
 };
 
-function aggregateKlines(klines: Kline[], timeframe: string): Kline[] {
-    const timeframeMs = getTimeframeDuration(timeframe);
-    if (timeframeMs <= 60000) return klines; // Source is 1m, no aggregation needed for 1m.
-
-    const aggregated: Kline[] = [];
-    if (klines.length === 0) return [];
-
-    let currentAggKline: Kline | null = null;
-
-    for (const kline of klines) {
-        const timeframeStart = Math.floor(kline.time / timeframeMs) * timeframeMs;
-
-        if (!currentAggKline || timeframeStart !== currentAggKline.time) {
-            if (currentAggKline) {
-                aggregated.push(currentAggKline);
-            }
-            currentAggKline = {
-                time: timeframeStart,
-                open: kline.open,
-                high: kline.high,
-                low: kline.low,
-                close: kline.close,
-                volume: kline.volume || 0,
-                isFinal: true,
-            };
-        } else {
-            currentAggKline.high = Math.max(currentAggKline.high, kline.high);
-            currentAggKline.low = Math.min(currentAggKline.low, kline.low);
-            currentAggKline.close = kline.close;
-            currentAggKline.volume = (currentAggKline.volume || 0) + (kline.volume || 0);
-        }
-    }
-
-    if (currentAggKline) {
-        aggregated.push(currentAggKline);
-    }
-    return aggregated;
-}
-
 async function runFullAnalysisInWorker(
     agent: Agent,
     klines: Kline[],
@@ -93,21 +53,32 @@ async function runFullAnalysisInWorker(
     const config = applyTimeframeSettings(originalConfig);
     const params = config.agentParams as Required<AgentParams>;
 
-    const htfContext = htfKlines && htfKlines.length > 0 ? captureMarketContext([], htfKlines) : undefined;
+    const htfContext = htfKlines && htfKlines.length > 0 ? captureMarketContext([], htfKlines, params, config.timeFrame) : undefined;
+    
+    // Derived Bitcoin State for Gravity Engines (Omega & AstraX)
+    const btcState: BitcoinState = btcKlines ? analyzeBitcoinState(btcKlines) : { 
+        state: 'NEUTRAL', 
+        trend: 'neutral', 
+        momentum: 'neutral', 
+        rejection: 'none', 
+        reason: 'BTC context unavailable' 
+    };
 
     let agentSignal: TradeSignal;
 
-    if (agent.id === 19) {
+    if (agent.id === 25) {
+        let map = astraXKlinesMap || new Map<string, Kline[]>();
+        if (!map.has(config.timeFrame)) map.set(config.timeFrame, klines);
+        agentSignal = await getOmegaSignal(config, map, btcState);
+    } else if (agent.id === 19) {
         let map = astraXKlinesMap || new Map<string, Kline[]>();
         if (!map.has(config.timeFrame)) map.set(config.timeFrame, klines);
         agentSignal = await getAstraXSignal(config, map, immediateKlines, livePrice, undefined, ltfKlines, btcKlines, orderBookAnalysis, ethBtcKlines);
     } else if (agent.id === 22) {
-        // Matrix Strategist needs the full map for global confluence
         agentSignal = getMatrixStrategistSignal(klines, config, astraXKlinesMap);
     } else {
         switch (agent.id) {
             case 9: agentSignal = getQuantumScalperSignal(klines, config, htfContext); break;
-            // FIX: Corrected routing for Agent 11 (Historic Expert) to call its dedicated signal function
             case 11: agentSignal = getHistoricExpertSignal(klines, config, htfContext); break; 
             case 13: agentSignal = getChameleonSignal(klines, config, htfContext); break;
             case 14: agentSignal = getTheSentinelSignal(klines, config, htfContext); break;
@@ -134,6 +105,7 @@ self.onmessage = async (event: MessageEvent) => {
             );
             self.postMessage({ type: 'result', payload: result, id });
         } else if (type === 'runBacktest' || type === 'runOptimization') {
+             // Basic implementation to avoid hanging. Full backtest sync requires time-machine synchronized maps.
              self.postMessage({ type: 'result', payload: [], id });
         }
     } catch (error) {

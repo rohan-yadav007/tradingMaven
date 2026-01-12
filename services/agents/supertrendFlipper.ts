@@ -1,3 +1,4 @@
+
 // services/agents/supertrendFlipper.ts
 
 import { Kline, BotConfig, TradeSignal, AgentParams } from '../../types';
@@ -27,7 +28,7 @@ export const getSupertrendFlipperSignal = (klines: Kline[], config: BotConfig): 
     // --- DYNAMIC MULTIPLIER LOGIC ---
     let activeMultiplier = params.stf_atrMultiplier!;
     if (params.stf_enableDynamicMultiplier) {
-        // FIX: Use the correct variable names `highs`, `lows`, and `closes` for the `high`, `low`, and `close` properties.
+        // FIX: Explicitly cast getLast(atrValues) to number | undefined to satisfy TS.
         const atrValues = ATR.calculate({ high: highs, low: lows, close: closes, period: params.stf_volatilityPeriod! });
         const lastAtr = getLast(atrValues) as number | undefined;
 

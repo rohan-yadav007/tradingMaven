@@ -1,5 +1,6 @@
+// components/RunningBots.tsx
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, memo } from 'react';
 import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, LogType } from '../types';
 import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, InfoIcon, ZapIcon, RefreshIcon } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
@@ -117,6 +118,24 @@ const ConfigToggle: React.FC<{label: string; checked: boolean; onChange: (checke
     </div>
 );
 
+const ParamSlider: React.FC<{label: string, value: number, onChange: (val: number) => void, min: number, max: number, step: number, valueDisplay?: (v: number) => string}> = 
+({ label, value, onChange, min, max, step, valueDisplay }) => (
+    <div className="flex flex-col gap-1.5 pt-2 mt-2 border-t border-slate-200 dark:border-slate-700">
+        <div className="flex justify-between items-baseline">
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</label>
+            <span className="text-sm font-semibold text-sky-500">{valueDisplay ? valueDisplay(value) : value}</span>
+        </div>
+        <input
+            type="range"
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            onChange={e => onChange(Number(e.target.value))}
+            className="w-full h-2 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer"
+        />
+    </div>
+);
 
 const EntryFilterConfiguration: React.FC<{ bot: RunningBot; onUpdate: (change: Partial<BotConfig>) => void; onRefreshAnalysis: () => void; }> = ({ bot, onUpdate, onRefreshAnalysis }) => {
     const { config } = bot;
@@ -131,6 +150,8 @@ const EntryFilterConfiguration: React.FC<{ bot: RunningBot; onUpdate: (change: P
             <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Entry Filter Configuration</h4>
              <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg space-y-2 text-sm">
                 <p className="text-xs text-slate-500 dark:text-slate-400">Toggle entry filters for the next trade. These changes apply immediately.</p>
+                <ConfigToggle label="Initial Risk Veto" checked={config.isInitialRiskVetoEnabled} onChange={v => handleChange({ isInitialRiskVetoEnabled: v })} />
+                <ParamSlider label="Max Margin Loss %" value={config.maxMarginLossPercent} onChange={v => handleChange({ maxMarginLossPercent: v })} min={1} max={25} step={0.5} valueDisplay={v => `${v.toFixed(1)}%`} />
                 <ConfigToggle label="Momentum Concordance" checked={config.isMomentumConcordanceEnabled} onChange={v => handleChange({ isMomentumConcordanceEnabled: v })} />
                 <ConfigToggle label="Liquidation Cascade Veto" checked={config.isLiquidationFilterEnabled ?? false} onChange={v => handleChange({ isLiquidationFilterEnabled: v })} />
                 <ConfigToggle label="ADX Trend Filter" checked={config.isAdxFilterEnabled ?? false} onChange={v => handleChange({ isAdxFilterEnabled: v })} />
@@ -167,6 +188,7 @@ const TradeManagementConfiguration: React.FC<{ bot: RunningBot; onUpdate: (chang
             <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Trade Management Configuration</h4>
              <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg space-y-2 text-sm">
                 <p className="text-xs text-slate-500 dark:text-slate-400">Toggle rules for open and future trades.</p>
+                <ConfigToggle label="Trade Guardian (Proactive Exit)" checked={config.isTradeGuardianEnabled ?? true} onChange={v => handleToggleChange({ isTradeGuardianEnabled: v })} />
                 <ConfigToggle label="Agent Indicator Trail" checked={config.isAgentTrailEnabled} onChange={v => handleToggleChange({ isAgentTrailEnabled: v })} />
                 <ConfigToggle label="Mandatory Breakeven Trail" checked={config.isBreakevenTrailEnabled} onChange={v => handleToggleChange({ isBreakevenTrailEnabled: v })} />
                 <ConfigToggle label="Universal Profit Trail" checked={config.isUniversalProfitTrailEnabled} onChange={v => handleToggleChange({ isUniversalProfitTrailEnabled: v })} />
@@ -176,9 +198,10 @@ const TradeManagementConfiguration: React.FC<{ bot: RunningBot; onUpdate: (chang
                     <select 
                         id={`aggressive-trail-mode-${bot.id}`}
                         value={config.aggressiveTrailMode} 
-                        onChange={e => handleSelectChange({ aggressiveTrailMode: e.target.value as 'distance' | 'pnl'})}
+                        onChange={e => handleSelectChange({ aggressiveTrailMode: e.target.value as 'distance' | 'pnl' | 'disabled'})}
                         className="text-xs font-semibold bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md p-1 focus:outline-none focus:ring-1 focus:ring-sky-500"
                     >
+                        <option value="disabled">Disabled</option>
                         <option value="distance">Distance to TP</option>
                         <option value="pnl">PNL %</option>
                     </select>
@@ -444,7 +467,7 @@ const useBotState = (botId: string) => {
     return bot;
 };
 
-const BotCard: React.FC<{ botId: string; actions: Omit<RunningBotsProps, 'bots'> }> = ({ botId, actions }) => {
+const BotCard = memo(({ botId, actions }: { botId: string; actions: Omit<RunningBotsProps, 'bots'> }) => {
     const bot = useBotState(botId);
     const [isExpanded, setIsExpanded] = useState(false);
     
@@ -470,7 +493,7 @@ const BotCard: React.FC<{ botId: string; actions: Omit<RunningBotsProps, 'bots'>
     const duration = useDuration(bot!); // Assume bot exists for duration calculation
     
     if (!bot) {
-        return <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-4 animate-pulse h-48"></div>; // Or a skeleton loader
+        return <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-4 animate-pulse h-48"></div>; 
     }
 
     const statusInfo = getStatusInfo(bot.status);
@@ -621,104 +644,21 @@ const BotCard: React.FC<{ botId: string; actions: Omit<RunningBotsProps, 'bots'>
             )}
         </div>
     );
-};
-
-// --- State Management Hooks for RunningBots ---
-
-/**
- * Hook to get the full state of all bots, for components that need frequent updates on all bots (e.g., kill switches).
- */
-const useAllBotStates = (initialBots: RunningBot[]) => {
-    const [bots, setBots] = useState(initialBots);
-
-    useEffect(() => {
-        setBots(initialBots);
-    }, [initialBots]);
-
-    useEffect(() => {
-        const handleUpdate = (updatedBot: RunningBot) => {
-            setBots(currentBots => 
-                currentBots.map(b => b.id === updatedBot.id ? updatedBot : b)
-            );
-        };
-
-        const subscriptions = initialBots.map(bot => {
-            const handler = (b: RunningBot) => handleUpdate(b);
-            botManagerService.subscribeToBotUpdates(bot.id, handler);
-            return { botId: bot.id, handler };
-        });
-
-        return () => {
-            subscriptions.forEach(sub => {
-                botManagerService.unsubscribeFromBotUpdates(sub.botId, sub.handler);
-            });
-        };
-    }, [initialBots]);
-
-    return bots;
-}
-
-
-/**
- * Hook to get only structural information (id, status) for bots.
- * This is optimized to only trigger updates when a bot's status changes,
- * preventing re-renders of the main list for simple price updates.
- */
-type BotStructure = { id: string; status: BotStatus };
-const useBotStructures = (initialBots: RunningBot[]): BotStructure[] => {
-    const [structures, setStructures] = useState<BotStructure[]>(() =>
-        initialBots.map(b => ({ id: b.id, status: b.status }))
-    );
-
-    useEffect(() => {
-        setStructures(initialBots.map(b => ({ id: b.id, status: b.status })));
-    
-        const handleUpdate = (updatedBot: RunningBot) => {
-            setStructures(currentStructures => {
-                const index = currentStructures.findIndex(s => s.id === updatedBot.id);
-                if (index === -1) return currentStructures;
-                
-                const existing = currentStructures[index];
-                if (existing.status === updatedBot.status) {
-                    return currentStructures; // No structural change, don't update state
-                }
-                
-                const newStructures = [...currentStructures];
-                newStructures[index] = { id: updatedBot.id, status: updatedBot.status };
-                return newStructures;
-            });
-        };
-
-        const subscriptions = initialBots.map(bot => {
-            const handler = (b: RunningBot) => handleUpdate(b);
-            botManagerService.subscribeToBotUpdates(bot.id, handler);
-            return { botId: bot.id, handler };
-        });
-
-        return () => {
-            subscriptions.forEach(sub => {
-                botManagerService.unsubscribeFromBotUpdates(sub.botId, sub.handler);
-            });
-        };
-    }, [initialBots]);
-
-    return structures;
-}
+});
 
 // --- Emergency Close Panel Component ---
 
 const EmergencyClosePanel: React.FC<{ bots: RunningBot[], onClosePosition: RunningBotsProps['onClosePosition'] }> = ({ bots, onClosePosition }) => {
-    const liveBots = useAllBotStates(bots);
-
     const { allOpenPositions, profitablePositions, losingPositions } = useMemo(() => {
         const allOpen: Position[] = [];
         const profitable: Position[] = [];
         const losing: Position[] = [];
 
-        liveBots.forEach(bot => {
-            if (bot.status === BotStatus.PositionOpen && bot.openPosition && bot.livePrice) {
+        bots.forEach(bot => {
+            if (bot.status === BotStatus.PositionOpen && bot.openPosition) {
                 const isLong = bot.openPosition.direction === 'LONG';
-                const unrealizedPnl = (bot.livePrice - bot.openPosition.entryPrice) * bot.openPosition.size * (isLong ? 1 : -1);
+                const currentPrice = bot.livePrice || bot.openPosition.entryPrice;
+                const unrealizedPnl = (currentPrice - bot.openPosition.entryPrice) * bot.openPosition.size * (isLong ? 1 : -1);
                 
                 allOpen.push(bot.openPosition);
 
@@ -730,13 +670,13 @@ const EmergencyClosePanel: React.FC<{ bots: RunningBot[], onClosePosition: Runni
             }
         });
         return { allOpenPositions: allOpen, profitablePositions: profitable, losingPositions: losing };
-    }, [liveBots]);
+    }, [bots]);
 
     const handleCloseAll = () => {
         if (allOpenPositions.length === 0) return;
         if (window.confirm(`Are you sure you want to close all ${allOpenPositions.length} open positions immediately?`)) {
             allOpenPositions.forEach(pos => {
-                const bot = liveBots.find(b => b.openPositionId === pos.id);
+                const bot = bots.find(b => b.openPositionId === pos.id);
                 if (bot) {
                     onClosePosition(pos, 'Kill Switch: Close All', bot.livePrice);
                 }
@@ -748,7 +688,7 @@ const EmergencyClosePanel: React.FC<{ bots: RunningBot[], onClosePosition: Runni
         if (profitablePositions.length === 0) return;
         if (window.confirm(`Are you sure you want to close all ${profitablePositions.length} profitable positions immediately?`)) {
             profitablePositions.forEach(pos => {
-                const bot = liveBots.find(b => b.openPositionId === pos.id);
+                const bot = bots.find(b => b.openPositionId === pos.id);
                 if (bot) {
                     onClosePosition(pos, 'Kill Switch: Close Profitable', bot.livePrice);
                 }
@@ -760,7 +700,7 @@ const EmergencyClosePanel: React.FC<{ bots: RunningBot[], onClosePosition: Runni
         if (losingPositions.length === 0) return;
         if (window.confirm(`Are you sure you want to close all ${losingPositions.length} losing positions immediately?`)) {
             losingPositions.forEach(pos => {
-                const bot = liveBots.find(b => b.openPositionId === pos.id);
+                const bot = bots.find(b => b.openPositionId === pos.id);
                 if (bot) {
                     onClosePosition(pos, 'Kill Switch: Close Losing', bot.livePrice);
                 }
@@ -768,7 +708,7 @@ const EmergencyClosePanel: React.FC<{ bots: RunningBot[], onClosePosition: Runni
         }
     };
     
-    if (liveBots.filter(b => b.status === BotStatus.PositionOpen).length === 0) {
+    if (bots.filter(b => b.status === BotStatus.PositionOpen).length === 0) {
         return null;
     }
 
@@ -807,17 +747,16 @@ const EmergencyClosePanel: React.FC<{ bots: RunningBot[], onClosePosition: Runni
 };
 
 
-// --- Main RunningBots Component (Refactored for Performance) ---
+// --- Main RunningBots Component ---
 
-export const RunningBots: React.FC<RunningBotsProps> = ({ bots: initialBots, ...actions }) => {
+export const RunningBots: React.FC<RunningBotsProps> = ({ bots, ...actions }) => {
     const { onClosePosition } = actions;
-    const botStructures = useBotStructures(initialBots);
     const [activeTab, setActiveTab] = useState<'open' | 'monitoring'>('open');
 
     const { openPositionBots, monitoringBots } = useMemo(() => {
-        const open: BotStructure[] = [];
-        const monitoring: BotStructure[] = [];
-        botStructures.forEach(bot => {
+        const open: RunningBot[] = [];
+        const monitoring: RunningBot[] = [];
+        bots.forEach(bot => {
             if (bot.status === BotStatus.PositionOpen || bot.status === BotStatus.FlipPending) {
                 open.push(bot);
             } else {
@@ -825,10 +764,10 @@ export const RunningBots: React.FC<RunningBotsProps> = ({ bots: initialBots, ...
             }
         });
         return { openPositionBots: open, monitoringBots: monitoring };
-    }, [botStructures]);
+    }, [bots]);
 
     const botsToDisplay = activeTab === 'open' ? openPositionBots : monitoringBots;
-    const activeBotsCount = botStructures.length;
+    const activeBotsCount = bots.length;
 
     return (
         <div className="flex flex-col gap-4">
@@ -840,7 +779,7 @@ export const RunningBots: React.FC<RunningBotsProps> = ({ bots: initialBots, ...
                 </h2>
                 
                 <div className="flex items-center gap-4">
-                     <EmergencyClosePanel bots={initialBots} onClosePosition={onClosePosition} />
+                     <EmergencyClosePanel bots={bots} onClosePosition={onClosePosition} />
                     <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-lg">
                         <button
                             onClick={() => setActiveTab('open')}
@@ -858,7 +797,7 @@ export const RunningBots: React.FC<RunningBotsProps> = ({ bots: initialBots, ...
                 </div>
             </div>
 
-            {initialBots.length > 0 ? (
+            {bots.length > 0 ? (
                 <div className="flex flex-col gap-4">
                     {botsToDisplay.map(bot => <BotCard key={bot.id} botId={bot.id} actions={actions} />)}
                     {botsToDisplay.length === 0 && (

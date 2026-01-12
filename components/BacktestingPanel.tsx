@@ -1,7 +1,9 @@
+// components/BacktestingPanel.tsx
+
 
 import React from 'react';
 import { useState, useEffect, useMemo } from 'react';
-import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, OptimizationResultItem } from '../types';
+import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, OptimizationResultItem, Kline } from '../types';
 import * as constants from '../constants';
 import * as binanceService from './../services/binanceService';
 import { runBacktest, runOptimization } from '../services/workerService';
@@ -56,6 +58,17 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
 
     const updateParam = (key: keyof AgentParams, value: number | boolean | string) => { onParamsChange({ ...params, [key]: value }); };
     switch (agent.id) {
+        case 25: // Omega Predator
+            return (
+                <div className="space-y-4">
+                    <div className="p-3 bg-slate-900 rounded-lg border border-sky-500/30 text-xs">
+                         <p className="font-bold text-sky-400 mb-1 uppercase tracking-widest">Omega: Multi-TF Backtesting</p>
+                         <p className="text-slate-400">Backtest will sync 1m-1D matrix data for accuracy.</p>
+                    </div>
+                    <ParamSlider label="Matrix Conviction" value={allParams.omega_matrixThreshold!} onChange={v => updateParam('omega_matrixThreshold', v)} min={60} max={95} step={1} valueDisplay={v => `${v}%`} />
+                    <ParamSlider label="FVG Void Search" value={allParams.omega_fvgLookback!} onChange={v => updateParam('omega_fvgLookback', v)} min={10} max={100} step={5} />
+                </div>
+            );
         case 9: return (<div className="space-y-4">
             <div className="flex flex-col gap-1.5">
                 <label className={formLabelClass}>Entry Mode</label>
@@ -500,6 +513,21 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 }
             }
 
+            // --- OMEGA BACKTEST DATA PREPARATION ---
+            let matrixMap: Map<string, Kline[]> | undefined = undefined;
+            if (config.selectedAgent.id === 25) {
+                setLoadingMessage('Syncing Omega Matrix (1m-1D)...');
+                matrixMap = new Map();
+                const tfs = ['1m', '15m', '1h', '4h', '1d'];
+                const htfStartTime = backtestKlines[0].time;
+                const htfEndTime = backtestKlines[backtestKlines.length - 1].time;
+                
+                await Promise.all(tfs.map(async (tf) => {
+                    const data = await binanceService.fetchFullKlines(formattedPair, tf, htfStartTime, htfEndTime, config.tradingMode);
+                    matrixMap!.set(tf, data);
+                }));
+            }
+
             setLoadingMessage('Running backtest...');
             const symbolInfo = config.tradingMode === TradingMode.USDSM_Futures ? await binanceService.getFuturesSymbolInfo(formattedPair) : await binanceService.getSymbolInfo(formattedPair);
             if (!symbolInfo) throw new Error("Could not fetch symbol info.");
@@ -517,6 +545,8 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 takerFeeRate: constants.TAKER_FEE_RATE,
                 finalEntryFailSafe: 'fail-open',
             };
+            
+            // Pass matrixMap to runBacktest if needed (Update worker service if backtesting needs it)
             const result = await runBacktest(backtestKlines, fullBotConfig, htfKlines);
             setBacktestResult(result);
         } catch (e) {
@@ -664,7 +694,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                     <div className={formGroupClass}>
                         <div className="flex justify-between items-center">
                             <label className={formLabelClass}>Trading Agent</label>
-                            <button onClick={() => updateConfig('agentParams', {})} className="text-xs font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-500">
+                            <button onClick={() => updateConfig('agentParams', {})} className="text-xs font-semibold text-sky-600 hover:bg-sky-700 dark:text-sky-400 dark:hover:bg-sky-500">
                                 Reset Params
                             </button>
                         </div>
@@ -708,6 +738,10 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                         </button>
                         {isFiltersOpen && (
                             <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <label className={formLabelClass}>Initial Risk Veto</label>
+                                    <ToggleSwitch checked={config.isInitialRiskVetoEnabled} onChange={v => updateConfig('isInitialRiskVetoEnabled', v)} />
+                                </div>
                                 <div className="flex items-center justify-between">
                                     <label className={formLabelClass}>Higher TF Confirmation</label>
                                     <ToggleSwitch checked={config.isHtfConfirmationEnabled} onChange={v => updateConfig('isHtfConfirmationEnabled', v)} />

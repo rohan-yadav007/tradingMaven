@@ -1,9 +1,11 @@
+
 // services/agents/agentUtils.ts
 
-import { Kline, BotConfig, AgentParams, MarketDataContext, ADXOutput, StochasticRSIOutput, BollingerBandsOutput, MACDOutput, IchimokuCloudOutput, VortexIndicatorOutput, BitcoinState } from '../../types';
+import { Kline, BotConfig, AgentParams, MarketDataContext, ADXOutput, StochasticRSIOutput, BollingerBandsOutput, MACDOutput, IchimokuCloudOutput, VortexIndicatorOutput, BitcoinState, ChartPattern } from '../../types';
 import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, IchimokuCloud, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, dragonflydoji, gravestonedoji, hammerpattern, hangingman, morningstar, piercingline, shootingstar, eveningstar } from 'technicalindicators';
 import * as constants from '../../constants';
 import { findSwingPoints } from '../chartAnalysisService';
+import { PatternRecognitionService } from '../patternRecognitionService';
 
 // --- Custom Indicator Implementations ---
 
@@ -151,6 +153,27 @@ export function calculateDailyVwap(klines: Kline[]): (number | undefined)[] {
 }
 
 /**
+ * Calculates ATR Trend to detect expanding/contracting volatility.
+ */
+export function calculateAtrTrend(klines: Kline[], period: number = 14): 'expanding' | 'contracting' | 'stable' {
+    if (klines.length < period + 5) return 'stable';
+    const highs = klines.map(k => k.high);
+    const lows = klines.map(k => k.low);
+    const closes = klines.map(k => k.close);
+    const atrValues = ATR.calculate({ high: highs, low: lows, close: closes, period });
+    
+    // FIX: Variable names corrected to 'last' and typed as number.
+    const last = getLast(atrValues) as number | undefined;
+    const prev = atrValues[atrValues.length - 4] as number | undefined;
+    if (last === undefined || prev === undefined) return 'stable';
+
+    const diff = (last - prev) / prev;
+    if (diff > 0.05) return 'expanding';
+    if (diff < -0.05) return 'contracting';
+    return 'stable';
+}
+
+/**
  * Calculates the slope of Bollinger Bandwidth to detect volatility expansion velocity.
  */
 export function calculateBandwidthSlope(klines: Kline[], period: number = 20): number {
@@ -172,13 +195,44 @@ export function calculateRVOL(klines: Kline[], period: number = 20): number {
     const volumes = klines.map(k => k.volume || 0);
     const lastVol = getLast(volumes) || 0;
     
-    // Slice off the last volume to calculate the average of previous N
     const previousVolumes = volumes.slice(0, -1).slice(-period);
-    
     const sum = previousVolumes.reduce((a, b) => a + b, 0);
     const avg = sum / previousVolumes.length || 1;
     
     return lastVol / avg;
+}
+
+/**
+ * Calculates RSI Velocity (Acceleration of momentum).
+ * Higher positive values indicate accelerating bullish momentum.
+ */
+export function calculateRsiVelocity(rsiValues: number[]): number {
+    if (rsiValues.length < 5) return 0;
+    const last = rsiValues[rsiValues.length - 1];
+    const prev = rsiValues[rsiValues.length - 2];
+    const avgPrev = (rsiValues[rsiValues.length - 2] + rsiValues[rsiValues.length - 3] + rsiValues[rsiValues.length - 4]) / 3;
+    return last - avgPrev;
+}
+
+/**
+ * V6.2: Real-time Candle Analysis for Exits
+ * Checks if the candle is forming a significant rejection wick.
+ */
+export function getCandleExhaustion(kline: Kline): { bullish: boolean, bearish: boolean, intensity: number } {
+    const body = Math.abs(kline.close - kline.open);
+    const range = kline.high - kline.low;
+    if (range === 0) return { bullish: false, bearish: false, intensity: 0 };
+    
+    const upperWick = kline.high - Math.max(kline.close, kline.open);
+    const lowerWick = Math.min(kline.close, kline.open) - kline.low;
+    
+    const intensity = Math.max(upperWick, lowerWick) / range;
+    
+    return {
+        bullish: lowerWick > body * 1.5 && lowerWick > upperWick, 
+        bearish: upperWick > body * 1.5 && upperWick > lowerWick, 
+        intensity
+    };
 }
 
 export function applyTimeframeSettings(config: BotConfig): BotConfig {
@@ -208,7 +262,6 @@ export function calculateFibLevels(high: number, low: number): { [key: string]: 
 
 /**
  * Simplified Value Area (VA) calculator to estimate VAL/VAH.
- * Finds the price range that contains roughly 70% of the total volume.
  */
 export function calculateValueArea(klines: Kline[]): { val: number, vah: number, poc: number } {
     if (klines.length === 0) return { val: 0, vah: 0, poc: 0 };
@@ -216,7 +269,7 @@ export function calculateValueArea(klines: Kline[]): { val: number, vah: number,
     const min = Math.min(...klines.map(k => k.low));
     const max = Math.max(...klines.map(k => k.high));
     const range = max - min;
-    const step = range / 50; // 50 price buckets
+    const step = range / 50; 
 
     const buckets = new Map<number, number>();
     let totalVolume = 0;
@@ -403,7 +456,7 @@ export function analyzeMicroMarketStructure(microKlines: Kline[]): 'ascending' |
     return 'ranging';
 }
 
-export function captureMarketContext(klines: Kline[], htfKlines?: Kline[], params?: AgentParams): Partial<MarketDataContext> {
+export function captureMarketContext(klines: Kline[], htfKlines?: Kline[], params?: AgentParams, timeframe?: string): Partial<MarketDataContext> {
     const context: Partial<MarketDataContext> = {};
     const calculateIndicators = (k: Kline[]): Partial<Omit<MarketDataContext, 'htf_trend'>> => {
         if (k.length < 2) return {};
@@ -416,31 +469,37 @@ export function captureMarketContext(klines: Kline[], htfKlines?: Kline[], param
         const viPeriod = params?.viPeriod || 14;
 
         if (k.length >= Math.max(rsiPeriod, adxPeriod, atrPeriod, viPeriod)) {
-            res.rsi14 = getLast(RSI.calculate({ period: rsiPeriod, values: c }));
+            res.rsi14 = getLast(RSI.calculate({ period: rsiPeriod, values: c })) as number | undefined;
             res.adx14 = getLast(ADX.calculate({ period: adxPeriod, high: h, low: l, close: c })) as ADXOutput | undefined;
-            res.atr14 = getLast(ATR.calculate({ period: atrPeriod, high: h, low: l, close: c }));
+            res.atr14 = getLast(ATR.calculate({ period: atrPeriod, high: h, low: l, close: c })) as number | undefined;
             res.stochRsi = getLast(StochasticRSI.calculate({ values: c, rsiPeriod: rsiPeriod, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 })) as StochasticRSIOutput | undefined;
             const vi14 = VortexIndicator.calculate({ period: viPeriod, high: h, low: l, close: c });
             if(getLast(vi14.pdi) !== undefined && getLast(vi14.ndi) !== undefined) res.vi14 = { pdi: getLast(vi14.pdi)!, ndi: getLast(vi14.ndi)! };
         }
         if (k.length >= 20) {
             res.bb20_2 = getLast(BollingerBands.calculate({ period: 20, stdDev: 2, values: c })) as BollingerBandsOutput | undefined;
-            res.volumeSma20 = getLast(SMA.calculate({ period: 20, values: v }));
+            res.volumeSma20 = getLast(SMA.calculate({ period: 20, values: v })) as number | undefined;
             const obv = OBV.calculate({ close: c, volume: v });
             res.obvTrend = isObvTrending(obv, 'bullish') ? 'bullish' : isObvTrending(obv, 'bearish') ? 'bearish' : 'neutral';
         }
         if (k.length >= 26) res.macd = getLast(MACD.calculate({ values: c, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false })) as MACDOutput | undefined;
-        if (k.length >= 9) res.ema9 = getLast(EMA.calculate({ period: 9, values: c }));
-        if (k.length >= 21) res.ema21 = getLast(EMA.calculate({ period: 21, values: c }));
-        if (k.length >= 50) res.ema50 = getLast(EMA.calculate({ period: 50, values: c }));
-        if (k.length >= 200) res.ema200 = getLast(EMA.calculate({ period: 200, values: c }));
-        if (k.length >= 50) res.sma50 = getLast(SMA.calculate({ period: 50, values: c }));
-        if (k.length >= 200) res.sma200 = getLast(SMA.calculate({ period: 200, values: c }));
+        if (k.length >= 9) res.ema9 = getLast(EMA.calculate({ period: 9, values: c })) as number | undefined;
+        if (k.length >= 21) res.ema21 = getLast(EMA.calculate({ period: 21, values: c })) as number | undefined;
+        if (k.length >= 50) res.ema50 = getLast(EMA.calculate({ period: 50, values: c })) as number | undefined;
+        if (k.length >= 200) res.ema200 = getLast(EMA.calculate({ period: 200, values: c })) as number | undefined;
+        if (k.length >= 50) res.sma50 = getLast(SMA.calculate({ period: 50, values: c })) as number | undefined;
+        if (k.length >= 200) res.sma200 = getLast(SMA.calculate({ period: 200, values: c })) as number | undefined;
         res.ichiCloud = getLast(IchimokuCloud.calculate({ conversionPeriod: 9, basePeriod: 26, spanPeriod: 52, displacement: 26, high: h, low: l })) as IchimokuCloudOutput | undefined;
-        res.lastCandlePattern = recognizeCandlestickPattern(k[k.length - 1], k[k.length - 2]);
-        res.vwap = getLast(calculateDailyVwap(k));
-        res.lastVolume = getLast(v);
-        res.lastClose = getLast(c);
+        res.lastCandlePattern = recognizeCandlestickPattern(k[k.length - 1], k[k.length - 2]) as { name: string; type: 'bullish' | 'bearish' } | undefined;
+        res.vwap = getLast(calculateDailyVwap(k)) as number | undefined;
+        res.lastVolume = getLast(v) as number | undefined;
+        res.lastClose = getLast(c) as number | undefined;
+
+        // V8.0: Vortex Geometry Snapshot (Requires deeper lookbacks up to 500 candles)
+        if (timeframe) {
+            res.activePatterns = PatternRecognitionService.detectPatterns(k, timeframe);
+        }
+        
         return res;
     };
     Object.assign(context, calculateIndicators(klines));
@@ -448,9 +507,10 @@ export function captureMarketContext(klines: Kline[], htfKlines?: Kline[], param
         const htfCtxRaw = calculateIndicators(htfKlines);
         for (const key in htfCtxRaw) (context as any)[`htf_${key}`] = (htfCtxRaw as any)[key];
         if(htfKlines.length >= 200) {
-            const lastClose = getLast(htfKlines.map(x => x.close))!;
-            const ema50 = getLast(EMA.calculate({ period: 50, values: htfKlines.map(x => x.close) })) as number;
-            const ema200 = getLast(EMA.calculate({ period: 200, values: htfKlines.map(x => x.close) })) as number;
+            const htfCloses = htfKlines.map(x => x.close);
+            const lastClose = getLast(htfCloses)!;
+            const ema50 = getLast(EMA.calculate({ period: 50, values: htfCloses })) as number;
+            const ema200 = getLast(EMA.calculate({ period: 200, values: htfCloses })) as number;
             if (lastClose > ema50 && ema50 > ema200) context.htf_trend = 'bullish';
             else if (lastClose < ema50 && ema50 < ema200) context.htf_trend = 'bearish';
             else context.htf_trend = 'neutral';
@@ -470,6 +530,28 @@ export function detectLiquiditySweep(klines: Kline[], lookback: number = 10): { 
     return { bullish: bullishSweep, bearish: bearishSweep };
 }
 
+export function detectFairValueGaps(klines: Kline[], lookback: number = 20): { top: number, bottom: number, type: 'FVG Bullish' | 'FVG Bearish', filled: boolean }[] {
+    if (klines.length < 3) return [];
+    const gaps: any[] = [];
+    const recent = klines.slice(-lookback);
+
+    for (let i = 2; i < recent.length; i++) {
+        const k1 = recent[i-2];
+        const k2 = recent[i-1];
+        const k3 = recent[i];
+
+        // Bullish FVG (Gap between K1 High and K3 Low)
+        if (k3.low > k1.high && k2.close > k2.open) {
+            gaps.push({ top: k3.low, bottom: k1.high, type: 'FVG Bullish', filled: false });
+        }
+        // Bearish FVG (Gap between K1 Low and K3 High)
+        else if (k3.high < k1.low && k2.close < k2.open) {
+            gaps.push({ top: k1.low, bottom: k3.high, type: 'FVG Bearish', filled: false });
+        }
+    }
+    return gaps;
+}
+
 export function calculateRsiSlope(rsiValues: number[]): number {
     if (rsiValues.length < 3) return 0;
     const last = rsiValues[rsiValues.length - 1];
@@ -482,45 +564,85 @@ export function isPriceOverextended(currentPrice: number, meanPrice: number, vol
     return Math.abs(currentPrice - meanPrice) > (volatility * threshold);
 }
 
+/**
+ * Detects if the market is in a period of low volatility (Bollinger Band squeeze).
+ */
 export function detectVolatilityCompression(klines: Kline[], length: number = 20, threshold: number = 0.02): boolean {
     if (klines.length < length) return false;
     const closes = klines.map(k => k.close);
-    const bb = getLast(BollingerBands.calculate({ period: length, stdDev: 2, values: closes })) as BollingerBandsOutput | undefined;
-    if (!bb) return false;
-    const bandwidth = (bb.upper - bb.lower) / bb.middle;
+    const bb = BollingerBands.calculate({ period: length, stdDev: 2, values: closes });
+    // FIX: Cast getLast result to BollingerBandsOutput to access its properties.
+    const lastBB = getLast(bb) as BollingerBandsOutput | undefined;
+    if (!lastBB) return false;
+    const bandwidth = (lastBB.upper - lastBB.lower) / lastBB.middle;
     return bandwidth < threshold;
 }
 
+/**
+ * Analyzes the state of Bitcoin to provide market-wide context.
+ * Returns a standardized BitcoinState object based on EMA alignment and RSI momentum.
+ */
 export function analyzeBitcoinState(btcKlines: Kline[]): BitcoinState {
-    const minData = 50;
-    if (!btcKlines || btcKlines.length < minData) return { state: 'NEUTRAL', trend: 'neutral', momentum: 'neutral', rejection: 'none', reason: 'Insufficient BTC Data' };
-    const closes = btcKlines.map(k => k.close), highs = btcKlines.map(k => k.high), lows = btcKlines.map(k => k.low), volumes = btcKlines.map(k => k.volume || 0);
-    const ema50 = getLast(EMA.calculate({ period: 50, values: closes })) || 0, rsi = getLast(RSI.calculate({ period: 14, values: closes })) || 50;
-    const atr = getLast(ATR.calculate({ period: 14, high: highs, low: lows, close: closes })) || 0, adx = getLast(ADX.calculate({ period: 14, high: highs, low: lows, close: closes })) as ADXOutput;
-    const volSma = getLast(SMA.calculate({ period: 20, values: volumes })) || 0;
-    const macdValues = MACD.calculate({ values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
-    const lastMacd = getLast(macdValues) as MACDOutput | undefined, prevMacd = macdValues.length > 1 ? macdValues[macdValues.length - 2] as MACDOutput : undefined;
-    const lastKline = btcKlines[btcKlines.length - 1], currentPrice = lastKline.close, candleBody = Math.abs(lastKline.close - lastKline.open);
-    let state: BitcoinState['state'] = 'NEUTRAL', trend: BitcoinState['trend'] = 'neutral', reasonParts: string[] = [];
-    if (currentPrice > ema50) { trend = 'bullish'; state = 'TREND_UP'; } else if (currentPrice < ema50) { trend = 'bearish'; state = 'TREND_DOWN'; }
-    let momentum: BitcoinState['momentum'] = 'neutral';
-    if (lastMacd?.histogram !== undefined && prevMacd?.histogram !== undefined) {
-        const delta = lastMacd.histogram - prevMacd.histogram;
-        if (trend === 'bullish') momentum = delta > 0 ? 'accelerating' : 'decelerating';
-        else if (trend === 'bearish') momentum = delta < 0 ? 'accelerating' : 'decelerating';
+    if (btcKlines.length < 50) {
+        return { 
+            state: 'NEUTRAL', 
+            trend: 'neutral', 
+            momentum: 'neutral', 
+            rejection: 'none', 
+            reason: 'Insufficient BTC data for analysis.' 
+        };
     }
-    if (momentum === 'decelerating') reasonParts.push('Momentum slowing');
-    if (momentum === 'accelerating') reasonParts.push('Momentum accelerating');
-    let rejection: BitcoinState['rejection'] = 'none';
-    const upperWick = lastKline.high - Math.max(lastKline.close, lastKline.open), lowerWick = Math.min(lastKline.close, lastKline.open) - lastKline.low;
-    const wickThreshold = Math.max(candleBody * 1.5, atr * 0.2);
-    if (upperWick > wickThreshold && upperWick > lowerWick) { rejection = 'resistance'; reasonParts.push('Rejected at Resistance'); }
-    else if (lowerWick > wickThreshold && lowerWick > upperWick) { rejection = 'support'; reasonParts.push('Rejected at Support'); }
-    const isCrash = currentPrice < ema50 && rsi < 35 && lastKline.close < lastKline.open && candleBody > (atr * 2) && lastKline.volume! > (volSma * 1.5);
-    const isPump = currentPrice > ema50 && rsi > 70 && lastKline.close > lastKline.open && candleBody > (atr * 2) && lastKline.volume! > (volSma * 1.5);
-    if (isCrash) { state = 'CRASH'; reasonParts = ['BTC Flash Crash']; }
-    else if (isPump) { state = 'PUMP'; reasonParts = ['BTC Flash Pump']; }
-    else if (adx && adx.adx < 25) { state = 'RANGE'; if (!reasonParts.includes('Ranging')) reasonParts.unshift(`Ranging (ADX ${adx.adx.toFixed(0)})`); }
-    else reasonParts.unshift(state === 'TREND_UP' ? 'BTC Uptrend' : 'BTC Downtrend');
-    return { state, trend, momentum, rejection, reason: reasonParts.join(', ') };
+
+    const closes = btcKlines.map(k => k.close);
+    const lastClose = getLast(closes)!;
+    
+    // EMA-based trend analysis
+    const ema20Values = EMA.calculate({ period: 20, values: closes });
+    const ema50Values = EMA.calculate({ period: 50, values: closes });
+    // FIX: Explicitly cast EMA results to number.
+    const lastEma20 = getLast(ema20Values) as number | undefined;
+    const lastEma50 = getLast(ema50Values) as number | undefined;
+    
+    // RSI-based momentum analysis
+    const rsiValues = RSI.calculate({ period: 14, values: closes });
+    // FIX: Explicitly cast RSI result to number.
+    const lastRsi = getLast(rsiValues) as number | undefined;
+
+    let trend: 'bullish' | 'bearish' | 'neutral' = 'neutral';
+    if (lastEma20 !== undefined && lastEma50 !== undefined) {
+        if (lastClose > lastEma20 && lastEma20 > lastEma50) trend = 'bullish';
+        else if (lastClose < lastEma20 && lastEma20 < lastEma50) trend = 'bearish';
+    }
+
+    // Detect sudden spikes (PUMP/CRASH)
+    const returns = [];
+    for(let i=1; i < Math.min(closes.length, 30); i++) {
+        const idx = closes.length - 1 - i;
+        if (idx >= 0) {
+            returns.push((closes[idx+1] - closes[idx]) / closes[idx]);
+        }
+    }
+    const lastReturn = returns[0] || 0;
+    const avgReturn = returns.reduce((a,b) => a + Math.abs(b), 0) / (returns.length || 1);
+    
+    let state: BitcoinState['state'] = 'NEUTRAL';
+    if (lastReturn > avgReturn * 5) state = 'PUMP';
+    else if (lastReturn < -avgReturn * 5) state = 'CRASH';
+    else if (trend === 'bullish') state = 'TREND_UP';
+    else if (trend === 'bearish') state = 'TREND_DOWN';
+    else state = 'RANGE';
+
+    let momentum: BitcoinState['momentum'] = 'neutral';
+    if (lastRsi !== undefined) {
+        if (lastRsi > 60) momentum = 'accelerating';
+        else if (lastRsi < 40) momentum = 'decelerating';
+    }
+
+    return {
+        state,
+        trend,
+        momentum,
+        rejection: 'none',
+        reason: `BTC is in ${state} regime (${trend} trend).`
+    };
 }

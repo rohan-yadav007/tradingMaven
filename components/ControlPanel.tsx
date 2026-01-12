@@ -76,6 +76,42 @@ const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParam
     const updateParam = (key: keyof AgentParams, value: number | boolean | string) => { onParamsChange({ ...params, [key]: value }); };
     
     switch (agent.id) {
+        case 25: // Omega Predator
+            const aggLevel = allParams.omega_frequencyAggressiveness || 3;
+            const aggLabels: Record<number, string> = {
+                1: 'Deep Value',
+                2: 'Conservative',
+                3: 'Balanced',
+                4: 'Aggressive',
+                5: 'High Octane'
+            };
+
+            return (
+                <div className="space-y-4">
+                    <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-200 dark:border-indigo-800 text-xs">
+                         <p className="font-bold text-indigo-700 dark:text-indigo-300 mb-1 uppercase tracking-wider">Omega: Unified Matrix Control</p>
+                         <p className="text-slate-600 dark:text-slate-400">Synchronizing 1m-1D footprints. Targeting Institutional Voids.</p>
+                    </div>
+                    
+                    <ParamSlider 
+                        label="Trade Frequency" 
+                        value={aggLevel} 
+                        onChange={v => updateParam('omega_frequencyAggressiveness', v)} 
+                        min={1} max={5} step={1} 
+                        valueDisplay={v => aggLabels[v]} 
+                    />
+                    
+                    <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                        <ParamSlider label="Matrix Threshold" value={allParams.omega_matrixThreshold!} onChange={v => updateParam('omega_matrixThreshold', v)} min={60} max={95} step={1} valueDisplay={v => `${v}% Conviction`} />
+                        <ParamSlider label="Min Reward Expectancy" value={allParams.omega_minExpectancy!} onChange={v => updateParam('omega_minExpectancy', v)} min={2} max={15} step={0.5} valueDisplay={v => `${v}x Cost`} />
+                    </div>
+
+                    <div className="p-2 bg-slate-100 dark:bg-slate-900 rounded text-[10px] text-slate-500 flex items-start gap-2">
+                        <InfoIcon className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                        <span>High frequency scales the entire Matrix to be more sensitive to micro-volatility and smaller institutional footprints.</span>
+                    </div>
+                </div>
+            );
         case 22: // Matrix Strategist
             return (
                 <div className="space-y-4">

@@ -134,7 +134,8 @@ const AppContent: React.FC = () => {
                     pair: pair,
                     mode: tradingMode,
                     executionMode,
-                    leverage,
+                    // V8.4: Force leverage to 1 for Spot to ensure correct Risk Veto calculations
+                    leverage: tradingMode === TradingMode.Spot ? 1 : leverage,
                     marginType,
                     agent: selectedAgent,
                     timeFrame: chartTimeFrame,
@@ -589,7 +590,9 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 isTradeGuardianEnabled: config.isTradeGuardianEnabled,
                 finalEntryFailSafe: config.finalEntryFailSafe,
                 isHeikinAshiEnabled: config.isHeikinAshiEnabled,
-                isDynamicSizingEnabled: config.isDynamicSizingEnabled
+                isDynamicSizingEnabled: config.isDynamicSizingEnabled,
+                // FIX: Added missing maxMarginLossPercent to BotConfigSnapshot to resolve access issues in Trade Guardian.
+                maxMarginLossPercent: config.maxMarginLossPercent
             },
             entryContext: executionDetails.entryContext,
             entryAtr: executionDetails.entryContext.atr14,

@@ -1,3 +1,4 @@
+// constants.ts
 
 import { Agent, AgentParams, WalletBalance } from './types';
 
@@ -40,6 +41,12 @@ export const getHigherTimeframe = (timeframe: string): string | undefined => {
 
 export const AGENTS: Agent[] = [
     {
+        id: 25,
+        name: 'Omega: Unified Predator',
+        description: "An advanced multi-dimensional outcome engine. It ignores execution timeframe constraints to synchronize Macro Tide, Structural Voids (FVGs), and Micro-Liquidity Sweeps for institutional-grade high RR trades.",
+        indicators: ["Unified Matrix", "FVG Voids", "Liquidity Sweeps", "The Trap"],
+    },
+    {
         id: 22,
         name: 'The Matrix Strategist',
         description: "A context-switching agent that morphs its strategy based on the timeframe. From high-frequency 1m scalping to macro 1d investing, it uses a pre-optimized matrix of indicators and rules for each market environment.",
@@ -60,8 +67,8 @@ export const AGENTS: Agent[] = [
     {
         id: 19,
         name: 'AstraX Super-Agent',
-        description: "A TF-agnostic, multi-pair, long-running agent that derives a unified market state from multiple timeframes to determine directional conviction and adaptive risk.",
-        indicators: ["Multi-Timeframe Analysis", "Market Structure", "VWAP", "Volume Profile"],
+        description: "A synchronized multi-dimensional brain. It ensures convergence between Structure (Patterns), Momentum (Velocity), Gravity (BTC/HTF Flow), and Utility (Fee Gating) before emitting a signal.",
+        indicators: ["Convergence Matrix", "Quantum Handshake", "Vortex Retest", "Utility Gating"],
     },
     {
         id: 18,
@@ -72,7 +79,7 @@ export const AGENTS: Agent[] = [
     {
         id: 9,
         name: 'Quantum Scalper',
-        description: "A dynamic, aggressive agent using a weighted scoring system. It filters for volatility and trend regime, then scores signals based on Trend, Momentum, and Confirmation. Now features a 'Mean Reversion Veto' to prevent chasing exhausted moves, and 'HTF Momentum Sync' to ensure entries align with higher timeframe momentum, not just trend direction. Supports 'Breakout' and 'Pullback' entry modes.",
+        description: "A dynamic, aggressive agent using a weighted scoring system. It filters for volatility and trend regime, then scores signals based on Trend, Momentum, and Confirmation. Supports 'Breakout' and 'Pullback' entry modes.",
         indicators: ['Market Regime Filter (ADX)', 'Volatility Filter (BBW)', 'Ichimoku Cloud', 'OBV'],
     },
     {
@@ -120,18 +127,18 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     invalidationCandleLimit: 10,
 
     // Universal Veto Parameters
-    veto_volumeFilterMultiplier: 2.0, // Day-trading default
+    veto_volumeFilterMultiplier: 2.0, 
     veto_srZoneAtrBuffer: 0.5,
-    veto_sr_buffer_scalp: 0.3, // Tighter buffer for scalpers
-    veto_sr_buffer_swing: 0.8, // Wider buffer for swing traders
+    veto_sr_buffer_scalp: 0.3, 
+    veto_sr_buffer_swing: 0.8, 
     veto_rsiAlignmentThreshold_bullish: 52,
     veto_rsiAlignmentThreshold_bearish: 48,
-    veto_concordanceDivergenceLookback: 15, // Day-trading default
-    veto_atrChaosRatio: 2.5, // Day-trading default
-    veto_normalizeAtrChaos: true, // Tweak #2
-    veto_candlePositionVeto_long: 0.80, // Day-trading default
-    veto_candlePositionVeto_short: 0.20, // Day-trading default
-    veto_concordanceVolumeMinMultiplier: 0.8, // Day-trading default
+    veto_concordanceDivergenceLookback: 15, 
+    veto_atrChaosRatio: 2.5, 
+    veto_normalizeAtrChaos: true, 
+    veto_candlePositionVeto_long: 0.80, 
+    veto_candlePositionVeto_short: 0.20, 
+    veto_concordanceVolumeMinMultiplier: 0.8, 
     veto_rsiConcordance_strongTrend_bullish: 55,
     veto_rsiConcordance_strongTrend_bearish: 45,
     veto_rsiConcordance_chop_bullish: 51,
@@ -141,12 +148,11 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     veto_atrChaos_graceMultiplier: 1.2,
     veto_atrChaos_strongTrendAdx: 30,
     veto_liquiditySweep_maxAdx: 30,
-    // New Context-Aware Entry Classifier
-    veto_microEmaFast: 5,       // For Breakout mode
-    veto_microEmaSlow: 9,       // For Breakout mode
-    veto_pullback_stochRsiPeriod: 14, // For Pullback mode
-    veto_pullback_stochRsiOversold: 30, // For Pullback mode
-    veto_pullback_stochRsiOverbought: 70, // For Pullback mode
+    veto_microEmaFast: 5,       
+    veto_microEmaSlow: 9,       
+    veto_pullback_stochRsiPeriod: 14, 
+    veto_pullback_stochRsiOversold: 30, 
+    veto_pullback_stochRsiOverbought: 70, 
 
     // TF-Specific Concordance Veto Parameters
     concordance_breakout_stochRsiOverbought: 85,
@@ -245,24 +251,24 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     conductor_choppyTrendAdx: 20,
     conductor_choppyTrendThreshold: 82,
     conductor_structureWeightMultiplier: 1.25,
-    conductor_entryTrigger_candleVelocity: 0.75, // Requires close in top/bottom 25% of range
+    conductor_entryTrigger_candleVelocity: 0.75, 
     conductor_entryTrigger_rsiHookPeriod: 3,
 
-    // Agent 19: AstraX Super-Agent (Setup-First)
+    // Agent 19: AstraX Super-Agent (V8.6 Tuning)
     astraX_executionMode: 'hybrid',
-    astraX_sweepLookback: 20,
+    astraX_sweepLookback: 25,
     astraX_breakoutVolMultiplier: 2.0,
     astraX_pullbackEmaPeriod: 21,
-    astraX_adxThreshold: 25,
-    astraX_baseThreshold: 50,
+    astraX_adxThreshold: 22,
+    astraX_baseThreshold: 62, // Lowered for higher sensitivity
     astraX_strongTrendAdx: 30,
-    astraX_chopAdx: 20,
-    astraX_strongTrendThreshold: 70,
-    astraX_chopThreshold: 80,
-    astraX_regimeMultiplier_strong: 0.8,
-    astraX_regimeMultiplier_chop: 1.2,
-    astraX_weights_structure: 40,
-    astraX_weights_momentum: 30,
+    astraX_chopAdx: 18,
+    astraX_strongTrendThreshold: 72,
+    astraX_chopThreshold: 85,
+    astraX_regimeMultiplier_strong: 0.9,
+    astraX_regimeMultiplier_chop: 1.3,
+    astraX_weights_structure: 35,
+    astraX_weights_momentum: 35,
     astraX_weights_context: 20,
     astraX_weights_confirmation: 10,
     astraX_context_vwapWeight: 40,
@@ -276,22 +282,18 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     astraX_confirmation_candleBodyMinRatio: 0.5,
     astraX_supertrendPeriod: 10,
     astraX_supertrendMultiplier: 3.0,
-    // AstraX Timeframe Specific Risk
-    astraX_sl_multiplier_sweep: 1.2,
+    astraX_sl_multiplier_sweep: 1.5,
     astraX_sl_multiplier_breakout: 2.0,
-    astraX_sl_multiplier_pullback: 1.5,
+    astraX_sl_multiplier_pullback: 1.8,
     astraX_breakout_candle_max_atr: 3.0,
-
-    // AstraX Physics (Defaults)
-    astraX_elasticity_multiplier: 0.8,
+    astraX_elasticity_multiplier: 1.0,
     astraX_ratchet_breakeven: 0.5,
-    astraX_ratchet_secure: 0.8,
-    astraX_ratchet_parabolic: 2.0,
+    astraX_ratchet_secure: 1.0,
+    astraX_ratchet_parabolic: 2.5,
     
     // Agent 20: Supertrend Flipper
     stf_atrPeriod: 10,
     stf_atrMultiplier: 3.0,
-    // -- Dynamic Multiplier --
     stf_enableDynamicMultiplier: true,
     stf_volatilityPeriod: 100,
     stf_volatilityThreshold_low: 30,
@@ -314,19 +316,27 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     ms_1h_emaPeriod: 200,
     ms_4h_swingLookback: 10,
 
+    // Agent 25: Omega Predator Defaults
+    omega_matrixThreshold: 75,
+    omega_fvgLookback: 20,
+    omega_sweepDepth: 30,
+    omega_minExpectancy: 5.0,
+    omega_frequencyAggressiveness: 3,
+
     // SMC Reversal Veto
     smc_divergenceLookback: 12,
     smc_volumeMultiplier: 2.0,
-    smc_requireConfluenceOnScalp: true, // Tweak #3
-    smc_confluence_bbwSqueezeThreshold: 0.006, // Tweak #3
+    smc_requireConfluenceOnScalp: true, 
+    smc_confluence_bbwSqueezeThreshold: 0.006, 
 
-    // BTC Correlation Veto (Tweak #5)
+    // BTC Correlation Veto
     btc_correlation_veto_ema_fast: 8,
     btc_correlation_veto_ema_slow: 21,
 
     // Risk Management
-    risk_atrVolatilityPercentile_upper: 80, // Top 20%
-    risk_atrVolatilityPercentile_lower: 20, // Bottom 20%
+    risk_atrVolatilityPeriod: 100,
+    risk_atrVolatilityPercentile_upper: 80, 
+    risk_atrVolatilityPercentile_lower: 20, 
     risk_atrVolatilityMultiplier_upper_adj: 0.5,
     risk_atrVolatilityMultiplier_lower_adj: -0.5,
 };
@@ -389,11 +399,9 @@ export const PIVOT_POINT_SUPERTREND_TIMEFRAME_SETTINGS: Record<string, Partial<A
 };
 
 export const CONCORDANCE_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    // Stricter on low TFs to avoid chasing
     '1m':  { concordance_breakout_stochRsiOverbought: 80, concordance_breakout_stochRsiOversold: 20, concordance_breakout_macdHistoDecel: true },
     '3m':  { concordance_breakout_stochRsiOverbought: 85, concordance_breakout_stochRsiOversold: 15, concordance_breakout_macdHistoDecel: true },
     '5m':  { concordance_breakout_stochRsiOverbought: 85, concordance_breakout_stochRsiOversold: 15, concordance_breakout_macdHistoDecel: true },
-    // More lenient on higher TFs
     '15m': { concordance_breakout_stochRsiOverbought: 90, concordance_breakout_stochRsiOversold: 10, concordance_breakout_macdHistoDecel: false },
     '30m': { concordance_breakout_stochRsiOverbought: 90, concordance_breakout_stochRsiOversold: 10, concordance_breakout_macdHistoDecel: false },
     '1h':  { concordance_breakout_stochRsiOverbought: 95, concordance_breakout_stochRsiOversold: 5, concordance_breakout_macdHistoDecel: false },
@@ -402,15 +410,12 @@ export const CONCORDANCE_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>
 };
 
 export const VETO_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    // Scalping (1m, 3m, 5m)
     '1m':  { veto_volumeFilterMultiplier: 1.5, veto_concordanceDivergenceLookback: 8,  veto_atrChaosRatio: 2.0, veto_candlePositionVeto_long: 0.90, veto_candlePositionVeto_short: 0.10, veto_concordanceVolumeMinMultiplier: 1.0 },
     '3m':  { veto_volumeFilterMultiplier: 1.8, veto_concordanceDivergenceLookback: 10, veto_atrChaosRatio: 2.0, veto_candlePositionVeto_long: 0.90, veto_candlePositionVeto_short: 0.10, veto_concordanceVolumeMinMultiplier: 0.9 },
     '5m':  { veto_volumeFilterMultiplier: 2.0, veto_concordanceDivergenceLookback: 12, veto_atrChaosRatio: 2.2, veto_candlePositionVeto_long: 0.85, veto_candlePositionVeto_short: 0.15, veto_concordanceVolumeMinMultiplier: 0.8 },
-    // Day Trading (defaults are mostly here)
     '15m': { veto_concordanceDivergenceLookback: 15, veto_concordanceVolumeMinMultiplier: 0.7 },
     '30m': { veto_volumeFilterMultiplier: 2.2, veto_concordanceDivergenceLookback: 18, veto_concordanceVolumeMinMultiplier: 0.7 },
     '1h':  { veto_volumeFilterMultiplier: 2.2, veto_concordanceDivergenceLookback: 20, veto_atrChaosRatio: 2.8, veto_candlePositionVeto_long: 0.75, veto_candlePositionVeto_short: 0.25, veto_concordanceVolumeMinMultiplier: 0.6 },
-    // Swing Trading (4h, 1d)
     '4h':  { veto_volumeFilterMultiplier: 2.5, veto_concordanceDivergenceLookback: 20, veto_atrChaosRatio: 3.0, veto_candlePositionVeto_long: 0.70, veto_candlePositionVeto_short: 0.30, veto_concordanceVolumeMinMultiplier: 0.6 },
     '1d':  { veto_volumeFilterMultiplier: 2.5, veto_concordanceDivergenceLookback: 20, veto_atrChaosRatio: 3.0, veto_candlePositionVeto_long: 0.70, veto_candlePositionVeto_short: 0.30, veto_concordanceVolumeMinMultiplier: 0.5 },
 };
@@ -449,15 +454,12 @@ export const CONDUCTOR_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> 
 };
 
 export const QUANTUM_SCALPER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    // Scalping: Higher thresholds for BBW to reflect naturally higher volatility.
     '1m':  { qsc_adxThreshold: 32, qsc_rsiMomentumThreshold: 65, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30, qsc_trendScoreThreshold: 88, qsc_bbwSqueezeThreshold: 0.012 },
     '3m':  { qsc_adxThreshold: 30, qsc_rsiMomentumThreshold: 62, qsc_rsiOverextendedLong: 82, qsc_rsiOverextendedShort: 18, qsc_trendScoreThreshold: 85, qsc_bbwSqueezeThreshold: 0.010 },
     '5m':  { qsc_adxThreshold: 28, qsc_rsiMomentumThreshold: 60, qsc_rsiOverextendedLong: 80, qsc_rsiOverextendedShort: 20, qsc_trendScoreThreshold: 80, qsc_bbwSqueezeThreshold: 0.008 },
-    // Day Trading: Balanced thresholds.
     '15m': { qsc_adxThreshold: 25, qsc_rsiMomentumThreshold: 58, qsc_rsiOverextendedLong: 78, qsc_rsiOverextendedShort: 22, qsc_trendScoreThreshold: 78, qsc_bbwSqueezeThreshold: 0.006 },
     '30m': { qsc_adxThreshold: 23, qsc_rsiMomentumThreshold: 55, qsc_rsiOverextendedLong: 75, qsc_rsiOverextendedShort: 25, qsc_trendScoreThreshold: 75, qsc_bbwSqueezeThreshold: 0.005 },
     '1h':  { qsc_adxThreshold: 22, qsc_rsiMomentumThreshold: 55, qsc_rsiOverextendedLong: 72, qsc_rsiOverextendedShort: 28, qsc_trendScoreThreshold: 70, qsc_bbwSqueezeThreshold: 0.0045 },
-    // Swing Trading: Lower thresholds for BBW as trends are smoother.
     '4h':  { qsc_adxThreshold: 20, qsc_rsiMomentumThreshold: 52, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30, qsc_trendScoreThreshold: 68, qsc_bbwSqueezeThreshold: 0.004 },
     '1d':  { qsc_adxThreshold: 20, qsc_rsiMomentumThreshold: 52, qsc_rsiOverextendedLong: 70, qsc_rsiOverextendedShort: 30, qsc_trendScoreThreshold: 65, qsc_bbwSqueezeThreshold: 0.0035 },
 };
@@ -476,25 +478,64 @@ export const HISTORIC_EXPERT_TIMEFRAME_SETTINGS: Record<string, Partial<AgentPar
 export const CHAMELEON_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
     '1m':  { ch_trendEmaPeriod: 100, ch_adxThreshold: 25, ch_fastEmaPeriod: 8, ch_slowEmaPeriod: 18 },
     '3m':  { ch_trendEmaPeriod: 150, ch_adxThreshold: 23, ch_fastEmaPeriod: 9, ch_slowEmaPeriod: 20 },
-    '5m':  { ch_trendEmaPeriod: 200, ch_adxThreshold: 22 }, // Uses default EMA params
-    '30m': {},
+    '5m':  { ch_trendEmaPeriod: 200, ch_adxThreshold: 22 }, 
 };
 
 export const SENTINEL_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    // Scalping: Faster, more sensitive exits. Tighter trails.
     '1m':  { sentinel_swingLookback: 5, sentinel_entryThreshold: 85, sentinel_stPeriod: 7, sentinel_stMultiplier: 2.0, sentinel_adxPeriod: 10, sentinel_rsiPeriod: 10 },
     '3m':  { sentinel_swingLookback: 6, sentinel_entryThreshold: 82, sentinel_stPeriod: 7, sentinel_stMultiplier: 2.0, sentinel_adxPeriod: 10, sentinel_rsiPeriod: 10 },
     '5m':  { sentinel_swingLookback: 8, sentinel_entryThreshold: 80, sentinel_stPeriod: 8, sentinel_stMultiplier: 2.2, sentinel_adxPeriod: 12, sentinel_rsiPeriod: 12 },
-    // Day Trading: Balanced settings.
     '15m': { sentinel_swingLookback: 10, sentinel_entryThreshold: 78, sentinel_stPeriod: 10, sentinel_stMultiplier: 2.5, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14 },
     '30m': { sentinel_swingLookback: 10, sentinel_entryThreshold: 78, sentinel_stPeriod: 10, sentinel_stMultiplier: 2.5, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14 },
     '1h':  { sentinel_swingLookback: 12, sentinel_entryThreshold: 75, sentinel_stPeriod: 12, sentinel_stMultiplier: 2.8, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14 },
-    // Swing Trading: Slower, less sensitive exits. Wider trails.
     '4h':  { sentinel_swingLookback: 15, sentinel_entryThreshold: 75, sentinel_stPeriod: 12, sentinel_stMultiplier: 3.0, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14 },
     '1d':  { sentinel_swingLookback: 15, sentinel_entryThreshold: 72, sentinel_stPeriod: 14, sentinel_stMultiplier: 3.0, sentinel_adxPeriod: 14, sentinel_rsiPeriod: 14 },
 };
 
-export const ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
+export const ASTRAX_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
+    // --- SNIPER ZONE (1m - 3m) ---
+    // Priority: Momentum (Velocity) and RVOL. Structure is secondary (Liquidity Traps).
+    '1m': {
+        astraX_weights_structure: 30, astraX_weights_momentum: 45, astraX_weights_context: 15, astraX_weights_confirmation: 10,
+        astraX_baseThreshold: 62, astraX_adxThreshold: 20, astraX_sweepLookback: 15, 
+        astraX_sl_multiplier_sweep: 1.2, astraX_sl_multiplier_breakout: 1.5, astraX_sl_multiplier_pullback: 1.3,
+        astraX_ratchet_breakeven: 0.3, astraX_ratchet_secure: 0.6,
+    },
+    '3m': {
+        astraX_weights_structure: 35, astraX_weights_momentum: 40, astraX_weights_context: 15, astraX_weights_confirmation: 10,
+        astraX_baseThreshold: 62, astraX_adxThreshold: 22, astraX_sweepLookback: 20,
+        astraX_sl_multiplier_sweep: 1.5, astraX_sl_multiplier_breakout: 1.8,
+    },
+    
+    // --- DAY TRADING ZONE (5m - 1h) ---
+    // Priority: Structure (Classic Geometry) and Confirmed Trends.
+    '5m': {
+        astraX_weights_structure: 40, astraX_weights_momentum: 30, astraX_weights_context: 20, astraX_weights_confirmation: 10,
+        astraX_baseThreshold: 60, astraX_adxThreshold: 25, astraX_sweepLookback: 40,
+        astraX_sl_multiplier_sweep: 1.5, astraX_sl_multiplier_breakout: 2.0, astraX_sl_multiplier_pullback: 1.6,
+    },
+    '15m': {
+        astraX_weights_structure: 45, astraX_weights_momentum: 25, astraX_weights_context: 20, astraX_weights_confirmation: 10,
+        astraX_baseThreshold: 60, astraX_adxThreshold: 25, astraX_sweepLookback: 50,
+    },
+    '1h': {
+        astraX_weights_structure: 50, astraX_weights_momentum: 20, astraX_weights_context: 20, astraX_weights_confirmation: 10,
+        astraX_baseThreshold: 60, astraX_adxThreshold: 22,
+    },
+    
+    // --- SWING TRADING ZONE (4h, 1d) ---
+    // Priority: Context (HTF Gravity) and Macro S/R Structure.
+    '4h': {
+        astraX_weights_structure: 35, astraX_weights_momentum: 15, astraX_weights_context: 40, astraX_weights_confirmation: 10,
+        astraX_baseThreshold: 60, astraX_adxThreshold: 20, astraX_sweepLookback: 60,
+    },
+    '1d': {
+        astraX_weights_structure: 30, astraX_weights_momentum: 10, astraX_weights_context: 50, astraX_weights_confirmation: 10,
+        astraX_baseThreshold: 60, astraX_adxThreshold: 18,
+    },
+};
+
+export const MATRIX_STRATEGIST_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
     '1m':  {},
     '3m':  {},
     '5m':  {},
@@ -505,161 +546,19 @@ export const ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS: Record<string, Partial<Age
     '1d':  {},
 };
 
-export const MOMENTUM_SWING_TRADER_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '5m':  { mst_emaFastPeriod: 50, mst_emaSlowPeriod: 200 },
-    '15m': { mst_emaFastPeriod: 50, mst_emaSlowPeriod: 200 },
-    '30m': { mst_emaFastPeriod: 50, mst_emaSlowPeriod: 200 },
-    '1h':  { mst_emaFastPeriod: 50, mst_emaSlowPeriod: 200 },
-};
-
-export const MATRIX_STRATEGIST_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    '1m': { ms_1m_emaFast: 9, ms_1m_emaSlow: 21, ms_1m_rsiPeriod: 7, ms_1m_volSpike: 3.0, ms_1m_bbPeriod: 10, ms_1m_bbStd: 1.5 },
-    '3m': { ms_3m_ema1: 12, ms_3m_ema2: 26, ms_3m_ema3: 55, ms_3m_rsiPeriod: 14, ms_3m_volMult: 2.0 },
-    '5m': { ms_5m_ema1: 20, ms_5m_ema2: 50, ms_5m_ema3: 200, ms_5m_stochK: 14, ms_5m_stochD: 3 },
-    '15m': { ms_15m_ema1: 50, ms_15m_ema2: 100, ms_15m_ema3: 200, ms_15m_adxThreshold: 25 },
-    '30m': { ms_30m_ema1: 100, ms_30m_ema2: 200, ms_30m_rsiPeriod: 21 },
-    '1h': { ms_1h_emaPeriod: 200 },
-    '4h': { ms_4h_swingLookback: 10 },
-    '1d': {}
-};
-
-export const ASTRAX_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
-    // --- SNIPER ZONE (1m, 3m) ---
-    // Looser Elasticity: Allow small deviations since noise is high.
-    // Tighter Ratchet: Lock profits aggressively.
-    '1m': {
-        astraX_sweepLookback: 20, 
-        astraX_breakoutVolMultiplier: 2.0, 
-        astraX_pullbackEmaPeriod: 50, 
-        astraX_adxThreshold: 20,
-        astraX_sl_multiplier_sweep: 1.5, // Increased from 1.2 to survive wicks
-        astraX_sl_multiplier_breakout: 1.8, 
-        astraX_sl_multiplier_pullback: 1.5,
-        astraX_breakout_candle_max_atr: 4.0,
-        
-        astraX_elasticity_multiplier: 1.2, // Reduced from 1.5 to allow more entries in chop
-        astraX_ratchet_breakeven: 0.25, 
-        astraX_ratchet_secure: 0.5,     
-        astraX_ratchet_parabolic: 1.2,  // Increased from 0.8 to give a bit more room
-    },
-    '3m': {
-        astraX_sweepLookback: 30,
-        astraX_breakoutVolMultiplier: 1.8, 
-        astraX_pullbackEmaPeriod: 50,
-        astraX_adxThreshold: 22,
-        astraX_sl_multiplier_sweep: 1.5,
-        astraX_sl_multiplier_breakout: 1.8,
-        astraX_sl_multiplier_pullback: 1.5,
-        astraX_breakout_candle_max_atr: 3.5,
-        
-        astraX_elasticity_multiplier: 1.2, 
-        astraX_ratchet_breakeven: 0.35,
-        astraX_ratchet_secure: 0.6,
-        astraX_ratchet_parabolic: 1.2,
-    },
-    
-    // --- DAY TRADING ZONE (5m - 1h) ---
-    '5m': {
-        astraX_sweepLookback: 40,
-        astraX_breakoutVolMultiplier: 2.0,
-        astraX_pullbackEmaPeriod: 21,
-        astraX_adxThreshold: 20, // Lowered from 25 to catch early trends
-        astraX_sl_multiplier_sweep: 1.5,
-        astraX_sl_multiplier_breakout: 1.8,
-        astraX_sl_multiplier_pullback: 1.5,
-        astraX_breakout_candle_max_atr: 3.0,
-        
-        astraX_elasticity_multiplier: 1.5,
-        astraX_ratchet_breakeven: 0.4,
-        astraX_ratchet_secure: 0.8,
-        astraX_ratchet_parabolic: 1.5,
-    },
-    '15m': {
-        astraX_sweepLookback: 60,
-        astraX_breakoutVolMultiplier: 2.0,
-        astraX_pullbackEmaPeriod: 21,
-        astraX_adxThreshold: 25,
-        astraX_sl_multiplier_sweep: 1.5, 
-        astraX_sl_multiplier_breakout: 1.5,
-        astraX_sl_multiplier_pullback: 1.5,
-        astraX_breakout_candle_max_atr: 3.0,
-        
-        astraX_elasticity_multiplier: 1.2,
-        astraX_ratchet_breakeven: 0.6,
-        astraX_ratchet_secure: 1.0,
-        astraX_ratchet_parabolic: 2.5,
-    },
-    '30m': {
-        astraX_sweepLookback: 50,
-        astraX_breakoutVolMultiplier: 1.8,
-        astraX_pullbackEmaPeriod: 21,
-        astraX_adxThreshold: 25,
-        astraX_sl_multiplier_sweep: 1.5,
-        astraX_sl_multiplier_breakout: 1.5,
-        astraX_sl_multiplier_pullback: 1.5,
-        astraX_breakout_candle_max_atr: 2.8,
-        
-        astraX_elasticity_multiplier: 1.2,
-        astraX_ratchet_breakeven: 0.7,
-        astraX_ratchet_secure: 1.2,
-        astraX_ratchet_parabolic: 3.0,
-    },
-    '1h': {
-        astraX_sweepLookback: 48,
-        astraX_breakoutVolMultiplier: 1.8,
-        astraX_pullbackEmaPeriod: 21,
-        astraX_adxThreshold: 22,
-        astraX_sl_multiplier_sweep: 1.5,
-        astraX_sl_multiplier_breakout: 1.5,
-        astraX_sl_multiplier_pullback: 1.5,
-        astraX_breakout_candle_max_atr: 2.5,
-        
-        astraX_elasticity_multiplier: 1.0,
-        astraX_ratchet_breakeven: 0.8,
-        astraX_ratchet_secure: 1.5,
-        astraX_ratchet_parabolic: 3.5,
-    },
-    
-    // --- SWING TRADING ZONE (4h, 1d) ---
-    // Stricter Elasticity: 1.0 ATR.
-    '4h': {
-        astraX_sweepLookback: 60,
-        astraX_breakoutVolMultiplier: 1.5,
-        astraX_pullbackEmaPeriod: 50,
-        astraX_adxThreshold: 20,
-        astraX_sl_multiplier_sweep: 1.2,
-        astraX_sl_multiplier_breakout: 1.4,
-        astraX_sl_multiplier_pullback: 1.2,
-        astraX_breakout_candle_max_atr: 2.5,
-        
-        astraX_elasticity_multiplier: 1.0,
-        astraX_ratchet_breakeven: 1.5,
-        astraX_ratchet_secure: 3.0,
-        astraX_ratchet_parabolic: 6.0,
-    },
-    '1d': {
-        astraX_sweepLookback: 30,
-        astraX_breakoutVolMultiplier: 1.3,
-        astraX_pullbackEmaPeriod: 50,
-        astraX_adxThreshold: 18,
-        astraX_sl_multiplier_sweep: 1.0,
-        astraX_sl_multiplier_breakout: 1.3,
-        astraX_sl_multiplier_pullback: 1.0,
-        astraX_breakout_candle_max_atr: 2.0,
-        
-        astraX_elasticity_multiplier: 1.0,
-        astraX_ratchet_breakeven: 2.5,
-        astraX_ratchet_secure: 5.0,
-        astraX_ratchet_parabolic: 10.0,
-    },
+export const OMEGA_TIMEFRAME_SETTINGS: Record<string, Partial<AgentParams>> = {
+    '1m':  {},
+    '3m':  {},
+    '5m':  {},
+    '15m': {},
+    '30m': {},
+    '1h':  {},
+    '4h':  {},
+    '1d':  {},
 };
 
 /**
  * A helper function to get the correct, timeframe-specific parameters for a given agent.
- * This now merges general SMC settings with agent-specific settings.
- * @param agentId The ID of the agent.
- * @param timeFrame The timeframe string (e.g., '5m', '1h').
- * @returns An object with the agent's parameters for that timeframe.
  */
 export const getAgentTimeframeSettings = (agentId: number, timeFrame: string): Partial<AgentParams> => {
     const vetoSettings = VETO_TIMEFRAME_SETTINGS[timeFrame] || {};
@@ -672,13 +571,12 @@ export const getAgentTimeframeSettings = (agentId: number, timeFrame: string): P
         case 11: agentSettings = HISTORIC_EXPERT_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 13: agentSettings = CHAMELEON_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 14: agentSettings = SENTINEL_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
-        case 16: agentSettings = ICHIMOKU_TREND_RIDER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
-        case 17: agentSettings = MOMENTUM_SWING_TRADER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 18: agentSettings = CONDUCTOR_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 19: agentSettings = ASTRAX_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 20: agentSettings = SUPERTREND_FLIPPER_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 21: agentSettings = PIVOT_POINT_SUPERTREND_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
         case 22: agentSettings = MATRIX_STRATEGIST_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
+        case 25: agentSettings = OMEGA_TIMEFRAME_SETTINGS[timeFrame] || {}; break;
     }
 
     return { ...vetoSettings, ...smcSettings, ...concordanceSettings, ...agentSettings };
@@ -701,13 +599,9 @@ export const MOCK_PAPER_FUTURES_WALLET: WalletBalance[] = [
 
 /**
  * A non-configurable hard cap on risk to prevent catastrophic single-trade losses.
- * This is the maximum percentage of the *invested margin* that a trade is allowed to lose.
- * For example, a value of 10 with a $100 investment means the max loss (before fees/slippage)
- * is hard-capped at $10, regardless of leverage or the agent's calculated stop loss.
  */
-export const MAX_MARGIN_LOSS_PERCENT = 6; // Increased slightly for more flexibility
+export const MAX_MARGIN_LOSS_PERCENT = 6; 
 
-// New, wider ATR multipliers for initial stop loss placement to give trades more "breathing room"
 export const TIMEFRAME_ATR_CONFIG: Record<string, { atrMultiplier: number, riskRewardRatio: number }> = {
     '1m':  { atrMultiplier: 2.8, riskRewardRatio: 1.6 },
     '3m':  { atrMultiplier: 2.8, riskRewardRatio: 1.8 },
@@ -747,14 +641,11 @@ export const TRADE_GUARDIAN_CONFIG: Record<string, {
     maxCandles: number;
     vwapEmaPeriod: number;
 }> = {
-    // Scalping & Low TF: More sensitive, uses RSI7 as an early warning.
     '1m':  { rsi7_long_threshold: 45, rsi7_short_threshold: 55, rsi14_long_threshold: 42, rsi14_short_threshold: 58, atrSpikeMultiplier: 2.5, pnlRetracePercent: 0.7, maxCandles: 15, vwapEmaPeriod: 9 },
     '3m':  { rsi7_long_threshold: 45, rsi7_short_threshold: 55, rsi14_long_threshold: 42, rsi14_short_threshold: 58, atrSpikeMultiplier: 2.5, pnlRetracePercent: 0.7, maxCandles: 15, vwapEmaPeriod: 9 },
     '5m':  { rsi7_long_threshold: 45, rsi7_short_threshold: 55, rsi14_long_threshold: 42, rsi14_short_threshold: 58, atrSpikeMultiplier: 2.5, pnlRetracePercent: 0.7, maxCandles: 15, vwapEmaPeriod: 9 },
-    // Mid TF: Slightly less sensitive, gives more room.
     '15m': { rsi7_long_threshold: 42, rsi7_short_threshold: 58, rsi14_long_threshold: 40, rsi14_short_threshold: 60, atrSpikeMultiplier: 2.0, pnlRetracePercent: 0.5, maxCandles: 8, vwapEmaPeriod: 21 },
     '30m': { rsi7_long_threshold: 42, rsi7_short_threshold: 58, rsi14_long_threshold: 40, rsi14_short_threshold: 60, atrSpikeMultiplier: 2.0, pnlRetracePercent: 0.5, maxCandles: 8, vwapEmaPeriod: 21 },
-    // High TF: Much more lenient, ignores noisy RSI7 completely.
     '1h':  { rsi14_long_threshold: 40, rsi14_short_threshold: 60, atrSpikeMultiplier: 1.8, pnlRetracePercent: 0.5, maxCandles: 5, vwapEmaPeriod: 50 },
     '4h':  { rsi14_long_threshold: 40, rsi14_short_threshold: 60, atrSpikeMultiplier: 1.8, pnlRetracePercent: 0.5, maxCandles: 5, vwapEmaPeriod: 50 },
     '1d':  { rsi14_long_threshold: 38, rsi14_short_threshold: 62, atrSpikeMultiplier: 1.5, pnlRetracePercent: 0.4, maxCandles: 3, vwapEmaPeriod: 100 }

@@ -2,8 +2,8 @@
 
 
 import React, { useRef, useEffect } from 'react';
-import { Agent, TradeSignal, AgentParams, SentinelAnalysis, ConductorAnalysis, AstraXAnalysis, Kline, MarketDataContext } from '../types';
-import { ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, InfoIcon, SparklesIcon } from './icons';
+import { Agent, TradeSignal, AgentParams, SentinelAnalysis, ConductorAnalysis, AstraXAnalysis, OmegaAnalysis, Kline, MarketDataContext } from '../types';
+import { ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, InfoIcon, SparklesIcon, ZapIcon } from './icons';
 
 interface AnalysisPreviewProps {
     analysis: TradeSignal | null;
@@ -76,6 +76,55 @@ const ProgressBar: React.FC<{ value: number; colorClass: string; height?: string
     </div>
 );
 
+const OmegaAnalysisDisplay: React.FC<{ analysis: OmegaAnalysis }> = ({ analysis }) => {
+    const { conviction, layers, targets } = analysis;
+
+    return (
+        <div className="space-y-4 text-sm">
+            <div className="bg-slate-900 rounded-lg p-3 border border-sky-500/30">
+                <div className="flex justify-between items-center mb-2">
+                    <span className="text-sky-400 font-bold uppercase tracking-widest text-[10px]">Unified Matrix Convergence</span>
+                    <span className="text-white font-mono font-bold text-lg">{conviction}%</span>
+                </div>
+                <ProgressBar value={conviction} colorClass="bg-sky-500" height="h-3" />
+            </div>
+
+            <div className="grid grid-cols-1 gap-3">
+                <div>
+                    <div className="flex justify-between text-xs mb-1">
+                        <span className="text-slate-500 font-semibold uppercase">1. Macro Tide (1D/4H)</span>
+                        <span className={layers.macro >= 100 ? 'text-emerald-500 font-bold' : 'text-slate-400'}>{layers.macro}%</span>
+                    </div>
+                    <ProgressBar value={layers.macro} colorClass={layers.macro >= 100 ? "bg-emerald-500" : "bg-slate-400"} height="h-1.5" />
+                </div>
+
+                <div>
+                    <div className="flex justify-between text-xs mb-1">
+                        <span className="text-slate-500 font-semibold uppercase">2. Structural Void (15m)</span>
+                        <span className={layers.structural >= 60 ? 'text-sky-500 font-bold' : 'text-slate-400'}>{layers.structural}%</span>
+                    </div>
+                    <ProgressBar value={layers.structural} colorClass={layers.structural >= 60 ? "bg-sky-500" : "bg-slate-400"} height="h-1.5" />
+                </div>
+
+                <div>
+                    <div className="flex justify-between text-xs mb-1">
+                        <span className="text-slate-500 font-semibold uppercase">3. Micro Sweep (1m)</span>
+                        <span className={layers.micro >= 100 ? 'text-amber-500 font-bold' : 'text-slate-400'}>{layers.micro}%</span>
+                    </div>
+                    <ProgressBar value={layers.micro} colorClass={layers.micro >= 100 ? "bg-amber-500" : "bg-slate-400"} height="h-1.5" />
+                </div>
+            </div>
+
+            {targets.fvgPrice && (
+                <div className="mt-2 flex items-center gap-2 p-2 bg-indigo-500/10 border border-indigo-500/20 rounded">
+                    <ZapIcon className="w-3.5 h-3.5 text-indigo-400" />
+                    <span className="text-[11px] text-indigo-300 font-semibold">Institutional Target Locked: ${targets.fvgPrice.toFixed(2)}</span>
+                </div>
+            )}
+        </div>
+    );
+};
+
 const SentinelAnalysisDisplay: React.FC<{ analysis: SentinelAnalysis }> = ({ analysis }) => {
     const { bullish, bearish } = analysis;
 
@@ -145,7 +194,7 @@ const ConductorAnalysisDisplay: React.FC<{ analysis: ConductorAnalysis }> = ({ a
 };
 
 const AstraXAnalysisDisplay: React.FC<{ analysis: AstraXAnalysis }> = ({ analysis }) => {
-    const { conviction, regime, thesis, setupName, confidenceMetrics, adjustments } = analysis;
+    const { conviction, regime, thesis, setupName, confidenceMetrics } = analysis;
     
     const regimeColor = regime === 'Strong Trend' ? 'text-indigo-600 dark:text-indigo-400' 
                       : regime === 'Choppy Market' ? 'text-amber-600 dark:text-amber-400' 
@@ -230,18 +279,6 @@ const AstraXAnalysisDisplay: React.FC<{ analysis: AstraXAnalysis }> = ({ analysi
                     </div>
                 </div>
             )}
-            
-            {adjustments && adjustments.length > 0 && (
-                <div className="pt-2">
-                    <h5 className="font-semibold text-xs text-slate-600 dark:text-slate-300 mb-1">Risk Adjustments</h5>
-                    {adjustments.map((adj, i) => (
-                        <div key={i} className="flex justify-between items-baseline text-xs text-amber-600 dark:text-amber-400">
-                            <span>{adj.reason}</span>
-                            <span className="font-mono">{adj.impact.toFixed(0)}</span>
-                        </div>
-                    ))}
-                </div>
-            )}
         </div>
     );
 };
@@ -261,6 +298,7 @@ export const AnalysisPreview: React.FC<AnalysisPreviewProps> = ({ analysis, isLo
     const isSentinelAgent = agent.id === 14;
     const isConductorAgent = agent.id === 18;
     const isAstraXAgent = agent.id === 19;
+    const isOmegaAgent = agent.id === 25;
 
     return (
         <div className="relative">
@@ -287,9 +325,12 @@ export const AnalysisPreview: React.FC<AnalysisPreviewProps> = ({ analysis, isLo
                         {isAstraXAgent && displayAnalysis.astraXAnalysis && (
                             <AstraXAnalysisDisplay analysis={displayAnalysis.astraXAnalysis} />
                         )}
+                        {isOmegaAgent && displayAnalysis.omegaAnalysis && (
+                            <OmegaAnalysisDisplay analysis={displayAnalysis.omegaAnalysis} />
+                        )}
 
                         {displayAnalysis.reasons.length > 0 && (
-                            <div className={`text-xs flex-grow ${isSentinelAgent && displayAnalysis.sentinelAnalysis ? 'pt-3 border-t border-slate-200 dark:border-slate-700 mt-3' : ''}`}>
+                            <div className={`text-xs flex-grow ${(isSentinelAgent || isOmegaAgent) && (displayAnalysis.sentinelAnalysis || displayAnalysis.omegaAnalysis) ? 'pt-3 border-t border-slate-200 dark:border-slate-700 mt-3' : ''}`}>
                                 <ul className="space-y-1.5">
                                     {displayAnalysis.reasons.map((reason, index) => (
                                         <ReasonItem key={index} reason={reason} />

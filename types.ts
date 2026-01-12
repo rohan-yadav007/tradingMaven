@@ -1,4 +1,3 @@
-
 // types.ts
 
 // --- Enums ---
@@ -54,11 +53,6 @@ export interface LiveTicker {
 
 // --- Binance API Specific ---
 
-export interface SymbolFilter {
-    filterType: 'PRICE_FILTER' | 'LOT_SIZE' | 'MARKET_LOT_SIZE' | 'MAX_NUM_ORDERS' | 'MAX_NUM_ALGO_ORDERS' | 'ICEBERG_PARTS' | 'MIN_NOTIONAL';
-    [key: string]: any;
-}
-
 export interface SymbolInfo {
     symbol: string;
     status: string;
@@ -68,6 +62,11 @@ export interface SymbolInfo {
     filters: SymbolFilter[];
     pricePrecision: number;
     quantityPrecision: number;
+}
+
+export interface SymbolFilter {
+    filterType: 'PRICE_FILTER' | 'LOT_SIZE' | 'MARKET_LOT_SIZE' | 'MAX_NUM_ORDERS' | 'MAX_NUM_ALGO_ORDERS' | 'ICEBERG_PARTS' | 'MIN_NOTIONAL';
+    [key: string]: any;
 }
 
 export interface RawWalletBalance {
@@ -142,6 +141,48 @@ export interface OrderBookAnalysis {
     depthRatio: number; // Ratio of total bid volume to total ask volume in depth scope
 }
 
+// --- Analysis & Structure ---
+
+export interface SupportResistance {
+    supports: { price: number; score: number }[];
+    resistances: { price: number; score: number }[];
+}
+
+export interface SwingPoint {
+    index: number;
+    price: number;
+    type: 'high' | 'low';
+}
+
+export interface MarketStructureAnalysis {
+    structure: 'Uptrend' | 'Downtrend' | 'Ranging' | 'Indeterminate';
+    lastSignal: 'HH' | 'HL' | 'LL' | 'LH' | 'ChoCH_Bearish' | 'ChoCH_Bullish' | null;
+    reason: string;
+}
+
+// --- Pattern Recognition ---
+
+export type PatternType = 
+    | 'Double Top' | 'Double Bottom' 
+    | 'Triple Top' | 'Triple Bottom'
+    | 'Head and Shoulders' | 'Inverse Head and Shoulders' 
+    | 'Bull Flag' | 'Bear Flag' 
+    | 'Bull Pennant' | 'Bear Pennant'
+    | 'Bullish Rectangle' | 'Bearish Rectangle'
+    | 'Ascending Triangle' | 'Descending Triangle' 
+    | 'Symmetrical Triangle' | 'Rising Wedge' | 'Falling Wedge';
+
+export interface ChartPattern {
+    type: PatternType;
+    sentiment: 'Bullish' | 'Bearish' | 'Neutral';
+    confidence: number; // 0 to 100
+    points: number[]; // Indices of klines forming the pattern
+    reason: string;
+    triggerPrice?: number;      // Price level that confirms a breakout
+    measuredTarget?: number;    // Calculated take-profit for the pattern
+    invalidationLevel?: number; // Calculated stop-loss for the pattern
+}
+
 // --- Agent & Trading Logic ---
 
 export interface Agent {
@@ -172,8 +213,7 @@ export interface AgentParams {
     veto_candlePositionVeto_long?: number;
     veto_candlePositionVeto_short?: number;
     veto_concordanceVolumeMinMultiplier?: number;
-    veto_normalizeAtrChaos?: boolean; // Tweak #2
-    // -- Adaptive Concordance --
+    veto_normalizeAtrChaos?: boolean;
     veto_rsiConcordance_strongTrend_bullish?: number;
     veto_rsiConcordance_strongTrend_bearish?: number;
     veto_rsiConcordance_chop_bullish?: number;
@@ -185,12 +225,11 @@ export interface AgentParams {
     veto_liquiditySweep_maxAdx?: number;
     veto_sr_buffer_scalp?: number;
     veto_sr_buffer_swing?: number;
-    // -- Context-Aware Entry Classifier --
-    veto_microEmaFast?: number; // For Breakout mode
-    veto_microEmaSlow?: number; // For Breakout mode
-    veto_pullback_stochRsiPeriod?: number; // For Pullback mode
-    veto_pullback_stochRsiOversold?: number; // For Pullback mode
-    veto_pullback_stochRsiOverbought?: number; // For Pullback mode
+    veto_microEmaFast?: number;
+    veto_microEmaSlow?: number;
+    veto_pullback_stochRsiPeriod?: number;
+    veto_pullback_stochRsiOversold?: number;
+    veto_pullback_stochRsiOverbought?: number;
 
     // TF-Specific Concordance Veto Parameters
     concordance_breakout_stochRsiOverbought?: number;
@@ -249,7 +288,7 @@ export interface AgentParams {
     ch_trendEmaPeriod?: number;
     ch_adxThreshold?: number;
     
-    // Agent 14: The Sentinel V2 (Market Structure First)
+    // Agent 14: The Sentinel V2
     sentinel_entryThreshold?: number;
     sentinel_swingLookback?: number;
     sentinel_structureWeight?: number;
@@ -292,14 +331,12 @@ export interface AgentParams {
     conductor_entryTrigger_candleVelocity?: number;
     conductor_entryTrigger_rsiHookPeriod?: number;
     
-    // Agent 19: AstraX Super-Agent (Setup-First Architecture)
+    // Agent 19: AstraX Super-Agent
     astraX_executionMode?: 'conviction' | 'scalp' | 'hybrid';
     astraX_sweepLookback?: number;
     astraX_breakoutVolMultiplier?: number;
     astraX_pullbackEmaPeriod?: number;
     astraX_adxThreshold?: number;
-    
-    // AstraX Extended Params
     astraX_baseThreshold?: number;
     astraX_strongTrendAdx?: number;
     astraX_chopAdx?: number;
@@ -307,34 +344,25 @@ export interface AgentParams {
     astraX_chopThreshold?: number;
     astraX_regimeMultiplier_strong?: number;
     astraX_regimeMultiplier_chop?: number;
-    
     astraX_weights_structure?: number;
     astraX_weights_momentum?: number;
     astraX_weights_context?: number;
     astraX_weights_confirmation?: number;
-
     astraX_context_vwapWeight?: number;
     astraX_context_volatilityWeight?: number;
     astraX_context_marketBreadthWeight?: number;
     astraX_context_liquidationWeight?: number;
-
     astraX_scalp_retestEmaPeriod?: number;
     astraX_scalp_bbPeriod?: number;
     astraX_scalp_bbStdDev?: number;
-
     astraX_confirmation_minVolumeMultiplier?: number;
     astraX_confirmation_candleBodyMinRatio?: number;
-
     astraX_supertrendPeriod?: number;
     astraX_supertrendMultiplier?: number;
-
-    // AstraX Timeframe Specific Risk
     astraX_sl_multiplier_sweep?: number;
     astraX_sl_multiplier_breakout?: number;
     astraX_sl_multiplier_pullback?: number;
-    astraX_breakout_candle_max_atr?: number; // Veto if breakout candle is too large (exhaustion)
-
-    // AstraX Physics
+    astraX_breakout_candle_max_atr?: number;
     astraX_elasticity_multiplier?: number;
     astraX_ratchet_breakeven?: number;
     astraX_ratchet_secure?: number;
@@ -343,11 +371,10 @@ export interface AgentParams {
     // Agent 20: Supertrend Flipper
     stf_atrPeriod?: number;
     stf_atrMultiplier?: number;
-    // -- Dynamic Multiplier --
     stf_enableDynamicMultiplier?: boolean;
-    stf_volatilityPeriod?: number; // ATR period for volatility calculation
-    stf_volatilityThreshold_low?: number; // Percentile
-    stf_volatilityThreshold_high?: number; // Percentile
+    stf_volatilityPeriod?: number;
+    stf_volatilityThreshold_low?: number;
+    stf_volatilityThreshold_high?: number;
     stf_multiplier_low?: number;
     stf_multiplier_normal?: number;
     stf_multiplier_high?: number;
@@ -357,50 +384,52 @@ export interface AgentParams {
     pps_atrFactor?: number;
     pps_atrPeriod?: number;
 
-    // Agent 22: The Matrix Strategist (TF Setup Matrix)
+    // Agent 22: The Matrix Strategist
     ms_1m_emaFast?: number;
     ms_1m_emaSlow?: number;
     ms_1m_rsiPeriod?: number;
     ms_1m_volSpike?: number;
     ms_1m_bbPeriod?: number;
     ms_1m_bbStd?: number;
-    
     ms_3m_ema1?: number;
     ms_3m_ema2?: number;
     ms_3m_ema3?: number;
     ms_3m_rsiPeriod?: number;
     ms_3m_volMult?: number;
-    
     ms_5m_ema1?: number;
     ms_5m_ema2?: number;
     ms_5m_ema3?: number;
     ms_5m_stochK?: number;
     ms_5m_stochD?: number;
-    
     ms_15m_ema1?: number;
     ms_15m_ema2?: number;
     ms_15m_ema3?: number;
     ms_15m_adxThreshold?: number;
-    
     ms_30m_ema1?: number;
     ms_30m_ema2?: number;
     ms_30m_rsiPeriod?: number;
-    
     ms_1h_emaPeriod?: number;
-    
     ms_4h_swingLookback?: number;
+
+    // Agent 25: Omega Predator
+    omega_matrixThreshold?: number;
+    omega_fvgLookback?: number;
+    omega_sweepDepth?: number;
+    omega_minExpectancy?: number;
+    omega_frequencyAggressiveness?: number;
 
     // SMC Reversal Veto
     smc_divergenceLookback?: number;
     smc_volumeMultiplier?: number;
-    smc_requireConfluenceOnScalp?: boolean; // Tweak #3
-    smc_confluence_bbwSqueezeThreshold?: number; // Tweak #3
+    smc_requireConfluenceOnScalp?: boolean;
+    smc_confluence_bbwSqueezeThreshold?: number;
 
-    // BTC Correlation Veto (Tweak #5)
+    // BTC Correlation Veto
     btc_correlation_veto_ema_fast?: number;
     btc_correlation_veto_ema_slow?: number;
     
     // Risk Management
+    risk_atrVolatilityPeriod?: number;
     risk_atrVolatilityPercentile_upper?: number;
     risk_atrVolatilityPercentile_lower?: number;
     risk_atrVolatilityMultiplier_upper_adj?: number;
@@ -429,18 +458,16 @@ export interface MarketDataContext {
     vwap?: number;
     lastVolume?: number;
     lastClose?: number;
-    // HTF prefixed properties
     htf_rsi14?: number;
     htf_adx14?: ADXOutput;
     htf_stochRsi?: StochasticRSIOutput;
     htf_trend?: 'bullish' | 'bearish' | 'neutral';
-    
-    // New Order Book Context
     orderBook?: OrderBookAnalysis;
+    activePatterns?: ChartPattern[];
 }
 
 export interface AstraXAnalysis {
-    conviction: number; // -100 to 100
+    conviction: number;
     regime: 'Strong Trend' | 'Developing Trend' | 'Choppy Market' | 'Volatile Expansion' | 'Range Bound' | 'Unknown';
     thesis: 'Bullish' | 'Bearish' | 'Neutral';
     setupName?: string;
@@ -460,6 +487,25 @@ export interface AstraXAnalysis {
     adjustments?: { reason: string, impact: number }[];
 }
 
+export interface OmegaAnalysis {
+    conviction: number;
+    layers: {
+        macro: number;
+        structural: number;
+        micro: number;
+    };
+    targets: {
+        fvgPrice?: number;
+        liquidityPrice?: number;
+    };
+    brainState?: {
+        mode: string;
+        entropy: number;
+        vCompActive: boolean;
+        managementReason?: string;
+    };
+}
+
 export interface BitcoinState {
     state: 'CRASH' | 'PUMP' | 'RANGE' | 'TREND_UP' | 'TREND_DOWN' | 'NEUTRAL';
     trend: 'bullish' | 'bearish' | 'neutral';
@@ -474,12 +520,13 @@ export interface TradeSignal {
     entryPrice?: number;
     takeProfitPrice?: number;
     stopLossPrice?: number;
-    invalidationPrice?: number; // Critical level that, if hit, invalidates the setup immediately
+    invalidationPrice?: number;
     sentinelAnalysis?: SentinelAnalysis;
     conductorAnalysis?: ConductorAnalysis;
     astraXAnalysis?: AstraXAnalysis;
+    omegaAnalysis?: OmegaAnalysis;
     tradeType?: 'conviction' | 'scalp';
-    btcContext?: BitcoinState; // Snapshot of BTC state at signal time
+    btcContext?: BitcoinState;
 }
 
 export interface TradeManagementSignal {
@@ -514,7 +561,7 @@ export interface BotConfig {
     isMarketCohesionEnabled?: boolean;
     isVwapConfirmationEnabled?: boolean;
     isBtcConfirmationEnabled?: boolean;
-    isBtcCorrelationVetoEnabled?: boolean; // Tweak #5
+    isBtcCorrelationVetoEnabled?: boolean;
     btcConfirmationThreshold?: number;
     isVolumeFilterEnabled?: boolean;
     isAdxFilterEnabled?: boolean;
@@ -541,7 +588,7 @@ export interface BotConfig {
     finalEntryFailSafe?: 'fail-open' | 'fail-closed';
     isTradeGuardianEnabled?: boolean;
     isHeikinAshiEnabled: boolean;
-    isDynamicSizingEnabled?: boolean; // NEW: Controls whether to use conviction-based sizing
+    isDynamicSizingEnabled?: boolean;
 }
 
 export interface BotConfigSnapshot {
@@ -575,14 +622,15 @@ export interface BotConfigSnapshot {
     isMomentumConcordanceEnabled?: boolean;
     finalEntryFailSafe?: 'fail-open' | 'fail-closed';
     isTradeGuardianEnabled?: boolean;
-    isHeikinAshiEnabled: boolean;
+    isHeikinAshiEnabled?: boolean;
     isDynamicSizingEnabled?: boolean;
+    maxMarginLossPercent?: number;
 }
 
 export interface Position {
     id: number;
     botId: string | null;
-    agentId?: number; // ID of the agent that opened the position
+    agentId?: number;
     orderId: number | null;
     pair: string;
     mode: TradingMode;
@@ -598,12 +646,12 @@ export interface Position {
     agentName: string;
     takeProfitPrice: number;
     stopLossPrice: number;
-    invalidationPrice?: number; // Persisted structural invalidation level for Guardian
+    invalidationPrice?: number;
     initialTakeProfitPrice: number;
     initialStopLossPrice: number;
     initialRiskInPrice: number;
     initialStopLossReason: 'Agent Logic' | 'Hard Cap';
-    activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Profit Secure' | 'Breakeven' | 'Agent Trail';
+    activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Profit Secure' | 'Breakeven' | 'Agent Trail' | 'Sovereign Ratchet';
     pricePrecision: number;
     timeFrame: string;
     liquidationPrice?: number;
@@ -626,7 +674,12 @@ export interface Position {
     entryAtr?: number;
     tradeType?: 'conviction' | 'scalp';
     promotedFrom?: 'scalp';
-    btcContext?: BitcoinState; // Snapshot of BTC state at entry
+    btcContext?: BitcoinState;
+    omegaBrainData?: {
+        lastManagementReason?: string;
+        lockedAtRisk?: number;
+        entropyDecay?: number;
+    };
 }
 
 export interface Trade extends Position {
@@ -759,5 +812,5 @@ export interface TradingPairList {
 
 export interface UserPreferences {
     tradingPairLists: TradingPairList[];
-    dailyLossLimit?: number; // 0 = disabled, >0 = limit in USD
+    dailyLossLimit?: number;
 }

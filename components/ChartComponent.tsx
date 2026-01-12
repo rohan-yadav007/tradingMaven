@@ -1,4 +1,4 @@
-
+// components/ChartComponent.tsx
 
 import React, { useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react';
 import { type Kline, LiveTicker, TradingMode } from '../types';
@@ -40,6 +40,7 @@ const getTimeframeDurationMs = (timeframe: string): number => {
 const CountdownTimer: React.FC<{ timeframe: string }> = ({ timeframe }) => {
     const [countdown, setCountdown] = useState('--:--');
     const timeframeMs = getTimeframeDurationMs(timeframe);
+    const lastValueRef = useRef('--:--');
 
     useEffect(() => {
         if (!timeframeMs) return;
@@ -52,19 +53,22 @@ const CountdownTimer: React.FC<{ timeframe: string }> = ({ timeframe }) => {
             const nextBoundary = Math.ceil(now / timeframeMs) * timeframeMs;
             const remaining = nextBoundary - now;
             
-            if (remaining <= 0) {
-                // Small buffer to prevent flashing 00:00 for too long or negative
-                setCountdown('00:00');
-            } else {
+            let display = '00:00';
+            if (remaining > 0) {
                 const hours = Math.floor((remaining / (1000 * 60 * 60)));
                 const minutes = Math.floor((remaining % (1000 * 60 * 60)) / (1000 * 60));
                 const seconds = Math.floor((remaining % (1000 * 60)) / 1000);
                 
                 if (hours > 0) {
-                    setCountdown(`${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`);
+                    display = `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
                 } else {
-                    setCountdown(`${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`);
+                    display = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
                 }
+            }
+
+            if (display !== lastValueRef.current) {
+                lastValueRef.current = display;
+                setCountdown(display);
             }
         };
 
@@ -84,6 +88,7 @@ const CountdownTimer: React.FC<{ timeframe: string }> = ({ timeframe }) => {
 
 const FundingRateTimer: React.FC<{ fundingInfo: { rate: string; time: number } }> = ({ fundingInfo }) => {
     const [countdown, setCountdown] = useState('');
+    const lastValueRef = useRef('');
 
     useEffect(() => {
         if (!fundingInfo) return;
@@ -92,15 +97,17 @@ const FundingRateTimer: React.FC<{ fundingInfo: { rate: string; time: number } }
             const now = getSyncedNow();
             const remaining = fundingInfo.time - now;
             
-            if (remaining <= 0) {
-                setCountdown('00:00:00');
-            } else {
+            let display = '00:00:00';
+            if (remaining > 0) {
                 const hours = Math.floor((remaining / (1000 * 60 * 60)));
                 const minutes = Math.floor((remaining % (1000 * 60 * 60)) / (1000 * 60));
                 const seconds = Math.floor((remaining % (1000 * 60)) / 1000);
-                setCountdown(
-                    `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
-                );
+                display = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+            }
+
+            if (display !== lastValueRef.current) {
+                lastValueRef.current = display;
+                setCountdown(display);
             }
         }, 1000);
 

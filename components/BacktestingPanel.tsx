@@ -1,3 +1,4 @@
+
 // components/BacktestingPanel.tsx
 
 
@@ -546,8 +547,8 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 finalEntryFailSafe: 'fail-open',
             };
             
-            // Pass matrixMap to runBacktest if needed (Update worker service if backtesting needs it)
-            const result = await runBacktest(backtestKlines, fullBotConfig, htfKlines);
+            // Pass matrixMap to runBacktest
+            const result = await runBacktest(backtestKlines, fullBotConfig, htfKlines, matrixMap);
             setBacktestResult(result);
         } catch (e) {
             console.error("Backtest failed:", e); setError(e instanceof Error ? e.message : "An unknown error occurred during backtesting.");
@@ -577,6 +578,21 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 }
             }
             
+            // --- OMEGA BACKTEST DATA PREPARATION ---
+            let matrixMap: Map<string, Kline[]> | undefined = undefined;
+            if (config.selectedAgent.id === 25) {
+                setLoadingMessage('Syncing Omega Matrix (1m-1D)...');
+                matrixMap = new Map();
+                const tfs = ['1m', '15m', '1h', '4h', '1d'];
+                const htfStartTime = backtestKlines[0].time;
+                const htfEndTime = backtestKlines[backtestKlines.length - 1].time;
+                
+                await Promise.all(tfs.map(async (tf) => {
+                    const data = await binanceService.fetchFullKlines(formattedPair, tf, htfStartTime, htfEndTime, config.tradingMode);
+                    matrixMap!.set(tf, data);
+                }));
+            }
+            
             setLoadingMessage(`Preparing optimization...`);
             const symbolInfo = config.tradingMode === TradingMode.USDSM_Futures ? await binanceService.getFuturesSymbolInfo(formattedPair) : await binanceService.getSymbolInfo(formattedPair);
             if (!symbolInfo) throw new Error("Could not fetch symbol info.");
@@ -593,7 +609,7 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 takerFeeRate: constants.TAKER_FEE_RATE,
                 finalEntryFailSafe: 'fail-open',
             };
-            const results = await runOptimization(backtestKlines, baseBotConfig, onProgress, htfKlines);
+            const results = await runOptimization(backtestKlines, baseBotConfig, onProgress, htfKlines, matrixMap);
             if (results.length === 0) { setError("Optimization complete, but no profitable parameter combinations were found."); } else { setOptimizationResults(results); }
         } catch (e) {
             console.error("Optimization failed:", e); setError(e instanceof Error ? e.message : "An unknown error occurred during optimization.");

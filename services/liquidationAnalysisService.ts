@@ -1,37 +1,35 @@
+
 // services/liquidationAnalysisService.ts
 
 import { BotConfig, TradingMode } from '../types';
 
 interface LiquidationEvent {
     symbol: string;
-    side: 'BUY' | 'SELL'; // BUY = long liquidation, SELL = short liquidation
+    side: 'BUY' | 'SELL'; // BUY = Exchange Buying (Short Liq), SELL = Exchange Selling (Long Liq)
     quantity: number;
     price: number;
 }
 
 interface LiquidationBucket {
     timestamp: number;
-    longVolume: number;
-    shortVolume: number;
+    buySideVolume: number;  // Volume of BUY orders executed (Short Liquidations)
+    sellSideVolume: number; // Volume of SELL orders executed (Long Liquidations)
 }
 
 interface LiquidationState {
-    // Stores 1-second buckets for the last 5 seconds to check for recent spikes
     recentBuckets: LiquidationBucket[];
-    // Stores 5-second aggregated volumes for the last 5 minutes to calculate baseline
-    longTermHistory: { longVolume: number; shortVolume: number; timestamp: number; }[];
-    movingAverages: { long: number; short: number; };
-    stdDevs: { long: number; short: number; };
-    // Buffer for incoming raw events before aggregation
+    longTermHistory: { buySideVolume: number; sellSideVolume: number; timestamp: number; }[];
+    movingAverages: { buySide: number; sellSide: number; };
+    stdDevs: { buySide: number; sellSide: number; };
     eventBuffer: LiquidationEvent[];
 }
 
 // --- Configuration ---
-const RECENT_WINDOW_SECONDS = 5; // Check for spikes in the last 5 seconds
-const HISTORY_WINDOW_SECONDS = 300; // Calculate MA/StdDev over the last 5 minutes
+const RECENT_WINDOW_SECONDS = 5; 
+const HISTORY_WINDOW_SECONDS = 300; 
 const HISTORY_BUCKET_SIZE_SECONDS = 5;
 const HISTORY_MAX_LENGTH = HISTORY_WINDOW_SECONDS / HISTORY_BUCKET_SIZE_SECONDS;
-const SPIKE_STD_DEV_THRESHOLD = 3.0; // A spike is > 3 standard deviations above the average
+const SPIKE_STD_DEV_THRESHOLD = 3.0; 
 
 class LiquidationAnalysisService {
     private ws: WebSocket | null = null;
@@ -68,7 +66,7 @@ class LiquidationAnalysisService {
             if (message && message.e === 'forceOrder') {
                 const liqEvent: LiquidationEvent = {
                     symbol: message.o.s,
-                    side: message.o.S,
+                    side: message.o.S, // 'BUY' (Short Liq) or 'SELL' (Long Liq)
                     quantity: parseFloat(message.o.q),
                     price: parseFloat(message.o.p),
                 };
@@ -87,8 +85,8 @@ class LiquidationAnalysisService {
         return {
             recentBuckets: [],
             longTermHistory: [],
-            movingAverages: { long: 0, short: 0 },
-            stdDevs: { long: 1, short: 1 }, // Start with 1 to avoid division by zero
+            movingAverages: { buySide: 0, sellSide: 0 },
+            stdDevs: { buySide: 1, sellSide: 1 }, 
             eventBuffer: [],
         };
     }
@@ -96,36 +94,31 @@ class LiquidationAnalysisService {
     private startProcessingInterval() {
         if (this.processingInterval) clearInterval(this.processingInterval);
         
-        // Process buffers every second
         this.processingInterval = setInterval(() => {
             const now = Date.now();
             for (const [symbol, state] of this.symbolStates.entries()) {
-                let currentSecondLongVolume = 0;
-                let currentSecondShortVolume = 0;
+                let currentSecondBuySideVol = 0;  // Short Liquidations
+                let currentSecondSellSideVol = 0; // Long Liquidations
 
-                // Process all events in the buffer for the current symbol
-                const buffer = state.eventBuffer.splice(0); // Clear buffer
+                const buffer = state.eventBuffer.splice(0); 
                 for (const event of buffer) {
-                    if (event.side === 'BUY') { // Long liquidation
-                        currentSecondLongVolume += event.quantity * event.price;
-                    } else { // SELL = Short liquidation
-                        currentSecondShortVolume += event.quantity * event.price;
+                    if (event.side === 'BUY') {
+                        currentSecondBuySideVol += event.quantity * event.price;
+                    } else { 
+                        currentSecondSellSideVol += event.quantity * event.price;
                     }
                 }
                 
-                // Add the new 1-second bucket
                 state.recentBuckets.push({
                     timestamp: now,
-                    longVolume: currentSecondLongVolume,
-                    shortVolume: currentSecondShortVolume
+                    buySideVolume: currentSecondBuySideVol,
+                    sellSideVolume: currentSecondSellSideVol
                 });
                 
-                // Keep the recent window clean
                 while (state.recentBuckets.length > 0 && now - state.recentBuckets[0].timestamp > RECENT_WINDOW_SECONDS * 1000) {
                     state.recentBuckets.shift();
                 }
 
-                // Aggregate and update long-term history every 5 seconds
                 const lastHistoryEntry = state.longTermHistory.length > 0 ? state.longTermHistory[state.longTermHistory.length - 1] : null;
                 const shouldUpdateHistory = state.recentBuckets.length > 0 && 
                     (!lastHistoryEntry || now - lastHistoryEntry.timestamp >= HISTORY_BUCKET_SIZE_SECONDS * 1000);
@@ -138,10 +131,9 @@ class LiquidationAnalysisService {
     }
 
     private updateLongTermStats(state: LiquidationState, timestamp: number) {
-        // Aggregate the last 5 seconds of data from recentBuckets
         const fiveSecondData = {
-            longVolume: state.recentBuckets.slice(-HISTORY_BUCKET_SIZE_SECONDS).reduce((sum, b) => sum + b.longVolume, 0),
-            shortVolume: state.recentBuckets.slice(-HISTORY_BUCKET_SIZE_SECONDS).reduce((sum, b) => sum + b.shortVolume, 0),
+            buySideVolume: state.recentBuckets.slice(-HISTORY_BUCKET_SIZE_SECONDS).reduce((sum, b) => sum + b.buySideVolume, 0),
+            sellSideVolume: state.recentBuckets.slice(-HISTORY_BUCKET_SIZE_SECONDS).reduce((sum, b) => sum + b.sellSideVolume, 0),
         };
 
         state.longTermHistory.push({ ...fiveSecondData, timestamp });
@@ -150,8 +142,8 @@ class LiquidationAnalysisService {
         }
 
         if (state.longTermHistory.length > 1) {
-            const longVolumes = state.longTermHistory.map(h => h.longVolume);
-            const shortVolumes = state.longTermHistory.map(h => h.shortVolume);
+            const buySideVolumes = state.longTermHistory.map(h => h.buySideVolume);
+            const sellSideVolumes = state.longTermHistory.map(h => h.sellSideVolume);
             
             const calculateStats = (values: number[]) => {
                 const sum = values.reduce((a, b) => a + b, 0);
@@ -160,11 +152,11 @@ class LiquidationAnalysisService {
                 return { avg, stdDev };
             };
 
-            const longStats = calculateStats(longVolumes);
-            const shortStats = calculateStats(shortVolumes);
+            const buyStats = calculateStats(buySideVolumes);
+            const sellStats = calculateStats(sellSideVolumes);
 
-            state.movingAverages = { long: longStats.avg, short: shortStats.avg };
-            state.stdDevs = { long: longStats.stdDev, short: shortStats.stdDev };
+            state.movingAverages = { buySide: buyStats.avg, sellSide: sellStats.avg };
+            state.stdDevs = { buySide: buyStats.stdDev, sellSide: sellStats.stdDev };
         }
     }
 
@@ -185,29 +177,28 @@ class LiquidationAnalysisService {
             return { veto: false, reason: `⚠️ ${reason} Trade allowed by fail-open.` };
         }
         
-        // If there's no recent activity, don't veto.
         if (state.recentBuckets.length === 0) {
             return { veto: false, reason: `✅ Liquidation Filter: Passed` };
         }
 
         const isLongSignal = signalDirection === 'BUY';
-
-        // Check the most recent 1-second bucket for a spike
         const lastBucket = state.recentBuckets[state.recentBuckets.length - 1];
 
         if (isLongSignal) {
-            // Veto a BUY signal if there's a recent spike in LONG liquidations
-            const threshold = state.movingAverages.long + (state.stdDevs.long * SPIKE_STD_DEV_THRESHOLD);
-            if (lastBucket.longVolume > threshold) {
+            // Veto a BUY signal if there's a recent spike in LONG liquidations (Panic Selling)
+            // Long Liquidations = Sell Side Volume
+            const threshold = state.movingAverages.sellSide + (state.stdDevs.sellSide * SPIKE_STD_DEV_THRESHOLD);
+            if (lastBucket.sellSideVolume > threshold) {
                 return {
                     veto: true,
                     reason: `❌ VETO: Trading against a LONG liquidation cascade.`
                 };
             }
-        } else { // SELL Signal
-            // Veto a SELL signal if there's a recent spike in SHORT liquidations
-            const threshold = state.movingAverages.short + (state.stdDevs.short * SPIKE_STD_DEV_THRESHOLD);
-            if (lastBucket.shortVolume > threshold) {
+        } else { 
+            // Veto a SELL signal if there's a recent spike in SHORT liquidations (Panic Buying / Squeeze)
+            // Short Liquidations = Buy Side Volume
+            const threshold = state.movingAverages.buySide + (state.stdDevs.buySide * SPIKE_STD_DEV_THRESHOLD);
+            if (lastBucket.buySideVolume > threshold) {
                 return {
                     veto: true,
                     reason: `❌ VETO: Trading against a SHORT liquidation squeeze.`
@@ -216,6 +207,39 @@ class LiquidationAnalysisService {
         }
         
         return { veto: false, reason: `✅ Liquidation Filter: Passed` };
+    }
+
+    public getLiquidityTrap(pair: string, side: 'BUY' | 'SELL'): 'Spring' | 'Upthrust' | 'None' {
+        const symbol = pair.replace('/', '');
+        let state = this.symbolStates.get(symbol);
+
+        if (!state) {
+             state = this.createInitialState();
+             this.symbolStates.set(symbol, state);
+             return 'None'; 
+        }
+        
+        if (state.recentBuckets.length === 0) return 'None';
+
+        const lastBucket = state.recentBuckets[state.recentBuckets.length - 1];
+
+        if (side === 'BUY') {
+            // Looking for a Spring (Bullish Reversal)
+            // A Spring typically occurs on heavy selling (Long Liquidations / Sell Side Volume)
+            const threshold = state.movingAverages.sellSide + (state.stdDevs.sellSide * SPIKE_STD_DEV_THRESHOLD);
+            if (lastBucket.sellSideVolume > threshold && lastBucket.sellSideVolume > 5000) {
+                return 'Spring';
+            }
+        } else {
+            // Looking for an Upthrust (Bearish Reversal)
+            // An Upthrust typically occurs on heavy buying (Short Liquidations / Buy Side Volume)
+            const threshold = state.movingAverages.buySide + (state.stdDevs.buySide * SPIKE_STD_DEV_THRESHOLD);
+            if (lastBucket.buySideVolume > threshold && lastBucket.buySideVolume > 5000) {
+                return 'Upthrust';
+            }
+        }
+        
+        return 'None';
     }
 }
 

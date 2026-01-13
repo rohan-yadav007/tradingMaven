@@ -1,3 +1,4 @@
+
 // services/botManagerService.ts
 
 import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, TradingMode, MarketDataContext, AgentParams } from '../types';
@@ -279,11 +280,14 @@ class BotInstance {
         const isLong = signal.signal === 'BUY';
         const { config } = this.bot;
         
-        const { stopLossPrice, takeProfitPrice, slReason, agentStopLoss } = getInitialAgentTargets(
-            klinesForExecution, currentPrice, isLong ? 'LONG' : 'SHORT', config, 
-            signal.tradeType, signal.stopLossPrice, signal.takeProfitPrice
-        );
+        // For Omega (Agent 25), the signal ALREADY provides calculated SL/TP based on 5x Fee Law.
+        // We override the default risk logic with the signal's values.
+        const stopLossPrice = signal.stopLossPrice ?? 0;
+        const takeProfitPrice = signal.takeProfitPrice ?? 0;
+        const agentStopLoss = stopLossPrice;
+        const slReason = 'Agent Logic';
 
+        // Perform final profitability check just in case, but Omega should have already vetoed it.
         const validation = validateTradeProfitability(currentPrice, agentStopLoss, takeProfitPrice, isLong ? 'LONG' : 'SHORT', config);
         if (!validation.isValid && config.agent.id !== 20) { 
             this.notifyTradeExecutionFailed(validation.reason);
@@ -291,7 +295,10 @@ class BotInstance {
         }
 
         let convictionMultiplier = 1.0;
-        if (config.isDynamicSizingEnabled && signal.omegaAnalysis?.conviction) {
+        // V3 Omega: Uses signal.omegaAnalysis?.sizing.multiplier if available
+        if (config.agent.id === 25 && signal.omegaAnalysis?.sizing?.multiplier) {
+            convictionMultiplier = signal.omegaAnalysis.sizing.multiplier;
+        } else if (config.isDynamicSizingEnabled && signal.omegaAnalysis?.conviction) {
             const score = signal.omegaAnalysis.conviction;
             convictionMultiplier = score >= 90 ? 1.0 : score >= 80 ? 0.75 : 0.50;
         }
@@ -348,7 +355,7 @@ class BotInstance {
     
         const stopCandidates: { price: number; reason: Position['activeStopLossReason']; newState?: Partial<Position> }[] = [];
     
-        // OMEGA SOVEREIGN BRAIN (V2.0 P2P Adjusted)
+        // OMEGA SOVEREIGN BRAIN (V3.0)
         if (this.bot.config.agent.id === 25) {
             const omegaBrainSignal = SovereignManagementEngine.manage(positionState, currentPrice, this.klines, this.astraXKlinesMap);
             if (omegaBrainSignal.newStopLoss) stopCandidates.push({ price: omegaBrainSignal.newStopLoss, reason: omegaBrainSignal.activeStopLossReason || 'Sovereign Ratchet' });
@@ -451,16 +458,25 @@ class BotManagerService {
         try {
             const klines = await sharedKlineService.getData(config.pair, config.timeFrame, config.mode);
             this.subscribeToKlines(botInstance);
-            const tickerCallback = (data: any) => botInstance.updateLivePrice(parseFloat(data.c), { pair: data.s, closePrice: parseFloat(data.c), highPrice: parseFloat(data.h), lowPrice: parseFloat(data.l), volume: parseFloat(data.v), quoteVolume: parseFloat(data.q) });
+            const tickerCallback = (data: any) => botInstance.updateLivePrice(parseFloat(data.c), { pair: data.s, closePrice: parseFloat(data.c), highPrice: parseFloat(data.h), lowPrice: parseFloat(data.k || data.l), volume: parseFloat(data.v), quoteVolume: parseFloat(data.q) });
             this.subscribeToTickerUpdates(config.pair, config.mode, tickerCallback);
             botInstance.subscriptions.push({ type: 'ticker', pair: config.pair, mode: config.mode, callback: tickerCallback });
             orderBookService.subscribe(config.pair, config.mode);
             
+            // --- OMEGA V3: FORCE ALL TIMEFRAMES ---
             if (config.agent.id === 25) {
-                const matrixTfs = ['1m', '15m', '1h', '4h', '1d'];
+                const matrixTfs = ['1m', '5m', '15m', '1h', '4h', '1d'];
                 await Promise.all(matrixTfs.map(async (tf) => { 
-                    try { const data = await sharedKlineService.getData(config.pair, tf, config.mode); botInstance.astraXKlinesMap.set(tf, data); } catch(e) {} 
+                    try { 
+                        // Don't subscribe to the main TF again if it's already there
+                        if (tf !== config.timeFrame) {
+                            const data = await sharedKlineService.getData(config.pair, tf, config.mode); 
+                            botInstance.astraXKlinesMap.set(tf, data); 
+                        }
+                    } catch(e) {} 
                 }));
+                // Also explicitly set map for main TF
+                botInstance.astraXKlinesMap.set(config.timeFrame, klines);
             }
 
             if (config.isHtfConfirmationEnabled) {

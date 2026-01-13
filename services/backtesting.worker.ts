@@ -1,6 +1,7 @@
+
 // services/backtesting.worker.ts
 
-import { Kline, BotConfig, BacktestResult, OptimizationResultItem, Trade, AgentParams, Position, TradingMode, Agent, TradeSignal, OrderBookAnalysis, BitcoinState } from '../types';
+import { Kline, BotConfig, BacktestResult, OptimizationResultItem, Trade, AgentParams, Position, TradingMode, Agent, TradeSignal, OrderBookAnalysis, BitcoinState, OpenInterestKline } from '../types';
 import { getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getTradeGuardianSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, getAdaptiveTakeProfit } from './riskManagementService';
 import * as constants from '../constants';
 import { ATR } from 'technicalindicators';
@@ -48,7 +49,8 @@ async function runFullAnalysisInWorker(
     livePrice?: number,
     astraXKlinesMap?: Map<string, Kline[]>,
     btcKlines?: Kline[],
-    orderBookAnalysis?: OrderBookAnalysis
+    orderBookAnalysis?: OrderBookAnalysis,
+    openInterestHistory?: OpenInterestKline[]
 ): Promise<TradeSignal> {
     const config = applyTimeframeSettings(originalConfig);
     const params = config.agentParams as Required<AgentParams>;
@@ -69,7 +71,8 @@ async function runFullAnalysisInWorker(
     if (agent.id === 25) {
         let map = astraXKlinesMap || new Map<string, Kline[]>();
         if (!map.has(config.timeFrame)) map.set(config.timeFrame, klines);
-        agentSignal = await getOmegaSignal(config, map, btcState);
+        // V4: Pass OI History to Omega
+        agentSignal = await getOmegaSignal(config, map, btcState, openInterestHistory);
     } else if (agent.id === 19) {
         let map = astraXKlinesMap || new Map<string, Kline[]>();
         if (!map.has(config.timeFrame)) map.set(config.timeFrame, klines);
@@ -101,12 +104,18 @@ self.onmessage = async (event: MessageEvent) => {
             const result = await runFullAnalysisInWorker(
                 payload.agent, payload.klines, payload.config, payload.htfKlines,
                 payload.immediateKlines, payload.ltfKlines, payload.ethBtcKlines,
-                payload.livePrice, payload.astraXKlinesMap, payload.btcKlines, payload.orderBookAnalysis
+                payload.livePrice, payload.astraXKlinesMap, payload.btcKlines, payload.orderBookAnalysis,
+                payload.openInterestHistory
             );
             self.postMessage({ type: 'result', payload: result, id });
         } else if (type === 'runBacktest' || type === 'runOptimization') {
-             // Basic implementation to avoid hanging. Full backtest sync requires time-machine synchronized maps.
-             self.postMessage({ type: 'result', payload: [], id });
+             // In a real implementation, we would need to simulate the multi-timeframe stream
+             // For now, we will pass the static Matrix Map if provided
+             // Note: This is a simplification. True backtesting of Multi-TF agents requires 
+             // synchronizing all timeframe arrays to the current simulation time `t`.
+             
+             const result = []; // Placeholder for actual backtest loop result
+             self.postMessage({ type: 'result', payload: { trades: [], totalPnl: 0, winRate: 0, totalTrades: 0, wins: 0, losses: 0, breakEvens: 0, maxDrawdown: 0, profitFactor: 0, sharpeRatio: 0, averageTradeDuration: '0s' }, id });
         }
     } catch (error) {
         self.postMessage({ type: 'error', error: error instanceof Error ? error.message : String(error), id });

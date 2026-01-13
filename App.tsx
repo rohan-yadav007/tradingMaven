@@ -427,7 +427,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
         botId: string,
         executionDetails: {
             agentStopLoss: number,
-            slReason: 'Agent Logic' | 'Hard Cap',
+            slReason: 'Agent Logic' | 'Hard Cap' | 'Noise Floor', // Fixed Type Definition
             entryContext: MarketDataContext,
             convictionSizeMultiplier?: number
         }
@@ -597,6 +597,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             entryContext: executionDetails.entryContext,
             entryAtr: executionDetails.entryContext.atr14,
             tradeType: execSignal.tradeType,
+            setupType: execSignal.setupType, // Omega V5.2: Persist setup type
             invalidationPrice: execSignal.invalidationPrice, // Persist invalidation price
             btcContext: execSignal.btcContext, // Persist BTC context
         };

@@ -17,9 +17,10 @@ export {
 export { captureMarketContext } from './agents/agentUtils';
 
 // Imports for getTradingSignal orchestration
-import { Agent, Kline, TradeSignal, BotConfig, MarketDataContext, TradingMode } from '../types';
+import { Agent, Kline, TradeSignal, BotConfig, MarketDataContext, TradingMode, OpenInterestKline } from '../types';
 import { runLiveAnalysis } from './workerService';
 import { orderBookService } from './orderBookService';
+import * as binanceService from './binanceService';
 
 
 /**
@@ -41,9 +42,17 @@ export async function getTradingSignal(
 ): Promise<TradeSignal> {
     
     // Fetch live order book data if available.
-    // The worker will receive a snapshot of this data if needed.
-    // We pass config.mode (Spot vs Futures) to ensure we get the correct order book.
     const obAnalysis = orderBookService.getAnalysis(config.pair, config.mode);
+    
+    // V4.0: Fetch Open Interest History if Futures AND Agent is Omega (ID 25)
+    // Optimization: Don't fetch OI for agents that don't use it (e.g. Supertrend, Sentinel)
+    let openInterestHistory: OpenInterestKline[] | undefined;
+    if (config.mode === TradingMode.USDSM_Futures && agent.id === 25) {
+        // Map generic timeframes to OI periods. 5m is usually granular enough.
+        // If we are on 1m, use 5m OI to see the bigger flow.
+        const oiPeriod = ['1m', '3m', '5m'].includes(config.timeFrame) ? '5m' : config.timeFrame;
+        openInterestHistory = await binanceService.fetchOpenInterestHistory(config.pair, oiPeriod);
+    }
 
     // --- Offload ALL logic to Worker ---
     try {
@@ -58,7 +67,8 @@ export async function getTradingSignal(
             livePrice,
             astraXKlinesMap,
             btcKlines,
-            obAnalysis // Pass OB Analysis to worker
+            obAnalysis, // Pass OB Analysis to worker
+            openInterestHistory // Pass OI History to worker
         );
         
         return workerSignal;

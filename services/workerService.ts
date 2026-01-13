@@ -1,7 +1,7 @@
 
 // services/workerService.ts
 
-import { Kline, BotConfig, BacktestResult, OptimizationResultItem, TradeSignal, Agent, OrderBookAnalysis } from '../types';
+import { Kline, BotConfig, BacktestResult, OptimizationResultItem, TradeSignal, Agent, OrderBookAnalysis, OpenInterestKline } from '../types';
 
 // Use a dynamic import for the worker to support module syntax
 const worker = new Worker(new URL('./backtesting.worker.ts', import.meta.url), {
@@ -43,7 +43,8 @@ worker.onerror = (error) => {
 export function runBacktest(
     klines: Kline[],
     config: BotConfig,
-    htfKlines?: Kline[]
+    htfKlines?: Kline[],
+    astraXKlinesMap?: Map<string, Kline[]> // Added Matrix Map support
 ): Promise<BacktestResult> {
     return new Promise((resolve, reject) => {
         const id = requestIdCounter++;
@@ -51,7 +52,7 @@ export function runBacktest(
         worker.postMessage({
             type: 'runBacktest',
             id,
-            payload: { klines, config, htfKlines },
+            payload: { klines, config, htfKlines, astraXKlinesMap },
         });
     });
 }
@@ -67,7 +68,8 @@ export function runLiveAnalysis(
     livePrice?: number,
     astraXKlinesMap?: Map<string, Kline[]>,
     btcKlines?: Kline[],
-    orderBookAnalysis?: OrderBookAnalysis
+    orderBookAnalysis?: OrderBookAnalysis,
+    openInterestHistory?: OpenInterestKline[]
 ): Promise<TradeSignal> {
      return new Promise((resolve, reject) => {
         const id = requestIdCounter++;
@@ -75,7 +77,7 @@ export function runLiveAnalysis(
         worker.postMessage({
             type: 'runLiveAnalysis',
             id,
-            payload: { agent, klines, config, htfKlines, immediateKlines, ltfKlines, ethBtcKlines, livePrice, astraXKlinesMap, btcKlines, orderBookAnalysis },
+            payload: { agent, klines, config, htfKlines, immediateKlines, ltfKlines, ethBtcKlines, livePrice, astraXKlinesMap, btcKlines, orderBookAnalysis, openInterestHistory },
         });
     });
 }
@@ -85,7 +87,8 @@ export function runOptimization(
     klines: Kline[],
     baseConfig: BotConfig,
     onProgress: (progress: { percent: number; combinations: number }) => void,
-    htfKlines?: Kline[]
+    htfKlines?: Kline[],
+    astraXKlinesMap?: Map<string, Kline[]> // Added Matrix Map support
 ): Promise<OptimizationResultItem[]> {
     return new Promise((resolve, reject) => {
         const id = requestIdCounter++;
@@ -93,7 +96,7 @@ export function runOptimization(
         worker.postMessage({
             type: 'runOptimization',
             id,
-            payload: { klines, config: baseConfig, htfKlines },
+            payload: { klines, config: baseConfig, htfKlines, astraXKlinesMap },
         });
     });
 }

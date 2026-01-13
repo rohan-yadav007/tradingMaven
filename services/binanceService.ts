@@ -1,5 +1,5 @@
 
-import { Kline, SymbolInfo, SymbolFilter, WalletBalance, RawWalletBalance, AccountInfo, LeverageBracket, BinanceOrderResponse, TradingMode } from '../types';
+import { Kline, SymbolInfo, SymbolFilter, WalletBalance, RawWalletBalance, AccountInfo, LeverageBracket, BinanceOrderResponse, TradingMode, OpenInterestKline } from '../types';
 
 // --- Configuration ---
 const SPOT_BASE_URL = '/proxy-spot';
@@ -22,6 +22,68 @@ const CACHE_DURATION_SHORT = 1 * 60 * 1000;
 const CACHE_DURATION_MEDIUM = 5 * 60 * 1000;
 const CACHE_DURATION_LONG = 60 * 60 * 1000; // 1 hour for exchange info
 let leverageBracketCache = new Map<string, { data: any, timestamp: number }>();
+let openInterestHistoryCache = new Map<string, { data: OpenInterestKline[], timestamp: number }>();
+const OI_CACHE_DURATION = 60 * 1000; // 1 minute cache for OI history
+const OI_ERROR_CACHE_DURATION = 10 * 1000; // 10 seconds cache for failed requests
+
+// --- Rate Limiter ---
+class RateLimiter {
+    private queue: (() => Promise<void>)[] = [];
+    private processing = false;
+    private lastRequestTime = 0;
+    // 60ms delay ~= ~16 requests/sec max. Safe for IP limit of 1200/min.
+    private delayMs = 60; 
+    private pausedUntil = 0;
+
+    async schedule<T>(fn: () => Promise<T>): Promise<T> {
+        return new Promise<T>((resolve, reject) => {
+            this.queue.push(async () => {
+                if (Date.now() < this.pausedUntil) {
+                    const wait = this.pausedUntil - Date.now();
+                    console.warn(`[RateLimiter] Paused for ${wait}ms due to 429/418.`);
+                    await new Promise(r => setTimeout(r, wait));
+                }
+
+                try {
+                    const result = await fn();
+                    resolve(result);
+                } catch (e: any) {
+                    // Handle Rate Limit (429) or IP Ban (418)
+                    if (e && (e.code === 429 || e.code === 418 || (e.message && (e.message.includes('429') || e.message.includes('418'))))) {
+                        console.error("[RateLimiter] Hit Rate Limit! Backing off for 1 minute.");
+                        this.pausedUntil = Date.now() + 60000; // Backoff for 1 minute
+                    }
+                    reject(e);
+                }
+            });
+            this.process();
+        });
+    }
+
+    private async process() {
+        if (this.processing) return;
+        this.processing = true;
+
+        while (this.queue.length > 0) {
+            const now = Date.now();
+            const timeSinceLast = now - this.lastRequestTime;
+            
+            if (timeSinceLast < this.delayMs) {
+                await new Promise(r => setTimeout(r, this.delayMs - timeSinceLast));
+            }
+
+            const task = this.queue.shift();
+            if (task) {
+                this.lastRequestTime = Date.now();
+                await task(); // Execute the task (which resolves the promise wrapper)
+            }
+        }
+
+        this.processing = false;
+    }
+}
+
+const rateLimiter = new RateLimiter();
 
 // --- Private Helper Functions ---
 
@@ -64,53 +126,68 @@ async function hmacSha256(key: string, data: string): Promise<string> {
 }
 
 async function fetchSigned(endpoint: string, params: Record<string, any> = {}, method: 'GET' | 'POST' | 'DELETE' = 'GET', baseUrl: string = SPOT_BASE_URL): Promise<any> {
-    if (!apiKey || !apiSecret) {
-        throw new Error("API Key or Secret is not configured in environment variables.");
-    }
-    if (!isTimeSynced) {
-        await initializeTimeSync();
-    }
-
-    const timestamp = Date.now() + timeOffset;
-    
-    const headers: Record<string, string> = { 'X-MBX-APIKEY': apiKey };
-    const fetchOptions: RequestInit = { method, headers };
-    let url: string = `${baseUrl}${endpoint}`;
-
-    // Filter out null/undefined values before processing
-    const filteredParams = Object.fromEntries(Object.entries(params).filter(([_, v]) => v != null));
-
-    const allParams = { ...filteredParams, timestamp, recvWindow: 5000 };
-    const stringParams = Object.fromEntries(Object.entries(allParams).map(([k, v]) => [k, String(v)]));
-    const queryString = new URLSearchParams(stringParams).toString();
-    const signature = await hmacSha256(apiSecret, queryString);
-
-    if (method === 'GET') {
-        url = `${url}?${queryString}&signature=${signature}`;
-    } else { // POST, DELETE etc.
-        fetchOptions.body = `${queryString}&signature=${signature}`;
-        headers['Content-Type'] = 'application/x-www-form-urlencoded';
-    }
-
-    const response = await fetch(url, fetchOptions);
-
-    if (!response.ok) {
-        try {
-            const errorData = await response.json();
-            throw errorData;
-        } catch (e) {
-            throw new Error(`An HTTP error occurred: ${response.status} ${response.statusText}`);
+    return rateLimiter.schedule(async () => {
+        if (!apiKey || !apiSecret) {
+            throw new Error("API Key or Secret is not configured in environment variables.");
         }
-    }
-    
-    const text = await response.text();
-    return text ? JSON.parse(text) : {};
+        if (!isTimeSynced) {
+            await initializeTimeSync();
+        }
+
+        const timestamp = Date.now() + timeOffset;
+        
+        const headers: Record<string, string> = { 'X-MBX-APIKEY': apiKey };
+        const fetchOptions: RequestInit = { method, headers };
+        let url: string = `${baseUrl}${endpoint}`;
+
+        // Filter out null/undefined values before processing
+        const filteredParams = Object.fromEntries(Object.entries(params).filter(([_, v]) => v != null));
+
+        const allParams = { ...filteredParams, timestamp, recvWindow: 5000 };
+        const stringParams = Object.fromEntries(Object.entries(allParams).map(([k, v]) => [k, String(v)]));
+        const queryString = new URLSearchParams(stringParams).toString();
+        const signature = await hmacSha256(apiSecret, queryString);
+
+        if (method === 'GET') {
+            url = `${url}?${queryString}&signature=${signature}`;
+        } else { // POST, DELETE etc.
+            fetchOptions.body = `${queryString}&signature=${signature}`;
+            headers['Content-Type'] = 'application/x-www-form-urlencoded';
+        }
+
+        const response = await fetch(url, fetchOptions);
+
+        if (!response.ok) {
+            try {
+                const errorData = await response.json();
+                throw errorData;
+            } catch (e) {
+                // Pass status code for RateLimiter to catch 429/418
+                throw { message: `An HTTP error occurred: ${response.status} ${response.statusText}`, code: response.status };
+            }
+        }
+        
+        const text = await response.text();
+        return text ? JSON.parse(text) : {};
+    });
+}
+
+// Unsigned fetch with rate limiting
+async function fetchPublic(url: string): Promise<any> {
+    return rateLimiter.schedule(async () => {
+        const response = await fetch(url);
+        if (!response.ok) {
+             throw { message: `HTTP ${response.status}: ${response.statusText}`, code: response.status };
+        }
+        return response.json();
+    });
 }
 
 
 export async function initializeTimeSync(retries = 3) {
     for (let i = 0; i < retries; i++) {
         try {
+            // Using raw fetch here to avoid circular dependency or rate limit lock on init
             const response = await fetch(`${SPOT_BASE_URL}/api/v3/time`);
             if (!response.ok) throw new Error('Failed to fetch server time');
             const data = await response.json();
@@ -147,9 +224,7 @@ const getSpotExchangeInfo = async (): Promise<SymbolInfo[]> => {
     if (spotExchangeInfoCache && (now - spotCacheTimestamp < CACHE_DURATION_LONG)) {
         return spotExchangeInfoCache;
     }
-    const response = await fetch(`${SPOT_BASE_URL}/api/v3/exchangeInfo`);
-    if (!response.ok) throw new Error(await response.text());
-    const data = await response.json();
+    const data = await fetchPublic(`${SPOT_BASE_URL}/api/v3/exchangeInfo`);
     spotExchangeInfoCache = data.symbols;
     spotCacheTimestamp = now;
     return spotExchangeInfoCache!;
@@ -160,9 +235,7 @@ const getFuturesExchangeInfo = async (): Promise<any[]> => {
     if (futuresExchangeInfoCache && (now - futuresCacheTimestamp < CACHE_DURATION_LONG)) {
         return futuresExchangeInfoCache;
     }
-    const response = await fetch(`${FUTURES_BASE_URL}/fapi/v1/exchangeInfo`);
-    if (!response.ok) throw new Error(await response.text());
-    const data = await response.json();
+    const data = await fetchPublic(`${FUTURES_BASE_URL}/fapi/v1/exchangeInfo`);
     futuresExchangeInfoCache = data.symbols;
     futuresCacheTimestamp = now;
     return futuresExchangeInfoCache!;
@@ -215,18 +288,79 @@ export const fetchKlines = async (symbol: string, interval: string, options: { l
     const baseUrl = isFutures ? FUTURES_BASE_URL : SPOT_BASE_URL;
     const path = isFutures ? '/fapi/v1/klines' : '/api/v3/klines';
 
-    const response = await fetch(`${baseUrl}${path}?${params.toString()}`);
-    if (!response.ok) {
-        console.error(`404 from ${baseUrl}${path}?${params.toString()}`);
-        throw new Error("404 File not found");
-    }
-    const data = await response.json();
+    const data = await fetchPublic(`${baseUrl}${path}?${params.toString()}`);
+    
     const klinesResult: Kline[] = data.map((k: any) => ({
         time: k[0], open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]),
         close: parseFloat(k[4]), volume: parseFloat(k[5]), isFinal: true,
+        // Added Index 9 for Taker Buy Base Asset Volume (Omega V2.1)
+        takerBuyVolume: parseFloat(k[9])
     }));
     
     return klinesResult;
+};
+
+/**
+ * Fetch Open Interest for Futures (Omega V2.1)
+ * Note: Only works for Futures.
+ */
+export const fetchOpenInterest = async (symbol: string): Promise<{ openInterest: number, time: number } | null> => {
+    try {
+        // Strip the '/' for API call if it exists
+        const cleanSymbol = symbol.replace('/', '');
+        const data = await fetchPublic(`${FUTURES_BASE_URL}/fapi/v1/openInterest?symbol=${cleanSymbol}`);
+        return { openInterest: parseFloat(data.openInterest), time: data.time };
+    } catch (e) { return null; }
+};
+
+/**
+ * Fetch Open Interest History (Omega V4.0)
+ * Only works for Futures. Returns recent OI data to detect trends.
+ * NOTE: Binance does NOT provide a public WebSocket for OI History, so we must use REST.
+ * We cache the result to prevent rate limit issues.
+ */
+export const fetchOpenInterestHistory = async (symbol: string, period: string, limit: number = 30): Promise<OpenInterestKline[]> => {
+    const cleanSymbol = symbol.replace('/', '');
+    const cacheKey = `${cleanSymbol}:${period}`;
+    const now = Date.now();
+    const cached = openInterestHistoryCache.get(cacheKey);
+
+    // 1. Check for valid cache
+    if (cached && (now - cached.timestamp < OI_CACHE_DURATION)) {
+        // Check if we cached a "failure" state (empty array)
+        // If it was a failure, use shorter error cache duration
+        if (cached.data.length === 0 && (now - cached.timestamp < OI_ERROR_CACHE_DURATION)) {
+            return [];
+        }
+        // If it was a success, use standard cache duration
+        if (cached.data.length > 0) {
+            return cached.data;
+        }
+    }
+
+    try {
+        const params = new URLSearchParams({ symbol: cleanSymbol, period, limit: String(limit) });
+        // FIXED: Endpoint is /futures/data/openInterestHist, not /fapi/v1/openInterestHist
+        const data = await fetchPublic(`${FUTURES_BASE_URL}/futures/data/openInterestHist?${params.toString()}`);
+        
+        // Map to typed array
+        const result: OpenInterestKline[] = data.map((d: any) => ({
+            symbol: d.symbol,
+            sumOpenInterest: d.sumOpenInterest,
+            sumOpenInterestValue: d.sumOpenInterestValue,
+            timestamp: d.timestamp
+        }));
+
+        openInterestHistoryCache.set(cacheKey, { data: result, timestamp: now });
+        return result;
+    } catch (e) {
+        // Log the error but don't crash.
+        // Important: Cache the failure (empty array) for 10 seconds to prevent
+        // rapid-fire retries in the analysis loop if the API is returning 404/500.
+        console.warn(`[BinanceService] Failed to fetch OI history for ${symbol}. Caching failure for 10s.`);
+        openInterestHistoryCache.set(cacheKey, { data: [], timestamp: now }); 
+        return [];
+    }
 };
 
 export const fetchFullKlines = async (symbol: string, interval: string, startTime: number, endTime: number, mode: TradingMode): Promise<Kline[]> => {
@@ -247,10 +381,7 @@ export const fetchFullKlines = async (symbol: string, interval: string, startTim
             limit: String(MAX_LIMIT) 
         });
 
-        const response = await fetch(`${baseUrl}${path}?${params.toString()}`);
-        if (!response.ok) throw new Error(await response.text());
-
-        const data = await response.json();
+        const data = await fetchPublic(`${baseUrl}${path}?${params.toString()}`);
 
         if (data.length === 0) {
             break;
@@ -259,12 +390,17 @@ export const fetchFullKlines = async (symbol: string, interval: string, startTim
         const klines: Kline[] = data.map((k: any) => ({
             time: k[0], open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]),
             close: parseFloat(k[4]), volume: parseFloat(k[5]), isFinal: true,
+            // Added Index 9 for Taker Buy Base Asset Volume (Omega V2.1)
+            takerBuyVolume: parseFloat(k[9])
         }));
         
         allKlines.push(...klines);
         
         const lastKlineTime = klines[klines.length - 1].time;
         currentStartTime = lastKlineTime + 1;
+        
+        // Gentle delay between chunks in backtesting
+        await new Promise(r => setTimeout(r, 100));
     }
     
     const uniqueKlinesMap = new Map<number, Kline>();
@@ -288,9 +424,7 @@ export const fetchDepthSnapshot = async (symbol: string, mode: TradingMode, limi
     const baseUrl = isFutures ? FUTURES_BASE_URL : SPOT_BASE_URL;
     const path = isFutures ? '/fapi/v1/depth' : '/api/v3/depth';
 
-    const response = await fetch(`${baseUrl}${path}?${params.toString()}`);
-    if (!response.ok) throw new Error(await response.text());
-    return response.json();
+    return fetchPublic(`${baseUrl}${path}?${params.toString()}`);
 };
 
 const fetchAllTickerPrices = async (): Promise<Map<string, number>> => {
@@ -298,9 +432,7 @@ const fetchAllTickerPrices = async (): Promise<Map<string, number>> => {
     if (now - tickerPriceCacheTimestamp < CACHE_DURATION_SHORT) {
         return tickerPriceCache;
     }
-    const response = await fetch(`${SPOT_BASE_URL}/api/v3/ticker/price`);
-    if (!response.ok) throw new Error(await response.text());
-    const data: { symbol: string, price: string }[] = await response.json();
+    const data: { symbol: string, price: string }[] = await fetchPublic(`${SPOT_BASE_URL}/api/v3/ticker/price`);
     const newCache = new Map<string, number>();
     data.forEach(ticker => newCache.set(ticker.symbol, parseFloat(ticker.price)));
     tickerPriceCache = newCache;
@@ -309,32 +441,28 @@ const fetchAllTickerPrices = async (): Promise<Map<string, number>> => {
 };
 
 export const fetchTickerPrice = async (symbol: string): Promise<number | null> => {
-    const response = await fetch(`${SPOT_BASE_URL}/api/v3/ticker/price?symbol=${symbol}`);
-    if (!response.ok) {
-        console.error(`Failed to fetch price for ${symbol}:`, await response.text());
+    try {
+        const data = await fetchPublic(`${SPOT_BASE_URL}/api/v3/ticker/price?symbol=${symbol}`);
+        return parseFloat(data.price);
+    } catch (e) {
+        console.error(`Failed to fetch price for ${symbol}`, e);
         return null;
     }
-    const data = await response.json();
-    return parseFloat(data.price);
 };
 
 export const fetchFuturesTickerPrice = async (symbol: string): Promise<number | null> => {
-    const response = await fetch(`${FUTURES_BASE_URL}/fapi/v1/ticker/price?symbol=${symbol}`);
-    if (!response.ok) {
-        console.error(`Failed to fetch futures price for ${symbol}:`, await response.text());
+    try {
+        const data = await fetchPublic(`${FUTURES_BASE_URL}/fapi/v1/ticker/price?symbol=${symbol}`);
+        return parseFloat(data.price);
+    } catch (e) {
+        console.error(`Failed to fetch futures price for ${symbol}`, e);
         return null;
     }
-    const data = await response.json();
-    return parseFloat(data.price);
 };
 
 export const fetchFundingRate = async (symbol: string): Promise<{ fundingTime: number; fundingRate: string } | null> => {
     try {
-        const response = await fetch(`${FUTURES_BASE_URL}/fapi/v1/premiumIndex?symbol=${symbol}`);
-        if (!response.ok) {
-            return null;
-        }
-        const data = await response.json();
+        const data = await fetchPublic(`${FUTURES_BASE_URL}/fapi/v1/premiumIndex?symbol=${symbol}`);
         const fundingData = Array.isArray(data) ? data.find(d => d.symbol === symbol) : data;
         
         if (fundingData && fundingData.nextFundingTime && fundingData.lastFundingRate) {
@@ -345,7 +473,7 @@ export const fetchFundingRate = async (symbol: string): Promise<{ fundingTime: n
         }
         return null;
     } catch (e) {
-        console.error(`Failed to fetch funding rate for ${symbol}:`, e);
+        // console.error(`Failed to fetch funding rate for ${symbol}:`, e);
         return null;
     }
 };

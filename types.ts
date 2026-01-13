@@ -1,3 +1,4 @@
+
 // types.ts
 
 // --- Enums ---
@@ -37,6 +38,7 @@ export interface Kline {
     low: number;
     close: number;
     volume?: number;
+    takerBuyVolume?: number; // Omega V2.1: Institutional Aggression
     isFinal: boolean;
 }
 
@@ -48,6 +50,13 @@ export interface LiveTicker {
     lowPrice: number;
     volume: number;
     quoteVolume: number;
+}
+
+export interface OpenInterestKline {
+    symbol: string;
+    sumOpenInterest: string; // The raw value from Binance is string
+    sumOpenInterestValue: string;
+    timestamp: number;
 }
 
 
@@ -411,13 +420,16 @@ export interface AgentParams {
     ms_1h_emaPeriod?: number;
     ms_4h_swingLookback?: number;
 
-    // Agent 25: Omega Predator
+    // Agent 25: Omega Predator (V3 Sovereign)
     omega_matrixThreshold?: number;
+    omega_aggressiveness?: 'Conservative' | 'Standard' | 'Sniper'; // V3: Simple mode
+    omega_minExpectancy?: number;
+    // FIX: Added missing Omega parameters
     omega_fvgLookback?: number;
     omega_sweepDepth?: number;
-    omega_minExpectancy?: number;
     omega_frequencyAggressiveness?: number;
-
+    omega_orderFlowWeight?: number;
+    
     // SMC Reversal Veto
     smc_divergenceLookback?: number;
     smc_volumeMultiplier?: number;
@@ -442,6 +454,10 @@ export interface MarketDataContext {
     atr14?: number;
     stochRsi?: StochasticRSIOutput;
     vi14?: { pdi: number, ndi: number };
+    cvd?: number; // Omega V2.1: Cumulative Volume Delta
+    openInterest?: number; 
+    openInterestHistory?: OpenInterestKline[]; // Omega V4: Trend detection
+    liqIntensity?: number;
     bb20_2?: BollingerBandsOutput;
     volumeSma20?: number;
     obvTrend?: 'bullish' | 'bearish' | 'neutral';
@@ -487,22 +503,29 @@ export interface AstraXAnalysis {
     adjustments?: { reason: string, impact: number }[];
 }
 
+// Omega V3: Sovereign Architect Analysis
 export interface OmegaAnalysis {
     conviction: number;
-    layers: {
-        macro: number;
-        structural: number;
-        micro: number;
+    phases: {
+        scan: { bias: 'Bullish' | 'Bearish' | 'Neutral', score: number, reason: string }; // 4H/1H
+        hunt: { setup: 'FVG' | 'Breakout' | 'Rejection' | 'None', score: number, reason: string }; // 15m/5m
+        kill: { trigger: 'Sweep' | 'Divergence' | 'Price Action' | 'None', score: number, reason: string }; // 1m
+        flow?: { trend: 'Rising' | 'Falling' | 'Flat', score: number, reason: string }; // V4: OI Flow
+    };
+    feeExpectancy: {
+        cost: number;
+        reward: number;
+        ratio: number;
+        passed: boolean;
     };
     targets: {
-        fvgPrice?: number;
-        liquidityPrice?: number;
+        entry: number;
+        stopLoss: number;
+        takeProfit: number;
     };
-    brainState?: {
-        mode: string;
-        entropy: number;
-        vCompActive: boolean;
-        managementReason?: string;
+    sizing: {
+        multiplier: number;
+        reason: string;
     };
 }
 
@@ -526,6 +549,7 @@ export interface TradeSignal {
     astraXAnalysis?: AstraXAnalysis;
     omegaAnalysis?: OmegaAnalysis;
     tradeType?: 'conviction' | 'scalp';
+    setupType?: string; // Omega V5.2: Explicitly track setup mechanics (Breakout vs Rejection)
     btcContext?: BitcoinState;
 }
 
@@ -650,8 +674,8 @@ export interface Position {
     initialTakeProfitPrice: number;
     initialStopLossPrice: number;
     initialRiskInPrice: number;
-    initialStopLossReason: 'Agent Logic' | 'Hard Cap';
-    activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Profit Secure' | 'Breakeven' | 'Agent Trail' | 'Sovereign Ratchet';
+    initialStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Noise Floor';
+    activeStopLossReason: 'Agent Logic' | 'Hard Cap' | 'Profit Secure' | 'Breakeven' | 'Agent Trail' | 'Sovereign Ratchet' | 'Noise Floor';
     pricePrecision: number;
     timeFrame: string;
     liquidationPrice?: number;
@@ -673,6 +697,7 @@ export interface Position {
     exitContext?: Partial<MarketDataContext>;
     entryAtr?: number;
     tradeType?: 'conviction' | 'scalp';
+    setupType?: string; // Omega V5.2: Explicit setup type (Breakout, Rejection)
     promotedFrom?: 'scalp';
     btcContext?: BitcoinState;
     omegaBrainData?: {

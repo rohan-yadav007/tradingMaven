@@ -293,6 +293,8 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
                     return { text: 'Hard Cap', className: 'bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300' };
                 case 'Agent Logic':
                     return { text: 'Agent Logic', className: 'bg-slate-200 dark:bg-slate-600 text-slate-700 dark:text-slate-200' };
+                case 'Noise Floor':
+                    return { text: 'Noise Floor', className: 'bg-slate-200 dark:bg-slate-600 text-slate-700 dark:text-slate-200' };
                 case 'Profit Secure':
                     return { text: 'Profit Secure', className: 'bg-teal-100 dark:bg-teal-900/50 text-teal-700 dark:text-teal-300' };
                 case 'Breakeven':

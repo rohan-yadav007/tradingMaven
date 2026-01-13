@@ -1,3 +1,4 @@
+
 // components/AnalysisPreview.tsx
 
 
@@ -33,13 +34,12 @@ const SignalTag: React.FC<{ signal: 'BUY' | 'SELL' | 'HOLD' }> = ({ signal }) =>
 };
 
 const ReasonItem: React.FC<{ reason: string }> = ({ reason }) => {
-    const isMet = reason.startsWith('✅');
+    const isMet = reason.startsWith('✅') || reason.startsWith('🚀');
     const isUnmet = reason.startsWith('❌');
-    const isInfo = reason.startsWith('ℹ️');
+    const isInfo = reason.startsWith('ℹ️') || reason.startsWith('Scan:') || reason.startsWith('Hunt:') || reason.startsWith('Kill:');
     const isWarning = reason.startsWith('⚠️');
 
     if (isMet || isUnmet || isInfo || isWarning) {
-        const text = reason.substring(2).trim();
         let iconColor: string;
         let textColor: string;
         let Icon: React.FC<any>;
@@ -61,7 +61,7 @@ const ReasonItem: React.FC<{ reason: string }> = ({ reason }) => {
         return (
             <li className="flex items-center gap-2">
                 <Icon className={`w-4 h-4 flex-shrink-0 ${iconColor}`} />
-                <span className={textColor}>{text}</span>
+                <span className={textColor}>{reason}</span>
             </li>
         );
     }
@@ -77,50 +77,71 @@ const ProgressBar: React.FC<{ value: number; colorClass: string; height?: string
 );
 
 const OmegaAnalysisDisplay: React.FC<{ analysis: OmegaAnalysis }> = ({ analysis }) => {
-    const { conviction, layers, targets } = analysis;
+    const { conviction, phases, feeExpectancy, sizing } = analysis;
+
+    if (!phases) return null; // Safety check
 
     return (
         <div className="space-y-4 text-sm">
             <div className="bg-slate-900 rounded-lg p-3 border border-sky-500/30">
                 <div className="flex justify-between items-center mb-2">
-                    <span className="text-sky-400 font-bold uppercase tracking-widest text-[10px]">Unified Matrix Convergence</span>
+                    <span className="text-sky-400 font-bold uppercase tracking-widest text-[10px]">Matrix Conviction</span>
                     <span className="text-white font-mono font-bold text-lg">{conviction}%</span>
                 </div>
                 <ProgressBar value={conviction} colorClass="bg-sky-500" height="h-3" />
             </div>
 
+            {/* V3: 3-Phase Pipeline */}
             <div className="grid grid-cols-1 gap-3">
-                <div>
-                    <div className="flex justify-between text-xs mb-1">
-                        <span className="text-slate-500 font-semibold uppercase">1. Macro Tide (1D/4H)</span>
-                        <span className={layers.macro >= 100 ? 'text-emerald-500 font-bold' : 'text-slate-400'}>{layers.macro}%</span>
+                <div className="bg-slate-50 dark:bg-slate-800/50 p-2.5 rounded border border-slate-200 dark:border-slate-700">
+                    <div className="flex justify-between items-center mb-1">
+                        <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">1. Scan Phase (4H/1H)</span>
+                        <span className={`text-xs font-bold ${phases.scan.score === 100 ? 'text-emerald-500' : 'text-amber-500'}`}>
+                            {phases.scan.bias}
+                        </span>
                     </div>
-                    <ProgressBar value={layers.macro} colorClass={layers.macro >= 100 ? "bg-emerald-500" : "bg-slate-400"} height="h-1.5" />
+                    <p className="text-xs text-slate-600 dark:text-slate-300 truncate">{phases.scan.reason}</p>
                 </div>
 
-                <div>
-                    <div className="flex justify-between text-xs mb-1">
-                        <span className="text-slate-500 font-semibold uppercase">2. Structural Void (15m)</span>
-                        <span className={layers.structural >= 60 ? 'text-sky-500 font-bold' : 'text-slate-400'}>{layers.structural}%</span>
+                <div className="bg-slate-50 dark:bg-slate-800/50 p-2.5 rounded border border-slate-200 dark:border-slate-700">
+                    <div className="flex justify-between items-center mb-1">
+                        <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">2. Hunt Phase (15m)</span>
+                        <span className={`text-xs font-bold ${phases.hunt.score > 0 ? 'text-sky-500' : 'text-slate-400'}`}>
+                            {phases.hunt.setup}
+                        </span>
                     </div>
-                    <ProgressBar value={layers.structural} colorClass={layers.structural >= 60 ? "bg-sky-500" : "bg-slate-400"} height="h-1.5" />
+                    <p className="text-xs text-slate-600 dark:text-slate-300 truncate">{phases.hunt.reason}</p>
                 </div>
 
-                <div>
-                    <div className="flex justify-between text-xs mb-1">
-                        <span className="text-slate-500 font-semibold uppercase">3. Micro Sweep (1m)</span>
-                        <span className={layers.micro >= 100 ? 'text-amber-500 font-bold' : 'text-slate-400'}>{layers.micro}%</span>
+                <div className="bg-slate-50 dark:bg-slate-800/50 p-2.5 rounded border border-slate-200 dark:border-slate-700">
+                    <div className="flex justify-between items-center mb-1">
+                        <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">3. Kill Phase (1m)</span>
+                        <span className={`text-xs font-bold ${phases.kill.score > 0 ? 'text-rose-500' : 'text-slate-400'}`}>
+                            {phases.kill.trigger}
+                        </span>
                     </div>
-                    <ProgressBar value={layers.micro} colorClass={layers.micro >= 100 ? "bg-amber-500" : "bg-slate-400"} height="h-1.5" />
+                    <p className="text-xs text-slate-600 dark:text-slate-300 truncate">{phases.kill.reason}</p>
                 </div>
             </div>
 
-            {targets.fvgPrice && (
-                <div className="mt-2 flex items-center gap-2 p-2 bg-indigo-500/10 border border-indigo-500/20 rounded">
-                    <ZapIcon className="w-3.5 h-3.5 text-indigo-400" />
-                    <span className="text-[11px] text-indigo-300 font-semibold">Institutional Target Locked: ${targets.fvgPrice.toFixed(2)}</span>
+            {/* Fee Law & Sizing */}
+            <div className="grid grid-cols-2 gap-3 mt-2">
+                <div className={`p-2 rounded border ${feeExpectancy.passed ? 'bg-emerald-100/50 dark:bg-emerald-900/20 border-emerald-500/30' : 'bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-700'}`}>
+                    <span className="text-[10px] text-slate-500 uppercase block mb-1">Fee Expectancy</span>
+                    <div className="flex items-center gap-1">
+                        <span className={`font-bold ${feeExpectancy.passed ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500'}`}>
+                            {feeExpectancy.ratio > 0 ? `${feeExpectancy.ratio.toFixed(1)}x` : '-'}
+                        </span>
+                        {feeExpectancy.passed && <CheckCircleIcon className="w-3 h-3 text-emerald-500" />}
+                    </div>
                 </div>
-            )}
+                <div className="p-2 rounded bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
+                    <span className="text-[10px] text-slate-500 uppercase block mb-1">Dynamic Size</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200">
+                        {sizing.multiplier * 100}%
+                    </span>
+                </div>
+            </div>
         </div>
     );
 };

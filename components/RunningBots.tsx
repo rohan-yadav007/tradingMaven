@@ -1,3 +1,4 @@
+
 // components/RunningBots.tsx
 
 import React, { useState, useEffect, useMemo, useRef, memo } from 'react';
@@ -139,11 +140,28 @@ const ParamSlider: React.FC<{label: string, value: number, onChange: (val: numbe
 
 const EntryFilterConfiguration: React.FC<{ bot: RunningBot; onUpdate: (change: Partial<BotConfig>) => void; onRefreshAnalysis: () => void; }> = ({ bot, onUpdate, onRefreshAnalysis }) => {
     const { config } = bot;
+    const isOmega = config.agent.id === 25;
 
     const handleChange = (change: Partial<BotConfig>) => {
         onUpdate(change);
         onRefreshAnalysis();
     };
+
+    if (isOmega) {
+        return (
+            <div>
+                <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Entry Configuration</h4>
+                <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg space-y-2 text-sm">
+                    <p className="text-xs text-slate-500 dark:text-slate-400 italic">
+                        Omega operates autonomously. Most standard filters are handled internally by the Sovereign Matrix.
+                    </p>
+                    <ConfigToggle label="Initial Risk Veto" checked={config.isInitialRiskVetoEnabled} onChange={v => handleChange({ isInitialRiskVetoEnabled: v })} />
+                    <ParamSlider label="Max Margin Loss %" value={config.maxMarginLossPercent} onChange={v => handleChange({ maxMarginLossPercent: v })} min={1} max={25} step={0.5} valueDisplay={v => `${v.toFixed(1)}%`} />
+                    <ConfigToggle label="Immediate Entry" checked={config.entryTiming === 'immediate'} onChange={v => handleChange({ entryTiming: v ? 'immediate' : 'onNextCandle' })} />
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div>
@@ -173,15 +191,42 @@ const EntryFilterConfiguration: React.FC<{ bot: RunningBot; onUpdate: (change: P
 
 const TradeManagementConfiguration: React.FC<{ bot: RunningBot; onUpdate: (change: Partial<BotConfig>) => void; onRefreshAnalysis: () => void; }> = ({ bot, onUpdate, onRefreshAnalysis }) => {
     const { config } = bot;
+    const isOmega = config.agent.id === 25;
 
     const handleToggleChange = (change: Partial<BotConfig>) => {
         onUpdate(change);
-        // No need to refresh analysis for trade management changes as they don't affect entry signals
     };
 
      const handleSelectChange = (change: Partial<BotConfig>) => {
         onUpdate(change);
     };
+
+    if (isOmega) {
+        return (
+            <div>
+                <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Trade Management</h4>
+                <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg space-y-2 text-sm">
+                    <p className="text-xs text-slate-500 dark:text-slate-400 italic">
+                        Managed by Sovereign Engine V3.7.
+                    </p>
+                    <ConfigToggle label="Trade Guardian (Proactive Exit)" checked={config.isTradeGuardianEnabled ?? true} onChange={v => handleToggleChange({ isTradeGuardianEnabled: v })} />
+                    <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                        <label htmlFor={`invalidation-sensitivity-${bot.id}`} className="font-medium text-slate-700 dark:text-slate-300 text-sm">Invalidation Sensitivity</label>
+                        <select 
+                            id={`invalidation-sensitivity-${bot.id}`}
+                            value={config.invalidationSensitivity} 
+                            onChange={e => handleSelectChange({ invalidationSensitivity: e.target.value as 'low' | 'medium' | 'high'})}
+                            className="text-xs font-semibold bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-md p-1 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                        >
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div>
@@ -301,13 +346,15 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
                     return { text: 'Breakeven', className: 'bg-sky-100 dark:bg-sky-900/50 text-sky-700 dark:text-sky-300' };
                 case 'Agent Trail':
                     return { text: 'Agent Trail', className: 'bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300' };
+                case 'Sovereign Ratchet':
+                    return { text: 'Sov. Ratchet', className: 'bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300' };
                 default:
                     return { text: reason, className: 'bg-slate-200 dark:bg-slate-600' };
             }
         }, [reason]);
 
         return (
-            <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${reasonInfo.className}`}>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${reasonInfo.className}`}>
                 {reasonInfo.text}
             </span>
         );
@@ -315,37 +362,44 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
 
     const isProfitSecureActive = activeStopLossReason === 'Profit Secure';
     const isAgentTrailActive = activeStopLossReason === 'Agent Trail';
+    const isSovereignActive = activeStopLossReason === 'Sovereign Ratchet';
     
     const isUniversalTrailEnabled = config.isUniversalProfitTrailEnabled;
 
     const universalTrailStatus = useMemo(() => {
-        if (!isUniversalTrailEnabled) return { text: 'Disabled by user', className: 'bg-slate-200 dark:bg-slate-600' };
+        // Special case for Omega (Agent 25): Sovereign Ratchet is always active/monitoring
+        if (config.agent.id === 25) {
+             if (isSovereignActive) return { text: 'Active', className: 'bg-purple-500 text-white' };
+             return { text: 'Monitoring', className: 'bg-slate-500 dark:bg-slate-400 text-white dark:text-slate-900' };
+        }
+
+        if (!isUniversalTrailEnabled) return { text: 'Disabled', className: 'bg-slate-200 dark:bg-slate-600' };
         if (isProfitSecureActive && profitLockTier > 3) {
             const tier = profitLockTier - 3;
             return { text: tier > 0 ? `Tier ${tier} Active` : 'Active', className: 'bg-teal-500 text-white' };
         }
         if (isBreakevenSet) return { text: 'Breakeven', className: 'bg-sky-500 text-white' };
         return { text: 'Enabled', className: 'bg-slate-500 dark:bg-slate-400 text-white dark:text-slate-900' };
-    }, [isUniversalTrailEnabled, isProfitSecureActive, isBreakevenSet, profitLockTier]);
+    }, [isUniversalTrailEnabled, isProfitSecureActive, isBreakevenSet, profitLockTier, isSovereignActive, config.agent.id]);
     
     const proactiveExitStatus = useMemo(() => {
         // Highest priority states: Aggressive trail and Spike protection
         if (aggressiveTrailTier && aggressiveTrailTier > 0) {
-            return { text: 'Aggressive Trail', className: 'bg-purple-500 text-white' };
+            return { text: 'Aggressive', className: 'bg-purple-500 text-white' };
         }
         if (profitSpikeTier && profitSpikeTier > 0) {
-             return { text: `Spike Protector T${profitSpikeTier}`, className: 'bg-purple-500 text-white' };
+             return { text: `Spike T${profitSpikeTier}`, className: 'bg-purple-500 text-white' };
         }
         // Display the sensitivity level if no higher-priority state is active
         const sensitivity = config.invalidationSensitivity;
         if (sensitivity === 'low') {
-            return { text: 'Low Sensitivity', className: 'bg-slate-500 dark:bg-slate-400 text-white dark:text-slate-900' };
+            return { text: 'Low Sens.', className: 'bg-slate-500 dark:bg-slate-400 text-white dark:text-slate-900' };
         }
         if (sensitivity === 'medium') {
-            return { text: 'Medium Sensitivity', className: 'bg-amber-500 text-white' };
+            return { text: 'Med Sens.', className: 'bg-amber-500 text-white' };
         }
         if (sensitivity === 'high') {
-            return { text: 'High Sensitivity', className: 'bg-rose-500 text-white' };
+            return { text: 'High Sens.', className: 'bg-rose-500 text-white' };
         }
         // Fallback
         return { text: 'Enabled', className: 'bg-slate-500 dark:bg-slate-400 text-white dark:text-slate-900' };
@@ -354,7 +408,7 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
 
     const agentTrailStatus = useMemo(() => {
         if (!config.isAgentTrailEnabled) {
-            return { text: 'Disabled by user', className: 'bg-slate-200 dark:bg-slate-600' };
+            return { text: 'Disabled', className: 'bg-slate-200 dark:bg-slate-600' };
         }
         if (isAgentTrailActive) {
             return { text: 'ACTIVE', className: 'bg-indigo-500 text-white' };
@@ -365,62 +419,63 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
     const isProactiveSystemActive = (profitSpikeTier && profitSpikeTier > 0) || (aggressiveTrailTier && aggressiveTrailTier > 0);
 
     return (
-        <div>
-            <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Stop-Loss Details</h4>
-            <div className="bg-slate-100 dark:bg-slate-900/50 p-3 rounded-lg space-y-3 text-sm">
+        <div className="space-y-2">
+            <div className="bg-slate-100 dark:bg-slate-900/50 p-2 rounded-lg space-y-2 text-xs">
                 <div className="flex justify-between items-center">
                     <span className="font-bold">Active SL Price</span>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1">
                         <ActiveReasonTag reason={activeStopLossReason} />
-                        <span className="font-bold font-mono bg-slate-200 dark:bg-slate-700 px-2 py-1 rounded-md">{formatPrice(stopLossPrice, pricePrecision)}</span>
+                        <span className="font-bold font-mono bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-xs">{formatPrice(stopLossPrice, pricePrecision)}</span>
                     </div>
                 </div>
 
-                <div className={`p-2 rounded-md ${isProactiveSystemActive ? 'bg-purple-100 dark:bg-purple-900 border border-purple-300 dark:border-purple-700' : ''}`}>
+                <div className={`p-1.5 rounded-md ${isProactiveSystemActive ? 'bg-purple-100 dark:bg-purple-900 border border-purple-300 dark:border-purple-700' : ''}`}>
                     <div className="flex justify-between items-center">
                          <div className="flex items-center gap-1">
-                            <ZapIcon className="w-4 h-4 text-purple-600 dark:text-purple-400"/>
-                            <span className={isProactiveSystemActive ? 'font-semibold text-purple-700 dark:text-purple-300' : 'font-medium'}>
-                                Proactive Exit System
+                            <ZapIcon className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400"/>
+                            <span className={isProactiveSystemActive ? 'font-semibold text-purple-700 dark:text-purple-300 text-[10px]' : 'font-medium text-[10px]'}>
+                                Guardian
                             </span>
                          </div>
-                         <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${proactiveExitStatus.className}`}>
+                         <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${proactiveExitStatus.className}`}>
                             {proactiveExitStatus.text}
                          </span>
                     </div>
                 </div>
 
-                <div className={`p-2 rounded-md ${isProfitSecureActive && !isProactiveSystemActive ? 'bg-teal-100 dark:bg-teal-900 border border-teal-300 dark:border-teal-700' : ''}`}>
+                <div className={`p-1.5 rounded-md ${isSovereignActive ? 'bg-purple-100 dark:bg-purple-900 border border-purple-300 dark:border-purple-700' : (isProfitSecureActive && !isProactiveSystemActive ? 'bg-teal-100 dark:bg-teal-900 border border-teal-300 dark:border-teal-700' : '')}`}>
                     <div className="flex justify-between items-center">
-                         <span className={isProfitSecureActive ? 'font-semibold text-teal-700 dark:text-teal-300' : 'font-medium'}>
-                            Universal Profit Trail
+                         <span className={isSovereignActive ? 'font-semibold text-purple-700 dark:text-purple-300 text-[10px]' : (isProfitSecureActive ? 'font-semibold text-teal-700 dark:text-teal-300 text-[10px]' : 'font-medium text-[10px]')}>
+                            {config.agent.id === 25 ? 'Sov. Ratchet' : 'Universal'}
                         </span>
-                         <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${universalTrailStatus.className}`}>
+                         <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${universalTrailStatus.className}`}>
                             {universalTrailStatus.text}
                          </span>
                     </div>
                 </div>
 
-                <div className={`p-2 rounded-md ${isAgentTrailActive ? 'bg-indigo-100 dark:bg-indigo-900 border border-indigo-300 dark:border-indigo-700' : ''}`}>
-                    <div className="flex justify-between items-center">
-                         <span className={isAgentTrailActive ? 'font-semibold text-indigo-700 dark:text-indigo-300' : 'font-medium'}>
-                            Agent Trail
-                        </span>
-                         <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${agentTrailStatus.className}`}>
-                            {agentTrailStatus.text}
-                         </span>
+                {config.agent.id !== 25 && (
+                    <div className={`p-1.5 rounded-md ${isAgentTrailActive ? 'bg-indigo-100 dark:bg-indigo-900 border border-indigo-300 dark:border-indigo-700' : ''}`}>
+                        <div className="flex justify-between items-center">
+                             <span className={isAgentTrailActive ? 'font-semibold text-indigo-700 dark:text-indigo-300 text-[10px]' : 'font-medium text-[10px]'}>
+                                Agent Trail
+                            </span>
+                             <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${agentTrailStatus.className}`}>
+                                {agentTrailStatus.text}
+                             </span>
+                        </div>
                     </div>
-                </div>
+                )}
 
-                <div className="text-xs text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">
-                    Initial SL: {formatPrice(initialStopLossPrice, pricePrecision)} ({position.initialStopLossReason}).
+                <div className="text-[10px] text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-200 dark:border-slate-700 truncate">
+                    Init: {formatPrice(initialStopLossPrice, pricePrecision)} ({position.initialStopLossReason})
                 </div>
             </div>
         </div>
     );
 };
 
-const BotLog: React.FC<{ log: BotLogEntry[] }> = ({ log }) => {
+const BotLog: React.FC<{ log: BotLogEntry[], className?: string }> = ({ log, className }) => {
     const logContainerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -439,13 +494,13 @@ const BotLog: React.FC<{ log: BotLogEntry[] }> = ({ log }) => {
         }
     };
     return (
-        <div ref={logContainerRef} className="bg-slate-900 text-white font-mono text-xs rounded-lg p-3 h-[28rem] flex flex-col-reverse overflow-y-auto">
+        <div ref={logContainerRef} className={`bg-slate-900 text-white font-mono text-[10px] rounded-lg p-2 flex flex-col-reverse overflow-y-auto ${className || 'h-[28rem]'}`}>
             {/* The empty div is a trick to make scroll anchoring work better with flex-reverse */}
             <div></div>
             {log.slice().reverse().map((entry, index) => (
                 <div key={index} className="flex">
-                    <span className="text-slate-500 mr-2">{new Date(entry.timestamp).toLocaleTimeString()}</span>
-                    <span className={getLogColor(entry.type)}>{entry.message}</span>
+                    <span className="text-slate-500 mr-1.5 flex-shrink-0">{new Date(entry.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'})}</span>
+                    <span className={`${getLogColor(entry.type)} break-words`}>{entry.message}</span>
                 </div>
             ))}
         </div>
@@ -472,6 +527,7 @@ const useBotState = (botId: string) => {
 const BotCard = memo(({ botId, actions }: { botId: string; actions: Omit<RunningBotsProps, 'bots'> }) => {
     const bot = useBotState(botId);
     const [isExpanded, setIsExpanded] = useState(false);
+    const [expandedTab, setExpandedTab] = useState<'monitoring' | 'settings'>('monitoring');
     
     const [priceChange, setPriceChange] = useState<'up' | 'down' | 'none'>('none');
     const prevPriceRef = useRef(bot?.livePrice);
@@ -608,39 +664,70 @@ const BotCard = memo(({ botId, actions }: { botId: string; actions: Omit<Running
             
             {/* Expanded Details */}
             {isExpanded && (
-                <div className="bg-slate-50 dark:bg-slate-800/50 p-4 border-t border-slate-200 dark:border-slate-700">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="bg-slate-50 dark:bg-slate-800/50 border-t border-slate-200 dark:border-slate-700">
+                    <div className="flex border-b border-slate-200 dark:border-slate-700">
+                        <button
+                            onClick={() => setExpandedTab('monitoring')}
+                            className={`flex-1 py-3 text-sm font-semibold text-center transition-colors ${expandedTab === 'monitoring' ? 'text-sky-600 dark:text-sky-400 border-b-2 border-sky-600 dark:border-sky-400 bg-white dark:bg-slate-800' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'}`}
+                        >
+                            Monitoring
+                        </button>
+                        <button
+                            onClick={() => setExpandedTab('settings')}
+                            className={`flex-1 py-3 text-sm font-semibold text-center transition-colors ${expandedTab === 'settings' ? 'text-sky-600 dark:text-sky-400 border-b-2 border-sky-600 dark:border-sky-400 bg-white dark:bg-slate-800' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'}`}
+                        >
+                            Settings
+                        </button>
+                    </div>
 
-                        {/* Column 1: Position Details & AI Analysis */}
-                        <div className="space-y-6">
-                            {position && <StopLossDetails position={position} config={bot.config} />}
-                            <div>
-                                <div className="flex justify-between items-center mb-2">
-                                     <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base">AI Analysis</h4>
-                                     <button
-                                        onClick={() => actions.onRefreshBotAnalysis(bot.id)}
-                                        className="p-1.5 bg-slate-100 dark:bg-slate-700/50 rounded-full text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
-                                        title="Refresh analysis now"
-                                     >
-                                        <RefreshIcon className="w-4 h-4"/>
-                                     </button>
+                    <div className="p-4">
+                        {expandedTab === 'monitoring' && (
+                            <div className="flex flex-row gap-2 min-h-[18rem]">
+                                {/* Col 1: Analysis Preview */}
+                                <div className="flex-1 w-1/3 min-w-0 flex flex-col border-r border-slate-200 dark:border-slate-700 pr-2">
+                                    <div className="flex justify-between items-center mb-1 flex-shrink-0">
+                                         <h4 className="font-bold text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400">AI Analysis</h4>
+                                         <button
+                                            onClick={() => actions.onRefreshBotAnalysis(bot.id)}
+                                            className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full text-slate-400 dark:text-slate-500"
+                                            title="Refresh"
+                                         >
+                                            <RefreshIcon className="w-3.5 h-3.5"/>
+                                         </button>
+                                    </div>
+                                    <div className="flex-1">
+                                        <AnalysisPreview agent={bot.config.agent} agentParams={bot.config.agentParams} analysis={bot.analysis} isLoading={false} compact={true} />
+                                    </div>
                                 </div>
-                                 <AnalysisPreview agent={bot.config.agent} agentParams={bot.config.agentParams} analysis={bot.analysis} isLoading={false} />
+
+                                {/* Col 2: Stop Loss Details */}
+                                <div className="flex-1 w-1/3 min-w-0 flex flex-col border-r border-slate-200 dark:border-slate-700 px-2">
+                                    <h4 className="font-bold text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2 flex-shrink-0">Risk Management</h4>
+                                    <div className="overflow-y-auto flex-1 custom-scrollbar">
+                                        {position ? (
+                                            <StopLossDetails position={position} config={bot.config} />
+                                        ) : (
+                                            <div className="h-full flex flex-col justify-center items-center text-slate-400 dark:text-slate-500 border border-dashed border-slate-200 dark:border-slate-700 rounded-lg p-4">
+                                                <p className="text-xs font-medium text-center">No active position</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Col 3: Logs */}
+                                <div className="flex-1 w-1/3 min-w-0 flex flex-col pl-2">
+                                    <h4 className="font-bold text-xs uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2 flex-shrink-0">Activity Log</h4>
+                                    <BotLog log={bot.log} className="h-full max-h-[40rem]" />
+                                </div>
                             </div>
-                        </div>
+                        )}
 
-                        {/* Column 2: Configurations */}
-                        <div className="space-y-6">
-                            <EntryFilterConfiguration bot={bot} onUpdate={(partial) => actions.onUpdateBotConfig(bot.id, partial)} onRefreshAnalysis={() => actions.onRefreshBotAnalysis(bot.id)} />
-                            <TradeManagementConfiguration bot={bot} onUpdate={(partial) => actions.onUpdateBotConfig(bot.id, partial)} onRefreshAnalysis={() => actions.onRefreshBotAnalysis(bot.id)} />
-                        </div>
-
-                        {/* Column 3: Activity Log */}
-                        <div className="md:col-span-2 lg:col-span-1">
-                            <h4 className="font-semibold text-slate-800 dark:text-slate-200 text-base mb-2">Activity Log</h4>
-                            <BotLog log={bot.log} />
-                        </div>
-
+                        {expandedTab === 'settings' && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <EntryFilterConfiguration bot={bot} onUpdate={(partial) => actions.onUpdateBotConfig(bot.id, partial)} onRefreshAnalysis={() => actions.onRefreshBotAnalysis(bot.id)} />
+                                <TradeManagementConfiguration bot={bot} onUpdate={(partial) => actions.onUpdateBotConfig(bot.id, partial)} onRefreshAnalysis={() => actions.onRefreshBotAnalysis(bot.id)} />
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -651,34 +738,58 @@ const BotCard = memo(({ botId, actions }: { botId: string; actions: Omit<Running
 // --- Emergency Close Panel Component ---
 
 const EmergencyClosePanel: React.FC<{ bots: RunningBot[], onClosePosition: RunningBotsProps['onClosePosition'] }> = ({ bots, onClosePosition }) => {
+    // Add a simple local tick to ensure categorization re-evaluates on price updates even if bot array ref is same
+    const [tick, setTick] = useState(0);
+
+    useEffect(() => {
+        const interval = setInterval(() => setTick(t => t + 1), 1000);
+        return () => clearInterval(interval);
+    }, []);
+
     const { allOpenPositions, profitablePositions, losingPositions } = useMemo(() => {
         const allOpen: Position[] = [];
         const profitable: Position[] = [];
         const losing: Position[] = [];
 
-        bots.forEach(bot => {
-            if (bot.status === BotStatus.PositionOpen && bot.openPosition) {
-                const isLong = bot.openPosition.direction === 'LONG';
-                const currentPrice = bot.livePrice || bot.openPosition.entryPrice;
-                const unrealizedPnl = (currentPrice - bot.openPosition.entryPrice) * bot.openPosition.size * (isLong ? 1 : -1);
-                
-                allOpen.push(bot.openPosition);
+        // Query the live instances directly to get the latest live prices
+        const runningBots = botManagerService.getRunningBots();
 
-                if (unrealizedPnl > 0) {
-                    profitable.push(bot.openPosition);
-                } else if (unrealizedPnl < 0) {
-                    losing.push(bot.openPosition);
+        runningBots.forEach(bot => {
+            const hasPosition = (bot.status === BotStatus.PositionOpen || bot.status === BotStatus.FlipPending) && bot.openPosition;
+            if (hasPosition) {
+                const pos = bot.openPosition!;
+                const isLong = pos.direction === 'LONG';
+                
+                // Guard against uninitialized livePrice
+                const currentPrice = bot.livePrice && bot.livePrice > 0 ? bot.livePrice : pos.entryPrice;
+                
+                const entryValue = pos.entryPrice * pos.size;
+                const exitValue = currentPrice * pos.size;
+                
+                // Net PnL calculation: Gross - estimated round-trip fees
+                const grossPnl = (currentPrice - pos.entryPrice) * pos.size * (isLong ? 1 : -1);
+                const estFees = (entryValue + exitValue) * (pos.takerFeeRate || 0.0005);
+                const netPnl = grossPnl - estFees;
+
+                allOpen.push(pos);
+
+                // Use Net PnL for categorization for true accuracy
+                if (netPnl > 0) {
+                    profitable.push(pos);
+                } else if (netPnl < 0) {
+                    losing.push(pos);
                 }
+                // (Neutral trades stay in allOpen only)
             }
         });
         return { allOpenPositions: allOpen, profitablePositions: profitable, losingPositions: losing };
-    }, [bots]);
+    }, [bots, tick]); // Recalculate on structural changes (bots) and price updates (tick)
 
     const handleCloseAll = () => {
         if (allOpenPositions.length === 0) return;
         if (window.confirm(`Are you sure you want to close all ${allOpenPositions.length} open positions immediately?`)) {
             allOpenPositions.forEach(pos => {
-                const bot = bots.find(b => b.openPositionId === pos.id);
+                const bot = botManagerService.getBot(pos.botId!)?.bot;
                 if (bot) {
                     onClosePosition(pos, 'Kill Switch: Close All', bot.livePrice);
                 }
@@ -690,7 +801,7 @@ const EmergencyClosePanel: React.FC<{ bots: RunningBot[], onClosePosition: Runni
         if (profitablePositions.length === 0) return;
         if (window.confirm(`Are you sure you want to close all ${profitablePositions.length} profitable positions immediately?`)) {
             profitablePositions.forEach(pos => {
-                const bot = bots.find(b => b.openPositionId === pos.id);
+                const bot = botManagerService.getBot(pos.botId!)?.bot;
                 if (bot) {
                     onClosePosition(pos, 'Kill Switch: Close Profitable', bot.livePrice);
                 }
@@ -702,7 +813,7 @@ const EmergencyClosePanel: React.FC<{ bots: RunningBot[], onClosePosition: Runni
         if (losingPositions.length === 0) return;
         if (window.confirm(`Are you sure you want to close all ${losingPositions.length} losing positions immediately?`)) {
             losingPositions.forEach(pos => {
-                const bot = bots.find(b => b.openPositionId === pos.id);
+                const bot = botManagerService.getBot(pos.botId!)?.bot;
                 if (bot) {
                     onClosePosition(pos, 'Kill Switch: Close Losing', bot.livePrice);
                 }
@@ -710,7 +821,12 @@ const EmergencyClosePanel: React.FC<{ bots: RunningBot[], onClosePosition: Runni
         }
     };
     
-    if (bots.filter(b => b.status === BotStatus.PositionOpen).length === 0) {
+    // Check using botManager data for most accurate check
+    const hasAnyOpen = botManagerService.getRunningBots().some(b => 
+        (b.status === BotStatus.PositionOpen || b.status === BotStatus.FlipPending) && b.openPosition
+    );
+
+    if (!hasAnyOpen) {
         return null;
     }
 

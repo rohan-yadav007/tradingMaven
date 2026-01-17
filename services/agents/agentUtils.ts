@@ -1,10 +1,10 @@
 
 // services/agents/agentUtils.ts
 
-import { Kline, BotConfig, AgentParams, MarketDataContext, ADXOutput, StochasticRSIOutput, BollingerBandsOutput, MACDOutput, IchimokuCloudOutput, VortexIndicatorOutput, BitcoinState, ChartPattern } from '../../types';
+import { Kline, BotConfig, AgentParams, MarketDataContext, ADXOutput, StochasticRSIOutput, BollingerBandsOutput, MACDOutput, IchimokuCloudOutput, VortexIndicatorOutput, BitcoinState, ChartPattern, MarketStructureAnalysis } from '../../types';
 import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV, IchimokuCloud, bearishengulfingpattern, bullishengulfingpattern, darkcloudcover, dragonflydoji, gravestonedoji, hammerpattern, hangingman, morningstar, piercingline, shootingstar, eveningstar } from 'technicalindicators';
 import * as constants from '../../constants';
-import { findSwingPoints } from '../chartAnalysisService';
+import { findSwingPoints, analyzeMarketStructure } from '../chartAnalysisService';
 import { PatternRecognitionService } from '../patternRecognitionService';
 
 // --- Custom Indicator Implementations ---
@@ -152,39 +152,31 @@ export function calculateDailyVwap(klines: Kline[]): (number | undefined)[] {
     return vwapValues;
 }
 
-/**
- * Finds the nearest structural level (Swing High/Low) that could act as resistance/support.
- * Used for clamping profit targets.
- */
 export function findNearestStructuralLevel(
     klines: Kline[], 
     entryPrice: number, 
     direction: 'LONG' | 'SHORT', 
-    lookback: number = 50
+    lookback: number = 200 // Extended lookback for HTF targets
 ): number | null {
     const swings = findSwingPoints(klines.slice(-lookback), 5);
     
     if (direction === 'LONG') {
-        // Find the lowest Swing High that is ABOVE entry price (Next Resistance)
+        // Target: Nearest higher High
         const resistances = swings
             .filter(s => s.type === 'high' && s.price > entryPrice)
-            .sort((a, b) => a.price - b.price); // Ascending: smallest first (nearest)
+            .sort((a, b) => a.price - b.price); // Ascending price
         
         return resistances.length > 0 ? resistances[0].price : null;
     } else {
-        // Find the highest Swing Low that is BELOW entry price (Next Support)
+        // Target: Nearest lower Low
         const supports = swings
             .filter(s => s.type === 'low' && s.price < entryPrice)
-            .sort((a, b) => b.price - a.price); // Descending: largest first (nearest)
+            .sort((a, b) => b.price - a.price); // Descending price
         
         return supports.length > 0 ? supports[0].price : null;
     }
 }
 
-/**
- * Calculates the True Range of the last candle.
- * TR = Max(H-L, Abs(H-Cp), Abs(L-Cp))
- */
 export function calculateTrueRange(current: Kline, prev: Kline): number {
     const hl = current.high - current.low;
     const hcp = Math.abs(current.high - prev.close);
@@ -238,7 +230,6 @@ export function calculateRVOL(klines: Kline[], period: number = 20): number {
 export function calculateRsiVelocity(rsiValues: number[]): number {
     if (rsiValues.length < 5) return 0;
     const last = rsiValues[rsiValues.length - 1];
-    const prev = rsiValues[rsiValues.length - 2];
     const avgPrev = (rsiValues[rsiValues.length - 2] + rsiValues[rsiValues.length - 3] + rsiValues[rsiValues.length - 4]) / 3;
     return last - avgPrev;
 }
@@ -534,287 +525,48 @@ export function captureMarketContext(klines: Kline[], htfKlines?: Kline[], param
     return context;
 }
 
-export function detectLiquiditySweep(klines: Kline[], lookback: number = 10): { bullish: boolean, bearish: boolean } {
-    if (klines.length < lookback + 1) return { bullish: false, bearish: false };
-    const current = klines[klines.length - 1];
-    const previousCandles = klines.slice(-lookback - 1, -1);
-    const lowestLow = Math.min(...previousCandles.map(k => k.low));
-    const highestHigh = Math.max(...previousCandles.map(k => k.high));
-    const bullishSweep = current.low < lowestLow && current.close > lowestLow;
-    const bearishSweep = current.high > highestHigh && current.close < highestHigh;
-    return { bullish: bullishSweep, bearish: bearishSweep };
-}
+// --- OMEGA V7.3 Architecture Additions ---
 
 /**
- * Validates a swing rejection with volume and structure checks.
- * Replaces simple price comparison with "Volume + Wick + SFP" logic.
+ * Analyzes Higher Timeframe (4H) Structure.
+ * Distinguishes between Range, Uptrend, and Downtrend using pure Price Action.
+ * CRITICAL: This dictates the Hard Gate for Omega V8.0.
  */
-export function validateSwingRejection(
-    candle: Kline, 
-    swingLevel: number, 
-    type: 'support' | 'resistance', 
-    volumeSma: number
-): { score: number, reason: string } {
-    let score = 0;
-    let reasons: string[] = [];
+export function analyzeHTFStructure(klines: Kline[]): { bias: 'BULLISH' | 'BEARISH' | 'RANGE', reason: string } {
+    if (klines.length < 50) return { bias: 'RANGE', reason: 'Insuff. Data' };
 
-    // 1. Structural Check: Swing Failure Pattern (SFP)
-    // Did it breach the level but close back inside?
-    const isSfp = type === 'support' 
-        ? candle.low < swingLevel && candle.close > swingLevel 
-        : candle.high > swingLevel && candle.close < swingLevel;
+    const swingPoints = findSwingPoints(klines, 5); // 5-candle fractal lookback
+    const structure = analyzeMarketStructure(swingPoints);
 
-    if (isSfp) {
-        score += 50;
-        reasons.push('SFP (Close inside)');
+    if (structure.structure === 'Uptrend') {
+        return { bias: 'BULLISH', reason: '4H Structure: Higher Highs + Higher Lows' };
+    }
+    if (structure.structure === 'Downtrend') {
+        return { bias: 'BEARISH', reason: '4H Structure: Lower Lows + Lower Highs' };
+    }
+    
+    // Ranging or Indeterminate -> FORCE RANGE BIAS
+    return { bias: 'RANGE', reason: '4H Structure: Range / Indeterminate (No Clear Trend)' };
+}
+
+export function detectLiquidityInducement(klines: Kline[], level: number, type: 'support' | 'resistance'): boolean {
+    const last = klines[klines.length - 1];
+    
+    if (type === 'resistance') {
+        // Price wicked above level but failed to close significantly above?
+        // Or low volume breakout?
+        const isWickFakeout = last.high > level && last.close < level;
+        const isWeakBreakout = last.close > level && (last.close - level) / level < 0.001; // < 0.1% breakout
+        return isWickFakeout || isWeakBreakout;
     } else {
-        // Just a touch without SFP is weaker
-        const isTouch = type === 'support'
-            ? candle.low <= swingLevel * 1.001
-            : candle.high >= swingLevel * 0.999;
-        if (isTouch) {
-            score += 20;
-            reasons.push('Level Touch');
-        }
+        const isWickFakeout = last.low < level && last.close > level;
+        const isWeakBreakout = last.close < level && (level - last.close) / level < 0.001;
+        return isWickFakeout || isWeakBreakout;
     }
-
-    // 2. Effort Check: Volume Spike
-    if (candle.volume && volumeSma > 0) {
-        const rvol = candle.volume / volumeSma;
-        if (rvol > 2.0) {
-            score += 30;
-            reasons.push(`High Vol (${rvol.toFixed(1)}x)`);
-        } else if (rvol > 1.2) {
-            score += 15;
-            reasons.push(`Mod Vol (${rvol.toFixed(1)}x)`);
-        }
-    }
-
-    // 3. Rejection Check: Wick Size
-    const range = candle.high - candle.low;
-    if (range > 0) {
-        if (type === 'support') {
-            const lowerWick = Math.min(candle.open, candle.close) - candle.low;
-            if (lowerWick / range > 0.3) {
-                score += 20;
-                reasons.push('Long Wick');
-            }
-        } else {
-            const upperWick = candle.high - Math.max(candle.open, candle.close);
-            if (upperWick / range > 0.3) {
-                score += 20;
-                reasons.push('Long Wick');
-            }
-        }
-    }
-
-    return { score, reason: reasons.join(', ') };
-}
-
-export function detectFairValueGaps(klines: Kline[], lookback: number = 20): { top: number, bottom: number, type: 'FVG Bullish' | 'FVG Bearish', filled: boolean }[] {
-    if (klines.length < 3) return [];
-    const gaps: any[] = [];
-    const recent = klines.slice(-lookback);
-
-    for (let i = 2; i < recent.length; i++) {
-        const k1 = recent[i-2];
-        const k2 = recent[i-1];
-        const k3 = recent[i];
-
-        // Bullish FVG (Gap between K1 High and K3 Low)
-        if (k3.low > k1.high && k2.close > k2.open) {
-            gaps.push({ top: k3.low, bottom: k1.high, type: 'FVG Bullish', filled: false });
-        }
-        // Bearish FVG (Gap between K1 Low and K3 High)
-        else if (k3.high < k1.low && k2.close < k2.open) {
-            gaps.push({ top: k1.low, bottom: k3.high, type: 'FVG Bearish', filled: false });
-        }
-    }
-    return gaps;
-}
-
-export function calculateRsiSlope(rsiValues: number[]): number {
-    if (rsiValues.length < 3) return 0;
-    const last = rsiValues[rsiValues.length - 1];
-    const prev2 = rsiValues[rsiValues.length - 3];
-    return (last - prev2) / 2; 
-}
-
-export function isPriceOverextended(currentPrice: number, meanPrice: number, volatility: number, threshold: number): boolean {
-    if (volatility === 0) return false;
-    return Math.abs(currentPrice - meanPrice) > (volatility * threshold);
-}
-
-/**
- * Detects if the market is in a period of low volatility (Bollinger Band squeeze).
- */
-export function detectVolatilityCompression(klines: Kline[], length: number = 20, threshold: number = 0.02): boolean {
-    if (klines.length < length) return false;
-    const closes = klines.map(k => k.close);
-    const bb = BollingerBands.calculate({ period: length, stdDev: 2, values: closes });
-    // FIX: Cast getLast result to BollingerBandsOutput to access its properties.
-    const lastBB = getLast(bb) as BollingerBandsOutput | undefined;
-    if (!lastBB) return false;
-    const bandwidth = (lastBB.upper - lastBB.lower) / lastBB.middle;
-    return bandwidth < threshold;
-}
-
-/**
- * Omega V4.5 New Features
- */
-
-export type MarketRegime = 'TRENDING' | 'RANGING' | 'SQUEEZE' | 'VOLATILE';
-
-/**
- * Classifies the current market regime based on ADX (Trend Strength) and Bollinger Bandwidth (Volatility).
- * V4.8: Returns a conviction multiplier for sizing.
- */
-export function detectMarketRegime(klines: Kline[]): { regime: MarketRegime, score: number, multiplier: number } {
-    if (klines.length < 20) return { regime: 'RANGING', score: 0, multiplier: 0.8 }; // Fallback
-
-    const closes = klines.map(k => k.close);
-    const highs = klines.map(k => k.high);
-    const lows = klines.map(k => k.low);
-
-    const adxVal = getLast(ADX.calculate({ period: 14, high: highs, low: lows, close: closes })) as ADXOutput | undefined;
-    const bbVal = getLast(BollingerBands.calculate({ period: 20, stdDev: 2, values: closes })) as BollingerBandsOutput | undefined;
-
-    if (!adxVal || !bbVal) return { regime: 'RANGING', score: 0, multiplier: 0.8 };
-
-    const adx = adxVal.adx;
-    const bbw = (bbVal.upper - bbVal.lower) / bbVal.middle;
-
-    // 1. Squeeze Check (Pre-Trend Explosion)
-    // V4.8: Require confirmation (Rising ATR or high Volume) to differentiate Dead vs Coiling.
-    if (bbw < 0.05) {
-        const atrTrend = calculateAtrTrend(klines);
-        if (atrTrend === 'expanding') {
-             return { regime: 'SQUEEZE', score: 85, multiplier: 1.0 }; // Ready to pop
-        }
-        return { regime: 'SQUEEZE', score: 80, multiplier: 0.7 }; // Caution, could be dead
-    }
-
-    // 2. Trend Check
-    if (adx > 25) {
-        const mult = Math.min(1.2, 0.8 + (adx / 100)); // 0.8 to 1.2 based on strength
-        return { regime: 'TRENDING', score: adx, multiplier: mult };
-    }
-
-    // 3. Volatile Chop (High Bandwidth but Low ADX)
-    if (bbw > 0.15 && adx < 20) {
-        return { regime: 'VOLATILE', score: bbw * 100, multiplier: 0.5 }; // Reduce size significantly
-    }
-
-    // 4. Default: Ranging
-    return { regime: 'RANGING', score: 50, multiplier: 0.8 };
-}
-
-/**
- * Returns a conviction multiplier based on the time of day (Kill Zones).
- * Boosts conviction during high-volume sessions (London/NY overlap).
- */
-export function getKillZoneMultiplier(): number {
-    const now = new Date();
-    const hour = now.getUTCHours(); // 0-23
-
-    // London Open (07:00 - 10:00 UTC) -> High Volatility
-    if (hour >= 7 && hour < 10) return 1.1;
-
-    // NY Open / London Close Overlap (13:00 - 16:00 UTC) -> Highest Volatility
-    if (hour >= 13 && hour < 16) return 1.2;
-
-    // Asian Lunch / Weekend (Low Volatility) -> Reduce Size
-    const day = now.getUTCDay(); // 0 is Sunday, 6 is Saturday
-    if (day === 0 || day === 6) return 0.9;
-    
-    // Default
-    return 1.0;
-}
-
-/**
- * Calculates percentage deviation from VWAP.
- * Returns negative if price < VWAP, positive if price > VWAP.
- */
-export function calculateVwapDeviation(currentPrice: number, vwap: number): number {
-    if (vwap === 0) return 0;
-    return (currentPrice - vwap) / vwap;
-}
-
-/**
- * Analyzes the state of Bitcoin to provide market-wide context.
- * Returns a standardized BitcoinState object based on EMA alignment and RSI momentum.
- */
-export function analyzeBitcoinState(btcKlines: Kline[]): BitcoinState {
-    if (btcKlines.length < 50) {
-        return { 
-            state: 'NEUTRAL', 
-            trend: 'neutral', 
-            momentum: 'neutral', 
-            rejection: 'none', 
-            reason: 'Insufficient BTC data for analysis.' 
-        };
-    }
-
-    const closes = btcKlines.map(k => k.close);
-    const lastClose = getLast(closes)!;
-    
-    // EMA-based trend analysis
-    const ema20Values = EMA.calculate({ period: 20, values: closes });
-    const ema50Values = EMA.calculate({ period: 50, values: closes });
-    // FIX: Explicitly cast EMA results to number.
-    const lastEma20 = getLast(ema20Values) as number | undefined;
-    const lastEma50 = getLast(ema50Values) as number | undefined;
-    
-    // RSI-based momentum analysis
-    const rsiValues = RSI.calculate({ period: 14, values: closes });
-    // FIX: Explicitly cast RSI result to number.
-    const lastRsi = getLast(rsiValues) as number | undefined;
-
-    let trend: 'bullish' | 'bearish' | 'neutral' = 'neutral';
-    if (lastEma20 !== undefined && lastEma50 !== undefined) {
-        if (lastClose > lastEma20 && lastEma20 > lastEma50) trend = 'bullish';
-        else if (lastClose < lastEma20 && lastEma20 < lastEma50) trend = 'bearish';
-    }
-
-    // Detect sudden spikes (PUMP/CRASH)
-    const returns = [];
-    for(let i=1; i < Math.min(closes.length, 30); i++) {
-        const idx = closes.length - 1 - i;
-        if (idx >= 0) {
-            returns.push((closes[idx+1] - closes[idx]) / closes[idx]);
-        }
-    }
-    const lastReturn = returns[0] || 0;
-    const avgReturn = returns.reduce((a,b) => a + Math.abs(b), 0) / (returns.length || 1);
-    
-    let state: BitcoinState['state'] = 'NEUTRAL';
-    if (lastReturn > avgReturn * 5) state = 'PUMP';
-    else if (lastReturn < -avgReturn * 5) state = 'CRASH';
-    else if (trend === 'bullish') state = 'TREND_UP';
-    else if (trend === 'bearish') state = 'TREND_DOWN';
-    else state = 'RANGE';
-
-    let momentum: BitcoinState['momentum'] = 'neutral';
-    if (lastRsi !== undefined) {
-        if (lastRsi > 60) momentum = 'accelerating';
-        else if (lastRsi < 40) momentum = 'decelerating';
-    }
-
-    return {
-        state,
-        trend,
-        momentum,
-        rejection: 'none',
-        reason: `BTC is in ${state} regime (${trend} trend).`
-    };
 }
 
 // --- Omega V2.1 Additions ---
 
-/**
- * CVD: Cumulative Volume Delta
- * Measures the net difference between aggressive buyers and sellers over a window.
- */
 export function calculateCVD(klines: Kline[], period: number = 20): number {
     const slice = klines.slice(-period);
     return slice.reduce((acc, k) => {
@@ -825,17 +577,11 @@ export function calculateCVD(klines: Kline[], period: number = 20): number {
     }, 0);
 }
 
-/**
- * CVD DIVERGENCE (Omega V2.2)
- * Detects if CVD is making Higher Lows while Price makes Lower Lows (Bullish Divergence)
- * or CVD Lower Highs while Price Higher Highs (Bearish Divergence).
- */
 export function calculateCVDDivergence(klines: Kline[], lookback: number = 20): 'Bullish Divergence' | 'Bearish Divergence' | 'None' {
     if (klines.length < lookback) return 'None';
     
     const slice = klines.slice(-lookback);
     
-    // Calculate cumulative CVD array
     let currentCVD = 0;
     const cvdArray: number[] = [];
     const prices: number[] = [];
@@ -849,7 +595,6 @@ export function calculateCVDDivergence(klines: Kline[], lookback: number = 20): 
         prices.push(k.close);
     }
     
-    // Find pivots in Price and CVD
     const findLocalExtremes = (data: number[]) => {
         const lows: { val: number, idx: number }[] = [];
         const highs: { val: number, idx: number }[] = [];
@@ -863,19 +608,16 @@ export function calculateCVDDivergence(klines: Kline[], lookback: number = 20): 
     const priceExtremes = findLocalExtremes(prices);
     const cvdExtremes = findLocalExtremes(cvdArray);
     
-    // Bullish Divergence: Price Lower Low, CVD Higher Low
     if (priceExtremes.lows.length >= 2 && cvdExtremes.lows.length >= 2) {
         const pL1 = priceExtremes.lows[priceExtremes.lows.length-2];
         const pL2 = priceExtremes.lows[priceExtremes.lows.length-1];
         
-        // Find corresponding CVD points (roughly same time index)
         const cL1 = cvdExtremes.lows.find(c => Math.abs(c.idx - pL1.idx) <= 3);
         const cL2 = cvdExtremes.lows.find(c => Math.abs(c.idx - pL2.idx) <= 3);
         
         if (cL1 && cL2 && pL2.val < pL1.val && cL2.val > cL1.val) return 'Bullish Divergence';
     }
     
-    // Bearish Divergence: Price Higher High, CVD Lower High
     if (priceExtremes.highs.length >= 2 && cvdExtremes.highs.length >= 2) {
         const pH1 = priceExtremes.highs[priceExtremes.highs.length-2];
         const pH2 = priceExtremes.highs[priceExtremes.highs.length-1];
@@ -889,10 +631,6 @@ export function calculateCVDDivergence(klines: Kline[], lookback: number = 20): 
     return 'None';
 }
 
-/**
- * ABSORPTION DETECTION
- * V4.8: Added Location Filter (VWAP/BB proximity) to reduce noise.
- */
 export function detectAbsorption(
     klines: Kline[], 
     context?: { vwap?: number, upperBand?: number, lowerBand?: number, atr?: number }
@@ -900,21 +638,16 @@ export function detectAbsorption(
     const last = klines[klines.length - 1];
     if (!last || !last.volume || last.volume === 0) return 'None';
 
-    // Delta = Taker Buys - Taker Sells
     const takerBuy = last.takerBuyVolume || last.volume / 2;
     const delta = takerBuy - (last.volume - takerBuy);
-    
     const range = last.high - last.low;
-    // const body = Math.abs(last.close - last.open); // Unused for now
     
-    // V4.8 Location Filter Logic
     let isLocationValid = true;
     if (context && context.atr) {
         const atr = context.atr;
-        const threshold = atr * 0.5; // Within 0.5 ATR of key level
+        const threshold = atr * 0.5;
         let nearKeyLevel = false;
 
-        // Valid if near VWAP or BB Extremes
         if (context.vwap && Math.abs(last.close - context.vwap) < threshold) nearKeyLevel = true;
         if (context.upperBand && Math.abs(last.close - context.upperBand) < threshold) nearKeyLevel = true;
         if (context.lowerBand && Math.abs(last.close - context.lowerBand) < threshold) nearKeyLevel = true;
@@ -924,17 +657,169 @@ export function detectAbsorption(
 
     if (!isLocationValid) return 'None';
 
-    // Bullish Absorption: High negative delta (aggressive sells) but price refuses to fall
-    // Condition: Price closes in top half, small body relative to volume
     if (delta < -(last.volume * 0.15) && last.close > last.low + (range * 0.4)) {
         return 'Bullish Absorption';
     }
     
-    // Bearish Distribution: High positive delta (aggressive buys) but price refuses to rise
-    // Condition: Price closes in bottom half
     if (delta > (last.volume * 0.15) && last.close < last.high - (range * 0.4)) {
         return 'Bearish Distribution';
     }
     
     return 'None';
+}
+
+export enum MarketRegime {
+    TRENDING_BULLISH = 'TRENDING_BULLISH',
+    TRENDING_BEARISH = 'TRENDING_BEARISH',
+    RANGING = 'RANGING',
+    VOLATILE = 'VOLATILE',
+    SQUEEZE = 'SQUEEZE'
+}
+
+export function detectMarketRegime(klines: Kline[]): MarketRegime {
+    if (klines.length < 50) return MarketRegime.RANGING;
+    
+    const highs = klines.map(k => k.high);
+    const lows = klines.map(k => k.low);
+    const closes = klines.map(k => k.close);
+    
+    const adx = getLast(ADX.calculate({ high: highs, low: lows, close: closes, period: 14 }));
+    const atr = getLast(ATR.calculate({ high: highs, low: lows, close: closes, period: 14 }));
+    
+    // Add BB check for Squeeze
+    const bb = getLast(BollingerBands.calculate({ period: 20, stdDev: 2, values: closes }));
+
+    if (!adx || !atr || !bb) return MarketRegime.RANGING;
+    
+    const bbWidth = (bb.upper - bb.lower) / bb.middle;
+    if (bbWidth < 0.005) return MarketRegime.SQUEEZE; // Tight squeeze (< 0.5% width)
+
+    if (adx.adx > 25) {
+        return adx.pdi > adx.mdi ? MarketRegime.TRENDING_BULLISH : MarketRegime.TRENDING_BEARISH;
+    }
+    
+    const recentRange = (Math.max(...highs.slice(-10)) - Math.min(...lows.slice(-10)));
+    if (recentRange > atr * 5) return MarketRegime.VOLATILE;
+    
+    return MarketRegime.RANGING;
+}
+
+export function analyzeBitcoinState(btcKlines: Kline[]): BitcoinState {
+    if (!btcKlines || btcKlines.length < 50) return { state: 'NEUTRAL', trend: 'neutral', momentum: 'neutral', rejection: 'none', reason: 'Insufficient BTC Data' };
+    
+    const closes = btcKlines.map(k => k.close);
+    const lastClose = getLast(closes)!;
+    
+    const sma50 = getLast(SMA.calculate({ period: 50, values: closes })) || 0;
+    const sma200 = getLast(SMA.calculate({ period: 200, values: closes })) || 0;
+    const rsi = getLast(RSI.calculate({ period: 14, values: closes })) || 50;
+    
+    let trend: 'bullish' | 'bearish' | 'neutral' = 'neutral';
+    if (lastClose > sma50 && sma50 > sma200) trend = 'bullish';
+    else if (lastClose < sma50 && sma50 < sma200) trend = 'bearish';
+    
+    let state: BitcoinState['state'] = 'NEUTRAL';
+    let reason = 'Consolidation';
+    
+    const recentCloses = closes.slice(-5);
+    const drop = (Math.max(...recentCloses) - lastClose) / Math.max(...recentCloses);
+    const pump = (lastClose - Math.min(...recentCloses)) / Math.min(...recentCloses);
+    
+    if (drop > 0.05) { state = 'CRASH'; reason = 'BTC Flash Crash (-5%)'; }
+    else if (pump > 0.05) { state = 'PUMP'; reason = 'BTC Pump (+5%)'; }
+    else if (trend === 'bullish') { state = 'TREND_UP'; reason = 'BTC Uptrend'; }
+    else if (trend === 'bearish') { state = 'TREND_DOWN'; reason = 'BTC Downtrend'; }
+    
+    return {
+        state,
+        trend,
+        momentum: rsi > 55 ? 'accelerating' : rsi < 45 ? 'decelerating' : 'neutral',
+        rejection: 'none',
+        reason
+    };
+}
+
+export function calculateRsiSlope(rsiValues: number[], lookback: number = 3): number {
+    if (rsiValues.length < lookback + 1) return 0;
+    const current = rsiValues[rsiValues.length - 1];
+    const prev = rsiValues[rsiValues.length - 1 - lookback];
+    return (current - prev) / lookback;
+}
+
+export function detectLiquiditySweep(klines: Kline[], lookback: number = 10): { bullish: boolean, bearish: boolean } {
+    if (klines.length < lookback + 5) return { bullish: false, bearish: false };
+    
+    const current = klines[klines.length - 1];
+    const window = klines.slice(-lookback - 2, -2); // Previous candles excluding current and immediate prev
+    
+    const lowestLow = Math.min(...window.map(k => k.low));
+    const highestHigh = Math.max(...window.map(k => k.high));
+    
+    const bullish = current.low < lowestLow && current.close > lowestLow;
+    const bearish = current.high > highestHigh && current.close < highestHigh;
+    
+    return { bullish, bearish };
+}
+
+export interface FVG {
+    top: number;
+    bottom: number;
+    type: 'FVG Bullish' | 'FVG Bearish';
+    index: number;
+    filled: boolean;
+}
+
+export function detectFairValueGaps(klines: Kline[], lookback: number = 50): FVG[] {
+    const fvgs: FVG[] = [];
+    if (klines.length < 3) return fvgs;
+
+    for (let i = klines.length - 2; i > Math.max(0, klines.length - lookback); i--) {
+        const k1 = klines[i - 1];
+        const k2 = klines[i];
+        const k3 = klines[i + 1];
+
+        if (k3.low > k1.high) {
+            fvgs.push({
+                top: k3.low,
+                bottom: k1.high,
+                type: 'FVG Bullish',
+                index: i,
+                filled: false
+            });
+        }
+        else if (k3.high < k1.low) {
+            fvgs.push({
+                top: k1.low,
+                bottom: k3.high,
+                type: 'FVG Bearish',
+                index: i,
+                filled: false
+            });
+        }
+    }
+    return fvgs;
+}
+
+export function getKillZoneMultiplier(): number {
+    const now = new Date();
+    const hour = now.getUTCHours();
+    if (hour >= 7 && hour <= 10) return 1.5; // London
+    if (hour >= 13 && hour <= 16) return 2.0; // NY
+    if (hour >= 0 && hour <= 2) return 1.2; // Asia
+    return 1.0;
+}
+
+export function validateSwingRejection(klines: Kline[], swingType: 'high' | 'low'): boolean {
+    if (klines.length < 3) return false;
+    const last = klines[klines.length - 1];
+    
+    if (swingType === 'high') {
+        const body = Math.abs(last.close - last.open);
+        const upperWick = last.high - Math.max(last.close, last.open);
+        return upperWick > body;
+    } else {
+        const body = Math.abs(last.close - last.open);
+        const lowerWick = Math.min(last.close, last.open) - last.low;
+        return lowerWick > body;
+    }
 }

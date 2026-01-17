@@ -41,6 +41,7 @@ const AppContent: React.FC = () => {
         return (localStorage.getItem('theme') as 'light' | 'dark') || 'dark';
     });
     const [activeView, setActiveView] = useState<'trading' | 'backtesting' | 'preferences'>('trading');
+    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     
     // Trading Configuration (from context)
     const configState = useTradingConfigState();
@@ -129,6 +130,8 @@ const AppContent: React.FC = () => {
                 const pricePrecisionForBot = binanceService.getPricePrecision(symbolInfoForBot);
                 const quantityPrecisionForBot = binanceService.getQuantityPrecision(symbolInfoForBot);
                 const stepSizeForBot = binanceService.getStepSize(symbolInfoForBot);
+                
+                const isOmega = selectedAgent.id === 25;
 
                 const botConfig: BotConfig = {
                     pair: pair,
@@ -142,28 +145,29 @@ const AppContent: React.FC = () => {
                     investmentAmount,
                     maxMarginLossPercent,
                     isInitialRiskVetoEnabled,
-                    isHtfConfirmationEnabled,
+                    isHtfConfirmationEnabled: isOmega ? false : isHtfConfirmationEnabled,
                     htfTimeFrame,
-                    isUniversalProfitTrailEnabled,
-                    isMinRrEnabled,
+                    // Omega handles its own trails
+                    isUniversalProfitTrailEnabled: isOmega ? false : isUniversalProfitTrailEnabled,
+                    isMinRrEnabled: isOmega ? false : isMinRrEnabled,
                     invalidationSensitivity,
-                    isAgentTrailEnabled,
-                    isBreakevenTrailEnabled,
-                    isMarketCohesionEnabled,
-                    isVwapConfirmationEnabled,
-                    isBtcConfirmationEnabled,
-                    isBtcCorrelationVetoEnabled,
+                    isAgentTrailEnabled: isOmega ? false : isAgentTrailEnabled,
+                    isBreakevenTrailEnabled: isOmega ? false : isBreakevenTrailEnabled,
+                    isMarketCohesionEnabled: isOmega ? false : isMarketCohesionEnabled,
+                    isVwapConfirmationEnabled: isOmega ? false : isVwapConfirmationEnabled,
+                    isBtcConfirmationEnabled: isOmega ? false : isBtcConfirmationEnabled,
+                    isBtcCorrelationVetoEnabled: isOmega ? false : isBtcCorrelationVetoEnabled,
                     btcConfirmationThreshold,
-                    isVolumeFilterEnabled,
-                    isAdxFilterEnabled,
-                    isExhaustionFilterEnabled,
-                    isSmcVetoEnabled,
-                    isSrAnalysisEnabled,
-                    isCandlestickConfirmationEnabled,
-                    isMarketStructureVetoEnabled,
-                    isSupertrendConfirmationEnabled,
-                    isAdaptiveTpEnabled,
-                    aggressiveTrailMode,
+                    isVolumeFilterEnabled: isOmega ? false : isVolumeFilterEnabled,
+                    isAdxFilterEnabled: isOmega ? false : isAdxFilterEnabled,
+                    isExhaustionFilterEnabled: isOmega ? false : isExhaustionFilterEnabled,
+                    isSmcVetoEnabled: isOmega ? false : isSmcVetoEnabled,
+                    isSrAnalysisEnabled: isOmega ? false : isSrAnalysisEnabled,
+                    isCandlestickConfirmationEnabled: isOmega ? false : isCandlestickConfirmationEnabled,
+                    isMarketStructureVetoEnabled: isOmega ? false : isMarketStructureVetoEnabled,
+                    isSupertrendConfirmationEnabled: isOmega ? false : isSupertrendConfirmationEnabled,
+                    isAdaptiveTpEnabled: isOmega ? false : isAdaptiveTpEnabled,
+                    aggressiveTrailMode: isOmega ? 'disabled' : aggressiveTrailMode,
                     agentParams,
                     htfAgentParams,
                     pricePrecision: pricePrecisionForBot,
@@ -171,11 +175,11 @@ const AppContent: React.FC = () => {
                     stepSize: stepSizeForBot,
                     takerFeeRate: constants.TAKER_FEE_RATE,
                     entryTiming,
-                    isMarketBreadthFilterEnabled,
-                    isLiquidationFilterEnabled,
-                    isConfirmationCandleEnabled,
-                    isMomentumConcordanceEnabled,
-                    isTradeGuardianEnabled,
+                    isMarketBreadthFilterEnabled: isOmega ? false : isMarketBreadthFilterEnabled,
+                    isLiquidationFilterEnabled: isOmega ? false : isLiquidationFilterEnabled,
+                    isConfirmationCandleEnabled: isOmega ? false : isConfirmationCandleEnabled,
+                    isMomentumConcordanceEnabled: isOmega ? false : isMomentumConcordanceEnabled,
+                    isTradeGuardianEnabled, // Omega uses a modified Trade Guardian internally, keep enabled.
                     finalEntryFailSafe: executionMode === 'live' ? 'fail-closed' : 'fail-open',
                     isHeikinAshiEnabled,
                     isDynamicSizingEnabled,
@@ -591,7 +595,6 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
                 finalEntryFailSafe: config.finalEntryFailSafe,
                 isHeikinAshiEnabled: config.isHeikinAshiEnabled,
                 isDynamicSizingEnabled: config.isDynamicSizingEnabled,
-                // FIX: Added missing maxMarginLossPercent to BotConfigSnapshot to resolve access issues in Trade Guardian.
                 maxMarginLossPercent: config.maxMarginLossPercent
             },
             entryContext: executionDetails.entryContext,
@@ -810,8 +813,10 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
                 />
                 <main className="container mx-auto p-3 lg:p-4">
                     {activeView === 'trading' && (
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-                            <div className="lg:col-span-4 xl:col-span-3">
+                        // Changed from Grid to Flexbox for collapsible sidebar
+                        <div className="flex flex-col lg:flex-row gap-4 transition-all duration-300">
+                            {/* Dynamic Width Sidebar Container */}
+                            <div className={`${isSidebarOpen ? 'w-full lg:w-96 xl:w-[24rem]' : 'w-full lg:w-16'} transition-all duration-300 shrink-0`}>
                                 <Sidebar 
                                     onStartBot={handleStartBot}
                                     klines={klines}
@@ -823,9 +828,11 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
                                     accountInfo={accountInfo}
                                     isWalletLoading={isWalletLoading}
                                     walletError={walletError}
+                                    isOpen={isSidebarOpen}
+                                    onToggle={() => setIsSidebarOpen(prev => !prev)}
                                 />
                             </div>
-                            <div className="lg:col-span-8 xl:col-span-9 flex flex-col gap-4">
+                            <div className="flex-1 min-w-0 flex flex-col gap-4">
                                 <ChartComponent 
                                     data={klines} 
                                     pair={displayPair}

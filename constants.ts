@@ -1,5 +1,4 @@
 
-
 // constants.ts
 
 import { Agent, AgentParams, WalletBalance } from './types';
@@ -320,12 +319,13 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
 
     // Agent 25: Omega Predator Defaults
     omega_matrixThreshold: 75,
-    omega_aggressiveness: 'Standard',
+    omega_aggressiveness: 'Auto',
     omega_fvgLookback: 20,
     omega_sweepDepth: 30,
     omega_minExpectancy: 5.0,
     omega_frequencyAggressiveness: 3,
     omega_orderFlowWeight: 45,
+    omega_allowShapeshifting: false, // New Default
 
     // SMC Reversal Veto
     smc_divergenceLookback: 12,

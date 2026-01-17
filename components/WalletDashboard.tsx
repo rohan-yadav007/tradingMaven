@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { TradingMode, WalletBalance, AccountInfo } from '../types';
 import * as constants from '../constants';
@@ -144,6 +143,16 @@ const ErrorMessage: React.FC<{ message: string }> = ({ message }) => (
     <div className="bg-rose-100 dark:bg-rose-900/50 border-l-4 border-rose-500 text-rose-700 dark:text-rose-300 p-4 rounded-r-lg" role="alert">
         <p className="font-bold">Connection Failed</p>
         <p className="text-sm">{message}</p>
+        {message.includes("Proxy Configuration Error") && (
+            <div className="mt-3 text-xs bg-white/60 dark:bg-black/30 p-2.5 rounded border border-rose-200 dark:border-rose-800">
+                <strong>How to Fix on AWS Amplify:</strong>
+                <ol className="list-decimal pl-4 mt-1 space-y-1">
+                    <li>Go to Amplify Console &gt; App settings &gt; Rewrites and redirects.</li>
+                    <li>Click <strong>Edit</strong> and add the rules (JSON format available in README.md).</li>
+                    <li>Ensure the rule <code>Source: /proxy-spot/&lt;*&gt;</code> points to <code>Target: https://api.binance.com/&lt;*&gt;</code> with <strong>200 (Rewrite)</strong>.</li>
+                </ol>
+            </div>
+        )}
     </div>
 );
 

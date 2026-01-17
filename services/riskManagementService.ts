@@ -1,3 +1,4 @@
+
 // services/riskManagementService.ts
 
 import { TradingMode, Agent, Kline, AgentParams, Position, ADXOutput, MACDOutput, BollingerBandsOutput, StochasticRSIOutput, TradeManagementSignal, BotConfig, IchimokuCloudOutput } from '../types';
@@ -11,7 +12,6 @@ const { TIMEFRAME_ATR_CONFIG, MIN_PROFIT_BUFFER_MULTIPLIER } = constants;
 
 /**
  * Calculates initial stop-loss and take-profit levels.
- * V2.0: Added "Predator Scale" Noise Floor.
  */
 export function getInitialAgentTargets(
     klines: Kline[],
@@ -25,6 +25,27 @@ export function getInitialAgentTargets(
     const config = applyTimeframeSettings(originalConfig);
     const { timeFrame, agent, leverage } = config;
     
+    // --- OMEGA V8.0 SOVEREIGN PASSTHROUGH ---
+    // Omega calculates structural targets based on FVGs/Swings. We must respect them exactly.
+    if (agent.id === 25) {
+         if (providedStopLoss && providedTakeProfit) {
+             return { 
+                 stopLossPrice: providedStopLoss, 
+                 takeProfitPrice: providedTakeProfit, 
+                 slReason: 'Agent Logic', 
+                 agentStopLoss: providedStopLoss 
+             };
+         }
+         // Fallback safety (should rarely hit if Omega is working)
+         const atr = (getLast(ATR.calculate({high: klines.map(k=>k.high), low: klines.map(k=>k.low), close: klines.map(k=>k.close), period: 14})) as number) || entryPrice*0.01;
+         return {
+             stopLossPrice: direction === 'LONG' ? entryPrice - atr : entryPrice + atr,
+             takeProfitPrice: direction === 'LONG' ? entryPrice + (atr*2) : entryPrice - (atr*2),
+             slReason: 'Agent Logic',
+             agentStopLoss: direction === 'LONG' ? entryPrice - atr : entryPrice + atr
+         }
+    }
+
     const maxMarginLoss = config.maxMarginLossPercent;
     const isLong = direction === 'LONG';
     const closes = klines.map(k => k.close);
@@ -37,8 +58,7 @@ export function getInitialAgentTargets(
     // Hard Limit based on Margin
     const maxPriceDistAllowed = (maxMarginLoss / 100) * (entryPrice / leverage);
     
-    // --- V2.0 NOISE FLOOR ---
-    // Minimum distance required to survive spread/noise, regardless of what the logic says.
+    // Noise Floor
     const noiseFloorMultiplier = ['1m', '3m'].includes(timeFrame) ? 1.5 : 1.2;
     const noiseFloorDist = currentAtr * noiseFloorMultiplier;
     
@@ -52,18 +72,7 @@ export function getInitialAgentTargets(
         finalSl = providedStopLoss;
         finalTp = providedTakeProfit;
     } else {
-        let finalDist: number;
-        if (agent.id === 19) {
-            const lookback = tradeType === 'scalp' ? 30 : 60; 
-            const recent = klines.slice(-lookback);
-            const structuralBase = isLong ? Math.min(...recent.map(k => k.low)) : Math.max(...recent.map(k => k.high));
-            finalDist = Math.abs(entryPrice - structuralBase);
-        } else if (providedStopLoss) {
-            finalDist = Math.abs(entryPrice - providedStopLoss);
-        } else {
-            finalDist = currentAtr * timeframeConfig.atrMultiplier;
-        }
-
+        let finalDist = currentAtr * timeframeConfig.atrMultiplier;
         finalSl = isLong ? entryPrice - finalDist : entryPrice + finalDist;
         const targetRr = tradeType === 'scalp' ? 2.2 : (config.isMinRrEnabled ? 2.8 : 2.4);
         finalTp = isLong ? entryPrice + (finalDist * targetRr) : entryPrice - (finalDist * targetRr);
@@ -71,48 +80,35 @@ export function getInitialAgentTargets(
 
     // --- APPLY CONSTRAINTS ---
     
-    // 1. Noise Floor Check (Widen if too tight)
+    // 1. Noise Floor Check
     const currentDist = Math.abs(entryPrice - finalSl);
     if (currentDist < noiseFloorDist) {
-        const adjustment = noiseFloorDist - currentDist;
         finalSl = isLong ? entryPrice - noiseFloorDist : entryPrice + noiseFloorDist;
-        // Proportionally widen TP to maintain expectancy
         const rr = Math.abs(finalTp - entryPrice) / currentDist;
         finalTp = isLong ? entryPrice + (noiseFloorDist * rr) : entryPrice - (noiseFloorDist * rr);
         slReason = 'Noise Floor';
     }
 
-    // 2. Margin Hard Cap (Tighten if too wide)
+    // 2. Margin Hard Cap
     const afterFloorDist = Math.abs(entryPrice - finalSl);
     if (afterFloorDist > maxPriceDistAllowed) {
         finalSl = isLong ? entryPrice - maxPriceDistAllowed : entryPrice + maxPriceDistAllowed;
         slReason = 'Hard Cap';
     }
 
-    // 3. Final Directional Failsafe
-    const isTpInProfitSide = isLong ? finalTp > entryPrice : finalTp < entryPrice;
-    if (!isTpInProfitSide) {
-        const fallbackDist = currentAtr * 3;
-        finalTp = isLong ? entryPrice + fallbackDist : entryPrice - fallbackDist;
-    }
-
-    const isSlInRiskSide = isLong ? finalSl < entryPrice : finalSl > entryPrice;
-    if (!isSlInRiskSide) {
-        const fallbackDist = currentAtr * 2;
-        finalSl = isLong ? entryPrice - fallbackDist : entryPrice + fallbackDist;
-    }
-
     return { stopLossPrice: finalSl, takeProfitPrice: finalTp, slReason, agentStopLoss: finalSl };
 }
 
 /**
- * V2.0: RE-CALIBRATED UNIVERSAL PROFIT TRAIL
- * Prevents "Choking" trades. BE only moves at 2.2R profit.
+ * Universal Profit Trail
+ * DISABLED for Omega Agent (it uses SovereignManagementEngine).
  */
 export function getMultiStageProfitSecureSignal(
     position: Position,
     currentPrice: number
 ): TradeManagementSignal {
+    if (position.agentId === 25) return { reasons: [] };
+
     const isLong = position.direction === 'LONG';
     const pnlPercent = isLong 
         ? (currentPrice - position.entryPrice) / position.entryPrice 
@@ -124,7 +120,6 @@ export function getMultiStageProfitSecureSignal(
     let newTier = position.profitLockTier || 0;
     let newSl: number | undefined;
 
-    // V2.0 Tuning: Increased thresholds to 2.2R/4R/6R
     if (rMultiple >= 6.0 && newTier < 3) {
         newTier = 3;
         newSl = isLong ? position.entryPrice + position.initialRiskInPrice * 3.0 : position.entryPrice - position.initialRiskInPrice * 3.0;
@@ -133,7 +128,7 @@ export function getMultiStageProfitSecureSignal(
         newSl = isLong ? position.entryPrice + position.initialRiskInPrice * 1.5 : position.entryPrice - position.initialRiskInPrice * 1.5;
     } else if (rMultiple >= 2.2 && newTier < 1) {
         newTier = 1;
-        newSl = position.entryPrice; // BE only at 2.2R profit
+        newSl = position.entryPrice; 
     }
 
     if (newSl) {
@@ -151,8 +146,9 @@ export function getMultiStageProfitSecureSignal(
 }
 
 /**
- * THE TRADE GUARDIAN: Zero-Time Invalidation Logic.
- * V2.0: Momentum Panic reduced.
+ * THE TRADE GUARDIAN
+ * V3.1: Strict Simplified Logic.
+ * If Omega: Only exit on Structural Invalidation (Hard SL/Level breach).
  */
 export function getTradeGuardianSignal(
     position: Position,
@@ -165,36 +161,42 @@ export function getTradeGuardianSignal(
     if (!config || !config.isTradeGuardianEnabled) return { action: 'hold' };
 
     const isLong = position.direction === 'LONG';
+    const lastKline = klines[klines.length - 1];
     
-    if (position.invalidationPrice) {
-        const isInvalid = isLong ? currentPrice < position.invalidationPrice : currentPrice > position.invalidationPrice;
-        if (isInvalid) return { action: 'close', reason: 'Guardian: Structural thesis invalidated.' };
-    }
-
-    const closes = klines.map(k => k.close);
-    const rsiValues = RSI.calculate({ period: 14, values: closes });
-    const lastRsi = getLast(rsiValues) as number | undefined;
-    if (lastRsi) {
-        // V2.0: Further relaxed to 30/70 for Guardian. Let the SL handle the exit unless it's an extreme reversal.
-        const isRsiVeto = isLong ? lastRsi < 30 : lastRsi > 70;
-        if (isRsiVeto && position.hasBeenProfitable) {
-             return { action: 'close', reason: `Guardian: Extreme Momentum reversal (RSI: ${lastRsi.toFixed(1)})` };
+    // --- OMEGA V8.0 SOVEREIGN LOGIC ---
+    if (position.agentId === 25) {
+        // 1. Structural Invalidation (The "Surgical Cut")
+        // Omega provides a specific invalidation price (usually FVG bottom or swing low).
+        // We enforce a hard close if a candle *closes* beyond this level, or if price pushes deeply beyond.
+        if (position.invalidationPrice) {
+            const buffer = position.entryPrice * 0.001; // 0.1% tolerance buffer
+            
+            const isInvalid = isLong 
+                ? currentPrice < (position.invalidationPrice - buffer) 
+                : currentPrice > (position.invalidationPrice + buffer);
+                
+            if (isInvalid) {
+                return { action: 'close', reason: 'Guardian: Structural Invalidation (Hard Level Breach).' };
+            }
         }
+        
+        // Omega ignores RSI/Volume panic exits to avoid being shaken out of valid structural zones.
+        return { action: 'hold' };
     }
 
-    if (position.agentId !== 25) {
-        if (position.candlesSinceEntry > 100) {
-            return { action: 'close', reason: `Guardian: Time-decay limit reached.` };
-        }
-    }
+    // --- STANDARD LOGIC (For other agents) ---
+    // Volume Panic Veto
+    const pnlR = (isLong ? (currentPrice - position.entryPrice) : (position.entryPrice - currentPrice)) / position.initialRiskInPrice;
+    if (pnlR < -0.3 && lastKline && lastKline.volume) {
+        const volumes = klines.map(k => k.volume || 0);
+        const avgVol = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
+        
+        const isPanicCandle = isLong 
+            ? lastKline.close < lastKline.open && lastKline.volume > avgVol * 4 
+            : lastKline.close > lastKline.open && lastKline.volume > avgVol * 4;
 
-    if (btcKlines && config.isBtcConfirmationEnabled) {
-        const btcState = analyzeBitcoinState(btcKlines);
-        const btcContradicts = isLong ? btcState.trend === 'bearish' : btcState.trend === 'bullish';
-        // V2.0: Only exit on BTC conflict if the trade is in RED and stagnant.
-        const pnlR = (isLong ? (currentPrice - position.entryPrice) : (position.entryPrice - currentPrice)) / position.initialRiskInPrice;
-        if (btcContradicts && pnlR < -0.5) {
-            return { action: 'close', reason: `Guardian: BTC Trend conflict while underwater.` };
+        if (isPanicCandle) {
+             return { action: 'close', reason: `Guardian: High Volume Panic against position (${(lastKline.volume/avgVol).toFixed(1)}x RVOL).` };
         }
     }
 
@@ -240,6 +242,9 @@ export function validateTradeProfitability(price: number, sl: number, tp: number
 }
 
 export function getMandatoryBreakevenSignal(position: Position, currentPrice: number): TradeManagementSignal {
+    // FIX: Disable for Omega Agent (ID 25)
+    if (position.agentId === 25) return { reasons: [] };
+
     if (position.isBreakevenSet) return { reasons: [] };
     const isLong = position.direction === 'LONG';
     const feeRate = position.takerFeeRate || 0.0005;
@@ -253,6 +258,9 @@ export function getMandatoryBreakevenSignal(position: Position, currentPrice: nu
 }
 
 export function getProfitSpikeSignal(position: Position, currentPrice: number): TradeManagementSignal {
+    // FIX: Disable for Omega Agent (ID 25)
+    if (position.agentId === 25) return { reasons: [] };
+
     const isLong = position.direction === 'LONG';
     const pnlPercent = isLong ? (currentPrice - position.entryPrice) / position.entryPrice : (position.entryPrice - currentPrice) / position.entryPrice;
     if (pnlPercent > 0.08 && (position.profitSpikeTier || 0) < 1) {
@@ -263,6 +271,9 @@ export function getProfitSpikeSignal(position: Position, currentPrice: number): 
 }
 
 export function getAggressiveRangeTrailSignal(position: Position, currentPrice: number): TradeManagementSignal {
+    // FIX: Disable for Omega Agent (ID 25)
+    if (position.agentId === 25) return { reasons: [] };
+
     const isLong = position.direction === 'LONG';
     const distToTp = Math.abs(position.takeProfitPrice - currentPrice);
     const totalRange = Math.abs(position.takeProfitPrice - position.entryPrice);
@@ -275,14 +286,7 @@ export function getAggressiveRangeTrailSignal(position: Position, currentPrice: 
 }
 
 export function getAdaptiveTakeProfit(position: Position, klines: Kline[], currentPrice: number): TradeManagementSignal {
-    const isLong = position.direction === 'LONG';
-    const rsi = getLast(RSI.calculate({ period: 14, values: klines.map(k => k.close) })) as number | undefined;
-    if (rsi) {
-        const isNearTp = Math.abs(position.takeProfitPrice - currentPrice) / currentPrice < 0.005;
-        const isMomentumFading = isLong ? rsi > 72 && rsi < 78 : rsi < 28 && rsi > 22; 
-        if (isNearTp && isMomentumFading && !position.adaptiveTpTriggered) {
-             return { newTakeProfit: currentPrice, newState: { adaptiveTpTriggered: true }, reasons: ['Adaptive: Momentum fade near target.'] };
-        }
-    }
+    // FIX: Disable for Omega Agent (ID 25)
+    if (position.agentId === 25) return { reasons: [] };
     return { reasons: [] };
 }

@@ -422,13 +422,13 @@ export interface AgentParams {
 
     // Agent 25: Omega Predator (V3 Sovereign)
     omega_matrixThreshold?: number;
-    omega_aggressiveness?: 'Conservative' | 'Standard' | 'Sniper'; // V3: Simple mode
+    omega_aggressiveness?: 'Auto' | 'Conservative' | 'Standard' | 'Sniper'; // V3: Simple mode
     omega_minExpectancy?: number;
-    // FIX: Added missing Omega parameters
     omega_fvgLookback?: number;
     omega_sweepDepth?: number;
     omega_frequencyAggressiveness?: number;
     omega_orderFlowWeight?: number;
+    omega_allowShapeshifting?: boolean; // V12: Dynamic Timeframe Selection
     
     // SMC Reversal Veto
     smc_divergenceLookback?: number;
@@ -480,6 +480,22 @@ export interface MarketDataContext {
     htf_trend?: 'bullish' | 'bearish' | 'neutral';
     orderBook?: OrderBookAnalysis;
     activePatterns?: ChartPattern[];
+    fundingRate?: number;
+    // Omega V13 "Titan": Flight Recorder Data
+    omega_metadata?: {
+        tier: string;
+        volatilityPercent: number;
+        trendStrength: number;
+        structureFractal: string;
+        triggerFractal: string;
+        setupQualityScore: number;
+        entryAtr: number;
+        entryRsi: number;
+        entryAdx: number;
+        targetDistancePercent: number;
+        stopDistancePercent: number;
+        rvol: number;
+    };
 }
 
 export interface AstraXAnalysis {
@@ -507,10 +523,10 @@ export interface AstraXAnalysis {
 export interface OmegaAnalysis {
     conviction: number;
     phases: {
-        scan: { bias: 'Bullish' | 'Bearish' | 'Neutral', score: number, reason: string }; // 4H/1H
-        hunt: { setup: 'FVG' | 'Breakout' | 'Rejection' | 'None', score: number, reason: string }; // 15m/5m
-        kill: { trigger: 'Sweep' | 'Divergence' | 'Price Action' | 'None', score: number, reason: string }; // 1m
-        flow?: { trend: 'Rising' | 'Falling' | 'Flat', score: number, reason: string }; // V4: OI Flow
+        scan: { bias: 'Bullish' | 'Bearish' | 'Neutral', score: number, reason: string }; // 4H Structure
+        hunt: { setup: 'FVG' | 'Pullback' | 'Zone' | 'None', score: number, reason: string }; // 1H Zone
+        kill: { trigger: 'Confirmation' | 'Price Action' | 'None', score: number, reason: string }; // 5m Trigger
+        flow?: { trend: 'Supportive' | 'Neutral' | 'Opposing', score: number, reason: string }; // Sizing Modifier
     };
     feeExpectancy: {
         cost: number;
@@ -527,6 +543,7 @@ export interface OmegaAnalysis {
         multiplier: number;
         reason: string;
     };
+    mode?: 'Conservative' | 'Standard' | 'Sniper';
 }
 
 export interface BitcoinState {
@@ -549,8 +566,9 @@ export interface TradeSignal {
     astraXAnalysis?: AstraXAnalysis;
     omegaAnalysis?: OmegaAnalysis;
     tradeType?: 'conviction' | 'scalp';
-    setupType?: string; // Omega V5.2: Explicitly track setup mechanics (Breakout vs Rejection)
+    setupType?: string; // Omega V5.2: Explicit setup type (Breakout, Rejection)
     btcContext?: BitcoinState;
+    omegaMetadata?: MarketDataContext['omega_metadata']; // Titan: Flight recorder
 }
 
 export interface TradeManagementSignal {

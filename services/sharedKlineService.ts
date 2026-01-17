@@ -1,8 +1,9 @@
+
 // services/sharedKlineService.ts
 
 import { Kline, TradingMode } from '../types';
 import * as binanceService from './binanceService';
-import { WebSocketManager } from './webSocketManager';
+import { spotWsManager, futuresWsManager } from './wsRegistry';
 
 const getTimeframeDuration = (timeframe: string): number => {
     const unit = timeframe.slice(-1);
@@ -19,15 +20,8 @@ const getTimeframeDuration = (timeframe: string): number => {
 class SharedKlineService {
     private klineCache = new Map<string, Kline[]>();
     private referenceCounts = new Map<string, number>();
-    private spotWsManager: WebSocketManager;
-    private futuresWsManager: WebSocketManager;
     private fetchingPromises = new Map<string, Promise<Kline[]>>();
     private latestClosedCandleTimes = new Map<string, number>(); // <cacheKey, timestamp>
-
-    constructor() {
-        this.spotWsManager = new WebSocketManager(() => '/proxy-spot-ws');
-        this.futuresWsManager = new WebSocketManager(() => '/proxy-futures-ws');
-    }
 
     private getCacheKey(pair: string, timeframe: string, mode: TradingMode): string {
         return `${pair.replace('/', '').toLowerCase()}-${timeframe}-${mode}`;
@@ -72,7 +66,7 @@ class SharedKlineService {
     }
 
     private subscribeToUpdates(pair: string, timeframe: string, mode: TradingMode, key: string) {
-        const wsManager = mode === TradingMode.USDSM_Futures ? this.futuresWsManager : this.spotWsManager;
+        const wsManager = mode === TradingMode.USDSM_Futures ? futuresWsManager : spotWsManager;
         const streamName = `${pair.replace('/', '').toLowerCase()}@kline_${timeframe}`;
 
         wsManager.subscribe(streamName, (data: any) => {
@@ -109,7 +103,6 @@ class SharedKlineService {
             if (timeframeMs === 0) continue;
 
             const expectedCandleStartTime = Math.floor(analysisTimestamp / timeframeMs) * timeframeMs;
-
             const latestClosedTime = this.latestClosedCandleTimes.get(key);
 
             if (!latestClosedTime || latestClosedTime < expectedCandleStartTime) {
@@ -118,7 +111,6 @@ class SharedKlineService {
         }
         return true;
     }
-
 
     public releaseData(pair: string, timeframe: string, mode: TradingMode) {
         const key = this.getCacheKey(pair, timeframe, mode);
@@ -132,6 +124,10 @@ class SharedKlineService {
                 console.log(`[SharedKlineService] Last reference to ${key} released. Cleaning up.`);
                 this.klineCache.delete(key);
                 this.latestClosedCandleTimes.delete(key);
+                
+                const streamName = `${pair.replace('/', '').toLowerCase()}@kline_${timeframe}`;
+                const wsManager = mode === TradingMode.USDSM_Futures ? futuresWsManager : spotWsManager;
+                wsManager.unsubscribe(streamName, () => {});
             }
         }
     }

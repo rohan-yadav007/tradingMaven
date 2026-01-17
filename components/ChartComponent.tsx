@@ -1,3 +1,4 @@
+
 // components/ChartComponent.tsx
 
 import React, { useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react';
@@ -171,18 +172,11 @@ export const ChartComponent: React.FC<ChartComponentProps> = (props) => {
         if (!pair) return;
 
         const formattedPair = pair.replace('/', '');
-        const tickerCallback = (tickerData: any) => {
-             const ticker: LiveTicker = { 
-                 pair: tickerData.s, 
-                 closePrice: parseFloat(tickerData.c), 
-                 highPrice: parseFloat(tickerData.h), 
-                 lowPrice: parseFloat(tickerData.l), 
-                 volume: parseFloat(tickerData.v), 
-                 quoteVolume: parseFloat(tickerData.q) 
-             };
+        const tickerCallback = (tickerData: LiveTicker) => {
+             // tickerData is already the formatted object from botManagerService
              // Ensure update is for the correct pair
-             if (ticker.pair.toLowerCase() === formattedPair.toLowerCase()) {
-                setLivePrice(ticker.closePrice);
+             if (tickerData.pair.toLowerCase() === formattedPair.toLowerCase()) {
+                setLivePrice(tickerData.closePrice);
              }
         };
 

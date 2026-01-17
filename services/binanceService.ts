@@ -1,4 +1,3 @@
-
 import { Kline, SymbolInfo, SymbolFilter, WalletBalance, RawWalletBalance, AccountInfo, LeverageBracket, BinanceOrderResponse, TradingMode, OpenInterestKline } from '../types';
 
 // --- Configuration ---
@@ -157,6 +156,13 @@ async function fetchSigned(endpoint: string, params: Record<string, any> = {}, m
 
         const response = await fetch(url, fetchOptions);
 
+        // --- PROXY ERROR DETECTION ---
+        // If content-type is HTML, it means we got the Amplify fallback page or 404 page, not the API JSON.
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("text/html")) {
+             throw new Error("Proxy Configuration Error: The API request was routed to the frontend app instead of the Binance API. This indicates missing Rewrite rules in your hosting provider (AWS Amplify, Vercel, etc).");
+        }
+
         if (!response.ok) {
             try {
                 const errorData = await response.json();
@@ -176,6 +182,13 @@ async function fetchSigned(endpoint: string, params: Record<string, any> = {}, m
 async function fetchPublic(url: string): Promise<any> {
     return rateLimiter.schedule(async () => {
         const response = await fetch(url);
+
+        // --- PROXY ERROR DETECTION ---
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("text/html")) {
+             throw new Error("Proxy Configuration Error: The API request was routed to the frontend app instead of the Binance API. This indicates missing Rewrite rules in your hosting provider (AWS Amplify, Vercel, etc).");
+        }
+
         if (!response.ok) {
              throw { message: `HTTP ${response.status}: ${response.statusText}`, code: response.status };
         }
@@ -189,6 +202,14 @@ export async function initializeTimeSync(retries = 3) {
         try {
             // Using raw fetch here to avoid circular dependency or rate limit lock on init
             const response = await fetch(`${SPOT_BASE_URL}/api/v3/time`);
+            
+            // Basic check for proxy failure on init
+            const contentType = response.headers.get("content-type");
+            if (contentType && contentType.includes("text/html")) {
+                console.error("Proxy Configuration Error detected during Time Sync.");
+                throw new Error("Proxy Configuration Error: Missing Rewrites.");
+            }
+
             if (!response.ok) throw new Error('Failed to fetch server time');
             const data = await response.json();
             const serverTime = data.serverTime;
@@ -260,6 +281,8 @@ export const fetchFuturesPairs = async (quoteAsset: string = 'USDT'): Promise<st
 
 // --- Public Functions ---
 export const checkApiConnection = async (): Promise<boolean> => {
+    // If running in Live mode, we might need keys. But for fetching pairs/klines (Public), we don't.
+    // This check is mainly for Wallet access.
     if (!apiKey) return false;
     try {
         await fetchSigned('/api/v3/account');
@@ -272,6 +295,10 @@ export const checkApiConnection = async (): Promise<boolean> => {
             } catch (futuresError) {
                  return false;
             }
+        }
+        // If it's a proxy error, re-throw it so UI can display it properly
+        if (e.message && e.message.includes("Proxy Configuration Error")) {
+            throw e;
         }
         return false;
     }

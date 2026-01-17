@@ -6,7 +6,7 @@ import Select, { StylesConfig, GroupBase } from 'react-select';
 import { Trade, TradingMode, AgentParams, MarketDataContext, BitcoinState, OrderBookAnalysis } from '../types';
 import * as constants from '../constants';
 import { historyService } from '../services/historyService';
-import { HistoryIcon, ChevronDown, ChevronUp, TrashIcon, DownloadIcon } from './icons';
+import { HistoryIcon, ChevronDown, ChevronUp, TrashIcon, DownloadIcon, ChartIcon, InfoIcon, SettingsIcon, ActivityIcon, SparklesIcon, ZapIcon } from './icons';
 
 interface TradingLogProps {
     tradeHistory: Trade[];
@@ -26,144 +26,286 @@ const formatDisplayDate = (dateString: string): string => {
     });
 };
 
-const DetailItem: React.FC<{ label: string; value: React.ReactNode; valueClass?: string }> = ({ label, value, valueClass }) => (
-    <div>
-        <h4 className="font-semibold text-slate-700 dark:text-slate-300 mb-1">{label}</h4>
-        <div className={`text-slate-500 dark:text-slate-400 ${valueClass}`}>{value}</div>
+// --- Sub-Components for Expanded View ---
+
+const MetricCard: React.FC<{ label: string; value: React.ReactNode; subValue?: string; color?: string }> = ({ label, value, subValue, color = "text-slate-800 dark:text-slate-200" }) => (
+    <div className="bg-slate-100 dark:bg-slate-700/50 p-3 rounded-lg border border-slate-200 dark:border-slate-700 flex flex-col justify-center">
+        <span className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400 mb-1">{label}</span>
+        <div className={`text-sm font-bold font-mono ${color}`}>{value}</div>
+        {subValue && <div className="text-[10px] text-slate-500 mt-0.5">{subValue}</div>}
     </div>
 );
 
-const ParamDisplay: React.FC<{ params?: AgentParams }> = ({ params }) => {
-    if (!params || Object.keys(params).length === 0) {
-        return <p>Default</p>;
-    }
-    return (
-        <div className="space-y-0.5 font-mono text-xs p-2 bg-slate-100 dark:bg-slate-900/50 rounded">
-            {Object.entries(params).map(([key, value]) => (
-                <div key={key} className="flex justify-between">
-                    <span>{key}:</span>
-                    <span className="font-semibold">{String(value)}</span>
-                </div>
-            ))}
+const BtcContextVisual: React.FC<{ btcContext?: BitcoinState }> = ({ btcContext }) => {
+    if (!btcContext) return (
+        <div className="p-3 bg-slate-100 dark:bg-slate-700/50 rounded-lg border border-slate-200 dark:border-slate-700 h-full flex items-center justify-center text-xs text-slate-400">
+            No BTC Context Recorded
         </div>
     );
-};
 
-const BtcContextDisplay: React.FC<{ btcContext?: BitcoinState }> = ({ btcContext }) => {
-    if (!btcContext) return null;
     const isBullish = btcContext.state === 'TREND_UP' || btcContext.state === 'PUMP';
     const isBearish = btcContext.state === 'TREND_DOWN' || btcContext.state === 'CRASH';
-    const color = isBullish ? 'text-emerald-500' : isBearish ? 'text-rose-500' : 'text-slate-500';
+    const bgClass = isBullish ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800' : isBearish ? 'bg-rose-50 dark:bg-rose-900/20 border-rose-200 dark:border-rose-800' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700';
+    const textClass = isBullish ? 'text-emerald-700 dark:text-emerald-300' : isBearish ? 'text-rose-700 dark:text-rose-300' : 'text-slate-700 dark:text-slate-300';
 
     return (
-        <div className="p-2 bg-slate-100 dark:bg-slate-900/50 rounded border border-slate-200 dark:border-slate-700 mt-2">
-            <h5 className="font-medium text-slate-700 dark:text-slate-300 text-xs mb-1">BTC Context (At Entry)</h5>
-            <div className={`font-bold text-xs ${color} flex items-center gap-2`}>
-                {btcContext.state}
+        <div className={`p-3 rounded-lg border ${bgClass} h-full`}>
+            <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider opacity-70">BTC Environment</span>
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/50 dark:bg-black/20 ${textClass}`}>{btcContext.state}</span>
             </div>
-            {btcContext.momentum && btcContext.momentum !== 'neutral' && (
-                <div className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-                    Momentum: <span className="font-semibold text-slate-800 dark:text-slate-200">{btcContext.momentum}</span>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                    <span className="block opacity-60 text-[10px]">Trend</span>
+                    <span className="font-semibold capitalize">{btcContext.trend}</span>
+                </div>
+                <div>
+                    <span className="block opacity-60 text-[10px]">Momentum</span>
+                    <span className="font-semibold capitalize">{btcContext.momentum}</span>
+                </div>
+            </div>
+            {btcContext.reason && (
+                <div className="mt-2 text-[10px] italic opacity-80 border-t border-black/5 dark:border-white/5 pt-1">
+                    "{btcContext.reason}"
                 </div>
             )}
-            {btcContext.rejection && btcContext.rejection !== 'none' && (
-                <div className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-                    Rejection: <span className="font-semibold text-amber-600 dark:text-amber-400">{btcContext.rejection}</span>
-                </div>
-            )}
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 italic">{btcContext.reason}</p>
         </div>
     );
 };
 
-const MarketContextDisplay: React.FC<{ context?: Partial<MarketDataContext>, title: string }> = ({ context, title }) => {
-    if (!context || Object.keys(context).length === 0) return (
-        <div>
-            <h4 className="font-semibold text-slate-700 dark:text-slate-300 mb-1">{title}</h4>
-            <p className="text-xs text-slate-400">Context data not available for this trade.</p>
-        </div>
-    );
-
-    const { mainContext, htfContext } = useMemo(() => {
-        const main: Partial<MarketDataContext> = {};
-        const htf: Partial<MarketDataContext> = {};
-        for (const key in context) {
-            if (key.startsWith('htf_')) {
-                const newKey = key.substring(4) as keyof MarketDataContext;
-                (htf as any)[newKey] = (context as any)[key];
-            } else {
-                (main as any)[key] = (context as any)[key];
-            }
-        }
-        return { mainContext: main, htfContext: htf };
-    }, [context]);
-
-    const formatValue = (key: keyof MarketDataContext, value: any): React.ReactNode => {
-        if (value === undefined || value === null) return 'N/A';
-        
-        if (key === 'orderBook') {
-            const ob = value as OrderBookAnalysis;
-            const imbPercent = (ob.imbalance * 100).toFixed(1);
-            const imbColor = ob.imbalance > 0 ? 'text-emerald-600 dark:text-emerald-400' : ob.imbalance < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-600 dark:text-slate-400';
-            
-            return (
-                <span className="flex flex-col gap-0.5 mt-0.5 pl-2 border-l-2 border-slate-300 dark:border-slate-600">
-                    <span className="flex gap-2">
-                        <span>Imb: <span className={imbColor}>{ob.imbalance > 0 ? '+' : ''}{imbPercent}%</span></span>
-                        <span>Spr: {(ob.spread * 100).toFixed(3)}%</span>
-                    </span>
-                    <span className="text-xs opacity-80">
-                        Walls: <span className="text-emerald-600 dark:text-emerald-400">B:{ob.bidWall || '-'}</span> / <span className="text-rose-600 dark:text-rose-400">A:{ob.askWall || '-'}</span>
-                    </span>
-                </span>
-            );
-        }
-
-        if (typeof value === 'number') return value.toFixed(4);
-        if (typeof value === 'string') return value;
-        if (key === 'adx14' && value.adx) return `ADX: ${value.adx.toFixed(2)}`;
-        if (key === 'macd' && value.histogram) return `H: ${value.histogram.toFixed(4)}`;
-        if (key === 'stochRsi' && value.k) return `K: ${value.k.toFixed(2)}, D: ${value.d.toFixed(2)}`;
-        if (key === 'bb20_2' && value.upper) return `U: ${value.upper.toFixed(4)}, L: ${value.lower.toFixed(4)}`;
-        if (key === 'lastCandlePattern' && value.name) return `${value.name} (${value.type})`;
-        if (key === 'vi14' && value.pdi) return `+VI: ${value.pdi.toFixed(2)}, -VI: ${value.ndi.toFixed(2)}`;
-        if (key === 'ichiCloud' && value.spanA) return `SpanA: ${value.spanA.toFixed(4)}`;
-        
-        return JSON.stringify(value);
-    };
-
-    const renderItem = (key: keyof MarketDataContext, value: any) => {
-        if (value === undefined || value === null || (typeof value === 'object' && Object.keys(value).length === 0 && key !== 'orderBook')) return null;
-        
-        return (
-             <div key={key} className={`flex justify-between ${key === 'orderBook' ? 'flex-col items-start' : 'items-baseline'}`}>
-                <span className="text-slate-500 dark:text-slate-400 capitalize">{key.replace(/([A-Z0-9]+)/g, " $1").trim()}:</span>
-                <span className="font-semibold text-slate-800 dark:text-slate-200">{formatValue(key, value)}</span>
-            </div>
-        )
-    };
-
-    const renderContextBlock = (ctx: Partial<MarketDataContext>, subtitle: string) => {
-        if (Object.keys(ctx).length === 0) return null;
-        return (
-            <div>
-                <h5 className="font-medium text-slate-500 dark:text-slate-400 text-xs mb-1">{subtitle}</h5>
-                <div className="space-y-1 font-mono text-xs p-2 bg-slate-100 dark:bg-slate-900/50 rounded">
-                    {Object.entries(ctx).map(([key, value]) => renderItem(key as keyof MarketDataContext, value))}
-                </div>
-            </div>
-        );
+const ContextComparisonRow: React.FC<{ label: string; entryVal: any; exitVal: any; format?: (v: any) => string }> = ({ label, entryVal, exitVal, format }) => {
+    const formatValue = (v: any) => {
+        if (v === undefined || v === null) return '-';
+        return format ? format(v) : (typeof v === 'number' ? v.toFixed(2) : String(v));
     };
 
     return (
-        <div className="space-y-2">
-            <h4 className="font-semibold text-slate-700 dark:text-slate-300 mb-1">{title}</h4>
-            {renderContextBlock(mainContext, "Main Timeframe")}
-            {renderContextBlock(htfContext, "Higher Timeframe")}
+        <div className="grid grid-cols-3 border-b border-slate-200 dark:border-slate-700 py-1.5 text-xs last:border-0">
+            <span className="text-slate-500 dark:text-slate-400 font-medium self-center">{label}</span>
+            <span className="font-mono text-slate-800 dark:text-slate-200">{formatValue(entryVal)}</span>
+            <span className="font-mono text-slate-800 dark:text-slate-200">{formatValue(exitVal)}</span>
         </div>
     );
 };
 
+const TabButton: React.FC<{ active: boolean; onClick: () => void; icon: React.ReactNode; label: string }> = ({ active, onClick, icon, label }) => (
+    <button
+        onClick={onClick}
+        className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold transition-colors border-b-2 ${
+            active 
+                ? 'border-sky-500 text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-slate-800' 
+                : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+        }`}
+    >
+        {icon}
+        <span>{label}</span>
+    </button>
+);
+
+const ExpandedTradeDetails: React.FC<{ trade: Trade }> = ({ trade }) => {
+    const [activeTab, setActiveTab] = useState<'overview' | 'context' | 'config'>('overview');
+
+    // Extract metrics
+    const durationMs = new Date(trade.exitTime).getTime() - new Date(trade.entryTime).getTime();
+    const durationStr = durationMs > 3600000 
+        ? `${(durationMs / 3600000).toFixed(1)}h` 
+        : `${(durationMs / 60000).toFixed(0)}m`;
+    
+    const isProfit = trade.pnl >= 0;
+    const entryContext = trade.entryContext || {};
+    const exitContext = trade.exitContext || {};
+    const titanData = entryContext.omega_metadata;
+
+    const formatJSON = (data: any) => {
+        try {
+            return JSON.stringify(data, null, 2);
+        } catch (e) {
+            return 'Invalid Data';
+        }
+    };
+
+    return (
+        <div className="bg-white dark:bg-slate-900 border-x border-b border-slate-200 dark:border-slate-700 shadow-inner">
+            <div className="flex border-b border-slate-200 dark:border-slate-700 overflow-x-auto">
+                <TabButton active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} icon={<ActivityIcon className="w-4 h-4"/>} label="Overview" />
+                <TabButton active={activeTab === 'context'} onClick={() => setActiveTab('context')} icon={<ChartIcon className="w-4 h-4"/>} label="Market Data" />
+                <TabButton active={activeTab === 'config'} onClick={() => setActiveTab('config')} icon={<SettingsIcon className="w-4 h-4"/>} label="Strategy & Config" />
+            </div>
+
+            <div className="p-4">
+                {activeTab === 'overview' && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {/* Column 1: Financials */}
+                        <div className="space-y-3">
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">Financials</h4>
+                            <div className="grid grid-cols-2 gap-3">
+                                <MetricCard label="Net PNL" value={`$${trade.pnl.toFixed(2)}`} color={isProfit ? 'text-emerald-600' : 'text-rose-600'} />
+                                <MetricCard label="Return" value={`${((trade.pnl / (trade.investmentAmount || 1)) * 100).toFixed(2)}%`} color={isProfit ? 'text-emerald-600' : 'text-rose-600'} />
+                                <MetricCard label="Invested" value={`$${trade.investmentAmount?.toFixed(0) || '0'}`} />
+                                <MetricCard label="Leverage" value={`${trade.leverage}x`} />
+                            </div>
+                            <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700">
+                                <div className="flex justify-between text-xs mb-1">
+                                    <span className="text-slate-500">Entry Price</span>
+                                    <span className="font-mono">{formatPrice(trade.entryPrice, trade.pricePrecision)}</span>
+                                </div>
+                                <div className="flex justify-between text-xs">
+                                    <span className="text-slate-500">Exit Price</span>
+                                    <span className="font-mono">{formatPrice(trade.exitPrice, trade.pricePrecision)}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Column 2: Performance & Omega Context */}
+                        <div className="space-y-3">
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">Performance & Context</h4>
+                            {titanData ? (
+                                <div className="grid grid-cols-2 gap-3 mb-3">
+                                    <MetricCard label="Titan Tier" value={titanData.tier} color="text-sky-500" />
+                                    <MetricCard label="RVOL Gate" value={`${titanData.rvol.toFixed(1)}x`} color={titanData.rvol > 1.5 ? "text-emerald-500" : "text-slate-400"} />
+                                    <MetricCard label="Entry RSI" value={titanData.entryRsi.toFixed(1)} />
+                                    <MetricCard label="Stop Dist" value={`${titanData.stopDistancePercent.toFixed(2)}%`} color="text-rose-500" />
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-2 gap-3 mb-3">
+                                    <MetricCard label="Risk : Reward" value={trade.initialRiskRewardRatio ? `${trade.initialRiskRewardRatio.toFixed(2)}` : 'N/A'} />
+                                    <MetricCard label="Duration" value={durationStr} />
+                                </div>
+                            )}
+                            <div className="grid grid-cols-2 gap-3 mb-3">
+                                <div className="p-2 bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-800 rounded">
+                                    <div className="text-[9px] uppercase text-emerald-600 dark:text-emerald-400 font-bold">Max Profit (MFE)</div>
+                                    <div className="font-mono text-sm text-emerald-700 dark:text-emerald-300">
+                                        {trade.mfe ? `$${trade.mfe.toFixed(2)}` : 'N/A'}
+                                    </div>
+                                </div>
+                                <div className="p-2 bg-rose-50 dark:bg-rose-900/10 border border-rose-100 dark:border-rose-800 rounded">
+                                    <div className="text-[9px] uppercase text-rose-600 dark:text-rose-400 font-bold">Max Drawdown (MAE)</div>
+                                    <div className="font-mono text-sm text-rose-700 dark:text-rose-300">
+                                        {trade.mae ? `$${trade.mae.toFixed(2)}` : 'N/A'}
+                                    </div>
+                                </div>
+                            </div>
+                            <BtcContextVisual btcContext={trade.btcContext} />
+                        </div>
+
+                        {/* Column 3: The Story */}
+                        <div className="flex flex-col h-full">
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">Trade Narrative</h4>
+                            <div className="flex-grow bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg border border-slate-200 dark:border-slate-700 overflow-y-auto max-h-64 text-xs space-y-3">
+                                <div>
+                                    <span className="font-bold text-sky-600 dark:text-sky-400 block mb-1">Entry Reason</span>
+                                    <p className="text-slate-600 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">
+                                        {trade.entryReason || "No entry reason recorded."}
+                                    </p>
+                                </div>
+                                <div className="border-t border-slate-200 dark:border-slate-600 pt-2">
+                                    <span className="font-bold text-rose-600 dark:text-rose-400 block mb-1">Exit Reason</span>
+                                    <p className="text-slate-600 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">
+                                        {trade.exitReason || "No exit reason recorded."}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === 'context' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-3 flex items-center gap-2">
+                                <SparklesIcon className="w-4 h-4 text-sky-500"/> Indicator Delta (Entry vs Exit)
+                            </h4>
+                            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+                                <div className="grid grid-cols-3 bg-slate-50 dark:bg-slate-700/50 py-2 px-3 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                                    <span>Metric</span>
+                                    <span>Entry</span>
+                                    <span>Exit</span>
+                                </div>
+                                <div className="px-3">
+                                    <ContextComparisonRow label="RSI (14)" entryVal={titanData ? titanData.entryRsi : entryContext.rsi14} exitVal={exitContext.rsi14} format={v => v?.toFixed(1)} />
+                                    <ContextComparisonRow label="ADX Strength" entryVal={titanData ? titanData.entryAdx : entryContext.adx14?.adx} exitVal={exitContext.adx14?.adx} format={v => v?.toFixed(1)} />
+                                    <ContextComparisonRow label="ATR Volatility" entryVal={titanData ? titanData.entryAtr : entryContext.atr14} exitVal={exitContext.atr14} format={v => v?.toFixed(4)} />
+                                    <ContextComparisonRow label="Stoch RSI (K)" entryVal={entryContext.stochRsi?.k} exitVal={exitContext.stochRsi?.k} format={v => v?.toFixed(1)} />
+                                    <ContextComparisonRow label="Volume" entryVal={entryContext.lastVolume} exitVal={exitContext.lastVolume} format={v => v?.toFixed(0)} />
+                                    <ContextComparisonRow label="Price vs EMA50" entryVal={entryContext.ema50 ? (trade.entryPrice - entryContext.ema50).toFixed(2) : '-'} exitVal={exitContext.ema50 ? (trade.exitPrice - exitContext.ema50).toFixed(2) : '-'} />
+                                    <ContextComparisonRow label="Funding Rate" entryVal={trade.entryContext?.fundingRate} exitVal={trade.exitContext?.fundingRate} />
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-3">HTF Context (Entry)</h4>
+                            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 space-y-2 text-xs">
+                                <div className="flex justify-between">
+                                    <span className="text-slate-500">HTF Trend</span>
+                                    <span className={`font-bold uppercase ${entryContext.htf_trend === 'bullish' ? 'text-emerald-500' : entryContext.htf_trend === 'bearish' ? 'text-rose-500' : 'text-slate-500'}`}>
+                                        {entryContext.htf_trend || 'N/A'}
+                                    </span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-slate-500">HTF RSI</span>
+                                    <span className="font-mono">{entryContext.htf_rsi14?.toFixed(1) || 'N/A'}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-slate-500">HTF ADX</span>
+                                    <span className="font-mono">{entryContext.htf_adx14?.adx?.toFixed(1) || 'N/A'}</span>
+                                </div>
+                            </div>
+
+                            <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200 mt-4 mb-3">Order Book (Entry)</h4>
+                            {entryContext.orderBook ? (
+                                <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 space-y-2 text-xs">
+                                    <div className="flex justify-between">
+                                        <span className="text-slate-500">Imbalance</span>
+                                        <span className={`font-mono font-bold ${entryContext.orderBook.imbalance > 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                            {(entryContext.orderBook.imbalance * 100).toFixed(2)}%
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-slate-500">Spread</span>
+                                        <span className="font-mono">{(entryContext.orderBook.spread * 100).toFixed(3)}%</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-slate-500">Bid Wall</span>
+                                        <span className="font-mono text-emerald-600">{entryContext.orderBook.bidWall || '-'}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-slate-500">Ask Wall</span>
+                                        <span className="font-mono text-rose-600">{entryContext.orderBook.askWall || '-'}</span>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="text-xs text-slate-400 italic bg-slate-50 dark:bg-slate-800/50 p-3 rounded">No Order Book snapshot available.</div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === 'config' && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-2">Bot Configuration Snapshot</h4>
+                            <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg border border-slate-200 dark:border-slate-700 text-[10px] font-mono overflow-auto max-h-80">
+                                <pre className="whitespace-pre-wrap text-slate-600 dark:text-slate-300">
+                                    {formatJSON(trade.botConfigSnapshot)}
+                                </pre>
+                            </div>
+                        </div>
+                        <div>
+                            <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-2">Agent Parameters Snapshot</h4>
+                            <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg border border-slate-200 dark:border-slate-700 text-[10px] font-mono overflow-auto max-h-80">
+                                <pre className="whitespace-pre-wrap text-slate-600 dark:text-slate-300">
+                                    {formatJSON(trade.agentParamsSnapshot)}
+                                </pre>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
 
 const TradeRow: React.FC<{ trade: Trade; isOpen: boolean; onToggle: () => void; }> = ({ trade, isOpen, onToggle }) => {
     const isLong = trade.direction === 'LONG';
@@ -174,8 +316,8 @@ const TradeRow: React.FC<{ trade: Trade; isOpen: boolean; onToggle: () => void; 
         : { text: 'PAPER', bg: 'bg-sky-100 dark:bg-sky-900', text_color: 'text-sky-700 dark:text-sky-300' };
 
     return (
-        <>
-            <tr onClick={onToggle} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer text-sm">
+        <React.Fragment>
+            <tr onClick={onToggle} className={`border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer text-sm ${isOpen ? 'bg-slate-50 dark:bg-slate-800/50' : ''}`}>
                 <td className="px-4 py-3 align-middle">
                      <div className="flex items-center gap-3">
                         <span className="text-slate-400">
@@ -187,74 +329,37 @@ const TradeRow: React.FC<{ trade: Trade; isOpen: boolean; onToggle: () => void; 
                                 PRO
                             </div>
                         )}
-                        <div className={`text-xs font-bold px-2 py-0.5 rounded-full ${executionModeTag.bg} ${executionModeTag.text_color}`}>{executionModeTag.text}</div>
-                        <div className="text-xs font-semibold bg-slate-200 dark:bg-slate-700 px-2 py-0.5 rounded-full">{trade.timeFrame}</div>
+                        <div className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${executionModeTag.bg} ${executionModeTag.text_color}`}>{executionModeTag.text}</div>
+                        <div className="text-[10px] font-semibold bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-full">{trade.timeFrame}</div>
                     </div>
                 </td>
                 <td className={`px-4 py-3 font-bold align-middle ${isLong ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                     {trade.direction}{trade.mode === TradingMode.USDSM_Futures && ` ${trade.leverage}x`}
                 </td>
                 <td className="px-4 py-3 align-middle font-mono text-slate-600 dark:text-slate-300">
-                    ${trade.investmentAmount ? trade.investmentAmount.toFixed(0) : 'N/A'} / {trade.leverage}x
+                    ${trade.investmentAmount ? trade.investmentAmount.toFixed(0) : 'N/A'}
                 </td>
-                <td className="px-4 py-3 align-middle font-mono">{formatDisplayDate(trade.exitTime)}</td>
+                <td className="px-4 py-3 align-middle font-mono text-xs text-slate-500 dark:text-slate-400">
+                    {formatDisplayDate(trade.entryTime)}
+                </td>
+                <td className="px-4 py-3 align-middle font-mono text-xs text-slate-500 dark:text-slate-400">
+                    {formatDisplayDate(trade.exitTime)}
+                </td>
                 <td className={`px-4 py-3 font-bold align-middle font-mono ${isProfit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                     {isProfit ? '+' : ''}{formatPrice(trade.pnl, 2)}
                 </td>
-                <td className="px-4 py-3 align-middle text-slate-500 dark:text-slate-400">{trade.agentName}</td>
+                <td className="px-4 py-3 align-middle text-slate-500 dark:text-slate-400 text-xs truncate max-w-[150px]" title={trade.agentName}>
+                    {trade.agentName}
+                </td>
             </tr>
             {isOpen && (
-                <tr className="bg-slate-50 dark:bg-slate-800/20">
-                    <td colSpan={6} className="px-4 py-3">
-                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 text-xs p-2">
-                            <div className="space-y-4">
-                                <DetailItem label="Entry" value={<><p className="font-mono">{formatPrice(trade.entryPrice, trade.pricePrecision)}</p><p>{formatDisplayDate(trade.entryTime)}</p></>} />
-                                <DetailItem label="Exit" value={<><p className="font-mono">{formatPrice(trade.exitPrice, trade.pricePrecision)}</p><p>{formatDisplayDate(trade.exitTime)}</p></>} />
-                                <DetailItem label="Position Info" value={
-                                    <div className="font-mono space-y-1">
-                                        <p>Invested: <span className="font-semibold">${trade.investmentAmount?.toFixed(2) ?? 'N/A'}</span></p>
-                                        <p>Leverage: <span className="font-semibold">{trade.leverage}x</span></p>
-                                        <p>Position Size: <span className="font-semibold">{trade.size.toFixed(4)} ({trade.pair.split('/')[0]})</span></p>
-                                    </div>
-                                } />
-                                <DetailItem label="Performance" value={
-                                    <div className="font-mono space-y-1">
-                                        <p>Initial R:R: <span className="font-semibold">{trade.initialRiskRewardRatio?.toFixed(2) ?? 'N/A'}:1</span></p>
-                                        <p>MFE: <span className="font-semibold text-emerald-500">${trade.mfe?.toFixed(2) ?? 'N/A'}</span></p>
-                                        <p>MAE: <span className="font-semibold text-rose-500">${trade.mae?.toFixed(2) ?? 'N/A'}</span></p>
-                                    </div>
-                                } />
-                                { (trade.tradeType || trade.promotedFrom) && (
-                                    <DetailItem label="Trade Type" value={
-                                        <div className="flex items-center gap-2">
-                                            <span className="capitalize font-semibold">{trade.tradeType || 'conviction'}</span>
-                                            {trade.promotedFrom && <span className="text-xs bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded-full">Promoted</span>}
-                                        </div>
-                                    } />
-                                )}
-                                <BtcContextDisplay btcContext={trade.btcContext} />
-                            </div>
-                            <div className="space-y-4">
-                               <MarketContextDisplay title="Entry Context" context={trade.entryContext} />
-                               <MarketContextDisplay title="Exit Context" context={trade.exitContext} />
-                            </div>
-                            <div className="space-y-4">
-                                 <DetailItem label="Entry Reason" value={<p className="whitespace-pre-wrap break-words">{trade.entryReason || 'N/A'}</p>} />
-                                <DetailItem label="Exit Reason" value={<p className="whitespace-pre-wrap break-words">{trade.exitReason}</p>} />
-                                <DetailItem label="Bot Config Snapshot" value={
-                                     <div className="font-mono space-y-1">
-                                        {Object.entries(trade.botConfigSnapshot || {}).filter(([key]) => key !== 'agentParamsSnapshot').map(([key, value]) => (
-                                             <p key={key}>{key}: <span className="font-semibold">{String(value)}</span></p>
-                                        ))}
-                                     </div>
-                                 } />
-                                 <DetailItem label="Agent Params Snapshot" value={<ParamDisplay params={trade.agentParamsSnapshot} />} />
-                            </div>
-                        </div>
+                <tr>
+                    <td colSpan={7} className="p-0">
+                        <ExpandedTradeDetails trade={trade} />
                     </td>
                 </tr>
             )}
-        </>
+        </React.Fragment>
     );
 };
 
@@ -402,7 +507,8 @@ export const TradingLog: React.FC<TradingLogProps> = ({ tradeHistory, setTradeHi
                         <tr>
                             <th scope="col" className="px-4 py-2 font-medium">Market</th>
                             <th scope="col" className="px-4 py-2 font-medium">Direction</th>
-                            <th scope="col" className="px-4 py-2 font-medium">Inv. / Lev.</th>
+                            <th scope="col" className="px-4 py-2 font-medium">Inv.</th>
+                            <th scope="col" className="px-4 py-2 font-medium">Entry Time</th>
                             <th scope="col" className="px-4 py-2 font-medium">Exit Time</th>
                             <th scope="col" className="px-4 py-2 font-medium" title="Profit/Loss after estimated trading fees">Net P/L ($)</th>
                             <th scope="col" className="px-4 py-2 font-medium">Agent</th>
@@ -412,7 +518,7 @@ export const TradingLog: React.FC<TradingLogProps> = ({ tradeHistory, setTradeHi
                         {filteredTrades.length > 0 ? (
                             filteredTrades.map((trade) => <TradeRow key={trade.id} trade={trade} isOpen={expandedRowId === trade.id} onToggle={() => handleToggleRow(trade.id)}/>)
                         ) : (
-                            <tr><td colSpan={6} className="text-center p-8 text-slate-500">No trades match the current filter.</td></tr>
+                            <tr><td colSpan={7} className="text-center p-8 text-slate-500">No trades match the current filter.</td></tr>
                         )}
                     </tbody>
                 </table>

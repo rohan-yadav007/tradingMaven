@@ -1,3 +1,4 @@
+
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -19,12 +20,14 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/proxy-futures/, ''),
       },
       // Proxy for WebSocket Streams to fix cross-origin issues in dev
+      // Binance Spot streams typically run on port 9443
       '/proxy-spot-ws': {
-        target: 'wss://stream.binance.com',
+        target: 'wss://stream.binance.com:9443',
         ws: true,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/proxy-spot-ws/, ''),
       },
+      // Binance Futures streams
       '/proxy-futures-ws': {
         target: 'wss://fstream.binance.com',
         ws: true,

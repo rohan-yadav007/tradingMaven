@@ -61,7 +61,8 @@ const AppContent: React.FC = () => {
         isMarketBreadthFilterEnabled, isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled,
         isTradeGuardianEnabled,
         isHeikinAshiEnabled,
-        isDynamicSizingEnabled
+        isDynamicSizingEnabled,
+        isModelFilterEnabled
     } = configState;
 
     const {
@@ -183,6 +184,7 @@ const AppContent: React.FC = () => {
                     finalEntryFailSafe: executionMode === 'live' ? 'fail-closed' : 'fail-open',
                     isHeikinAshiEnabled,
                     isDynamicSizingEnabled,
+                    isModelFilterEnabled,
                 };
 
                 botManagerService.startBot(botConfig);
@@ -201,7 +203,7 @@ const AppContent: React.FC = () => {
         isBtcConfirmationEnabled, isBtcCorrelationVetoEnabled, btcConfirmationThreshold, isVolumeFilterEnabled, isAdxFilterEnabled,
         isExhaustionFilterEnabled, isSmcVetoEnabled, isSrAnalysisEnabled, isCandlestickConfirmationEnabled, 
         isMarketStructureVetoEnabled, isSupertrendConfirmationEnabled, isAdaptiveTpEnabled, aggressiveTrailMode, isMarketBreadthFilterEnabled,
-        isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled, isTradeGuardianEnabled, isHeikinAshiEnabled, isDynamicSizingEnabled
+        isLiquidationFilterEnabled, isConfirmationCandleEnabled, isMomentumConcordanceEnabled, isTradeGuardianEnabled, isHeikinAshiEnabled, isDynamicSizingEnabled, isModelFilterEnabled
     ]);
 
     const handleClosePosition = useCallback(async (posToClose: Position, exitReason: string = "Manual Close", exitPriceOverride?: number) => {
@@ -558,7 +560,7 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             initialStopLossReason: executionDetails.slReason, activeStopLossReason: executionDetails.slReason,
             pricePrecision: config.pricePrecision, timeFrame: config.timeFrame,
             liquidationPrice: finalLiquidationPrice, isBreakevenSet: false, proactiveLossCheckTriggered: false,
-            profitLockTier: 0, profitSpikeTier: 0, aggressiveTrailTier: 0,
+            profitLockTier: 0, profitSpikeTier: 0, aggressiveTrailTier: 0, tpLockStage: 0,
             peakPrice: finalEntryPrice, troughPrice: finalEntryPrice, candlesSinceEntry: 0, hasBeenProfitable: false,
             takerFeeRate: config.takerFeeRate, initialRiskRewardRatio, agentParamsSnapshot: config.agentParams,
             adaptiveTpTriggered: false,

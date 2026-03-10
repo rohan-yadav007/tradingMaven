@@ -42,10 +42,16 @@ export const getHigherTimeframe = (timeframe: string): string | undefined => {
 
 export const AGENTS: Agent[] = [
     {
+        id: 26,
+        name: 'Apex: Sovereign Predator',
+        description: "A complete redesign of Omega with 5 targeted fixes from trade history analysis: (1) Hard model block ≤-15, (2) Volume hard block <0.3× SMA, (3) OB Reclaim retired (0% WR), (4) Enhanced sweep confirmation with wick rejection + close-back-inside, (5) Conviction-based patience replacing the fixed 13-candle Guardian. Plus funding rate intelligence.",
+        indicators: ["Enhanced Liquidity Sweep", "H1/M5 BOS", "Trend-Only FVG", "Funding Rate", "Conviction Patience"],
+    },
+    {
         id: 25,
         name: 'Omega: Unified Predator',
-        description: "An advanced multi-dimensional outcome engine. It ignores execution timeframe constraints to synchronize Macro Tide, Structural Voids (FVGs), and Micro-Liquidity Sweeps for institutional-grade high RR trades.",
-        indicators: ["Unified Matrix", "FVG Voids", "Liquidity Sweeps", "The Trap"],
+        description: "An advanced multi-dimensional vessel for institutional strategies. It ignores execution timeframe constraints to synchronize Macro Tide and Soul-driven setups (FVG, Liquidity Traps, POC Reversions) for high RR outcomes.",
+        indicators: ["Swappable Soul", "Unified Matrix", "FVG Voids", "Liquidity Traps", "POC Reversions"],
     },
     {
         id: 22,
@@ -318,14 +324,19 @@ export const DEFAULT_AGENT_PARAMS: Required<AgentParams> = {
     ms_4h_swingLookback: 10,
 
     // Agent 25: Omega Predator Defaults
+    omega_intent: 'Growth',
     omega_matrixThreshold: 75,
     omega_aggressiveness: 'Auto',
+    omega_strategy: 'void', 
     omega_fvgLookback: 20,
     omega_sweepDepth: 30,
     omega_minExpectancy: 5.0,
     omega_frequencyAggressiveness: 3,
     omega_orderFlowWeight: 45,
-    omega_allowShapeshifting: false, // New Default
+    omega_allowShapeshifting: false, 
+    omega_patience: 'Medium',
+    omega_auto_mode: true, // Auto-Pilot enabled by default
+    omega_session_filter: true, // Session awareness enabled by default
 
     // SMC Reversal Veto
     smc_divergenceLookback: 12,

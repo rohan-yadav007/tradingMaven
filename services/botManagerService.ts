@@ -3,17 +3,14 @@
 
 import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, TradingMode, MarketDataContext, AgentParams, TradeManagementSignal } from '../types';
 import * as binanceService from './binanceService';
-import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getInitialAgentTargets, validateTradeProfitability, getTradeGuardianSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, captureMarketContext, getAdaptiveTakeProfit } from './localAgentService';
-import { TIME_FRAMES, getMicroTimeframe } from '../constants';
-import { telegramBotService } from './telegramBotService';
-import { WebSocketManager } from './webSocketManager';
-import { sharedKlineService } from './sharedKlineService';
+import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getTradeGuardianSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, getTPProportionalLockSignal, captureMarketContext } from './localAgentService';
+import { TIME_FRAMES } from '../constants';
 import * as constants from '../constants';
-import { getConfluenceTimeframes, getAstraXRegimeAndDirection } from './agents/astrax';
 import { getOmegaSignal, SovereignManagementEngine, logFailedOmegaSetup } from './agents/omega';
-import { orderBookService } from './orderBookService';
-import { historyService } from './historyService';
+import { ApexManagementEngine } from './agents/apex';
 import { spotWsManager, futuresWsManager } from './wsRegistry';
+import { tapeReadingService } from './tapeReadingService';
+import { calculateWinProbability } from './predictiveModel';
 
 const MAX_LOG_ENTRIES = 100;
 
@@ -95,9 +92,9 @@ export class BotInstance {
         this.isInitialized = true; 
 
         if (this.bot.status === BotStatus.Starting) {
-            this.updateState({ 
-                status: BotStatus.Monitoring, 
-                lastResumeTimestamp: binanceService.getSyncedNow(),
+            this.updateState({
+                status: BotStatus.Monitoring,
+                lastResumeTimestamp: Date.now(),
             }, true);
         }
     }    
@@ -150,14 +147,16 @@ export class BotInstance {
              }, false);
         }
 
-        const isMatrixAgent = this.bot.config.agent.id === 25;
-        const isTriggerTF = timeframe === '5m' || timeframe === '1m';
+        const isMatrixAgent = this.bot.config.agent.id === 25 || this.bot.config.agent.id === 26;
+        // Omega/Apex Execution Trigger: 5m Candle Close
+        const isExecutionTf = timeframe === '5m';
 
-        if (isMatrixAgent && isTriggerTF && newKline.isFinal && this.bot.status === BotStatus.Monitoring && !this.bot.openPosition) {
+        if (isMatrixAgent && isExecutionTf && newKline.isFinal && this.bot.status === BotStatus.Monitoring && !this.bot.openPosition) {
             if (this.executing) return;
             this.executing = true;
             try {
-                await this.runAnalysis({ execute: true, reason: `Matrix ${timeframe} Pulse` });
+                // IMPORTANT: Execute is TRUE on 5m close for Omega
+                await this.runAnalysis({ execute: true, reason: `Matrix ${timeframe} Close Analysis` });
             } finally {
                 this.executing = false;
             }
@@ -165,26 +164,21 @@ export class BotInstance {
     }
 
     public runAnalysis = async (options: { execute: boolean, reason: string, klinesOverride?: Kline[] }) => {
-        const isMatrixAgent = this.bot.config.agent.id === 25 || this.bot.config.agent.id === 19;
+        const isMatrixAgent = this.bot.config.agent.id === 25 || this.bot.config.agent.id === 26 || this.bot.config.agent.id === 19;
         
         if (isMatrixAgent && !this.isMatrixReady()) {
             return;
         }
 
         const klinesToUse = options.klinesOverride || this.klines;
-        const minLen = (this.bot.config.agent.id === 19 || this.bot.config.agent.id === 25) ? 1 : 50;
+        const minLen = (this.bot.config.agent.id === 19 || this.bot.config.agent.id === 25 || this.bot.config.agent.id === 26) ? 1 : 50;
         if (klinesToUse.length < minLen) return;
 
         try {
             let klinesForAnalysis = klinesToUse;
             if (!options.klinesOverride && this.bot.config.entryTiming === 'immediate' && this.bot.livePrice && klinesToUse.length > 0) {
                 const lastKline = klinesToUse[klinesToUse.length - 1];
-                if (this.bot.config.agent.id === 25) {
-                    if (!lastKline.isFinal) {
-                         klinesForAnalysis = klinesToUse.slice(0, -1);
-                    }
-                } 
-                else if (!lastKline.isFinal) {
+                if (!lastKline.isFinal) {
                     const previewKline: Kline = {
                         ...lastKline,
                         high: Math.max(lastKline.high, this.bot.livePrice),
@@ -209,7 +203,12 @@ export class BotInstance {
                 this.btcKlines
             );
             
-            this.updateState({ analysis: signal }, false);
+            this.updateState({ 
+                analysis: signal,
+                omegaJitActive: signal.isOmegaSetupReady,
+                omegaJitDirection: signal.omegaSetupDirection,
+                omegaJitZone: signal.omegaSetupZone
+            }, false);
             
             if (options.execute && signal.signal !== 'HOLD') {
                 const now = binanceService.getSyncedNow();
@@ -218,8 +217,8 @@ export class BotInstance {
                 if (!this.bot.openPosition && (now - this.lastClosedTradeTimestamp < COOLDOWN_MS)) {
                     if (this.lastTradeWasLoss) return;
                     let isHighConviction = false;
-                    if (this.bot.config.agent.id === 25 && signal.omegaAnalysis?.conviction >= 80) isHighConviction = true;
-                    else if (signal.astraXAnalysis?.conviction >= 80) isHighConviction = true;
+                    if ((this.bot.config.agent.id === 25 || this.bot.config.agent.id === 26) && (signal.omegaAnalysis?.conviction ?? 0) >= 80) isHighConviction = true;
+                    else if ((signal.astraXAnalysis?.conviction ?? 0) >= 80) isHighConviction = true;
                     if (!isHighConviction) return;
                 }
 
@@ -255,17 +254,33 @@ export class BotInstance {
         const updatePayload: Partial<RunningBot> = { livePrice: price, liveTicker: tickerData, lastPriceUpdateTimestamp: now };
         if (this.bot.openPosition) {
             const pos = this.bot.openPosition;
-            let newPeak = pos.peakPrice, newTrough = pos.troughPrice, posUpdated = false;
+            let posUpdated = false;
+            let newPeak = pos.peakPrice, newTrough = pos.troughPrice;
             if (pos.direction === 'LONG') {
-                if (price > newPeak) { newPeak = price; posUpdated = true; }
-                if (price < newTrough) { newTrough = price; posUpdated = true; }
+                if (price > pos.peakPrice) { newPeak = price; posUpdated = true; }
+                if (price < pos.troughPrice) { newTrough = price; posUpdated = true; }
             } else {
-                if (price < newPeak) { newPeak = price; posUpdated = true; }
-                if (price > newTrough) { newTrough = price; posUpdated = true; }
+                if (price < pos.peakPrice) { newPeak = price; posUpdated = true; }
+                if (price > pos.troughPrice) { newTrough = price; posUpdated = true; }
             }
             if (posUpdated) updatePayload.openPosition = { ...pos, peakPrice: newPeak, troughPrice: newTrough };
         }
         this.updateState(updatePayload, false);
+
+        if (this.bot.omegaJitActive && !this.bot.openPosition && this.bot.status === BotStatus.Monitoring) {
+            const dir = this.bot.omegaJitDirection;
+            const zone = this.bot.omegaJitZone;
+            let triggerSpark = false;
+            if (zone) {
+                if (dir === 'LONG' && price >= zone.low && price <= zone.high * 1.002) triggerSpark = true;
+                if (dir === 'SHORT' && price <= zone.high && price >= zone.low * 0.998) triggerSpark = true;
+            }
+            if (triggerSpark) {
+                this.addLog(`V14 JIT Pulse: Momentum Spark triggered at ${price}`, LogType.Action);
+                this.runAnalysis({ execute: true, reason: 'Omega JIT Tick' });
+            }
+        }
+
         if (this.bot.openPosition) {
             if (now - this.lastManagementTimestamp >= 500) {
                 this.lastManagementTimestamp = now;
@@ -314,6 +329,12 @@ export class BotInstance {
         const position = this.bot.openPosition;
         const applyUpdate = (sig: TradeManagementSignal) => {
             let updates: Partial<Position> = {}, logReasons: string[] = [];
+            
+            // Capture forecast regardless of SL update
+            if (sig.forecast) {
+                updates.managementForecast = sig.forecast;
+            }
+
             if (sig.newStopLoss && ((position.direction === 'LONG' && sig.newStopLoss > position.stopLossPrice) || (position.direction === 'SHORT' && sig.newStopLoss < position.stopLossPrice))) {
                 updates.stopLossPrice = sig.newStopLoss;
                 updates.activeStopLossReason = sig.activeStopLossReason || position.activeStopLossReason;
@@ -331,6 +352,16 @@ export class BotInstance {
             }
         };
 
+        if (position.agentId === 26) {
+             const apexSignal = ApexManagementEngine.manage(position, currentPrice, this.klines, this.astraXKlinesMap);
+             if (apexSignal.action === 'close') {
+                 this.handlers.onClosePosition(position, apexSignal.reasons[0] || 'Apex Management', currentPrice);
+                 return;
+             }
+             applyUpdate(apexSignal);
+             this.updateWinProbability(currentPrice);
+             return;
+        }
         if (position.agentId === 25) {
              const omegaSignal = SovereignManagementEngine.manage(position, currentPrice, this.klines, this.astraXKlinesMap);
              if (omegaSignal.action === 'close') {
@@ -338,6 +369,7 @@ export class BotInstance {
                  return;
              }
              applyUpdate(omegaSignal);
+             this.updateWinProbability(currentPrice);
              return;
         }
 
@@ -346,17 +378,61 @@ export class BotInstance {
             this.handlers.onClosePosition(position, guardianSignal.reason || 'Trade Guardian Exit', currentPrice);
             return;
         }
-        const aggressiveSignal = getAggressiveRangeTrailSignal(position, currentPrice);
         const spikeSignal = getProfitSpikeSignal(position, currentPrice);
-        const secureSignal = getMultiStageProfitSecureSignal(position, currentPrice);
-        const breakevenSignal = getMandatoryBreakevenSignal(position, currentPrice);
         const managementSignal = getAgentExitSignal(position, this.klines, currentPrice, this.bot.config);
 
-        if (aggressiveSignal.newStopLoss) applyUpdate(aggressiveSignal);
-        else if (spikeSignal.newStopLoss) applyUpdate(spikeSignal);
-        else if (secureSignal.newStopLoss) applyUpdate(secureSignal);
-        else if (breakevenSignal.newStopLoss) applyUpdate(breakevenSignal);
+        // TP-bound positions: use TP-proportional locking (replaces R-tier + breakeven + aggressive trail)
+        // No-TP positions: fall back to the R-tier ratchet system
+        const profitSignal = position.takeProfitPrice
+            ? getTPProportionalLockSignal(position, currentPrice)
+            : (() => {
+                const ag = getAggressiveRangeTrailSignal(position, currentPrice);
+                if (ag.newStopLoss) return ag;
+                const sec = getMultiStageProfitSecureSignal(position, currentPrice, this.klines);
+                if (sec.newStopLoss) return sec;
+                return getMandatoryBreakevenSignal(position, currentPrice);
+            })();
+
+        if (spikeSignal.newStopLoss) applyUpdate(spikeSignal);
+        else if (profitSignal.newStopLoss) applyUpdate(profitSignal);
         else if (managementSignal.newStopLoss) applyUpdate(managementSignal);
+
+        this.updateWinProbability(currentPrice);
+    }
+
+    private updateWinProbability = (currentPrice: number): boolean => {
+        if (!this.bot.openPosition) return false;
+        const history = this.bot.probabilityHistory ?? [];
+        const result = calculateWinProbability(this.bot.openPosition, currentPrice, this.klines, history);
+        const newHistory = [...history, result.probability].slice(-50);
+
+        // Track consecutive low-probability ticks for early exit logic
+        const prevLowTicks = this.bot.consecutiveLowProbabilityTicks ?? 0;
+        const isLowProb = result.probability < 25;
+        const consecutiveLowProbabilityTicks = isLowProb ? prevLowTicks + 1 : 0;
+
+        this.updateState({
+            winProbability: result.probability,
+            winProbabilityFactors: result.factors,
+            probabilityHistory: newHistory,
+            consecutiveLowProbabilityTicks,
+        }, false);
+
+        // --- Proactive Early Exit: model signals deterioration ---
+        // Trigger if: model says exit AND probability stayed low for 5+ consecutive ticks
+        if (result.shouldEarlyExit && consecutiveLowProbabilityTicks >= 5) {
+            const pos = this.bot.openPosition;
+            const pnlR = (pos.direction === 'LONG'
+                ? currentPrice - pos.entryPrice
+                : pos.entryPrice - currentPrice) / pos.initialRiskInPrice;
+
+            // Only exit if in drawdown territory (don't cut winners)
+            if (pnlR < -0.15) {
+                this.handlers.onClosePosition(pos, `Predictive Exit: ${result.earlyExitReason || 'Low win probability sustained.'}`, currentPrice);
+                return true; // position closed
+            }
+        }
+        return false;
     }
 
     public checkPriceBoundaries = (currentPrice: number) => {
@@ -373,7 +449,7 @@ export class BotInstance {
             this.handlers.onClosePosition(pos, `Stop Loss (${pos.activeStopLossReason})`, currentPrice);
             this.lastTradeWasLoss = true;
             this.lastClosedTradeTimestamp = binanceService.getSyncedNow();
-            if (this.bot.config.agent.id === 25 && pos.setupType) logFailedOmegaSetup(pos.pair, pos.initialStopLossPrice, pos.setupType, pos.direction);
+            if ((this.bot.config.agent.id === 25 || this.bot.config.agent.id === 26) && pos.setupType) logFailedOmegaSetup(pos.pair, pos.initialStopLossPrice, pos.setupType, pos.direction);
         }
     }
 }
@@ -400,6 +476,13 @@ class BotManagerService {
         this.bots.set(instance.bot.id, instance);
         this.notifyListeners();
         this.initializeBotData(instance);
+        
+        // Start Tape Reading if applicable
+        if (config.agent.id === 25 || config.agent.id === 26) { // Omega/Apex use Tape
+            tapeReadingService.subscribe(config.pair, config.mode);
+            instance.subscriptionCleanups.push(() => tapeReadingService.unsubscribe(config.pair, config.mode));
+        }
+        
         return instance.bot;
     }
 
@@ -412,14 +495,19 @@ class BotManagerService {
                 const htf = htfTimeFrame === 'auto' ? constants.getHigherTimeframe(timeFrame) : htfTimeFrame;
                 if (htf) instance.htfKlines = await binanceService.fetchKlines(formattedPair, htf, { limit: 200, mode });
             }
-            if (instance.bot.config.agent.id === 25 || instance.bot.config.agent.id === 19) {
-                const tfs = ['1m', '5m', '15m', '1h', '4h', '1d']; 
+            if (instance.bot.config.agent.id === 25 || instance.bot.config.agent.id === 26 || instance.bot.config.agent.id === 19) {
+                const tfs = ['1m', '5m', '15m', '1h', '4h', '1d'];
                 instance.astraXKlinesMap.set(timeFrame, klines);
                 const missingTfs = tfs.filter(tf => tf !== timeFrame);
                 await Promise.all(missingTfs.map(async (tf) => {
                     const data = await binanceService.fetchKlines(formattedPair, tf, { limit: 200, mode });
                     instance.astraXKlinesMap.set(tf, data);
                 }));
+            }
+            // Load BTC correlation klines for Omega (agent 25)
+            if ((instance.bot.config.agent.id === 25 || instance.bot.config.agent.id === 26) && formattedPair !== 'BTCUSDT') {
+                const btcMode = mode === TradingMode.USDSM_Futures ? TradingMode.USDSM_Futures : TradingMode.Spot;
+                instance.btcKlines = await binanceService.fetchKlines('BTCUSDT', '1h', { limit: 200, mode: btcMode });
             }
             this.setupDataSubscriptions(instance);
             await instance.initialize(klines);
@@ -436,7 +524,7 @@ class BotManagerService {
             const wsManager = mode === TradingMode.USDSM_Futures ? futuresWsManager : spotWsManager;
             const stream = `${formattedPair.toLowerCase()}@kline_${tf}`;
             const handler = (data: any) => {
-                const k: Kline = { time: data.k.t, open: parseFloat(data.k.o), high: parseFloat(data.k.h), low: parseFloat(data.k.l), close: parseFloat(data.k.c), volume: parseFloat(data.k.v), isFinal: data.k.x };
+                const k: Kline = { time: data.k.t, open: parseFloat(data.k.o), high: parseFloat(data.k.h), low: parseFloat(data.k.l), close: parseFloat(data.k.c), volume: parseFloat(data.k.v), takerBuyVolume: parseFloat(data.k.V), isFinal: data.k.x };
                 callback(k);
             };
             wsManager.subscribe(stream, handler);
@@ -447,16 +535,34 @@ class BotManagerService {
             if (last && k.time === last.time) instance.klines[instance.klines.length - 1] = k;
             else { instance.klines.push(k); if (instance.klines.length > 500) instance.klines.shift(); }
             instance.onMatrixKlineUpdate(timeFrame, k);
-            if (k.isFinal && instance.bot.config.agent.id !== 25) instance.runAnalysis({ execute: true, reason: 'Candle Close' });
+            if (k.isFinal && instance.bot.config.agent.id !== 25 && instance.bot.config.agent.id !== 26) instance.runAnalysis({ execute: true, reason: 'Candle Close' });
         });
-        if (instance.bot.config.agent.id === 25 || instance.bot.config.agent.id === 19) {
+        if (instance.bot.config.agent.id === 25 || instance.bot.config.agent.id === 26 || instance.bot.config.agent.id === 19) {
             ['1m', '5m', '15m', '1h', '4h', '1d'].forEach(tf => {
                 if (tf !== timeFrame) subscribeKline(tf, (k) => instance.onMatrixKlineUpdate(tf, k));
             });
         }
-        const tickerCallback = () => {};
-        this.subscribeToTickerUpdates(formattedPair, mode, tickerCallback);
-        instance.subscriptionCleanups.push(() => this.unsubscribeFromTickerUpdates(formattedPair, mode, tickerCallback));
+        // Subscribe to BTC 1h updates for Omega/Apex context
+        if ((instance.bot.config.agent.id === 25 || instance.bot.config.agent.id === 26) && formattedPair !== 'BTCUSDT') {
+            const wsManager = mode === TradingMode.USDSM_Futures ? futuresWsManager : spotWsManager;
+            const btcStream = 'btcusdt@kline_1h';
+            const btcHandler = (data: any) => {
+                const k: Kline = { time: data.k.t, open: parseFloat(data.k.o), high: parseFloat(data.k.h), low: parseFloat(data.k.l), close: parseFloat(data.k.c), volume: parseFloat(data.k.v), takerBuyVolume: parseFloat(data.k.V), isFinal: data.k.x };
+                if (!instance.btcKlines) instance.btcKlines = [];
+                const last = instance.btcKlines[instance.btcKlines.length - 1];
+                if (last && k.time === last.time) instance.btcKlines[instance.btcKlines.length - 1] = k;
+                else { instance.btcKlines.push(k); if (instance.btcKlines.length > 250) instance.btcKlines.shift(); }
+            };
+            wsManager.subscribe(btcStream, btcHandler);
+            instance.subscriptionCleanups.push(() => wsManager.unsubscribe(btcStream, btcHandler));
+        }
+        // Ensure the ticker WS stream is started for this pair so updateLivePrice fires for all bots.
+        // The WS handler updates all matching bots directly; no external callback is needed here.
+        if (!this.tickerSubscriptions.has(formattedPair.toLowerCase())) {
+            const sentinelCallback = () => {};
+            this.subscribeToTickerUpdates(formattedPair, mode, sentinelCallback);
+            instance.subscriptionCleanups.push(() => this.unsubscribeFromTickerUpdates(formattedPair, mode, sentinelCallback));
+        }
     }
 
     public stopBot(botId: string) {
@@ -536,7 +642,7 @@ class BotManagerService {
     public notifyPositionClosed(botId: string, pnl: number) {
         const instance = this.bots.get(botId);
         if (instance) {
-            const newStats = { closedTradesCount: instance.bot.closedTradesCount + 1, wins: instance.bot.wins + (pnl > 0 ? 1 : 0), losses: instance.bot.losses + (pnl <= 0 ? 1 : 0), totalPnl: instance.bot.totalPnl + pnl, openPosition: null, openPositionId: null, status: BotStatus.Monitoring, lastProfitableTradeDirection: pnl > 0 ? instance.bot.openPosition?.direction || null : null };
+            const newStats = { closedTradesCount: instance.bot.closedTradesCount + 1, wins: instance.bot.wins + (pnl > 0 ? 1 : 0), losses: instance.bot.losses + (pnl <= 0 ? 1 : 0), totalPnl: instance.bot.totalPnl + pnl, openPosition: null, openPositionId: null, status: BotStatus.Monitoring, lastProfitableTradeDirection: pnl > 0 ? instance.bot.openPosition?.direction || null : null, omegaJitActive: false };
             instance.updateState(newStats, true);
             instance.addLog(`Trade closed. PNL: $${pnl.toFixed(2)}`, pnl > 0 ? LogType.Success : LogType.Error);
         }
@@ -551,6 +657,21 @@ class BotManagerService {
     public updateBotState(botId: string, partialState: Partial<RunningBot>) { const instance = this.bots.get(botId); if (instance) instance.updateState(partialState, true); }
     public addBotLog(botId: string, message: string, type: LogType) { const instance = this.bots.get(botId); if (instance) instance.addLog(message, type); }
     public stopAllBots() { this.bots.forEach(bot => this.stopBot(bot.bot.id)); }
+
+    /** Called when a universal model is deployed — immediately refreshes analysis for all idle Omega bots
+     *  so the model score shows up in the AI Analysis panel without waiting for the next candle close. */
+    public requestImmediateOmegaAnalysis() {
+        this.bots.forEach(instance => {
+            if (
+                (instance.bot.config.agent.id === 25 || instance.bot.config.agent.id === 26) &&
+                instance.bot.status === BotStatus.Monitoring &&
+                !instance.bot.openPosition
+            ) {
+                // execute=false: just refresh the display, don't enter trades
+                instance.runAnalysis({ execute: false, reason: 'Model Deployed — Refresh' });
+            }
+        });
+    }
 }
 
 export const botManagerService = new BotManagerService();

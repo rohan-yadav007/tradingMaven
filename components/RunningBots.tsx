@@ -3,10 +3,12 @@
 
 import React, { useState, useEffect, useMemo, useRef, memo } from 'react';
 import { RunningBot, BotStatus, Position, BotConfig, BotLogEntry, LogType } from '../types';
-import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, InfoIcon, ZapIcon, RefreshIcon } from './icons';
+/* Added SparklesIcon to imports to fix "Cannot find name 'SparklesIcon'" error */
+import { StopIcon, ActivityIcon, CpuIcon, PauseIcon, PlayIcon, TrashIcon, CloseIcon, ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, InfoIcon, ZapIcon, RefreshIcon, SparklesIcon } from './icons';
 import { AnalysisPreview } from './AnalysisPreview';
 import { TAKER_FEE_RATE } from '../constants';
 import { botManagerService } from '../services/botManagerService';
+import { TradePredictionModal } from './TradePredictionModal';
 
 
 interface RunningBotsProps {
@@ -31,36 +33,41 @@ const InfoItem: React.FC<{ label: string; value: React.ReactNode; valueClassName
 
 const useDuration = (bot: RunningBot) => {
     const [duration, setDuration] = useState('00:00:00');
+    // Keep a ref so the interval always reads the latest values without needing deps
+    const botRef = useRef(bot);
+    botRef.current = bot;
 
     useEffect(() => {
         const updateDuration = () => {
-            let totalMs = bot.accumulatedActiveMs;
-            if (bot.lastResumeTimestamp) {
-                totalMs += Date.now() - bot.lastResumeTimestamp;
+            const b = botRef.current;
+            let totalMs = b.accumulatedActiveMs;
+            if (b.lastResumeTimestamp) {
+                totalMs += Date.now() - b.lastResumeTimestamp;
             }
-            
+            if (totalMs < 0) totalMs = 0;
+
             const hours = Math.floor(totalMs / 3600000);
             const minutes = Math.floor((totalMs % 3600000) / 60000);
             const seconds = Math.floor((totalMs % 60000) / 1000);
-            
+
             setDuration(
                 `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
             );
         };
 
+        const isActive = bot.status !== BotStatus.Paused && bot.status !== BotStatus.Stopped && bot.status !== BotStatus.Error;
         let intervalId: number | undefined;
-        if (bot.status !== BotStatus.Paused && bot.status !== BotStatus.Stopped && bot.status !== BotStatus.Error) {
-             intervalId = window.setInterval(updateDuration, 1000);
+        if (isActive) {
+            intervalId = window.setInterval(updateDuration, 1000);
         }
-        
-        updateDuration(); 
+
+        updateDuration();
 
         return () => {
-            if (intervalId) {
-                window.clearInterval(intervalId);
-            }
+            if (intervalId) window.clearInterval(intervalId);
         };
-    }, [bot.status, bot.accumulatedActiveMs, bot.lastResumeTimestamp]);
+    // Only re-run when active/inactive status changes — the ref handles live value reads
+    }, [bot.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
     return duration;
 };
@@ -72,15 +79,21 @@ const formatPrice = (price: number | undefined, precision: number) => {
 
 const getStatusInfo = (status: BotStatus): { text: string; bg: string; text_color: string; icon: React.ReactNode; pulse: boolean; } => {
     switch(status) {
-        case BotStatus.Monitoring: return { text: status, bg: 'bg-sky-100 dark:bg-sky-900/50', text_color: 'text-sky-700 dark:text-sky-300', icon: <ActivityIcon className="w-3 h-3"/>, pulse: true };
+        // FIX: Cast status to string to satisfy type requirement
+        case BotStatus.Monitoring: return { text: status as string, bg: 'bg-sky-100 dark:bg-sky-900/50', text_color: 'text-sky-700 dark:text-sky-300', icon: <ActivityIcon className="w-3 h-3"/>, pulse: true };
         case BotStatus.PositionOpen: return { text: 'Position Open', bg: 'bg-emerald-100 dark:bg-emerald-900/50', text_color: 'text-emerald-700 dark:text-emerald-300', icon: <CheckCircleIcon className="w-3 h-3"/>, pulse: false };
         case BotStatus.ExecutingTrade: return { text: 'Executing...', bg: 'bg-amber-100 dark:bg-amber-900/50', text_color: 'text-amber-700 dark:text-amber-300', icon: <CpuIcon className="w-3 h-3"/>, pulse: true };
         case BotStatus.FlipPending: return { text: 'Flip Pending', bg: 'bg-indigo-100 dark:bg-indigo-900/50', text_color: 'text-indigo-700 dark:text-indigo-300', icon: <ZapIcon className="w-3 h-3"/>, pulse: true };
-        case BotStatus.Error: return { text: status, bg: 'bg-rose-100 dark:bg-rose-900/50', text_color: 'text-rose-700 dark:text-rose-300', icon: <XCircleIcon className="w-3 h-3"/>, pulse: false };
-        case BotStatus.Paused: return { text: status, bg: 'bg-slate-200 dark:bg-slate-700', text_color: 'text-slate-600 dark:text-slate-300', icon: <PauseIcon className="w-3 h-3"/>, pulse: false };
-        case BotStatus.Stopped: return { text: status, bg: 'bg-slate-200 dark:bg-slate-700', text_color: 'text-slate-600 dark:text-slate-300', icon: <StopIcon className="w-3 h-3"/>, pulse: false };
-        case BotStatus.Starting: return { text: status, bg: 'bg-indigo-100 dark:bg-indigo-900/50', text_color: 'text-indigo-700 dark:text-indigo-300', icon: <CpuIcon className="w-3 h-3"/>, pulse: true };
-        default: return { text: status, bg: 'bg-slate-200 dark:bg-slate-700', text_color: 'text-slate-600 dark:text-slate-300', icon: <StopIcon className="w-3 h-3"/>, pulse: false };
+        // FIX: Cast status to string to satisfy type requirement
+        case BotStatus.Error: return { text: status as string, bg: 'bg-rose-100 dark:bg-rose-900/50', text_color: 'text-rose-700 dark:text-rose-300', icon: <XCircleIcon className="w-3 h-3"/>, pulse: false };
+        // FIX: Cast status to string to satisfy type requirement
+        case BotStatus.Paused: return { text: status as string, bg: 'bg-slate-200 dark:bg-slate-700', text_color: 'text-slate-600 dark:text-slate-300', icon: <PauseIcon className="w-3 h-3"/>, pulse: false };
+        // FIX: Cast status to string to satisfy type requirement
+        case BotStatus.Stopped: return { text: status as string, bg: 'bg-slate-200 dark:bg-slate-700', text_color: 'text-slate-600 dark:text-slate-300', icon: <StopIcon className="w-3 h-3"/>, pulse: false };
+        // FIX: Cast status to string to satisfy type requirement
+        case BotStatus.Starting: return { text: status as string, bg: 'bg-indigo-100 dark:bg-indigo-900/50', text_color: 'text-indigo-700 dark:text-indigo-300', icon: <CpuIcon className="w-3 h-3"/>, pulse: true };
+        // FIX: Cast status to string to satisfy type requirement
+        default: return { text: status as string, bg: 'bg-slate-200 dark:bg-slate-700', text_color: 'text-slate-600 dark:text-slate-300', icon: <StopIcon className="w-3 h-3"/>, pulse: false };
     }
 }
 
@@ -328,7 +341,7 @@ interface StopLossDetailsProps {
 const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) => {
     const {
         stopLossPrice, initialStopLossPrice, activeStopLossReason, pricePrecision,
-        profitLockTier, isBreakevenSet, profitSpikeTier, aggressiveTrailTier
+        profitLockTier, isBreakevenSet, profitSpikeTier, aggressiveTrailTier, managementForecast
     } = position;
 
     const ActiveReasonTag: React.FC<{ reason: Position['activeStopLossReason'] }> = ({ reason }) => {
@@ -471,6 +484,41 @@ const StopLossDetails: React.FC<StopLossDetailsProps> = ({ position, config }) =
                     Init: {formatPrice(initialStopLossPrice, pricePrecision)} ({position.initialStopLossReason})
                 </div>
             </div>
+
+            {/* OMEGA MILESTONE FORECASTER */}
+            {config.agent.id === 25 && managementForecast && (
+                <div className="bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-950/40 dark:to-purple-950/40 border border-indigo-200 dark:border-indigo-800 p-2.5 rounded-lg shadow-sm">
+                    <div className="flex items-center gap-2 mb-2">
+                        <SparklesIcon className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                        <h5 className="text-[10px] font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-widest">Ratchet Milestone</h5>
+                    </div>
+                    
+                    <div className="space-y-1.5">
+                        <div className="flex justify-between items-baseline">
+                            <span className="text-[9px] text-slate-500 dark:text-slate-400 font-medium">Next Threshold</span>
+                            <span className="text-[10px] font-bold font-mono text-slate-900 dark:text-slate-100">
+                                {formatPrice(managementForecast.triggerPrice, pricePrecision)}
+                            </span>
+                        </div>
+                        
+                        <div className="flex justify-between items-baseline">
+                            <span className="text-[9px] text-slate-500 dark:text-slate-400 font-medium">New Stop Loss</span>
+                            <span className="text-[10px] font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                                {formatPrice(managementForecast.targetStopLoss, pricePrecision)}
+                            </span>
+                        </div>
+                        
+                        <div className="mt-2 flex items-center gap-1.5">
+                             <div className="px-1.5 py-0.5 bg-indigo-100 dark:bg-indigo-900/50 rounded text-[8px] font-bold text-indigo-600 dark:text-indigo-300 uppercase">
+                                {managementForecast.label}
+                             </div>
+                             <div className="flex-1 h-1 bg-indigo-200 dark:bg-indigo-900 rounded-full overflow-hidden">
+                                <div className="h-full bg-indigo-500 animate-pulse" style={{width: '65%'}}></div>
+                             </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
@@ -528,6 +576,7 @@ const BotCard = memo(({ botId, actions }: { botId: string; actions: Omit<Running
     const bot = useBotState(botId);
     const [isExpanded, setIsExpanded] = useState(false);
     const [expandedTab, setExpandedTab] = useState<'monitoring' | 'settings'>('monitoring');
+    const [showPrediction, setShowPrediction] = useState(false);
     
     const [priceChange, setPriceChange] = useState<'up' | 'down' | 'none'>('none');
     const prevPriceRef = useRef(bot?.livePrice);
@@ -577,6 +626,7 @@ const BotCard = memo(({ botId, actions }: { botId: string; actions: Omit<Running
     }, [bot.status, bot.analysis]);
 
     return (
+        <>
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm overflow-hidden transition-all duration-300">
             <div className="p-4">
                 {/* Header */}
@@ -637,9 +687,25 @@ const BotCard = memo(({ botId, actions }: { botId: string; actions: Omit<Running
                     <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-700">
                         <div className="flex justify-between items-center">
                             <div>
-                                <h4 className="font-semibold text-base text-slate-800 dark:text-slate-200">
-                                    <span className={position.direction === 'LONG' ? 'text-emerald-500' : 'text-rose-500'}>{position.direction} Position</span>
-                                </h4>
+                                <div className="flex items-center gap-2">
+                                    <h4 className="font-semibold text-base text-slate-800 dark:text-slate-200">
+                                        <span className={position.direction === 'LONG' ? 'text-emerald-500' : 'text-rose-500'}>{position.direction} Position</span>
+                                    </h4>
+                                    {bot.winProbability !== undefined && (
+                                        <button
+                                            onClick={() => setShowPrediction(true)}
+                                            title="View trade win probability"
+                                            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border transition-colors hover:opacity-80 ${
+                                                bot.winProbability >= 60 ? 'bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700' :
+                                                bot.winProbability >= 40 ? 'bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700' :
+                                                'bg-rose-100 dark:bg-rose-900/50 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-700'
+                                            }`}
+                                        >
+                                            <SparklesIcon className="w-3 h-3" />
+                                            {bot.winProbability}%
+                                        </button>
+                                    )}
+                                </div>
                                  <p className="text-xs text-slate-500 dark:text-slate-400">
                                     Entry: {formatPrice(position.entryPrice, position.pricePrecision)} | Size: {position.size.toFixed(4)}
                                 </p>
@@ -732,6 +798,11 @@ const BotCard = memo(({ botId, actions }: { botId: string; actions: Omit<Running
                 </div>
             )}
         </div>
+
+        {showPrediction && bot.openPosition && (
+            <TradePredictionModal bot={bot} onClose={() => setShowPrediction(false)} />
+        )}
+        </>
     );
 });
 

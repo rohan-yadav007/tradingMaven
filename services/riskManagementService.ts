@@ -6,6 +6,7 @@ import { EMA, RSI, MACD, BollingerBands, ATR, SMA, ADX, StochasticRSI, PSAR, OBV
 import * as constants from '../constants';
 import { calculateSupportResistance, findSwingPoints, analyzeMarketStructure } from './chartAnalysisService';
 import { Supertrend, applyTimeframeSettings, getLast, getPenultimate, captureMarketContext, detectRsiDivergence, calculateDailyVwap, analyzeBitcoinState, calculateRsiSlope, getCandleExhaustion, calculateRVOL, VortexIndicator } from './agents/agentUtils';
+import { getVolatilityRegime } from './indicators';
 
 const MIN_STOP_LOSS_PERCENT = 0.5;
 const { TIMEFRAME_ATR_CONFIG, MIN_PROFIT_BUFFER_MULTIPLIER } = constants;
@@ -25,29 +26,12 @@ export function getInitialAgentTargets(
     const config = applyTimeframeSettings(originalConfig);
     const { timeFrame, agent, leverage } = config;
     
-    // --- OMEGA V8.0 SOVEREIGN PASSTHROUGH ---
-    // Omega calculates structural targets based on FVGs/Swings. We must respect them exactly.
-    if (agent.id === 25) {
-         if (providedStopLoss && providedTakeProfit) {
-             return { 
-                 stopLossPrice: providedStopLoss, 
-                 takeProfitPrice: providedTakeProfit, 
-                 slReason: 'Agent Logic', 
-                 agentStopLoss: providedStopLoss 
-             };
-         }
-         // Fallback safety (should rarely hit if Omega is working)
-         const atr = (getLast(ATR.calculate({high: klines.map(k=>k.high), low: klines.map(k=>k.low), close: klines.map(k=>k.close), period: 14})) as number) || entryPrice*0.01;
-         return {
-             stopLossPrice: direction === 'LONG' ? entryPrice - atr : entryPrice + atr,
-             takeProfitPrice: direction === 'LONG' ? entryPrice + (atr*2) : entryPrice - (atr*2),
-             slReason: 'Agent Logic',
-             agentStopLoss: direction === 'LONG' ? entryPrice - atr : entryPrice + atr
-         }
-    }
-
-    const maxMarginLoss = config.maxMarginLossPercent;
     const isLong = direction === 'LONG';
+    const maxMarginLoss = config.maxMarginLossPercent;
+    
+    // Hard Limit based on Margin (Sync with Leverage)
+    const maxPriceDistAllowed = (maxMarginLoss / 100) * (entryPrice / leverage);
+
     const closes = klines.map(k => k.close);
     const highs = klines.map(k => k.high);
     const lows = klines.map(k => k.low);
@@ -55,13 +39,42 @@ export function getInitialAgentTargets(
     const atrValues = ATR.calculate({ high: highs, low: lows, close: closes, period: 14 });
     const currentAtr = (getLast(atrValues) as number | undefined) || (entryPrice * 0.01);
 
-    // Hard Limit based on Margin
-    const maxPriceDistAllowed = (maxMarginLoss / 100) * (entryPrice / leverage);
+    // Volatility Governor: Adjust Noise Floor based on regime
+    const regime = getVolatilityRegime(currentAtr, entryPrice);
+    let noiseFloorMultiplier = ['1m', '3m', '5m'].includes(timeFrame) ? 1.5 : 1.2;
     
-    // Noise Floor
-    const noiseFloorMultiplier = ['1m', '3m'].includes(timeFrame) ? 1.5 : 1.2;
+    if (regime === 'High') noiseFloorMultiplier *= 1.5; // Widen stops in high volatility
+    
     const noiseFloorDist = currentAtr * noiseFloorMultiplier;
-    
+
+    // --- OMEGA SOVEREIGN SYNC ---
+    if (agent.id === 25) {
+         let finalSl = providedStopLoss || (isLong ? entryPrice * 0.99 : entryPrice * 1.01);
+         let finalTp = providedTakeProfit || (isLong ? entryPrice * 1.03 : entryPrice * 0.97);
+         let slReason: 'Agent Logic' | 'Hard Cap' | 'Noise Floor' = 'Agent Logic';
+
+         // 1. Noise Floor Check
+         const requestedDist = Math.abs(entryPrice - finalSl);
+         if (requestedDist < noiseFloorDist) {
+             finalSl = isLong ? entryPrice - noiseFloorDist : entryPrice + noiseFloorDist;
+             slReason = 'Noise Floor';
+         }
+
+         // 2. Leverage Constraint Sync
+         const afterFloorDist = Math.abs(entryPrice - finalSl);
+         if (afterFloorDist > maxPriceDistAllowed) {
+             finalSl = isLong ? entryPrice - maxPriceDistAllowed : entryPrice + maxPriceDistAllowed;
+             slReason = 'Hard Cap';
+         }
+
+         return { 
+             stopLossPrice: finalSl, 
+             takeProfitPrice: finalTp, 
+             slReason, 
+             agentStopLoss: providedStopLoss || finalSl 
+         };
+    }
+
     const timeframeConfig = TIMEFRAME_ATR_CONFIG[timeFrame] || TIMEFRAME_ATR_CONFIG['5m'];
 
     let finalSl: number;
@@ -78,14 +91,12 @@ export function getInitialAgentTargets(
         finalTp = isLong ? entryPrice + (finalDist * targetRr) : entryPrice - (finalDist * targetRr);
     }
 
-    // --- APPLY CONSTRAINTS ---
-    
     // 1. Noise Floor Check
     const currentDist = Math.abs(entryPrice - finalSl);
     if (currentDist < noiseFloorDist) {
         finalSl = isLong ? entryPrice - noiseFloorDist : entryPrice + noiseFloorDist;
-        const rr = Math.abs(finalTp - entryPrice) / currentDist;
-        finalTp = isLong ? entryPrice + (noiseFloorDist * rr) : entryPrice - (noiseFloorDist * rr);
+        const rr = currentDist > 0 ? Math.abs(finalTp - entryPrice) / currentDist : 2.5;
+        finalTp = isLong ? entryPrice + (noiseFloorDist * (rr || 2.5)) : entryPrice - (noiseFloorDist * (rr || 2.5));
         slReason = 'Noise Floor';
     }
 
@@ -100,45 +111,82 @@ export function getInitialAgentTargets(
 }
 
 /**
- * Universal Profit Trail
- * DISABLED for Omega Agent (it uses SovereignManagementEngine).
+ * Dynamic Profit Trail — tiers and ATR trail scale with volatility regime.
+ * High volatility → wider tiers (harder targets, more breathing room).
+ * Low volatility  → tighter tiers (easier targets, lock profits earlier).
  */
 export function getMultiStageProfitSecureSignal(
     position: Position,
-    currentPrice: number
+    currentPrice: number,
+    klines?: Kline[]
 ): TradeManagementSignal {
-    if (position.agentId === 25) return { reasons: [] };
+    // Omega/Apex manage their own ratchet via SovereignManagementEngine / ApexManagementEngine
+    if (position.agentId === 25 || position.agentId === 26) return { reasons: [] };
 
     const isLong = position.direction === 'LONG';
-    const pnlPercent = isLong 
-        ? (currentPrice - position.entryPrice) / position.entryPrice 
+    const pnlPercent = isLong
+        ? (currentPrice - position.entryPrice) / position.entryPrice
         : (position.entryPrice - currentPrice) / position.entryPrice;
-    
+
     const riskPercent = position.initialRiskInPrice / position.entryPrice;
     const rMultiple = pnlPercent / riskPercent;
-    
+
+    // --- Dynamic tier calibration based on volatility regime ---
+    let tier1R = 2.2, tier2R = 4.0, tier3R = 6.0;
+    let lock1R = 0,   lock2R = 1.5, lock3R = 3.0;
+    let regime = 'Normal';
+
+    if (klines && klines.length >= 20) {
+        const atrVals = ATR.calculate({
+            high: klines.map(k => k.high),
+            low:  klines.map(k => k.low),
+            close: klines.map(k => k.close),
+            period: 14,
+        });
+        const currentAtr = getLast(atrVals) as number | undefined;
+        if (currentAtr && currentAtr > 0) {
+            regime = getVolatilityRegime(currentAtr, currentPrice);
+        }
+    }
+
+    if (regime === 'High') {
+        // Widen tiers: market is noisy, don't lock too early
+        tier1R = 3.0; tier2R = 5.0; tier3R = 8.0;
+        lock1R = 0;   lock2R = 2.0; lock3R = 4.0;
+    } else if (regime === 'Low') {
+        // Tight tiers: clean moves, capture gains quickly
+        tier1R = 1.8; tier2R = 3.0; tier3R = 5.0;
+        lock1R = 0;   lock2R = 1.0; lock3R = 2.5;
+    }
+
     let newTier = position.profitLockTier || 0;
     let newSl: number | undefined;
 
-    if (rMultiple >= 6.0 && newTier < 3) {
+    if (rMultiple >= tier3R && newTier < 3) {
         newTier = 3;
-        newSl = isLong ? position.entryPrice + position.initialRiskInPrice * 3.0 : position.entryPrice - position.initialRiskInPrice * 3.0;
-    } else if (rMultiple >= 4.0 && newTier < 2) {
+        newSl = isLong
+            ? position.entryPrice + position.initialRiskInPrice * lock3R
+            : position.entryPrice - position.initialRiskInPrice * lock3R;
+    } else if (rMultiple >= tier2R && newTier < 2) {
         newTier = 2;
-        newSl = isLong ? position.entryPrice + position.initialRiskInPrice * 1.5 : position.entryPrice - position.initialRiskInPrice * 1.5;
-    } else if (rMultiple >= 2.2 && newTier < 1) {
+        newSl = isLong
+            ? position.entryPrice + position.initialRiskInPrice * lock2R
+            : position.entryPrice - position.initialRiskInPrice * lock2R;
+    } else if (rMultiple >= tier1R && newTier < 1) {
         newTier = 1;
-        newSl = position.entryPrice; 
+        newSl = isLong
+            ? position.entryPrice + position.initialRiskInPrice * lock1R
+            : position.entryPrice - position.initialRiskInPrice * lock1R;
     }
 
-    if (newSl) {
+    if (newSl !== undefined) {
         const isTighter = isLong ? newSl > position.stopLossPrice : newSl < position.stopLossPrice;
         if (isTighter) {
             return {
                 newStopLoss: newSl,
                 activeStopLossReason: 'Profit Secure',
                 newState: { profitLockTier: newTier },
-                reasons: [`Universal: Secured Tier ${newTier} (${rMultiple.toFixed(1)}R reached).`]
+                reasons: [`Dynamic Secure Tier ${newTier} [${regime}] (${rMultiple.toFixed(1)}R → locked ${newTier === 1 ? 'breakeven' : newTier === 2 ? lock2R + 'R' : lock3R + 'R'}).`],
             };
         }
     }
@@ -147,8 +195,6 @@ export function getMultiStageProfitSecureSignal(
 
 /**
  * THE TRADE GUARDIAN
- * V3.1: Strict Simplified Logic.
- * If Omega: Only exit on Structural Invalidation (Hard SL/Level breach).
  */
 export function getTradeGuardianSignal(
     position: Position,
@@ -163,33 +209,24 @@ export function getTradeGuardianSignal(
     const isLong = position.direction === 'LONG';
     const lastKline = klines[klines.length - 1];
     
-    // --- OMEGA V8.0 SOVEREIGN LOGIC ---
-    if (position.agentId === 25) {
-        // 1. Structural Invalidation (The "Surgical Cut")
-        // Omega provides a specific invalidation price (usually FVG bottom or swing low).
-        // We enforce a hard close if a candle *closes* beyond this level, or if price pushes deeply beyond.
+    if (position.agentId === 25 || position.agentId === 26) {
         if (position.invalidationPrice) {
-            const buffer = position.entryPrice * 0.001; // 0.1% tolerance buffer
-            
-            const isInvalid = isLong 
-                ? currentPrice < (position.invalidationPrice - buffer) 
+            const buffer = position.entryPrice * 0.001;
+            const isInvalid = isLong
+                ? currentPrice < (position.invalidationPrice - buffer)
                 : currentPrice > (position.invalidationPrice + buffer);
-                
             if (isInvalid) {
                 return { action: 'close', reason: 'Guardian: Structural Invalidation (Hard Level Breach).' };
             }
         }
-        
-        // Omega ignores RSI/Volume panic exits to avoid being shaken out of valid structural zones.
         return { action: 'hold' };
     }
 
-    // --- STANDARD LOGIC (For other agents) ---
-    // Volume Panic Veto
     const pnlR = (isLong ? (currentPrice - position.entryPrice) : (position.entryPrice - currentPrice)) / position.initialRiskInPrice;
     if (pnlR < -0.3 && lastKline && lastKline.volume) {
         const volumes = klines.map(k => k.volume || 0);
-        const avgVol = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
+        const volSlice = volumes.slice(-21, -1);
+        const avgVol = volSlice.reduce((a, b) => a + b, 0) / (volSlice.length || 1);
         
         const isPanicCandle = isLong 
             ? lastKline.close < lastKline.open && lastKline.volume > avgVol * 4 
@@ -202,8 +239,6 @@ export function getTradeGuardianSignal(
 
     return { action: 'hold' };
 }
-
-// --- Re-export standard management functions ---
 
 export function getAgentExitSignal(position: Position, klines: Kline[], currentPrice: number, config: BotConfig): TradeManagementSignal {
     const params = position.agentParamsSnapshot as Required<AgentParams>;
@@ -242,9 +277,7 @@ export function validateTradeProfitability(price: number, sl: number, tp: number
 }
 
 export function getMandatoryBreakevenSignal(position: Position, currentPrice: number): TradeManagementSignal {
-    // FIX: Disable for Omega Agent (ID 25)
-    if (position.agentId === 25) return { reasons: [] };
-
+    if (position.agentId === 25 || position.agentId === 26) return { reasons: [] };
     if (position.isBreakevenSet) return { reasons: [] };
     const isLong = position.direction === 'LONG';
     const feeRate = position.takerFeeRate || 0.0005;
@@ -258,9 +291,7 @@ export function getMandatoryBreakevenSignal(position: Position, currentPrice: nu
 }
 
 export function getProfitSpikeSignal(position: Position, currentPrice: number): TradeManagementSignal {
-    // FIX: Disable for Omega Agent (ID 25)
-    if (position.agentId === 25) return { reasons: [] };
-
+    if (position.agentId === 25 || position.agentId === 26) return { reasons: [] };
     const isLong = position.direction === 'LONG';
     const pnlPercent = isLong ? (currentPrice - position.entryPrice) / position.entryPrice : (position.entryPrice - currentPrice) / position.entryPrice;
     if (pnlPercent > 0.08 && (position.profitSpikeTier || 0) < 1) {
@@ -271,9 +302,7 @@ export function getProfitSpikeSignal(position: Position, currentPrice: number): 
 }
 
 export function getAggressiveRangeTrailSignal(position: Position, currentPrice: number): TradeManagementSignal {
-    // FIX: Disable for Omega Agent (ID 25)
-    if (position.agentId === 25) return { reasons: [] };
-
+    if (position.agentId === 25 || position.agentId === 26) return { reasons: [] };
     const isLong = position.direction === 'LONG';
     const distToTp = Math.abs(position.takeProfitPrice - currentPrice);
     const totalRange = Math.abs(position.takeProfitPrice - position.entryPrice);
@@ -286,7 +315,100 @@ export function getAggressiveRangeTrailSignal(position: Position, currentPrice: 
 }
 
 export function getAdaptiveTakeProfit(position: Position, klines: Kline[], currentPrice: number): TradeManagementSignal {
-    // FIX: Disable for Omega Agent (ID 25)
-    if (position.agentId === 25) return { reasons: [] };
+    return { reasons: [] };
+}
+
+/**
+ * TP-Proportional Profit Locking
+ * Locks profit in 6 accelerating stages based on distance REMAINING to TP.
+ * Activates only when position has a concrete takeProfitPrice.
+ * Fee-aware: true breakeven = entry + round-trip fee cost.
+ *
+ * Stage thresholds (remaining % of TP distance):
+ *   Stage 1 ≤62% → fee-adjusted breakeven
+ *   Stage 2 ≤45% → entry + 18% of TP range
+ *   Stage 3 ≤30% → entry + 38% of TP range
+ *   Stage 4 ≤18% → entry + 58% of TP range
+ *   Stage 5 ≤8%  → entry + 78% of TP range
+ *   Stage 6 ≤3%  → hyper-trail (1% of range behind current price)
+ *
+ * @param modelDelta  Optional live model score delta; if ≤-15, stages trigger
+ *                    10% earlier (price treated as 10% closer to TP).
+ */
+export function getTPProportionalLockSignal(
+    position: Position,
+    currentPrice: number,
+    modelDelta?: number
+): TradeManagementSignal {
+    if (!position.takeProfitPrice) return { reasons: [] };
+
+    const isLong      = position.direction === 'LONG';
+    const totalRange  = Math.abs(position.takeProfitPrice - position.entryPrice);
+    if (totalRange === 0) return { reasons: [] };
+
+    const distToTp = isLong
+        ? position.takeProfitPrice - currentPrice
+        : currentPrice - position.takeProfitPrice;
+
+    // Price moved past TP or hasn't moved toward it at all
+    if (distToTp < 0 || distToTp >= totalRange) return { reasons: [] };
+
+    // remainingPct: 100 = at entry, 0 = at TP
+    let remainingPct = (distToTp / totalRange) * 100;
+
+    // Model-aware acceleration: strong opposing signal → treat as 10% closer to TP
+    if (modelDelta !== undefined && modelDelta <= -15) {
+        remainingPct = Math.max(0, remainingPct - 10);
+    }
+
+    const currentStage = position.tpLockStage || 0;
+    const feeRate      = position.takerFeeRate || 0.0004;
+    const roundTrip    = feeRate * 2;
+
+    // Fee-adjusted breakeven — entry + cost to open AND close the trade
+    const trueBreakeven = isLong
+        ? position.entryPrice * (1 + roundTrip)
+        : position.entryPrice * (1 - roundTrip);
+
+    const stages = [
+        { threshold: 62, lockFraction: 0,    stage: 1, label: 'Breakeven (fees covered)' },
+        { threshold: 45, lockFraction: 0.18, stage: 2, label: '18% locked'               },
+        { threshold: 30, lockFraction: 0.38, stage: 3, label: '38% locked'               },
+        { threshold: 18, lockFraction: 0.58, stage: 4, label: '58% locked'               },
+        { threshold: 8,  lockFraction: 0.78, stage: 5, label: '78% locked'               },
+        { threshold: 3,  lockFraction: -1,   stage: 6, label: 'Hyper-Trail'              },
+    ] as const;
+
+    for (const s of stages) {
+        if (remainingPct <= s.threshold && currentStage < s.stage) {
+            let newSl: number;
+
+            if (s.stage === 1) {
+                newSl = trueBreakeven;
+            } else if (s.lockFraction === -1) {
+                // Stage 6: trail 1% of total range behind current price
+                newSl = isLong
+                    ? currentPrice - totalRange * 0.01
+                    : currentPrice + totalRange * 0.01;
+            } else {
+                newSl = isLong
+                    ? position.entryPrice + totalRange * s.lockFraction
+                    : position.entryPrice - totalRange * s.lockFraction;
+            }
+
+            const isTighter = isLong ? newSl > position.stopLossPrice : newSl < position.stopLossPrice;
+            if (isTighter) {
+                const coveredPct = (100 - remainingPct).toFixed(0);
+                const modelTag   = modelDelta !== undefined && modelDelta <= -15 ? ' [Model-accelerated]' : '';
+                return {
+                    newStopLoss: newSl,
+                    activeStopLossReason: 'Profit Secure',
+                    newState: { tpLockStage: s.stage },
+                    reasons: [`TP Lock Stage ${s.stage}: ${s.label} (${coveredPct}% to TP)${modelTag}`],
+                };
+            }
+        }
+    }
+
     return { reasons: [] };
 }

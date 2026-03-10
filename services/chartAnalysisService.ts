@@ -1,4 +1,3 @@
-
 import type { Kline, SupportResistance, SwingPoint, MarketStructureAnalysis } from '../types';
 
 /**
@@ -65,13 +64,15 @@ export const calculateSupportResistance = (klines: Kline[], lookback: number = 1
         }
     });
 
+    // Fix: Using type predicates to narrow the array type for supports to satisfy SupportResistance interface
     const supports = levels
-        .filter(l => l.type === 'support')
+        .filter((l): l is { price: number; score: number; type: 'support' } => l.type === 'support')
         .sort((a, b) => b.score - a.score)
         .slice(0, 4); // Limit to top 4 significant levels
 
+    // Fix: Using type predicates to narrow the array type for resistances to satisfy SupportResistance interface
     const resistances = levels
-        .filter(l => l.type === 'resistance')
+        .filter((l): l is { price: number; score: number; type: 'resistance' } => l.type === 'resistance')
         .sort((a, b) => b.score - a.score)
         .slice(0, 4); // Limit to top 4 significant levels
         
@@ -154,7 +155,9 @@ export const analyzeMarketStructure = (swingPoints: SwingPoint[]): MarketStructu
             return { structure: 'Uptrend', lastSignal: 'HH', reason: 'Confirmed Uptrend: Higher Highs and Higher Lows.' };
         }
         if (!isHigherLow) {
-            return { structure: 'Downtrend', lastSignal: 'ChoCH_Bearish', reason: 'Change of Character: Uptrend failed to make a Higher Low, breaking structure.' };
+            // A failed Higher Low is a warning (ChoCH) but moves to Ranging, not full Downtrend,
+            // until a confirmed Lower Low is printed.
+            return { structure: 'Ranging', lastSignal: 'ChoCH_Bearish', reason: 'Change of Character: Uptrend failed to make a Higher Low. Watching for confirmation.' };
         }
         return { structure: 'Ranging', lastSignal: null, reason: 'Uptrend losing momentum (failed to make Higher High).' };
     }
@@ -168,7 +171,9 @@ export const analyzeMarketStructure = (swingPoints: SwingPoint[]): MarketStructu
             return { structure: 'Downtrend', lastSignal: 'LL', reason: 'Confirmed Downtrend: Lower Lows and Lower Highs.' };
         }
         if (!isLowerHigh) {
-            return { structure: 'Uptrend', lastSignal: 'ChoCH_Bullish', reason: 'Change of Character: Downtrend failed to make a Lower High, breaking structure.' };
+            // A failed Lower High is a warning (ChoCH) but moves to Ranging, not full Uptrend,
+            // until a confirmed Higher High is printed.
+            return { structure: 'Ranging', lastSignal: 'ChoCH_Bullish', reason: 'Change of Character: Downtrend failed to make a Lower High. Watching for confirmation.' };
         }
         return { structure: 'Ranging', lastSignal: null, reason: 'Downtrend losing momentum (failed to make Lower Low).' };
     }

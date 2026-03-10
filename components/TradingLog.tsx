@@ -161,10 +161,12 @@ const ExpandedTradeDetails: React.FC<{ trade: Trade }> = ({ trade }) => {
                             <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">Performance & Context</h4>
                             {titanData ? (
                                 <div className="grid grid-cols-2 gap-3 mb-3">
-                                    <MetricCard label="Titan Tier" value={titanData.tier} color="text-sky-500" />
-                                    <MetricCard label="RVOL Gate" value={`${titanData.rvol.toFixed(1)}x`} color={titanData.rvol > 1.5 ? "text-emerald-500" : "text-slate-400"} />
+                                    <MetricCard label="Intent" value={titanData.tier} color="text-sky-500" />
+                                    <MetricCard label="RVOL at Entry" value={`${titanData.rvol.toFixed(1)}x`} color={titanData.rvol > 1.5 ? "text-emerald-500" : "text-slate-400"} />
                                     <MetricCard label="Entry RSI" value={titanData.entryRsi.toFixed(1)} />
                                     <MetricCard label="Stop Dist" value={`${titanData.stopDistancePercent.toFixed(2)}%`} color="text-rose-500" />
+                                    {titanData.slSource && <MetricCard label="SL Anchor" value={titanData.slSource} color="text-amber-500" />}
+                                    {titanData.tpSource && <MetricCard label="TP Target" value={titanData.tpSource} color="text-indigo-400" />}
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-2 gap-3 mb-3">
@@ -191,7 +193,17 @@ const ExpandedTradeDetails: React.FC<{ trade: Trade }> = ({ trade }) => {
 
                         {/* Column 3: The Story */}
                         <div className="flex flex-col h-full">
-                            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">Trade Narrative</h4>
+                            <div className="flex items-center justify-between mb-2">
+                                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Trade Narrative</h4>
+                                {trade.setupType && (
+                                    <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide ${
+                                        trade.setupType.includes('Sweep') ? 'bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300' :
+                                        trade.setupType.includes('Order Block') ? 'bg-sky-100 dark:bg-sky-900/50 text-sky-700 dark:text-sky-300' :
+                                        trade.setupType.includes('BOS') ? 'bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300' :
+                                        'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                                    }`}>{trade.setupType}</span>
+                                )}
+                            </div>
                             <div className="flex-grow bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg border border-slate-200 dark:border-slate-700 overflow-y-auto max-h-64 text-xs space-y-3">
                                 <div>
                                     <span className="font-bold text-sky-600 dark:text-sky-400 block mb-1">Entry Reason</span>
@@ -319,7 +331,7 @@ const TradeRow: React.FC<{ trade: Trade; isOpen: boolean; onToggle: () => void; 
         <React.Fragment>
             <tr onClick={onToggle} className={`border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer text-sm ${isOpen ? 'bg-slate-50 dark:bg-slate-800/50' : ''}`}>
                 <td className="px-4 py-3 align-middle">
-                     <div className="flex items-center gap-3">
+                     <div className="flex items-center gap-3 flex-wrap">
                         <span className="text-slate-400">
                             {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                         </span>
@@ -327,6 +339,16 @@ const TradeRow: React.FC<{ trade: Trade; isOpen: boolean; onToggle: () => void; 
                         {trade.promotedFrom === 'scalp' && (
                             <div className="text-xs font-bold px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300" title="Promoted from a scalp trade">
                                 PRO
+                            </div>
+                        )}
+                        {trade.setupType && (
+                            <div className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                                trade.setupType.includes('Sweep') ? 'bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300' :
+                                trade.setupType.includes('Order Block') ? 'bg-sky-100 dark:bg-sky-900/50 text-sky-700 dark:text-sky-300' :
+                                trade.setupType.includes('BOS') ? 'bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300' :
+                                'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                            }`} title="Entry setup type">
+                                {trade.setupType}
                             </div>
                         )}
                         <div className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${executionModeTag.bg} ${executionModeTag.text_color}`}>{executionModeTag.text}</div>

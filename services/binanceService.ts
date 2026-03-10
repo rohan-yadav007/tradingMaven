@@ -1,4 +1,5 @@
-import { Kline, SymbolInfo, SymbolFilter, WalletBalance, RawWalletBalance, AccountInfo, LeverageBracket, BinanceOrderResponse, TradingMode, OpenInterestKline } from '../types';
+
+import { Kline, SymbolInfo, SymbolFilter, WalletBalance, RawWalletBalance, AccountInfo, LeverageBracket, BinanceOrderResponse, TradingMode, OpenInterestKline, LongShortRatio } from '../types';
 
 // --- Configuration ---
 const SPOT_BASE_URL = '/proxy-spot';
@@ -22,8 +23,9 @@ const CACHE_DURATION_MEDIUM = 5 * 60 * 1000;
 const CACHE_DURATION_LONG = 60 * 60 * 1000; // 1 hour for exchange info
 let leverageBracketCache = new Map<string, { data: any, timestamp: number }>();
 let openInterestHistoryCache = new Map<string, { data: OpenInterestKline[], timestamp: number }>();
-const OI_CACHE_DURATION = 60 * 1000; // 1 minute cache for OI history
-const OI_ERROR_CACHE_DURATION = 10 * 1000; // 10 seconds cache for failed requests
+let lsRatioHistoryCache = new Map<string, { data: LongShortRatio[], timestamp: number }>();
+const DATA_CACHE_DURATION = 60 * 1000; // 1 minute cache
+const ERROR_CACHE_DURATION = 10 * 1000; // 10 seconds cache for failed requests
 
 // --- Rate Limiter ---
 class RateLimiter {
@@ -86,9 +88,6 @@ const rateLimiter = new RateLimiter();
 
 // --- Private Helper Functions ---
 
-/**
- * Translates a Binance API error object or a generic error into a human-readable string.
- */
 export const interpretBinanceError = (error: any): string => {
     if (error && typeof error === 'object' && 'code' in error && 'msg' in error) {
         const code = error.code as number;
@@ -139,7 +138,6 @@ async function fetchSigned(endpoint: string, params: Record<string, any> = {}, m
         const fetchOptions: RequestInit = { method, headers };
         let url: string = `${baseUrl}${endpoint}`;
 
-        // Filter out null/undefined values before processing
         const filteredParams = Object.fromEntries(Object.entries(params).filter(([_, v]) => v != null));
 
         const allParams = { ...filteredParams, timestamp, recvWindow: 5000 };
@@ -156,11 +154,9 @@ async function fetchSigned(endpoint: string, params: Record<string, any> = {}, m
 
         const response = await fetch(url, fetchOptions);
 
-        // --- PROXY ERROR DETECTION ---
-        // If content-type is HTML, it means we got the Amplify fallback page or 404 page, not the API JSON.
         const contentType = response.headers.get("content-type");
         if (contentType && contentType.includes("text/html")) {
-             throw new Error("Proxy Configuration Error: The API request was routed to the frontend app instead of the Binance API. This indicates missing Rewrite rules in your hosting provider (AWS Amplify, Vercel, etc).");
+             throw new Error("Proxy Configuration Error: The API request was routed to the frontend app instead of the Binance API.");
         }
 
         if (!response.ok) {
@@ -168,7 +164,6 @@ async function fetchSigned(endpoint: string, params: Record<string, any> = {}, m
                 const errorData = await response.json();
                 throw errorData;
             } catch (e) {
-                // Pass status code for RateLimiter to catch 429/418
                 throw { message: `An HTTP error occurred: ${response.status} ${response.statusText}`, code: response.status };
             }
         }
@@ -178,15 +173,13 @@ async function fetchSigned(endpoint: string, params: Record<string, any> = {}, m
     });
 }
 
-// Unsigned fetch with rate limiting
 async function fetchPublic(url: string): Promise<any> {
     return rateLimiter.schedule(async () => {
         const response = await fetch(url);
 
-        // --- PROXY ERROR DETECTION ---
         const contentType = response.headers.get("content-type");
         if (contentType && contentType.includes("text/html")) {
-             throw new Error("Proxy Configuration Error: The API request was routed to the frontend app instead of the Binance API. This indicates missing Rewrite rules in your hosting provider (AWS Amplify, Vercel, etc).");
+             throw new Error("Proxy Configuration Error: The API request was routed to the frontend app instead of the Binance API.");
         }
 
         if (!response.ok) {
@@ -200,10 +193,8 @@ async function fetchPublic(url: string): Promise<any> {
 export async function initializeTimeSync(retries = 3) {
     for (let i = 0; i < retries; i++) {
         try {
-            // Using raw fetch here to avoid circular dependency or rate limit lock on init
             const response = await fetch(`${SPOT_BASE_URL}/api/v3/time`);
             
-            // Basic check for proxy failure on init
             const contentType = response.headers.get("content-type");
             if (contentType && contentType.includes("text/html")) {
                 console.error("Proxy Configuration Error detected during Time Sync.");
@@ -220,7 +211,7 @@ export async function initializeTimeSync(retries = 3) {
             return;
         } catch (error) {
             console.warn(`[BinanceService] Time sync failed (attempt ${i + 1}/${retries}):`, error);
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s before retry
+            await new Promise(resolve => setTimeout(resolve, 1000));
         }
     }
     console.error("[BinanceService] Failed to synchronize time with Binance server after multiple attempts.");
@@ -230,10 +221,6 @@ export function getTimeOffset(): number {
     return timeOffset;
 }
 
-/**
- * Returns the current timestamp synchronized with Binance server time.
- * Use this instead of Date.now() for anything related to trade timing or logs.
- */
 export const getSyncedNow = (): number => {
     return Date.now() + timeOffset;
 };
@@ -279,16 +266,13 @@ export const fetchFuturesPairs = async (quoteAsset: string = 'USDT'): Promise<st
 };
 
 
-// --- Public Functions ---
 export const checkApiConnection = async (): Promise<boolean> => {
-    // If running in Live mode, we might need keys. But for fetching pairs/klines (Public), we don't.
-    // This check is mainly for Wallet access.
     if (!apiKey) return false;
     try {
         await fetchSigned('/api/v3/account');
         return true;
     } catch (e: any) {
-         if (e.code === -2015) { // Specific check for permission errors
+         if (e.code === -2015) {
             try {
                 await fetchSigned('/fapi/v2/account', {}, 'GET', FUTURES_BASE_URL);
                 return true;
@@ -296,7 +280,6 @@ export const checkApiConnection = async (): Promise<boolean> => {
                  return false;
             }
         }
-        // If it's a proxy error, re-throw it so UI can display it properly
         if (e.message && e.message.includes("Proxy Configuration Error")) {
             throw e;
         }
@@ -320,57 +303,38 @@ export const fetchKlines = async (symbol: string, interval: string, options: { l
     const klinesResult: Kline[] = data.map((k: any) => ({
         time: k[0], open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]),
         close: parseFloat(k[4]), volume: parseFloat(k[5]), isFinal: true,
-        // Added Index 9 for Taker Buy Base Asset Volume (Omega V2.1)
         takerBuyVolume: parseFloat(k[9])
     }));
     
     return klinesResult;
 };
 
-/**
- * Fetch Open Interest for Futures (Omega V2.1)
- * Note: Only works for Futures.
- */
-export const fetchOpenInterest = async (symbol: string): Promise<{ openInterest: number, time: number } | null> => {
-    try {
-        // Strip the '/' for API call if it exists
-        const cleanSymbol = symbol.replace('/', '');
-        const data = await fetchPublic(`${FUTURES_BASE_URL}/fapi/v1/openInterest?symbol=${cleanSymbol}`);
-        return { openInterest: parseFloat(data.openInterest), time: data.time };
-    } catch (e) { return null; }
-};
-
-/**
- * Fetch Open Interest History (Omega V4.0)
- * Only works for Futures. Returns recent OI data to detect trends.
- * NOTE: Binance does NOT provide a public WebSocket for OI History, so we must use REST.
- * We cache the result to prevent rate limit issues.
- */
-export const fetchOpenInterestHistory = async (symbol: string, period: string, limit: number = 30): Promise<OpenInterestKline[]> => {
+// Updated: Support startTime and endTime for historical backtesting
+export const fetchOpenInterestHistory = async (symbol: string, period: string, options: { limit?: number, startTime?: number, endTime?: number } = {}): Promise<OpenInterestKline[]> => {
     const cleanSymbol = symbol.replace('/', '');
+    const { limit, startTime, endTime } = options;
+    
+    // Only cache if no time range specified (live usage)
+    const useCache = !startTime && !endTime;
     const cacheKey = `${cleanSymbol}:${period}`;
     const now = Date.now();
-    const cached = openInterestHistoryCache.get(cacheKey);
 
-    // 1. Check for valid cache
-    if (cached && (now - cached.timestamp < OI_CACHE_DURATION)) {
-        // Check if we cached a "failure" state (empty array)
-        // If it was a failure, use shorter error cache duration
-        if (cached.data.length === 0 && (now - cached.timestamp < OI_ERROR_CACHE_DURATION)) {
-            return [];
-        }
-        // If it was a success, use standard cache duration
-        if (cached.data.length > 0) {
-            return cached.data;
+    if (useCache) {
+        const cached = openInterestHistoryCache.get(cacheKey);
+        if (cached && (now - cached.timestamp < DATA_CACHE_DURATION)) {
+            if (cached.data.length === 0 && (now - cached.timestamp < ERROR_CACHE_DURATION)) return [];
+            if (cached.data.length > 0) return cached.data;
         }
     }
 
     try {
-        const params = new URLSearchParams({ symbol: cleanSymbol, period, limit: String(limit) });
-        // FIXED: Endpoint is /futures/data/openInterestHist, not /fapi/v1/openInterestHist
+        const params = new URLSearchParams({ symbol: cleanSymbol, period });
+        if (limit) params.set('limit', String(limit));
+        if (startTime) params.set('startTime', String(startTime));
+        if (endTime) params.set('endTime', String(endTime));
+
         const data = await fetchPublic(`${FUTURES_BASE_URL}/futures/data/openInterestHist?${params.toString()}`);
         
-        // Map to typed array
         const result: OpenInterestKline[] = data.map((d: any) => ({
             symbol: d.symbol,
             sumOpenInterest: d.sumOpenInterest,
@@ -378,17 +342,61 @@ export const fetchOpenInterestHistory = async (symbol: string, period: string, l
             timestamp: d.timestamp
         }));
 
-        openInterestHistoryCache.set(cacheKey, { data: result, timestamp: now });
+        if (useCache) {
+            openInterestHistoryCache.set(cacheKey, { data: result, timestamp: now });
+        }
         return result;
     } catch (e) {
-        // Log the error but don't crash.
-        // Important: Cache the failure (empty array) for 10 seconds to prevent
-        // rapid-fire retries in the analysis loop if the API is returning 404/500.
-        console.warn(`[BinanceService] Failed to fetch OI history for ${symbol}. Caching failure for 10s.`);
-        openInterestHistoryCache.set(cacheKey, { data: [], timestamp: now }); 
+        console.warn(`[BinanceService] Failed to fetch OI history for ${symbol}.`);
+        if (useCache) openInterestHistoryCache.set(cacheKey, { data: [], timestamp: now }); 
         return [];
     }
 };
+
+// Updated: Support startTime and endTime for historical backtesting
+export const fetchTopLongShortRatio = async (symbol: string, period: string, options: { limit?: number, startTime?: number, endTime?: number } = {}): Promise<LongShortRatio[]> => {
+    const cleanSymbol = symbol.replace('/', '');
+    const { limit, startTime, endTime } = options;
+
+    // Only cache if no time range specified
+    const useCache = !startTime && !endTime;
+    const cacheKey = `${cleanSymbol}:${period}`;
+    const now = Date.now();
+
+    if (useCache) {
+        const cached = lsRatioHistoryCache.get(cacheKey);
+        if (cached && (now - cached.timestamp < DATA_CACHE_DURATION)) {
+            if (cached.data.length === 0 && (now - cached.timestamp < ERROR_CACHE_DURATION)) return [];
+            return cached.data;
+        }
+    }
+
+    try {
+        const params = new URLSearchParams({ symbol: cleanSymbol, period });
+        if (limit) params.set('limit', String(limit));
+        if (startTime) params.set('startTime', String(startTime));
+        if (endTime) params.set('endTime', String(endTime));
+
+        const data = await fetchPublic(`${FUTURES_BASE_URL}/futures/data/topLongShortAccountRatio?${params.toString()}`);
+        
+        const result: LongShortRatio[] = data.map((d: any) => ({
+            symbol: d.symbol,
+            longShortRatio: parseFloat(d.longShortRatio),
+            longAccount: parseFloat(d.longAccount),
+            shortAccount: parseFloat(d.shortAccount),
+            timestamp: d.timestamp
+        }));
+
+        if (useCache) {
+            lsRatioHistoryCache.set(cacheKey, { data: result, timestamp: now });
+        }
+        return result;
+    } catch (e) {
+        console.warn(`[BinanceService] Failed to fetch L/S Ratio for ${symbol}.`);
+        if (useCache) lsRatioHistoryCache.set(cacheKey, { data: [], timestamp: now });
+        return [];
+    }
+}
 
 export const fetchFullKlines = async (symbol: string, interval: string, startTime: number, endTime: number, mode: TradingMode): Promise<Kline[]> => {
     let allKlines: Kline[] = [];
@@ -417,7 +425,6 @@ export const fetchFullKlines = async (symbol: string, interval: string, startTim
         const klines: Kline[] = data.map((k: any) => ({
             time: k[0], open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]),
             close: parseFloat(k[4]), volume: parseFloat(k[5]), isFinal: true,
-            // Added Index 9 for Taker Buy Base Asset Volume (Omega V2.1)
             takerBuyVolume: parseFloat(k[9])
         }));
         
@@ -426,7 +433,6 @@ export const fetchFullKlines = async (symbol: string, interval: string, startTim
         const lastKlineTime = klines[klines.length - 1].time;
         currentStartTime = lastKlineTime + 1;
         
-        // Gentle delay between chunks in backtesting
         await new Promise(r => setTimeout(r, 100));
     }
     
@@ -500,7 +506,6 @@ export const fetchFundingRate = async (symbol: string): Promise<{ fundingTime: n
         }
         return null;
     } catch (e) {
-        // console.error(`Failed to fetch funding rate for ${symbol}:`, e);
         return null;
     }
 };
@@ -510,7 +515,7 @@ const mapBalances = async (rawBalances: RawWalletBalance[]): Promise<WalletBalan
     const balances = rawBalances
         .map(b => {
             const total = b.free + b.locked;
-            if (total <= 0) return { ...b, total, usdValue: 0 }; // Quick filter for 0 balance assets
+            if (total <= 0) return { ...b, total, usdValue: 0 }; 
 
             const originalAsset = b.asset;
             const assetForPricing = originalAsset.startsWith('LD') ? originalAsset.substring(2) : originalAsset;
@@ -521,7 +526,7 @@ const mapBalances = async (rawBalances: RawWalletBalance[]): Promise<WalletBalan
             } else {
                 usdValue = total * (prices.get(`${assetForPricing}USDT`) || prices.get(`${assetForPricing}BUSD`) || 0);
             }
-            return { ...b, asset: originalAsset, total, usdValue }; // Keep original asset name
+            return { ...b, asset: originalAsset, total, usdValue }; 
         })
         .filter(b => b.total > 0.00001)
         .sort((a, b) => b.usdValue - a.usdValue);
@@ -628,7 +633,7 @@ export const getPricePrecision = (symbolInfo?: SymbolInfo): number => {
         const tickSize = parseFloat(priceFilter.tickSize);
         if (tickSize > 0) return Math.abs(Math.log10(tickSize));
     }
-    return 4; // Use a more sensible default for crypto
+    return 4; 
 };
 
 export const getQuantityPrecision = (symbolInfo?: any): number => {

@@ -1,21 +1,20 @@
 
 // components/BacktestingPanel.tsx
 
-
 import React from 'react';
 import { useState, useEffect, useMemo } from 'react';
-import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, OptimizationResultItem, Kline } from '../types';
+import { Agent, BotConfig, BacktestResult, TradingMode, AgentParams, Kline } from '../types';
 import * as constants from '../constants';
 import * as binanceService from './../services/binanceService';
-import { runBacktest, runOptimization } from '../services/workerService';
-import { FlaskIcon, ChevronUp, ChevronDown, SparklesIcon, InfoIcon } from './icons';
+import { runBacktest } from '../services/workerService';
+import { FlaskIcon, ChevronUp, ChevronDown, SparklesIcon } from './icons';
 import { useTradingConfigState, useTradingConfigActions } from '../contexts/TradingConfigContext';
 import { SearchableDropdown } from './SearchableDropdown';
 import { BacktestResultDisplay } from './BacktestResultDisplay';
-import { OptimizationResults } from './OptimizationResults';
+import { pairProfileService } from '../services/pairProfileService';
 
 
-// --- Internal Components (Moved from BacktestControlPanel) ---
+// --- Shared UI helpers ---
 
 const formGroupClass = "flex flex-col gap-1.5";
 const formLabelClass = "text-sm font-medium text-slate-700 dark:text-slate-300";
@@ -23,326 +22,153 @@ const formInputClass = "w-full px-3 py-2 bg-white dark:bg-slate-800 border borde
 const buttonClass = "flex-1 flex items-center justify-center gap-2 px-4 py-2 text-white font-semibold rounded-md shadow-sm transition-colors";
 const primaryButtonClass = `${buttonClass} bg-sky-600 hover:bg-sky-700 disabled:bg-slate-400 dark:disabled:bg-slate-600`;
 
-const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) => void }> = ({ checked, onChange }) => (
-    <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        onClick={() => onChange(!checked)}
-        className={`${checked ? 'bg-sky-600' : 'bg-slate-300 dark:bg-slate-600'} relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2 dark:focus:ring-offset-slate-800`}
-    >
-        <span
-            aria-hidden="true"
-            className={`${checked ? 'translate-x-5' : 'translate-x-0'} pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`}
-        />
-    </button>
-);
-
-const ParamSlider: React.FC<{label: string, value: number, onChange: (val: number) => void, min: number, max: number, step: number, valueDisplay?: (v: number) => string}> = 
-({ label, value, onChange, min, max, step, valueDisplay }) => (
+const ParamSlider: React.FC<{
+    label: string;
+    value: number;
+    onChange: (val: number) => void;
+    min: number;
+    max: number;
+    step: number;
+    valueDisplay?: (v: number) => string;
+}> = ({ label, value, onChange, min, max, step, valueDisplay }) => (
     <div className="flex flex-col gap-1.5">
         <div className="flex justify-between items-baseline">
             <label className={formLabelClass}>{label}</label>
             <span className="text-sm font-semibold text-sky-500">{valueDisplay ? valueDisplay(value) : value}</span>
         </div>
-        <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(Number(e.target.value))} className="w-full h-2 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer" />
+        <input
+            type="range" min={min} max={max} step={step} value={value}
+            onChange={e => onChange(Number(e.target.value))}
+            className="w-full h-2 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer"
+        />
     </div>
 );
 
-const AgentParameterEditor: React.FC<{agent: Agent, params: AgentParams, onParamsChange: (p: AgentParams) => void, isAdxFilterEnabled: boolean, timeFrame: string}> = ({ agent, params, onParamsChange, isAdxFilterEnabled, timeFrame }) => {
-    const [isExitVetoOpen, setIsExitVetoOpen] = useState(false);
-    
+const ToggleSwitch: React.FC<{ checked: boolean; onChange: (checked: boolean) => void }> = ({ checked, onChange }) => (
+    <button
+        type="button" role="switch" aria-checked={checked}
+        onClick={() => onChange(!checked)}
+        className={`${checked ? 'bg-sky-600' : 'bg-slate-300 dark:bg-slate-600'} relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none`}
+    >
+        <span aria-hidden="true" className={`${checked ? 'translate-x-5' : 'translate-x-0'} pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out`} />
+    </button>
+);
+
+// --- Agent Parameter Editor ---
+
+const AgentParameterEditor: React.FC<{
+    agent: Agent;
+    params: AgentParams;
+    onParamsChange: (p: AgentParams) => void;
+    theme: 'light' | 'dark';
+    timeFrame: string;
+}> = ({ agent, params, onParamsChange, theme, timeFrame }) => {
     const allParams = useMemo(() => {
         const timeframeDefaults = constants.getAgentTimeframeSettings(agent.id, timeFrame);
         return { ...constants.DEFAULT_AGENT_PARAMS, ...timeframeDefaults, ...params };
     }, [agent.id, timeFrame, params]);
 
-    const updateParam = (key: keyof AgentParams, value: number | boolean | string) => { onParamsChange({ ...params, [key]: value }); };
+    const updateParam = (key: keyof AgentParams, value: number | boolean | string) => {
+        onParamsChange({ ...params, [key]: value });
+    };
+
     switch (agent.id) {
-        case 25: // Omega Predator
+        case 26: // Apex: Sovereign Predator
             return (
-                <div className="space-y-4">
-                    <div className="p-3 bg-slate-900 rounded-lg border border-sky-500/30 text-xs">
-                         <p className="font-bold text-sky-400 mb-1 uppercase tracking-widest">Omega: Multi-TF Backtesting</p>
-                         <p className="text-slate-400">Backtest will sync 1m-1D matrix data for accuracy.</p>
-                    </div>
-                    <ParamSlider label="Matrix Conviction" value={allParams.omega_matrixThreshold!} onChange={v => updateParam('omega_matrixThreshold', v)} min={60} max={95} step={1} valueDisplay={v => `${v}%`} />
-                    <ParamSlider label="FVG Void Search" value={allParams.omega_fvgLookback!} onChange={v => updateParam('omega_fvgLookback', v)} min={10} max={100} step={5} />
+                <div className="p-3 rounded-md bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-800">
+                    <p className="text-xs font-bold text-violet-700 dark:text-violet-300 uppercase tracking-widest mb-1">Apex: Sovereign Predator</p>
+                    <p className="text-xs text-violet-600/80 dark:text-violet-400/80">All parameters are auto-managed. No manual configuration needed.</p>
                 </div>
             );
-        case 9: return (<div className="space-y-4">
-            <div className="flex flex-col gap-1.5">
-                <label className={formLabelClass}>Entry Mode</label>
-                <div className="flex items-center gap-1 p-1 bg-slate-200 dark:bg-slate-900/70 rounded-md mt-1">
-                    <button 
-                        onClick={() => updateParam('qsc_entryMode', 'breakout')} 
-                        className={`flex-1 text-center text-xs font-semibold p-1.5 rounded-md transition-colors ${ (allParams.qsc_entryMode ?? 'breakout') === 'breakout' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
-                    >
-                        Breakout
-                    </button>
-                    <button 
-                        onClick={() => updateParam('qsc_entryMode', 'pullback')}
-                        className={`flex-1 text-center text-xs font-semibold p-1.5 rounded-md transition-colors ${ allParams.qsc_entryMode === 'pullback' ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
-                    >
-                        Pullback
-                    </button>
-                </div>
-            </div>
-            {isAdxFilterEnabled && (
-                <ParamSlider label="ADX Trend Threshold" value={allParams.qsc_adxThreshold} onChange={v => updateParam('qsc_adxThreshold', v)} min={20} max={40} step={1} />
-            )}
-            {(allParams.qsc_entryMode ?? 'breakout') === 'breakout' ? (
-                <ParamSlider label="RSI Crossover Threshold" value={allParams.qsc_rsiMomentumThreshold} onChange={v => updateParam('qsc_rsiMomentumThreshold', v)} min={51} max={70} step={1} />
-            ) : (
-                <ParamSlider label="RSI Pullback Threshold" value={allParams.qsc_rsiPullbackThreshold} onChange={v => updateParam('qsc_rsiPullbackThreshold', v)} min={30} max={49} step={1} />
-            )}
-            <ParamSlider label="Volume Exhaustion Veto" value={allParams.qsc_volumeExhaustionMultiplier!} onChange={v => updateParam('qsc_volumeExhaustionMultiplier', v)} min={1.5} max={5.0} step={0.1} valueDisplay={v => `${v.toFixed(1)}x Avg`} />
-            <ParamSlider label="Entry Score Threshold" value={allParams.qsc_trendScoreThreshold} onChange={v => updateParam('qsc_trendScoreThreshold', v)} min={50} max={95} step={1} valueDisplay={v => `${v}%`} />
-            </div>);
-        case 11: return (<div className="space-y-4">
-            <ParamSlider label="Trend SMA Period" value={allParams.he_trendSmaPeriod} onChange={v => updateParam('he_trendSmaPeriod', v)} min={20} max={50} step={1} />
-            <ParamSlider label="Fast EMA Period" value={allParams.he_fastEmaPeriod} onChange={v => updateParam('he_fastEmaPeriod', v)} min={5} max={20} step={1} />
-            <ParamSlider label="Slow EMA Period" value={allParams.he_slowEmaPeriod} onChange={v => updateParam('he_slowEmaPeriod', v)} min={20} max={50} step={1} />
-            <ParamSlider label="RSI Midline" value={allParams.he_rsiMidline} onChange={v => updateParam('he_rsiMidline', v)} min={40} max={60} step={1} />
-            </div>);
-        case 13: 
-             return (<div className="space-y-4">
-                 <ParamSlider 
-                    label="Trend EMA Period"
-                    value={allParams.ch_trendEmaPeriod}
-                    onChange={(v) => updateParam('ch_trendEmaPeriod', v)}
-                    min={50} max={200} step={10}
-                />
-                {isAdxFilterEnabled && (
-                    <ParamSlider 
-                        label="ADX Threshold"
-                        value={allParams.ch_adxThreshold}
-                        onChange={(v) => updateParam('ch_adxThreshold', v)}
-                        min={18} max={30} step={1}
-                    />
-                )}
-                 <ParamSlider 
-                    label="Fast EMA Period"
-                    value={allParams.ch_fastEmaPeriod}
-                    onChange={(v) => updateParam('ch_fastEmaPeriod', v)}
-                    min={5} max={20} step={1}
-                />
-                <ParamSlider 
-                    label="Slow EMA Period"
-                    value={allParams.ch_slowEmaPeriod}
-                    onChange={(v) => updateParam('ch_slowEmaPeriod', v)}
-                    min={20} max={50} step={1}
-                />
-            </div>);
-        case 14:
-            return (<div className="space-y-4">
-                <ParamSlider
-                    label="Entry Score Threshold"
-                    value={allParams.sentinel_entryThreshold!}
-                    onChange={(v) => updateParam('sentinel_entryThreshold', v)}
-                    min={50} max={95} step={1}
-                />
-                <ParamSlider
-                    label="Swing Point Lookback"
-                    value={allParams.sentinel_swingLookback!}
-                    onChange={(v) => updateParam('sentinel_swingLookback', v)}
-                    min={3} max={15} step={1}
-                />
-                <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-3 border-t border-slate-200 dark:border-slate-700">Pillar Weights</h4>
-                <ParamSlider
-                    label="Structure Weight"
-                    value={allParams.sentinel_structureWeight!}
-                    onChange={(v) => updateParam('sentinel_structureWeight', v)}
-                    min={20} max={70} step={5}
-                    valueDisplay={v => `${v}%`}
-                />
-                <ParamSlider
-                    label="Momentum Weight"
-                    value={allParams.sentinel_momentumWeight!}
-                    onChange={(v) => updateParam('sentinel_momentumWeight', v)}
-                    min={10} max={50} step={5}
-                    valueDisplay={v => `${v}%`}
-                />
-                <ParamSlider
-                    label="Context Weight"
-                    value={allParams.sentinel_contextWeight!}
-                    onChange={(v) => updateParam('sentinel_contextWeight', v)}
-                    min={10} max={50} step={5}
-                    valueDisplay={v => `${v}%`}
-                />
-                 <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
-                    <button onClick={() => setIsExitVetoOpen(!isExitVetoOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
-                        <span>Exit & SL/TP Logic</span>
-                        {isExitVetoOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-                    </button>
-                    {isExitVetoOpen && (
-                        <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
-                            <div className="flex items-center justify-between">
-                                 <div className="flex items-center gap-1.5">
-                                    <label className={formLabelClass}>Use S/R for Take Profit</label>
-                                 </div>
-                                <ToggleSwitch checked={allParams.sentinel_useSrLevelsForTp!} onChange={v => updateParam('sentinel_useSrLevelsForTp', v)} />
-                            </div>
-                            <ParamSlider label="SuperTrend Period (Trail SL)" value={allParams.sentinel_stPeriod!} onChange={v => updateParam('sentinel_stPeriod', v)} min={5} max={20} step={1} />
-                            <ParamSlider label="SuperTrend Multiplier (Trail SL)" value={allParams.sentinel_stMultiplier!} onChange={v => updateParam('sentinel_stMultiplier', v)} min={1.0} max={5.0} step={0.1} valueDisplay={v => v.toFixed(1)} />
-                            <ParamSlider label="Regime ADX Period (SL)" value={allParams.sentinel_adxPeriod!} onChange={v => updateParam('sentinel_adxPeriod', v)} min={5} max={20} step={1} />
-                            <ParamSlider label="Momentum RSI Period (Exit)" value={allParams.sentinel_rsiPeriod!} onChange={v => updateParam('sentinel_rsiPeriod', v)} min={5} max={20} step={1} />
+
+        case 25: // Omega Prime
+            const isAuto = allParams.omega_auto_mode ?? true;
+            const intent = (allParams.omega_intent as 'Preserve' | 'Growth' | 'Alpha') || 'Growth';
+            const patience = (allParams.omega_patience as 'Low' | 'Medium' | 'High') || 'Medium';
+            const sessionFilter = allParams.omega_session_filter ?? true;
+            return (
+                <div className="space-y-4">
+                    <div className="flex items-center gap-2 p-2 bg-indigo-50 dark:bg-indigo-900/20 rounded border border-indigo-200 dark:border-indigo-800">
+                        <SparklesIcon className="w-4 h-4 text-indigo-500" />
+                        <div>
+                            <p className="font-bold text-indigo-700 dark:text-indigo-300 text-xs uppercase tracking-widest">Omega Prime</p>
+                            <p className="text-[10px] text-indigo-600/80 dark:text-indigo-400/80">Autonomous Intelligent Agent</p>
                         </div>
-                    )}
-                </div>
-            </div>);
-        case 16: // Ichimoku Trend Rider
-            return (<div className="space-y-4">
-                <ParamSlider 
-                   label="Tenkan-sen Period"
-                   value={allParams.ichi_conversionPeriod!}
-                   onChange={(v) => updateParam('ichi_conversionPeriod', v)}
-                   min={5} max={20} step={1}
-               />
-               <ParamSlider 
-                   label="Kijun-sen Period"
-                   value={allParams.ichi_basePeriod!}
-                   onChange={(v) => updateParam('ichi_basePeriod', v)}
-                   min={20} max={60} step={1}
-               />
-               <ParamSlider 
-                   label="Senkou Span B Period"
-                   value={allParams.ichi_laggingSpanPeriod!}
-                   onChange={(v) => updateParam('ichi_laggingSpanPeriod', v)}
-                   min={40} max={120} step={2}
-               />
-            </div>);
-        case 17:
-            return (<div className="space-y-4">
-                <ParamSlider 
-                   label="Fast EMA Period"
-                   value={allParams.mst_emaFastPeriod!}
-                   onChange={(v) => updateParam('mst_emaFastPeriod', v)}
-                   min={20} max={100} step={1}
-               />
-               <ParamSlider 
-                   label="Slow EMA Period"
-                   value={allParams.mst_emaSlowPeriod!}
-                   onChange={(v) => updateParam('mst_emaSlowPeriod', v)}
-                   min={100} max={300} step={10}
-               />
-           </div>);
-        case 18: 
-            return (<div className="space-y-4">
-                 <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">Core Logic</h4>
-                 <ParamSlider label="Base Conviction Threshold" value={allParams.conductor_convictionThreshold!} onChange={v => updateParam('conductor_convictionThreshold', v)} min={50} max={95} step={1} valueDisplay={v => `${v}%`} />
-                 <ParamSlider label="Swing Point Lookback" value={allParams.conductor_swingLookback!} onChange={v => updateParam('conductor_swingLookback', v)} min={3} max={15} step={1} />
-                 <ParamSlider label="Structure Weight" value={allParams.conductor_structureWeight!} onChange={v => updateParam('conductor_structureWeight', v)} min={10} max={60} step={5} valueDisplay={v => `${v}%`} />
-                 <ParamSlider label="Momentum Weight" value={allParams.conductor_momentumWeight!} onChange={v => updateParam('conductor_momentumWeight', v)} min={10} max={60} step={5} valueDisplay={v => `${v}%`} />
-                 <ParamSlider label="Context Weight" value={allParams.conductor_contextWeight!} onChange={v => updateParam('conductor_contextWeight', v)} min={5} max={40} step={5} valueDisplay={v => `${v}%`} />
-                 <ParamSlider label="Confirmation Weight" value={allParams.conductor_confirmationWeight!} onChange={v => updateParam('conductor_confirmationWeight', v)} min={5} max={40} step={5} valueDisplay={v => `${v}%`} />
-
-                 <h4 className="text-sm font-semibold text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-200 dark:border-slate-700">Adaptive Behavior</h4>
-                 <ParamSlider label="Strong Trend ADX" value={allParams.conductor_strongTrendAdx!} onChange={v => updateParam('conductor_strongTrendAdx', v)} min={25} max={40} step={1} />
-                 <ParamSlider label="Strong Trend Threshold" value={allParams.conductor_strongTrendThreshold!} onChange={v => updateParam('conductor_strongTrendThreshold', v)} min={50} max={80} step={1} valueDisplay={v => `${v}%`} />
-                 <ParamSlider label="Choppy Market ADX" value={allParams.conductor_choppyTrendAdx!} onChange={v => updateParam('conductor_choppyTrendAdx', v)} min={15} max={25} step={1} />
-                 <ParamSlider label="Choppy Market Threshold" value={allParams.conductor_choppyTrendThreshold!} onChange={v => updateParam('conductor_choppyTrendThreshold', v)} min={70} max={95} step={1} valueDisplay={v => `${v}%`} />
-                 <ParamSlider label="Structure Weight Multiplier" value={allParams.conductor_structureWeightMultiplier!} onChange={v => updateParam('conductor_structureWeightMultiplier', v)} min={1.0} max={2.0} step={0.05} valueDisplay={v => `${v.toFixed(2)}x`} />
-            </div>);
-        case 20: return (<div className="space-y-4">
-            <ParamSlider 
-                label="ATR Period" 
-                value={allParams.stf_atrPeriod!} 
-                onChange={v => updateParam('stf_atrPeriod', v)} 
-                min={5} max={20} step={1} 
-            />
-            {!allParams.stf_enableDynamicMultiplier && (
-                <ParamSlider 
-                    label="ATR Multiplier" 
-                    value={allParams.stf_atrMultiplier!} 
-                    onChange={v => updateParam('stf_atrMultiplier', v)} 
-                    min={1.0} max={5.0} step={0.1} 
-                    valueDisplay={v => v.toFixed(1)}
-                />
-            )}
-            
-            <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                        <label className={formLabelClass}>Dynamic Multiplier</label>
-                        <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" title="Adjusts ATR multiplier based on market volatility."/>
                     </div>
-                    <ToggleSwitch checked={allParams.stf_enableDynamicMultiplier!} onChange={v => updateParam('stf_enableDynamicMultiplier', v)} />
-                </div>
-            </div>
-
-            {allParams.stf_enableDynamicMultiplier && (
-                <div className="pl-2 border-l-2 border-sky-500/30 space-y-4 mt-2">
-                    <ParamSlider 
-                        label="Low Vol Multiplier" 
-                        value={allParams.stf_multiplier_low!} 
-                        onChange={v => updateParam('stf_multiplier_low', v)} 
-                        min={1.0} max={3.0} step={0.1} 
-                        valueDisplay={v => v.toFixed(1)}
-                    />
-                     <ParamSlider 
-                        label="Normal Vol Multiplier" 
-                        value={allParams.stf_multiplier_normal!} 
-                        onChange={v => updateParam('stf_multiplier_normal', v)} 
-                        min={1.5} max={5.0} step={0.1} 
-                        valueDisplay={v => v.toFixed(1)}
-                    />
-                     <ParamSlider 
-                        label="High Vol Multiplier" 
-                        value={allParams.stf_multiplier_high!} 
-                        onChange={v => updateParam('stf_multiplier_high', v)} 
-                        min={3.0} max={7.0} step={0.1} 
-                        valueDisplay={v => v.toFixed(1)}
-                    />
-                    <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700">
-                        <ParamSlider 
-                            label="Volatility Lookback" 
-                            value={allParams.stf_volatilityPeriod!} 
-                            onChange={v => updateParam('stf_volatilityPeriod', v)} 
-                            min={50} max={250} step={10}
-                        />
-                         <ParamSlider 
-                            label="Low/High Threshold" 
-                            value={allParams.stf_volatilityThreshold_low!} 
-                            onChange={v => {
-                                updateParam('stf_volatilityThreshold_low', v);
-                                updateParam('stf_volatilityThreshold_high', 100 - v);
-                            }}
-                            min={10} max={40} step={1}
-                            valueDisplay={v => `${v}% / ${100-v}%`}
-                        />
+                    <div className="flex items-center justify-between">
+                        <label className={formLabelClass}>Auto-Pilot Mode</label>
+                        <ToggleSwitch checked={isAuto} onChange={v => updateParam('omega_auto_mode', v)} />
+                    </div>
+                    {!isAuto && (<>
+                        <div className={formGroupClass}>
+                            <label className={formLabelClass}>Intent</label>
+                            <select value={intent} onChange={e => updateParam('omega_intent', e.target.value)} className={formInputClass}>
+                                <option value="Preserve">Preserve – High bar, strong setups only</option>
+                                <option value="Growth">Growth – Balanced, standard mode</option>
+                                <option value="Alpha">Alpha – Aggressive, range mode</option>
+                            </select>
+                        </div>
+                        <div className={formGroupClass}>
+                            <label className={formLabelClass}>Patience</label>
+                            <select value={patience} onChange={e => updateParam('omega_patience', e.target.value)} className={formInputClass}>
+                                <option value="Low">Low – Faster entries</option>
+                                <option value="Medium">Medium – Balanced</option>
+                                <option value="High">High – Waits for best setup</option>
+                            </select>
+                        </div>
+                    </>)}
+                    <div className="flex items-center justify-between">
+                        <label className={formLabelClass}>Session Filter</label>
+                        <ToggleSwitch checked={sessionFilter} onChange={v => updateParam('omega_session_filter', v)} />
                     </div>
                 </div>
-            )}
-        </div>);
-        case 21: // Pivot Point SuperTrend
-            return (<div className="space-y-4">
-                <ParamSlider 
-                   label="Pivot Point Period"
-                   value={allParams.pps_pivotPeriod!}
-                   onChange={(v) => updateParam('pps_pivotPeriod', v)}
-                   min={1} max={50} step={1}
-               />
-               <ParamSlider 
-                   label="ATR Period"
-                   value={allParams.pps_atrPeriod!}
-                   onChange={(v) => updateParam('pps_atrPeriod', v)}
-                   min={1} max={50} step={1}
-               />
-               <ParamSlider 
-                   label="ATR Factor"
-                   value={allParams.pps_atrFactor!}
-                   onChange={(v) => updateParam('pps_atrFactor', v)}
-                   min={1.0} max={10.0} step={0.1}
-                   valueDisplay={v => v.toFixed(1)}
-               />
-            </div>);
-        default: return <p className="text-sm text-slate-500">This agent does not have any customizable parameters.</p>;
+            );
+
+        case 9: case 11: case 13: case 14: case 17: case 18:
+            return (
+                <div className="space-y-4">
+                    <ParamSlider label="RSI Period" value={allParams.rsiPeriod!} onChange={v => updateParam('rsiPeriod', v)} min={5} max={30} step={1} />
+                    <ParamSlider label="ATR Period" value={allParams.atrPeriod!} onChange={v => updateParam('atrPeriod', v)} min={5} max={30} step={1} />
+                    <ParamSlider label="ADX Period" value={allParams.adxPeriod!} onChange={v => updateParam('adxPeriod', v)} min={5} max={30} step={1} />
+                </div>
+            );
+
+        case 20:
+            return (
+                <div className="space-y-4">
+                    <ParamSlider label="ATR Period" value={allParams.atrPeriod!} onChange={v => updateParam('atrPeriod', v)} min={5} max={30} step={1} />
+                    <ParamSlider label="ATR Multiplier" value={allParams.atrMultiplier!} onChange={v => updateParam('atrMultiplier', v)} min={1.0} max={5.0} step={0.1} valueDisplay={v => v.toFixed(1)} />
+                </div>
+            );
+
+        case 21:
+            return (
+                <div className="space-y-4">
+                    <ParamSlider label="Pivot Period" value={allParams.pps_pivotPeriod!} onChange={v => updateParam('pps_pivotPeriod', v)} min={1} max={50} step={1} />
+                    <ParamSlider label="ATR Period" value={allParams.pps_atrPeriod!} onChange={v => updateParam('pps_atrPeriod', v)} min={1} max={50} step={1} />
+                    <ParamSlider label="ATR Factor" value={allParams.pps_atrFactor!} onChange={v => updateParam('pps_atrFactor', v)} min={1.0} max={10.0} step={0.1} valueDisplay={v => v.toFixed(1)} />
+                </div>
+            );
+
+        default:
+            return <p className="text-sm text-slate-500">This agent has no customizable parameters.</p>;
     }
 };
 
+// --- Config ---
 
-// --- Main Panel Component ---
+export type BacktestConfig = {
+    tradingMode: TradingMode;
+    selectedPair: string;
+    chartTimeFrame: string;
+    selectedAgent: Agent;
+    investmentAmount: number;
+    leverage: number;
+    marginType: 'ISOLATED' | 'CROSSED';
+    agentParams: AgentParams;
+};
+
+// --- Main Panel ---
 
 interface BacktestingPanelProps {
     backtestResult: BacktestResult | null;
@@ -351,316 +177,232 @@ interface BacktestingPanelProps {
     theme: 'light' | 'dark';
 }
 
-export type BacktestConfig = {
-    tradingMode: TradingMode;
-    selectedPair: string;
-    chartTimeFrame: string;
-    selectedAgent: Agent;
-    investmentAmount: number;
-    maxMarginLossPercent: number;
-    isInitialRiskVetoEnabled: boolean;
-    isHtfConfirmationEnabled: boolean;
-    isUniversalProfitTrailEnabled: boolean;
-    isMinRrEnabled: boolean;
-    htfTimeFrame: 'auto' | string;
-    invalidationSensitivity: 'low' | 'medium' | 'high';
-    isAgentTrailEnabled: boolean;
-    isBreakevenTrailEnabled: boolean;
-    isMarketCohesionEnabled: boolean;
-    isExhaustionFilterEnabled: boolean;
-    isSmcVetoEnabled: boolean;
-    agentParams: AgentParams;
-    leverage: number;
-    marginType: 'ISOLATED' | 'CROSSED';
-    entryTiming: 'immediate' | 'onNextCandle';
-    isAdaptiveTpEnabled: boolean;
-    aggressiveTrailMode: 'distance' | 'pnl' | 'disabled';
-    isVwapConfirmationEnabled: boolean;
-    isBtcConfirmationEnabled: boolean;
-    isBtcCorrelationVetoEnabled: boolean;
-    btcConfirmationThreshold: number;
-    isVolumeFilterEnabled: boolean;
-    isAdxFilterEnabled: boolean;
-    isSrAnalysisEnabled: boolean;
-    isCandlestickConfirmationEnabled: boolean;
-    isMarketStructureVetoEnabled: boolean;
-    isSupertrendConfirmationEnabled: boolean;
-    isMarketBreadthFilterEnabled: boolean;
-    isLiquidationFilterEnabled: boolean;
-    isConfirmationCandleEnabled: boolean;
-    isMomentumConcordanceEnabled: boolean;
-    isTradeGuardianEnabled: boolean;
-    isHeikinAshiEnabled: boolean;
-    isDynamicSizingEnabled: boolean;
-};
-
-const getTimeframeDuration = (timeframe: string): number => {
-    const unit = timeframe.slice(-1);
-    const value = parseInt(timeframe.slice(0, -1), 10);
-    if (isNaN(value)) return 0;
-    switch (unit) {
-        case 'm': return value * 60 * 1000;
-        case 'h': return value * 60 * 60 * 1000;
-        case 'd': return value * 24 * 60 * 60 * 1000;
-        default: return 0;
-    }
-};
+// Matrix timeframes required by Apex (26) and Omega (25)
+const MATRIX_TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d'];
 
 export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
     const { backtestResult, setBacktestResult, setActiveView, theme } = props;
-    
+
     const globalConfig = useTradingConfigState();
     const globalActions = useTradingConfigActions();
-    
+
     const [config, setConfig] = useState<BacktestConfig>({
         tradingMode: globalConfig.tradingMode,
-        selectedPair: globalConfig.selectedPairs[0] || constants.TRADING_PAIRS[0], 
+        selectedPair: globalConfig.selectedPairs[0] || constants.TRADING_PAIRS[0],
         chartTimeFrame: globalConfig.chartTimeFrame,
-        selectedAgent: globalConfig.selectedAgent, 
+        selectedAgent: globalConfig.selectedAgent,
         investmentAmount: globalConfig.investmentAmount,
-        maxMarginLossPercent: globalConfig.maxMarginLossPercent,
-        isInitialRiskVetoEnabled: globalConfig.isInitialRiskVetoEnabled,
-        isHtfConfirmationEnabled: globalConfig.isHtfConfirmationEnabled,
-        isUniversalProfitTrailEnabled: globalConfig.isUniversalProfitTrailEnabled, 
-        htfTimeFrame: globalConfig.htfTimeFrame,
-        agentParams: globalConfig.agentParams, 
         leverage: globalConfig.leverage,
         marginType: globalConfig.marginType,
-        isMinRrEnabled: globalConfig.isMinRrEnabled, 
-        invalidationSensitivity: globalConfig.invalidationSensitivity,
-        isAgentTrailEnabled: globalConfig.isAgentTrailEnabled,
-        isBreakevenTrailEnabled: globalConfig.isBreakevenTrailEnabled,
-        isMarketCohesionEnabled: globalConfig.isMarketCohesionEnabled,
-        isExhaustionFilterEnabled: globalConfig.isExhaustionFilterEnabled,
-        isSmcVetoEnabled: globalConfig.isSmcVetoEnabled,
-        entryTiming: globalConfig.entryTiming,
-        isAdaptiveTpEnabled: globalConfig.isAdaptiveTpEnabled,
-        aggressiveTrailMode: globalConfig.aggressiveTrailMode,
-        isVwapConfirmationEnabled: globalConfig.isVwapConfirmationEnabled,
-        isBtcConfirmationEnabled: globalConfig.isBtcConfirmationEnabled,
-        isBtcCorrelationVetoEnabled: globalConfig.isBtcCorrelationVetoEnabled,
-        btcConfirmationThreshold: globalConfig.btcConfirmationThreshold,
-        isVolumeFilterEnabled: globalConfig.isVolumeFilterEnabled,
-        isAdxFilterEnabled: globalConfig.isAdxFilterEnabled,
-        isSrAnalysisEnabled: globalConfig.isSrAnalysisEnabled,
-        isCandlestickConfirmationEnabled: globalConfig.isCandlestickConfirmationEnabled,
-        isMarketStructureVetoEnabled: globalConfig.isMarketStructureVetoEnabled,
-        isSupertrendConfirmationEnabled: globalConfig.isSupertrendConfirmationEnabled,
-        isMarketBreadthFilterEnabled: globalConfig.isMarketBreadthFilterEnabled,
-        isLiquidationFilterEnabled: globalConfig.isLiquidationFilterEnabled,
-        isConfirmationCandleEnabled: globalConfig.isConfirmationCandleEnabled,
-        isMomentumConcordanceEnabled: globalConfig.isMomentumConcordanceEnabled,
-        isTradeGuardianEnabled: globalConfig.isTradeGuardianEnabled,
-        isHeikinAshiEnabled: globalConfig.isHeikinAshiEnabled,
-        isDynamicSizingEnabled: globalConfig.isDynamicSizingEnabled,
+        agentParams: globalConfig.agentParams,
     });
 
-    const [backtestDays, setBacktestDays] = useState(3);
-    const [optimizationResults, setOptimizationResults] = useState<OptimizationResultItem[] | null>(null);
+    const [backtestDays, setBacktestDays] = useState(7);
+    const [useModelFilter, setUseModelFilter] = useState(true);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [loadingMessage, setLoadingMessage] = useState('Running Simulation...');
+    const [backtestProgress, setBacktestProgress] = useState(0);
     const [isParamsOpen, setIsParamsOpen] = useState(false);
-    const [isFiltersOpen, setIsFiltersOpen] = useState(false);
 
-
-    const canOptimize = [9, 11, 13, 14, 17, 18].includes(config.selectedAgent.id);
-    
     const updateConfig = <K extends keyof BacktestConfig>(key: K, value: BacktestConfig[K]) => {
-        setConfig(prev => ({...prev, [key]: value}));
+        setConfig(prev => ({ ...prev, [key]: value }));
     };
 
-    const higherTimeFrames = useMemo(() => {
-        const currentIndex = constants.TIME_FRAMES.indexOf(config.chartTimeFrame);
-        if (currentIndex === -1) return [];
-        return constants.TIME_FRAMES.slice(currentIndex + 1);
-    }, [config.chartTimeFrame]);
-
     useEffect(() => {
-        // When the agent changes, clear out any old custom parameters
-        // to ensure the new agent's defaults are used.
         updateConfig('agentParams', {});
     }, [config.selectedAgent.id]);
 
-    useEffect(() => {
-        if (config.htfTimeFrame !== 'auto' && !higherTimeFrames.includes(config.htfTimeFrame)) {
-            updateConfig('htfTimeFrame', 'auto');
-        }
-    }, [config.chartTimeFrame, config.htfTimeFrame, higherTimeFrames]);
-
-    useEffect(() => {
-        if (!constants.AGENTS.some(a => a.id === config.selectedAgent.id)) {
-            updateConfig('selectedAgent', constants.AGENTS[0]);
-        }
-    }, [config.selectedAgent]);
+    const isMatrixAgent = config.selectedAgent.id === 25 || config.selectedAgent.id === 26;
 
     const handleRunBacktest = async () => {
-        setIsLoading(true); setLoadingMessage('Fetching data...'); setError(null);
-        setBacktestResult(null); setOptimizationResults(null);
+        setIsLoading(true);
+        setLoadingMessage('Fetching kline data...');
+        setError(null);
+        setBacktestResult(null);
+        setBacktestProgress(0);
+
         try {
             const formattedPair = config.selectedPair.replace('/', '');
             const now = binanceService.getSyncedNow();
             const startTime = now - backtestDays * 24 * 60 * 60 * 1000;
-            const backtestKlines = await binanceService.fetchFullKlines(formattedPair, '1m', startTime, now, config.tradingMode);
-            if (backtestKlines.length < 200) { throw new Error("Not enough historical data available for a reliable backtest (min 200 candles)."); }
-            
-            let htfKlines: any[] | undefined = undefined;
-            if (config.isHtfConfirmationEnabled) {
-                const htf = config.htfTimeFrame === 'auto' ? constants.TIME_FRAMES[constants.TIME_FRAMES.indexOf(config.chartTimeFrame) + 1] : config.htfTimeFrame;
-                if (htf) {
-                    const htfStartTime = backtestKlines[0].time;
-                    const htfEndTime = backtestKlines[backtestKlines.length - 1].time + getTimeframeDuration(config.chartTimeFrame) - 1;
-                    htfKlines = await binanceService.fetchFullKlines(formattedPair, htf, htfStartTime, htfEndTime, config.tradingMode);
+
+            // --- Primary klines (1m for simulation tick resolution) ---
+            const primaryKlines = await binanceService.fetchFullKlines(
+                formattedPair, '1m', startTime, now, config.tradingMode
+            );
+            if (primaryKlines.length < 200) {
+                throw new Error('Not enough historical data (need at least 200 candles).');
+            }
+
+            const startTs = primaryKlines[0].time;
+            const endTs = primaryKlines[primaryKlines.length - 1].time;
+
+            // --- Matrix timeframes for Apex / Omega ---
+            let matrixMap: Map<string, Kline[]> | undefined;
+            let openInterestHistory: any[] | undefined;
+            let lsRatioHistory: any[] | undefined;
+
+            if (isMatrixAgent) {
+                setLoadingMessage('Syncing matrix (1m → 1D)...');
+                matrixMap = new Map();
+
+                // Apex/Omega require h1.length >= 200 and m5.length >= 100 before firing any signal.
+                // With only the backtest window, h1 starts at 0 and grows slowly — causing zero trades.
+                // Fix: pre-fetch 210 hours of history before the backtest start so the agent has
+                // full context from the very first candle.
+                const MATRIX_PREFETCH_MS = 210 * 60 * 60 * 1000; // 210h → 200h needed + margin
+                const matrixFetchStart = startTs - MATRIX_PREFETCH_MS;
+
+                await Promise.all(
+                    MATRIX_TIMEFRAMES.map(async tf => {
+                        const data = await binanceService.fetchFullKlines(
+                            formattedPair, tf, matrixFetchStart, endTs, config.tradingMode
+                        );
+                        matrixMap!.set(tf, data);
+                    })
+                );
+
+                if (config.tradingMode === TradingMode.USDSM_Futures) {
+                    setLoadingMessage('Syncing OI & sentiment data...');
+                    const oiPeriod = ['1m', '3m', '5m'].includes(config.chartTimeFrame) ? '5m' : config.chartTimeFrame;
+                    [openInterestHistory, lsRatioHistory] = await Promise.all([
+                        binanceService.fetchOpenInterestHistory(formattedPair, oiPeriod, {
+                            limit: 500, startTime: startTs, endTime: endTs
+                        }),
+                        binanceService.fetchTopLongShortRatio(formattedPair, oiPeriod, {
+                            limit: 500, startTime: startTs, endTime: endTs
+                        }),
+                    ]);
                 }
             }
 
-            // --- OMEGA BACKTEST DATA PREPARATION ---
-            let matrixMap: Map<string, Kline[]> | undefined = undefined;
-            if (config.selectedAgent.id === 25) {
-                setLoadingMessage('Syncing Omega Matrix (1m-1D)...');
-                matrixMap = new Map();
-                const tfs = ['1m', '15m', '1h', '4h', '1d'];
-                const htfStartTime = backtestKlines[0].time;
-                const htfEndTime = backtestKlines[backtestKlines.length - 1].time;
-                
-                await Promise.all(tfs.map(async (tf) => {
-                    const data = await binanceService.fetchFullKlines(formattedPair, tf, htfStartTime, htfEndTime, config.tradingMode);
-                    matrixMap!.set(tf, data);
-                }));
-            }
+            // --- Universal model (from localStorage — same source as live trading) ---
+            const universalModel = useModelFilter ? pairProfileService.load() : null;
 
-            setLoadingMessage('Running backtest...');
-            const symbolInfo = config.tradingMode === TradingMode.USDSM_Futures ? await binanceService.getFuturesSymbolInfo(formattedPair) : await binanceService.getSymbolInfo(formattedPair);
-            if (!symbolInfo) throw new Error("Could not fetch symbol info.");
-            
-            const fullBotConfig: BotConfig = {
-                ...config,
-                pair: config.selectedPair, 
-                mode: config.tradingMode, 
+            // --- Symbol info ---
+            setLoadingMessage('Simulating trades...');
+            setBacktestProgress(0);
+            const symbolInfo = config.tradingMode === TradingMode.USDSM_Futures
+                ? await binanceService.getFuturesSymbolInfo(formattedPair)
+                : await binanceService.getSymbolInfo(formattedPair);
+            if (!symbolInfo) throw new Error('Could not fetch symbol info.');
+
+            const botConfig: BotConfig = {
+                pair: config.selectedPair,
+                mode: config.tradingMode,
                 executionMode: 'paper',
-                timeFrame: config.chartTimeFrame, 
+                timeFrame: config.chartTimeFrame,
                 agent: config.selectedAgent,
-                pricePrecision: binanceService.getPricePrecision(symbolInfo), 
+                investmentAmount: config.investmentAmount,
+                leverage: config.leverage,
+                marginType: config.marginType,
+                agentParams: config.agentParams,
+                maxMarginLossPercent: 100,
+                pricePrecision: binanceService.getPricePrecision(symbolInfo),
                 quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
                 takerFeeRate: constants.TAKER_FEE_RATE,
                 finalEntryFailSafe: 'fail-open',
+                // Flags used inside agents (not dead filters)
+                isInitialRiskVetoEnabled: true,
+                isMinRrEnabled: true,
+                entryTiming: 'immediate',
             };
-            
-            // Pass matrixMap to runBacktest
-            const result = await runBacktest(backtestKlines, fullBotConfig, htfKlines, matrixMap);
+
+            const result = await runBacktest(
+                primaryKlines,
+                botConfig,
+                undefined, // htfKlines — handled inside matrix
+                matrixMap,
+                openInterestHistory,
+                lsRatioHistory,
+                universalModel,
+                (p) => setBacktestProgress(p.percent),
+            );
+
             setBacktestResult(result);
         } catch (e) {
-            console.error("Backtest failed:", e); setError(e instanceof Error ? e.message : "An unknown error occurred during backtesting.");
-        } finally { setIsLoading(false); }
-    };
-
-    const handleRunOptimization = async () => {
-        setIsLoading(true); setLoadingMessage('Fetching historical data...'); setError(null);
-        setBacktestResult(null); setOptimizationResults(null);
-        const onProgress = (progress: { percent: number; combinations: number }) => {
-            setLoadingMessage(`Optimizing... ${progress.percent.toFixed(0)}% of ${progress.combinations}`);
-        };
-        try {
-            const formattedPair = config.selectedPair.replace('/', '');
-            const now = binanceService.getSyncedNow();
-            const startTime = now - backtestDays * 24 * 60 * 60 * 1000;
-            const backtestKlines = await binanceService.fetchFullKlines(formattedPair, '1m', startTime, now, config.tradingMode);
-            if (backtestKlines.length < 200) { throw new Error("Not enough historical data for optimization."); }
-            
-            let htfKlines: any[] | undefined = undefined;
-            if (config.isHtfConfirmationEnabled) {
-                 const htf = config.htfTimeFrame === 'auto' ? constants.TIME_FRAMES[constants.TIME_FRAMES.indexOf(config.chartTimeFrame) + 1] : config.htfTimeFrame;
-                if (htf) {
-                    const htfStartTime = backtestKlines[0].time;
-                    const htfEndTime = backtestKlines[backtestKlines.length - 1].time + getTimeframeDuration(config.chartTimeFrame) - 1;
-                    htfKlines = await binanceService.fetchFullKlines(formattedPair, htf, htfStartTime, htfEndTime, config.tradingMode);
-                }
-            }
-            
-            // --- OMEGA BACKTEST DATA PREPARATION ---
-            let matrixMap: Map<string, Kline[]> | undefined = undefined;
-            if (config.selectedAgent.id === 25) {
-                setLoadingMessage('Syncing Omega Matrix (1m-1D)...');
-                matrixMap = new Map();
-                const tfs = ['1m', '15m', '1h', '4h', '1d'];
-                const htfStartTime = backtestKlines[0].time;
-                const htfEndTime = backtestKlines[backtestKlines.length - 1].time;
-                
-                await Promise.all(tfs.map(async (tf) => {
-                    const data = await binanceService.fetchFullKlines(formattedPair, tf, htfStartTime, htfEndTime, config.tradingMode);
-                    matrixMap!.set(tf, data);
-                }));
-            }
-            
-            setLoadingMessage(`Preparing optimization...`);
-            const symbolInfo = config.tradingMode === TradingMode.USDSM_Futures ? await binanceService.getFuturesSymbolInfo(formattedPair) : await binanceService.getSymbolInfo(formattedPair);
-            if (!symbolInfo) throw new Error("Could not fetch symbol info.");
-            const baseBotConfig: BotConfig = {
-                ...config,
-                pair: config.selectedPair, 
-                mode: config.tradingMode, 
-                executionMode: 'paper',
-                timeFrame: config.chartTimeFrame, 
-                agent: config.selectedAgent,
-                pricePrecision: binanceService.getPricePrecision(symbolInfo), 
-                quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
-                stepSize: binanceService.getStepSize(symbolInfo),
-                takerFeeRate: constants.TAKER_FEE_RATE,
-                finalEntryFailSafe: 'fail-open',
-            };
-            const results = await runOptimization(backtestKlines, baseBotConfig, onProgress, htfKlines, matrixMap);
-            if (results.length === 0) { setError("Optimization complete, but no profitable parameter combinations were found."); } else { setOptimizationResults(results); }
-        } catch (e) {
-            console.error("Optimization failed:", e); setError(e instanceof Error ? e.message : "An unknown error occurred during optimization.");
+            console.error('Backtest failed:', e);
+            setError(e instanceof Error ? e.message : 'An unknown error occurred.');
         } finally {
             setIsLoading(false);
         }
     };
 
-    const handleApplyAndSwitch = (params: AgentParams) => {
+    const handleApplyAndSwitch = () => {
+        globalActions.setTradingMode(config.tradingMode);
+        globalActions.setSelectedPairs([config.selectedPair]);
+        globalActions.setTimeFrame(config.chartTimeFrame);
         globalActions.setSelectedAgent(config.selectedAgent);
-        globalActions.setAgentParams(params);
+        globalActions.setInvestmentAmount(config.investmentAmount);
+        globalActions.setLeverage(config.leverage);
+        globalActions.setMarginType(config.marginType);
+        globalActions.setAgentParams(config.agentParams);
         setActiveView('trading');
     };
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* --- Control Panel Column --- */}
+
+            {/* ── Control Panel ─────────────────────────────────────────────── */}
             <div className="lg:col-span-3 bg-white dark:bg-slate-800 rounded-lg shadow-sm p-4 h-fit">
                 <h2 className="text-lg font-bold flex items-center gap-2 mb-4">
                     <FlaskIcon />
-                    <span>Backtest Configuration</span>
+                    <span>Backtest Setup</span>
                 </h2>
+
                 <div className="space-y-4">
+
+                    {/* Platform */}
                     <div className={formGroupClass}>
                         <label className={formLabelClass}>Platform</label>
-                        <select value={config.tradingMode} onChange={e => updateConfig('tradingMode', e.target.value as TradingMode)} className={formInputClass}>
-                            {Object.values(TradingMode).map(mode => <option key={mode} value={mode}>{mode}</option>)}
+                        <select
+                            value={config.tradingMode}
+                            onChange={e => updateConfig('tradingMode', e.target.value as TradingMode)}
+                            className={formInputClass}
+                        >
+                            {Object.values(TradingMode).map(m => <option key={m} value={m}>{m}</option>)}
                         </select>
                     </div>
 
+                    {/* Market */}
                     <div className={formGroupClass}>
                         <label className={formLabelClass}>Market</label>
                         <SearchableDropdown
                             options={globalConfig.allPairs}
                             value={config.selectedPair}
-                            onChange={(p) => updateConfig('selectedPair', p as string)}
+                            onChange={p => updateConfig('selectedPair', p as string)}
                             theme={theme}
                             disabled={globalConfig.isPairsLoading}
                         />
                     </div>
-                    
+
+                    {/* Time Frame */}
                     <div className={formGroupClass}>
-                        <label className={formLabelClass}>Time Frame</label>
-                        <select value={config.chartTimeFrame} onChange={e => updateConfig('chartTimeFrame', e.target.value)} className={formInputClass}>
+                        <label className={formLabelClass}>Chart Timeframe</label>
+                        <select
+                            value={config.chartTimeFrame}
+                            onChange={e => updateConfig('chartTimeFrame', e.target.value)}
+                            className={formInputClass}
+                        >
                             {constants.TIME_FRAMES.map(tf => <option key={tf} value={tf}>{tf}</option>)}
                         </select>
+                        {isMatrixAgent && (
+                            <p className="text-xs text-slate-400 mt-0.5">
+                                Matrix timeframes (1m–1D) are fetched automatically.
+                            </p>
+                        )}
                     </div>
 
+                    {/* Period */}
                     <div className={formGroupClass}>
                         <label className={formLabelClass}>Backtest Period</label>
-                        <select value={backtestDays} onChange={e => setBacktestDays(Number(e.target.value))} className={formInputClass}>
+                        <select
+                            value={backtestDays}
+                            onChange={e => setBacktestDays(Number(e.target.value))}
+                            className={formInputClass}
+                        >
                             <option value={1}>Last 24 Hours</option>
                             <option value={3}>Last 3 Days</option>
                             <option value={7}>Last 7 Days</option>
@@ -669,295 +411,150 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                         </select>
                     </div>
 
-                    <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
-
-                    <div className={formGroupClass}>
-                        <label className={formLabelClass}>Investment Amount</label>
-                        <input type="number" value={config.investmentAmount} onChange={e => updateConfig('investmentAmount', Number(e.target.value))} className={formInputClass} />
-                    </div>
-                    
-                    <div className={`${formGroupClass} mt-2`}>
+                    {/* Model Filter Toggle */}
+                    {isMatrixAgent && (
                         <div className="flex items-center justify-between">
-                             <div className="flex items-center gap-1.5">
-                                <label htmlFor="dynamic-sizing-toggle-backtest" className={formLabelClass}>
-                                    Dynamic Conviction Sizing
-                                </label>
-                                 <div className="relative group">
-                                    <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
-                                    <div className="absolute bottom-full mb-2 w-56 bg-slate-800 text-white text-xs rounded py-1 px-2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10">
-                                        If enabled, the AI will reduce position size for lower conviction setups (e.g., 50% size for low conviction). If disabled, it always uses the full Investment Amount.
-                                    </div>
-                                </div>
+                            <div>
+                                <label className={formLabelClass}>Model Filter</label>
+                                <p className="text-xs text-slate-400">Apply trained pattern model to entries</p>
                             </div>
-                            <ToggleSwitch
-                                checked={config.isDynamicSizingEnabled}
-                                onChange={v => updateConfig('isDynamicSizingEnabled', v)}
-                            />
+                            <ToggleSwitch checked={useModelFilter} onChange={setUseModelFilter} />
                         </div>
+                    )}
+
+                    <div className="border-t border-slate-200 dark:border-slate-700 -mx-4" />
+
+                    {/* Investment */}
+                    <div className={formGroupClass}>
+                        <label className={formLabelClass}>Investment Amount ($)</label>
+                        <input
+                            type="number"
+                            value={config.investmentAmount}
+                            onChange={e => updateConfig('investmentAmount', Number(e.target.value))}
+                            className={formInputClass}
+                        />
                     </div>
 
+                    {/* Leverage — futures only */}
                     {config.tradingMode === TradingMode.USDSM_Futures && (
-                        <ParamSlider 
-                            label="Leverage" 
-                            value={config.leverage} 
-                            onChange={v => updateConfig('leverage', v)} 
-                            min={1} max={125} step={1} valueDisplay={v => `${v}x`} 
+                        <ParamSlider
+                            label="Leverage"
+                            value={config.leverage}
+                            onChange={v => updateConfig('leverage', v)}
+                            min={1} max={125} step={1}
+                            valueDisplay={v => `${v}x`}
                         />
                     )}
 
-                    <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>
-                    
+                    <div className="border-t border-slate-200 dark:border-slate-700 -mx-4" />
+
+                    {/* Agent selector */}
                     <div className={formGroupClass}>
                         <div className="flex justify-between items-center">
-                            <label className={formLabelClass}>Trading Agent</label>
-                            <button onClick={() => updateConfig('agentParams', {})} className="text-xs font-semibold text-sky-600 hover:bg-sky-700 dark:text-sky-400 dark:hover:bg-sky-500">
+                            <label className={formLabelClass}>Agent</label>
+                            <button
+                                onClick={() => updateConfig('agentParams', {})}
+                                className="text-xs font-semibold text-sky-600 dark:text-sky-400 hover:underline"
+                            >
                                 Reset Params
                             </button>
                         </div>
-                        <select value={config.selectedAgent.id} onChange={e => updateConfig('selectedAgent', constants.AGENTS.find(a => a.id === Number(e.target.value))!)} className={formInputClass}>
-                            {constants.AGENTS.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+                        <select
+                            value={config.selectedAgent.id}
+                            onChange={e => updateConfig('selectedAgent', constants.AGENTS.find(a => a.id === Number(e.target.value))!)}
+                            className={formInputClass}
+                        >
+                            {constants.AGENTS.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                         </select>
-                         {config.selectedAgent.id === 20 && (
-                            <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700">
-                                <div className="flex items-center justify-between">
-                                     <div className="flex items-center gap-1.5">
-                                        <label htmlFor="heikin-ashi-toggle-backtest" className={formLabelClass}>
-                                            Use Heikin Ashi Candles
-                                        </label>
-                                        <InfoIcon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" title="Calculates Supertrend signals using smoothed Heikin Ashi candles instead of regular candles to filter noise." />
-                                    </div>
-                                    <ToggleSwitch
-                                        checked={config.isHeikinAshiEnabled}
-                                        onChange={v => updateConfig('isHeikinAshiEnabled', v)}
-                                    />
-                                </div>
-                            </div>
-                        )}
                     </div>
 
+                    {/* Agent parameter editor */}
                     <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
-                        <button onClick={() => setIsParamsOpen(!isParamsOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
-                            <span>Customize Agent Parameters</span>
-                            {isParamsOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                        <button
+                            onClick={() => setIsParamsOpen(!isParamsOpen)}
+                            className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200"
+                        >
+                            <span>Agent Parameters</span>
+                            {isParamsOpen
+                                ? <ChevronUp className="w-5 h-5" />
+                                : <ChevronDown className="w-5 h-5" />}
                         </button>
                         {isParamsOpen && (
-                            <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-4">
-                                <AgentParameterEditor agent={config.selectedAgent} params={config.agentParams} onParamsChange={(p) => updateConfig('agentParams', p)} isAdxFilterEnabled={config.isAdxFilterEnabled} timeFrame={config.chartTimeFrame} />
+                            <div className="p-3 border-t border-slate-200 dark:border-slate-600">
+                                <AgentParameterEditor
+                                    agent={config.selectedAgent}
+                                    params={config.agentParams}
+                                    onParamsChange={p => updateConfig('agentParams', p)}
+                                    theme={theme}
+                                    timeFrame={config.chartTimeFrame}
+                                />
                             </div>
                         )}
                     </div>
 
-                    <div className="border rounded-md bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700">
-                        <button onClick={() => setIsFiltersOpen(!isFiltersOpen)} className="w-full flex items-center justify-between p-3 text-left font-semibold text-slate-800 dark:text-slate-200">
-                            <span>Customize Agent Filters</span>
-                            {isFiltersOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-                        </button>
-                        {isFiltersOpen && (
-                            <div className="p-3 border-t border-slate-200 dark:border-slate-600 space-y-3">
-                                <div className="flex items-center justify-between">
-                                    <label className={formLabelClass}>Initial Risk Veto</label>
-                                    <ToggleSwitch checked={config.isInitialRiskVetoEnabled} onChange={v => updateConfig('isInitialRiskVetoEnabled', v)} />
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <label className={formLabelClass}>Higher TF Confirmation</label>
-                                    <ToggleSwitch checked={config.isHtfConfirmationEnabled} onChange={v => updateConfig('isHtfConfirmationEnabled', v)} />
-                                </div>
-                                {config.isHtfConfirmationEnabled && higherTimeFrames.length > 0 && (
-                                    <div className="flex flex-col gap-1.5 mt-2">
-                                        <label className={formLabelClass}>Confirmation Timeframe</label>
-                                        <select value={config.htfTimeFrame} onChange={e => updateConfig('htfTimeFrame', e.target.value)} className={formInputClass}>
-                                            <option value="auto">Auto</option>
-                                            {higherTimeFrames.map(tf => <option key={tf} value={tf}>{tf}</option>)}
-                                        </select>
-                                    </div>
-                                )}
-                                <div className="flex items-center justify-between">
-                                    <label className={formLabelClass}>Momentum Concordance</label>
-                                    <ToggleSwitch checked={config.isMomentumConcordanceEnabled} onChange={v => updateConfig('isMomentumConcordanceEnabled', v)} />
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <label className={formLabelClass}>Liquidation Cascade Veto</label>
-                                    <ToggleSwitch checked={config.isLiquidationFilterEnabled} onChange={v => updateConfig('isLiquidationFilterEnabled', v)} />
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <label className={formLabelClass}>ADX Trend Filter</label>
-                                    <ToggleSwitch checked={config.isAdxFilterEnabled} onChange={v => updateConfig('isAdxFilterEnabled', v)} />
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <label className={formLabelClass}>Market Breadth Filter</label>
-                                    <ToggleSwitch checked={config.isMarketBreadthFilterEnabled} onChange={v => updateConfig('isMarketBreadthFilterEnabled', v)} />
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <label className={formLabelClass}>BTC Trend Confirmation</label>
-                                    <ToggleSwitch checked={config.isBtcConfirmationEnabled} onChange={v => updateConfig('isBtcConfirmationEnabled', v)} />
-                                </div>
-                                {config.isBtcConfirmationEnabled && (
-                                    <ParamSlider 
-                                        label="BTC Trend Threshold"
-                                        value={config.btcConfirmationThreshold}
-                                        onChange={v => updateConfig('btcConfirmationThreshold', v)}
-                                        min={50} max={85} step={5}
-                                        valueDisplay={(v) => `${v}%`}
-                                    />
-                                )}
-                                <div className="flex items-center justify-between">
-                                    <label className={formLabelClass}>Capital Flow Veto</label>
-                                    <ToggleSwitch checked={config.isBtcCorrelationVetoEnabled} onChange={v => updateConfig('isBtcCorrelationVetoEnabled', v)} />
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <label className={formLabelClass}>VWAP Confirmation</label>
-                                    <ToggleSwitch checked={config.isVwapConfirmationEnabled} onChange={v => updateConfig('isVwapConfirmationEnabled', v)} />
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <label className={formLabelClass}>Universal Volume Filter</label>
-                                    <ToggleSwitch checked={config.isVolumeFilterEnabled} onChange={v => updateConfig('isVolumeFilterEnabled', v)} />
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <label className={formLabelClass}>Market Cohesion Filter</label>
-                                    <ToggleSwitch checked={config.isMarketCohesionEnabled} onChange={v => updateConfig('isMarketCohesionEnabled', v)} />
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <label className={formLabelClass}>Exhaustion Filter</label>
-                                    <ToggleSwitch checked={config.isExhaustionFilterEnabled} onChange={v => updateConfig('isExhaustionFilterEnabled', v)} />
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <label className={formLabelClass}>SMC Reversal Veto</label>
-                                    <ToggleSwitch checked={config.isSmcVetoEnabled} onChange={v => updateConfig('isSmcVetoEnabled', v)} />
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <label className={formLabelClass}>Market Structure Veto</label>
-                                    <ToggleSwitch checked={config.isMarketStructureVetoEnabled} onChange={v => updateConfig('isMarketStructureVetoEnabled', v)} />
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <label className={formLabelClass}>Supertrend Confirmation</label>
-                                    <ToggleSwitch checked={config.isSupertrendConfirmationEnabled} onChange={v => updateConfig('isSupertrendConfirmationEnabled', v)} />
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <label className={formLabelClass}>S/R Zone Analysis</label>
-                                    <ToggleSwitch checked={config.isSrAnalysisEnabled} onChange={v => updateConfig('isSrAnalysisEnabled', v)} />
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <label className={formLabelClass}>Candlestick Veto</label>
-                                    <ToggleSwitch checked={config.isCandlestickConfirmationEnabled} onChange={v => updateConfig('isCandlestickConfirmationEnabled', v)} />
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <label className={formLabelClass}>Confirmation Candle Veto</label>
-                                    <ToggleSwitch checked={config.isConfirmationCandleEnabled} onChange={v => updateConfig('isConfirmationCandleEnabled', v)} />
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <label className={formLabelClass}>Trade Guardian</label>
-                                    <ToggleSwitch checked={config.isTradeGuardianEnabled} onChange={v => updateConfig('isTradeGuardianEnabled', v)} />
-                                </div>
-                                <div className={formGroupClass}>
-                                    <label className={formLabelClass}>Aggressive Trail Mode</label>
-                                    <select
-                                        value={config.aggressiveTrailMode}
-                                        onChange={e => updateConfig('aggressiveTrailMode', e.target.value as 'distance' | 'pnl' | 'disabled')}
-                                        className={formInputClass}
-                                    >
-                                        <option value="disabled">Disabled</option>
-                                        <option value="distance">Distance to TP</option>
-                                        <option value="pnl">PNL %</option>
-                                    </select>
-                                </div>
-                            </div>
-                        )}
-                    </div>
+                    {/* Run button */}
+                    <button
+                        onClick={handleRunBacktest}
+                        disabled={isLoading}
+                        className={primaryButtonClass}
+                    >
+                        <FlaskIcon className="w-5 h-5" />
+                        {isLoading ? loadingMessage : 'Run Backtest'}
+                    </button>
 
-
-                    <div className="flex gap-4">
-                        <button onClick={handleRunBacktest} disabled={isLoading} className={primaryButtonClass}>
-                            <FlaskIcon className="w-5 h-5"/>
-                            Run Backtest
-                        </button>
-                        <button onClick={handleRunOptimization} disabled={isLoading || !canOptimize} className={`${primaryButtonClass} bg-indigo-600 hover:bg-indigo-700`}>
-                            <SparklesIcon className="w-5 h-5"/>
-                            Optimize
-                        </button>
-                    </div>
                 </div>
             </div>
 
-            {/* --- Results Column --- */}
+            {/* ── Results Panel ──────────────────────────────────────────────── */}
             <div className="lg:col-span-9">
                 {isLoading ? (
-                     <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 h-full flex items-center justify-center">
-                        <div className="text-center">
-                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500 mx-auto"></div>
-                             <p className="mt-4 text-slate-500 dark:text-slate-400">{loadingMessage}</p>
+                    <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 h-full flex items-center justify-center">
+                        <div className="text-center w-72">
+                            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-sky-500 mx-auto mb-4" />
+                            <p className="text-slate-600 dark:text-slate-300 font-medium mb-3">{loadingMessage}</p>
+                            {backtestProgress > 0 && (
+                                <>
+                                    <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2.5 overflow-hidden">
+                                        <div
+                                            className="bg-sky-500 h-2.5 rounded-full transition-all duration-300"
+                                            style={{ width: `${backtestProgress}%` }}
+                                        />
+                                    </div>
+                                    <p className="text-xs text-slate-400 mt-1.5">{backtestProgress}% complete</p>
+                                </>
+                            )}
                         </div>
                     </div>
                 ) : error ? (
                     <div className="bg-rose-100 dark:bg-rose-900/50 border-l-4 border-rose-500 text-rose-700 dark:text-rose-300 p-4 rounded-r-lg h-full flex flex-col justify-center">
-                        <h3 className="font-bold text-lg mb-2">An Error Occurred</h3>
+                        <h3 className="font-bold text-lg mb-2">Backtest Failed</h3>
                         <p>{error}</p>
-                        <button onClick={() => setError(null)} className="mt-4 text-sm font-semibold text-rose-800 dark:text-rose-200 underline">Try again</button>
+                        <button
+                            onClick={() => setError(null)}
+                            className="mt-4 text-sm font-semibold underline"
+                        >
+                            Try again
+                        </button>
                     </div>
                 ) : backtestResult ? (
-                    <BacktestResultDisplay 
-                        result={backtestResult} 
-                        onReset={() => { setBacktestResult(null); setOptimizationResults(null); }}
-                        onApplyAndSwitchView={() => {
-                            globalActions.setTradingMode(config.tradingMode);
-                            globalActions.setSelectedPairs([config.selectedPair]);
-                            globalActions.setTimeFrame(config.chartTimeFrame);
-                            globalActions.setSelectedAgent(config.selectedAgent);
-                            globalActions.setInvestmentAmount(config.investmentAmount);
-                            globalActions.setMaxMarginLossPercent(config.maxMarginLossPercent);
-                            globalActions.setIsInitialRiskVetoEnabled(config.isInitialRiskVetoEnabled);
-                            globalActions.setIsHtfConfirmationEnabled(config.isHtfConfirmationEnabled);
-                            globalActions.setIsUniversalProfitTrailEnabled(config.isUniversalProfitTrailEnabled);
-                            globalActions.setHtfTimeFrame(config.htfTimeFrame);
-                            globalActions.setAgentParams(config.agentParams);
-                            globalActions.setLeverage(config.leverage);
-                            globalActions.setMarginType(config.marginType);
-                            globalActions.setIsMinRrEnabled(config.isMinRrEnabled);
-                            globalActions.setInvalidationSensitivity(config.invalidationSensitivity);
-                            globalActions.setIsAgentTrailEnabled(config.isAgentTrailEnabled);
-                            globalActions.setIsBreakevenTrailEnabled(config.isBreakevenTrailEnabled);
-                            globalActions.setIsMarketCohesionEnabled(config.isMarketCohesionEnabled);
-                            globalActions.setIsExhaustionFilterEnabled(config.isExhaustionFilterEnabled);
-                            globalActions.setIsSmcVetoEnabled(config.isSmcVetoEnabled);
-                            globalActions.setEntryTiming(config.entryTiming);
-                            globalActions.setIsAdaptiveTpEnabled(config.isAdaptiveTpEnabled);
-                            globalActions.setAggressiveTrailMode(config.aggressiveTrailMode);
-                            globalActions.setIsVwapConfirmationEnabled(config.isVwapConfirmationEnabled);
-                            globalActions.setIsBtcConfirmationEnabled(config.isBtcConfirmationEnabled);
-                            globalActions.setIsBtcCorrelationVetoEnabled(config.isBtcCorrelationVetoEnabled);
-                            globalActions.setBtcConfirmationThreshold(config.btcConfirmationThreshold);
-                            globalActions.setIsVolumeFilterEnabled(config.isVolumeFilterEnabled);
-                            globalActions.setIsAdxFilterEnabled(config.isAdxFilterEnabled);
-                            globalActions.setIsSrAnalysisEnabled(config.isSrAnalysisEnabled);
-                            globalActions.setIsCandlestickConfirmationEnabled(config.isCandlestickConfirmationEnabled);
-                            globalActions.setIsMarketStructureVetoEnabled(config.isMarketStructureVetoEnabled);
-                            globalActions.setIsSupertrendConfirmationEnabled(config.isSupertrendConfirmationEnabled);
-                            globalActions.setIsMarketBreadthFilterEnabled(config.isMarketBreadthFilterEnabled);
-                            globalActions.setIsLiquidationFilterEnabled(config.isLiquidationFilterEnabled);
-                            globalActions.setIsConfirmationCandleEnabled(config.isConfirmationCandleEnabled);
-                            globalActions.setIsMomentumConcordanceEnabled(config.isMomentumConcordanceEnabled);
-                            globalActions.setIsTradeGuardianEnabled(config.isTradeGuardianEnabled);
-                            globalActions.setIsHeikinAshiEnabled(config.isHeikinAshiEnabled);
-                            globalActions.setIsDynamicSizingEnabled(config.isDynamicSizingEnabled);
-                            setActiveView('trading');
-                        }}
-                    />
-                ) : optimizationResults ? (
-                    <OptimizationResults 
-                        results={optimizationResults}
-                        onReset={() => { setBacktestResult(null); setOptimizationResults(null); }}
+                    <BacktestResultDisplay
+                        result={backtestResult}
+                        onReset={() => setBacktestResult(null)}
                         onApplyAndSwitchView={handleApplyAndSwitch}
-                        pricePrecision={8} // TODO: pass this down dynamically
                     />
                 ) : (
-                     <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 h-full flex items-center justify-center">
+                    <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 h-full flex items-center justify-center">
                         <div className="text-center">
-                            <FlaskIcon className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-4"/>
-                            <h3 className="font-bold text-lg">Run a Backtest or Optimization</h3>
-                            <p className="text-slate-500 dark:text-slate-400">Configure your parameters on the left and start a simulation to see the results here.</p>
+                            <FlaskIcon className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-4" />
+                            <h3 className="font-bold text-lg">Configure &amp; Run a Backtest</h3>
+                            <p className="text-slate-500 dark:text-slate-400">
+                                Select an agent, market, and time period — then hit Run Backtest.
+                            </p>
                         </div>
                     </div>
                 )}
             </div>
+
         </div>
     );
 };

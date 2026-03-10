@@ -1,10 +1,10 @@
 
 // components/AnalysisPreview.tsx
 
-
-import React, { useRef, useEffect } from 'react';
-import { Agent, TradeSignal, AgentParams, SentinelAnalysis, ConductorAnalysis, AstraXAnalysis, OmegaAnalysis, Kline, MarketDataContext } from '../types';
-import { ChevronDown, ChevronUp, CheckCircleIcon, XCircleIcon, InfoIcon, SparklesIcon, ZapIcon } from './icons';
+import React from 'react';
+import { Agent, TradeSignal, AgentParams, OmegaAnalysis } from '../types';
+import { ActivityIcon, SparklesIcon, ZapIcon, ChartIcon } from './icons';
+import { pairProfileService } from '../services/pairProfileService';
 
 interface AnalysisPreviewProps {
     analysis: TradeSignal | null;
@@ -14,452 +14,233 @@ interface AnalysisPreviewProps {
     compact?: boolean;
 }
 
-const SignalTag: React.FC<{ signal: 'BUY' | 'SELL' | 'HOLD'; size?: 'sm' | 'md' }> = ({ signal, size = 'md' }) => {
-    const isBuy = signal === 'BUY';
-    const isSell = signal === 'SELL';
-    
-    const colorClasses = isBuy 
-        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300' 
-        : isSell 
-        ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-300' 
-        : 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300';
-        
-    const iconSize = size === 'sm' ? "w-3.5 h-3.5" : "w-5 h-5";
-    const textClass = size === 'sm' ? "text-xs px-2 py-0.5" : "text-base px-3 py-1";
-
-    const icon = isBuy ? <ChevronUp className={iconSize} /> : isSell ? <ChevronDown className={iconSize} /> : null;
-
-    return (
-        <span className={`inline-flex items-center gap-1 font-bold rounded-full ${textClass} ${colorClasses}`}>
-            {icon}
-            <span>{signal}</span>
-        </span>
-    );
-};
-
-const ReasonItem: React.FC<{ reason: string }> = ({ reason }) => {
-    const isMet = reason.startsWith('✅') || reason.startsWith('🚀');
-    const isUnmet = reason.startsWith('❌');
-    const isInfo = reason.startsWith('ℹ️') || reason.startsWith('Scan:') || reason.startsWith('Hunt:') || reason.startsWith('Kill:');
-    const isWarning = reason.startsWith('⚠️');
-
-    if (isMet || isUnmet || isInfo || isWarning) {
-        let iconColor: string;
-        let textColor: string;
-        let Icon: React.FC<any>;
-
-        if (isMet) {
-            iconColor = 'text-emerald-500';
-            textColor = 'text-slate-700 dark:text-slate-300';
-            Icon = CheckCircleIcon;
-        } else if (isUnmet) {
-            iconColor = 'text-rose-500';
-            textColor = 'text-slate-500 dark:text-slate-400';
-            Icon = XCircleIcon;
-        } else { // isInfo or isWarning
-            iconColor = 'text-sky-500';
-            textColor = 'text-slate-600 dark:text-slate-300';
-            Icon = InfoIcon;
-        }
-
-        return (
-            <li className="flex items-center gap-2">
-                <Icon className={`w-3.5 h-3.5 flex-shrink-0 ${iconColor}`} />
-                <span className={textColor}>{reason}</span>
-            </li>
-        );
-    }
-    
-    // Default for plain text reasons
-    return <li className="text-slate-700 dark:text-slate-200">{reason}</li>;
-};
-
 const ProgressBar: React.FC<{ value: number; colorClass: string; height?: string }> = ({ value, colorClass, height = "h-2" }) => (
     <div className={`w-full bg-slate-200 dark:bg-slate-700 rounded-full ${height}`}>
         <div className={`${colorClass} ${height} rounded-full transition-all duration-300`} style={{ width: `${Math.min(value, 100)}%` }}></div>
     </div>
 );
 
-// New Component: Clean Pipeline Step for Omega
-const PipelineStep: React.FC<{ 
-    step: number, 
-    label: string, 
-    status: string, 
-    isActive: boolean, 
-    isPassed: boolean,
-    details: string,
-    compact?: boolean
-}> = ({ step, label, status, isActive, isPassed, details, compact }) => {
-    const statusColor = isPassed ? 'text-emerald-600 dark:text-emerald-400' : isActive ? 'text-sky-600 dark:text-sky-400' : 'text-slate-400';
-    const bgClass = isActive ? 'bg-sky-50 dark:bg-sky-900/10 border-sky-200 dark:border-sky-800' : 'bg-transparent border-transparent';
-    const numBg = isPassed ? 'bg-emerald-500 text-white' : isActive ? 'bg-sky-500 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-500';
-    
-    const labelSize = compact ? 'text-[10px]' : 'text-xs';
-    const statusSize = compact ? 'text-[10px]' : 'text-xs';
-    const detailSize = compact ? 'text-[10px]' : 'text-xs';
-    const stepSize = compact ? 'w-5 h-5 text-[10px]' : 'w-6 h-6 text-xs';
-    const padding = compact ? 'p-1.5' : 'p-2';
+const StepCard: React.FC<{ 
+    label: string; 
+    status: string; 
+    isActive: boolean; 
+    icon?: React.ReactNode 
+}> = ({ label, status, isActive, icon }) => {
+    const baseBorder = "border-slate-200 dark:border-slate-700";
+    const activeBorder = "border-indigo-500 dark:border-indigo-400";
+    const baseBg = "bg-slate-50 dark:bg-slate-800/50";
+    const activeBg = "bg-indigo-50 dark:bg-indigo-900/20";
 
     return (
-        <div className={`flex items-start gap-2 ${padding} rounded-lg border ${bgClass}`}>
-            <div className={`flex-shrink-0 ${stepSize} rounded-full flex items-center justify-center font-bold ${numBg}`}>
-                {step}
+        <div className={`flex flex-col p-2.5 rounded-lg border ${isActive ? `${activeBorder} ${activeBg}` : `${baseBorder} ${baseBg}`} transition-colors duration-200`}>
+            <div className="flex items-center gap-1.5 mb-1">
+                {icon}
+                <span className="text-[9px] uppercase font-bold text-slate-500 tracking-wider">{label}</span>
             </div>
-            <div className="flex-grow min-w-0">
-                <div className="flex justify-between items-baseline">
-                    <span className={`${labelSize} font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400`}>{label}</span>
-                    <span className={`${statusSize} font-bold ${statusColor}`}>{status}</span>
-                </div>
-                <p className={`${detailSize} text-slate-700 dark:text-slate-300 mt-0.5 truncate`} title={details}>
-                    {details}
-                </p>
-            </div>
+            <span className={`text-[11px] font-bold truncate ${isActive ? 'text-indigo-600 dark:text-indigo-300' : 'text-slate-600 dark:text-slate-400'}`}>
+                {status}
+            </span>
         </div>
     );
 };
 
-const OmegaAnalysisDisplay: React.FC<{ analysis: OmegaAnalysis, compact?: boolean }> = ({ analysis, compact }) => {
-    const { conviction, phases, feeExpectancy, sizing, mode, targets } = analysis;
+const SentimentCard: React.FC<{ label: string; value: string; trend?: 'bullish' | 'bearish' | 'neutral' }> = ({ label, value, trend }) => (
+    <div className="flex justify-between items-center p-2 bg-slate-50 dark:bg-slate-800/30 rounded border border-slate-100 dark:border-slate-700/50">
+        <span className="text-[9px] text-slate-500 font-semibold uppercase">{label}</span>
+        <span className={`text-[10px] font-bold font-mono ${trend === 'bullish' ? 'text-emerald-500' : trend === 'bearish' ? 'text-rose-500' : 'text-slate-400'}`}>
+            {value}
+        </span>
+    </div>
+);
 
-    if (!phases) return null;
+const ScorePillar: React.FC<{ label: string; score: number }> = ({ label, score }) => (
+    <div className="flex flex-col gap-1">
+        <div className="flex justify-between text-[8px] font-bold text-slate-500 uppercase">
+            <span>{label}</span>
+            <span>{score.toFixed(0)}</span>
+        </div>
+        <ProgressBar value={score} colorClass="bg-indigo-400" height="h-1" />
+    </div>
+);
 
-    const activeModeColor = mode === 'Sniper' ? 'bg-rose-500' : mode === 'Conservative' ? 'bg-emerald-500' : 'bg-sky-500';
-    const modeBadgeColor = mode === 'Sniper' ? 'text-rose-600 bg-rose-100 dark:bg-rose-900/30 dark:text-rose-300' : mode === 'Conservative' ? 'text-emerald-600 bg-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-300' : 'text-sky-600 bg-sky-100 dark:bg-sky-900/30 dark:text-sky-300';
-    
-    const textSize = compact ? 'text-xs' : 'text-sm';
-    const labelSize = compact ? 'text-[10px]' : 'text-xs';
-    const scoreSize = compact ? 'text-sm' : 'text-lg';
+const OmegaAnalysisDisplay: React.FC<{ analysis: OmegaAnalysis; setupType?: string; omegaMetadata?: any; compact?: boolean }> = ({ analysis, setupType, omegaMetadata, compact }) => {
+    const hasModel = pairProfileService.hasModel();
+    const { conviction, intent, marketState, poiStatus, triggerStatus, sentiment, scoreBreakdown, sessionAnalysis, htfAlignment, modelScore } = analysis;
+
+    // Resolve the active setup label: use real setup type when a trigger is ready
+    const triggerLabel = triggerStatus.ready && setupType
+        ? setupType
+        : triggerStatus.condition;
+
+    // Session badge color
+    const sessionColor = sessionAnalysis?.includes('Dead Zone')
+        ? 'bg-rose-900/60 text-rose-300'
+        : sessionAnalysis?.includes('US')
+        ? 'bg-emerald-900/60 text-emerald-300'
+        : sessionAnalysis?.includes('London')
+        ? 'bg-sky-900/60 text-sky-300'
+        : 'bg-slate-700/60 text-slate-400';
 
     return (
         <div className="space-y-3">
-            {/* Header: Conviction & Mode */}
-            <div className="bg-white dark:bg-slate-800 rounded-lg p-2 border border-slate-200 dark:border-slate-700 shadow-sm">
-                <div className="flex justify-between items-center mb-1">
-                    <div className="flex items-center gap-2">
-                        <span className={`${labelSize} font-bold text-slate-500 dark:text-slate-400 uppercase`}>Conviction</span>
-                        {mode && (
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${modeBadgeColor}`}>
-                                {mode.toUpperCase()}
-                            </span>
-                        )}
-                    </div>
-                    <span className={`font-mono font-bold ${scoreSize} text-slate-900 dark:text-slate-100`}>{conviction}%</span>
-                </div>
-                <ProgressBar value={conviction} colorClass={activeModeColor} height="h-1.5" />
-            </div>
-
-            {/* Pipeline Visualization */}
-            <div className="space-y-1">
-                <PipelineStep 
-                    step={1} 
-                    label="Scan" 
-                    status={phases.scan.bias} 
-                    isActive={phases.scan.score > 0 && phases.hunt.score === 0} 
-                    isPassed={phases.scan.score >= 100}
-                    details={phases.scan.reason}
-                    compact={compact}
-                />
-                <PipelineStep 
-                    step={2} 
-                    label="Hunt" 
-                    status={phases.hunt.setup} 
-                    isActive={phases.hunt.score > 0 && phases.kill.score === 0} 
-                    isPassed={phases.hunt.score >= 100}
-                    details={phases.hunt.reason}
-                    compact={compact}
-                />
-                <PipelineStep 
-                    step={3} 
-                    label="Kill" 
-                    status={phases.kill.trigger} 
-                    isActive={phases.kill.score > 0 && conviction < 100} 
-                    isPassed={phases.kill.score >= 100}
-                    details={phases.kill.reason}
-                    compact={compact}
-                />
-                <PipelineStep 
-                    step={4} 
-                    label="Flow" 
-                    status={phases.flow?.trend || 'Wait'} 
-                    isActive={conviction >= 80} 
-                    isPassed={conviction >= 90}
-                    details={phases.flow?.reason || 'Pending Execution'}
-                    compact={compact}
-                />
-            </div>
-
-            {/* Metrics Footer - Updated Labels for Clarity */}
-            <div className="flex gap-2">
-                <div className={`flex-1 p-1.5 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50`}>
-                    <span className="text-[9px] text-slate-500 uppercase block">R:R</span>
-                    <div className="flex items-center gap-1">
-                        <span className={`${textSize} font-bold ${feeExpectancy.passed ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500'}`}>
-                            {feeExpectancy.ratio > 0 ? `${feeExpectancy.ratio.toFixed(1)}` : '-'}
-                        </span>
-                        {feeExpectancy.passed && <CheckCircleIcon className="w-3 h-3 text-emerald-500" />}
-                    </div>
-                </div>
-                <div className="flex-1 p-1.5 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
-                    <span className="text-[9px] text-slate-500 uppercase block">Size</span>
-                    <span className={`${textSize} font-bold text-slate-800 dark:text-slate-200`}>
-                        {(sizing.multiplier * 100).toFixed(0)}%
+            <div className="bg-slate-900 rounded-lg p-3 border border-indigo-500/30 shadow-lg">
+                <div className="flex justify-between items-center mb-3">
+                    <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-1.5">
+                        <SparklesIcon className="w-3 h-3" /> Omega Prime
                     </span>
+                    <div className="flex items-center gap-1.5">
+                        {sessionAnalysis && (
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-semibold ${sessionColor}`}>{sessionAnalysis}</span>
+                        )}
+                        {hasModel && !modelScore && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded font-semibold bg-violet-900/60 text-violet-300" title="Model active — score shown when a setup is detected">Model ✦</span>
+                        )}
+                        {hasModel && modelScore && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded font-semibold bg-violet-900/60 text-violet-300">Model ✓</span>
+                        )}
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-indigo-500 text-white uppercase">{intent || 'Growth'}</span>
+                    </div>
                 </div>
-                 {targets && targets.takeProfit > 0 && (
-                    <div className="flex-1 p-1.5 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
-                        <span className="text-[9px] text-slate-500 uppercase block">TGT</span>
-                        <div className="flex flex-col leading-none">
-                            <span className="text-[9px] text-emerald-600 font-mono">TP: {targets.takeProfit.toFixed(1)}</span>
-                            <span className="text-[9px] text-rose-600 font-mono">SL: {targets.stopLoss.toFixed(1)}</span>
-                        </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                    <StepCard
+                        label="1H Structure"
+                        status={marketState.bias1H}
+                        isActive={marketState.bias1H !== 'Neutral'}
+                        icon={<ChartIcon className="w-3 h-3 text-slate-400" />}
+                    />
+                    <StepCard
+                        label="POI Type"
+                        status={poiStatus.type === 'None' ? poiStatus.distance : poiStatus.type}
+                        isActive={poiStatus.type !== 'None'}
+                        icon={<ActivityIcon className="w-3 h-3 text-slate-400" />}
+                    />
+                    <StepCard
+                        label="Setup Trigger"
+                        status={triggerLabel}
+                        isActive={triggerStatus.ready}
+                        icon={<ZapIcon className="w-3 h-3 text-slate-400" />}
+                    />
+                </div>
+
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                    <SentimentCard
+                        label="Money Flow (OI)"
+                        value={sentiment.oiState || 'Neutral'}
+                        trend={(sentiment.oiState === 'Long Buildup' || sentiment.oiState === 'Short Buildup') ? 'bullish' : (sentiment.oiState === 'Short Covering' || sentiment.oiState === 'Long Liquidation') ? 'bearish' : 'neutral'}
+                    />
+                    <SentimentCard
+                        label="CVD Flow"
+                        value={sentiment.cvdState}
+                        trend={sentiment.cvdState === 'Absorption' ? 'bullish' : sentiment.cvdState === 'Distribution' ? 'bearish' : 'neutral'}
+                    />
+                </div>
+
+                {/* 4H Alignment — always shown */}
+                <div className="mt-2">
+                    <SentimentCard
+                        label="4H Structure"
+                        value={htfAlignment ?? 'Scanning'}
+                        trend={htfAlignment === 'Aligned' ? 'bullish' : htfAlignment === 'Conflicted' ? 'bearish' : 'neutral'}
+                    />
+                </div>
+
+                {/* Model cards — only shown when a model is trained */}
+                {modelScore && (
+                    <div className="mt-2 space-y-1.5">
+                        <SentimentCard
+                            label="Model Delta"
+                            value={modelScore.delta > 0 ? `+${modelScore.delta} (${modelScore.activeCount} hits)` : modelScore.delta < 0 ? `${modelScore.delta} (opposing)` : 'Neutral'}
+                            trend={modelScore.delta > 0 ? 'bullish' : modelScore.delta < 0 ? 'bearish' : 'neutral'}
+                        />
+                        {modelScore.hourWinRate > 0 && (
+                            <SentimentCard
+                                label="Hour Win Rate"
+                                value={`${modelScore.hourWinRate}% this UTC hour`}
+                                trend={modelScore.hourWinRate >= 60 ? 'bullish' : modelScore.hourWinRate < 45 ? 'bearish' : 'neutral'}
+                            />
+                        )}
                     </div>
                 )}
-            </div>
-        </div>
-    );
-};
 
-const SentinelAnalysisDisplay: React.FC<{ analysis: SentinelAnalysis, compact?: boolean }> = ({ analysis, compact }) => {
-    const { bullish, bearish } = analysis;
-    const textSize = compact ? 'text-xs' : 'text-sm';
-    const scoreSize = compact ? 'text-base' : 'text-lg';
-
-    return (
-        <div className={`space-y-3 ${textSize}`}>
-            <div>
-                <div className="flex justify-between items-baseline mb-1">
-                    <span className="font-bold text-emerald-600 dark:text-emerald-400">Bullish</span>
-                    <span className={`font-bold ${scoreSize} text-emerald-600 dark:text-emerald-400`}>{bullish.total.toFixed(0)}</span>
-                </div>
-                <ProgressBar value={bullish.total} colorClass="bg-emerald-500" height="h-1.5" />
-                <div className="grid grid-cols-3 gap-1 text-[10px] text-center mt-1 text-slate-500 dark:text-slate-400">
-                    <span>St: {bullish.structure.toFixed(0)}</span>
-                    <span>Mo: {bullish.momentum.toFixed(0)}</span>
-                    <span>Cx: {bullish.context.toFixed(0)}</span>
-                </div>
-            </div>
-             <div>
-                <div className="flex justify-between items-baseline mb-1">
-                    <span className="font-bold text-rose-600 dark:text-rose-400">Bearish</span>
-                    <span className={`font-bold ${scoreSize} text-rose-600 dark:text-rose-400`}>{bearish.total.toFixed(0)}</span>
-                </div>
-                <ProgressBar value={bearish.total} colorClass="bg-rose-500" height="h-1.5" />
-                 <div className="grid grid-cols-3 gap-1 text-[10px] text-center mt-1 text-slate-500 dark:text-slate-400">
-                    <span>St: {bearish.structure.toFixed(0)}</span>
-                    <span>Mo: {bearish.momentum.toFixed(0)}</span>
-                    <span>Cx: {bearish.context.toFixed(0)}</span>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const ConductorAnalysisDisplay: React.FC<{ analysis: ConductorAnalysis, compact?: boolean }> = ({ analysis, compact }) => {
-    const { bullish, bearish } = analysis;
-    const textSize = compact ? 'text-xs' : 'text-sm';
-    const scoreSize = compact ? 'text-base' : 'text-lg';
-
-    return (
-        <div className={`space-y-3 ${textSize}`}>
-            <div>
-                <div className="flex justify-between items-baseline mb-1">
-                    <span className="font-bold text-emerald-600 dark:text-emerald-400">Bullish</span>
-                    <span className={`font-bold ${scoreSize} text-emerald-600 dark:text-emerald-400`}>{bullish.total.toFixed(0)}</span>
-                </div>
-                <ProgressBar value={bullish.total} colorClass="bg-emerald-500" height="h-1.5" />
-                <div className="grid grid-cols-4 gap-1 text-[10px] text-center mt-1 text-slate-500 dark:text-slate-400">
-                    <span>St:{bullish.structure.toFixed(0)}</span>
-                    <span>Mo:{bullish.momentum.toFixed(0)}</span>
-                    <span>Cx:{bullish.context.toFixed(0)}</span>
-                    <span>Cf:{bullish.confirmation.toFixed(0)}</span>
-                </div>
-            </div>
-             <div>
-                <div className="flex justify-between items-baseline mb-1">
-                    <span className="font-bold text-rose-600 dark:text-rose-400">Bearish</span>
-                    <span className={`font-bold ${scoreSize} text-rose-600 dark:text-rose-400`}>{bearish.total.toFixed(0)}</span>
-                </div>
-                <ProgressBar value={bearish.total} colorClass="bg-rose-500" height="h-1.5" />
-                <div className="grid grid-cols-4 gap-1 text-[10px] text-center mt-1 text-slate-500 dark:text-slate-400">
-                    <span>St:{bearish.structure.toFixed(0)}</span>
-                    <span>Mo:{bearish.momentum.toFixed(0)}</span>
-                    <span>Cx:{bearish.context.toFixed(0)}</span>
-                    <span>Cf:{bearish.confirmation.toFixed(0)}</span>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const AstraXAnalysisDisplay: React.FC<{ analysis: AstraXAnalysis, compact?: boolean }> = ({ analysis, compact }) => {
-    const { conviction, regime, thesis, setupName, confidenceMetrics } = analysis;
-    
-    const regimeColor = regime === 'Strong Trend' ? 'text-indigo-600 dark:text-indigo-400' 
-                      : regime === 'Choppy Market' ? 'text-amber-600 dark:text-amber-400' 
-                      : regime === 'Volatile Expansion' ? 'text-rose-600 dark:text-rose-400'
-                      : 'text-sky-600 dark:text-sky-400';
-
-    const thesisColor = thesis === 'Bullish' ? 'text-emerald-600 dark:text-emerald-400'
-                      : thesis === 'Bearish' ? 'text-rose-600 dark:text-rose-400'
-                      : 'text-slate-500 dark:text-slate-400';
-                      
-    const padding = compact ? 'p-2' : 'p-2.5';
-    const textSize = compact ? 'text-xs' : 'text-sm';
-    const smallText = compact ? 'text-[10px]' : 'text-xs';
-
-    return (
-        <div className={`space-y-3 ${textSize}`}>
-            {/* Market Context Card */}
-            <div className="grid grid-cols-2 gap-2">
-                <div className={`bg-slate-50 dark:bg-slate-700/30 ${padding} rounded-lg border border-slate-200 dark:border-slate-700`}>
-                    <p className={`${smallText} text-slate-500 dark:text-slate-400 font-medium mb-0.5`}>Matrix</p>
-                    <p className={`${textSize} font-bold ${regimeColor} truncate`}>{regime}</p>
-                </div>
-                <div className={`bg-slate-50 dark:bg-slate-700/30 ${padding} rounded-lg border border-slate-200 dark:border-slate-700`}>
-                    <p className={`${smallText} text-slate-500 dark:text-slate-400 font-medium mb-0.5`}>Alignment</p>
-                    <p className={`${textSize} font-bold ${thesisColor}`}>{thesis}</p>
-                </div>
-            </div>
-
-            {/* Setup Detection Card */}
-            <div className={`${padding} rounded-lg border ${setupName ? 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800' : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700'}`}>
-                <div className="flex items-start gap-2">
-                    <SparklesIcon className={`w-4 h-4 mt-0.5 ${setupName ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'}`} />
-                    <div className="min-w-0">
-                        <p className={`${smallText} font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide truncate`}>
-                            {setupName ? 'Active Archetype' : 'Scanning'}
-                        </p>
-                        <p className={`${textSize} font-bold ${setupName ? 'text-slate-800 dark:text-slate-100' : 'text-slate-500 italic'} truncate`}>
-                            {setupName || 'Waiting...'}
-                        </p>
-                        {setupName && (
-                            <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-600 dark:text-slate-300">
-                                <span className="px-1.5 py-0.5 bg-white dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 font-mono">
-                                    Conf: {conviction}%
-                                </span>
-                            </div>
-                        )}
+                {/* SL / TP source — only shown when a live signal is active */}
+                {omegaMetadata && (omegaMetadata.slSource || omegaMetadata.tpSource) && (
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                        <SentimentCard
+                            label="SL Anchor"
+                            value={omegaMetadata.slSource || 'ATR'}
+                            trend="neutral"
+                        />
+                        <SentimentCard
+                            label="TP Target"
+                            value={omegaMetadata.tpSource || 'Fallback'}
+                            trend={omegaMetadata.tpSource?.includes('Pool') ? 'bullish' : omegaMetadata.tpSource?.includes('FVG') ? 'bullish' : 'neutral'}
+                        />
                     </div>
+                )}
+
+                {scoreBreakdown && (
+                    <div className={`mt-3 grid ${modelScore ? 'grid-cols-4' : 'grid-cols-3'} gap-1.5 p-2 bg-slate-800/50 rounded border border-slate-700/50`}>
+                        <ScorePillar label="Structure" score={scoreBreakdown.structure} />
+                        <ScorePillar label="Momentum" score={scoreBreakdown.momentum} />
+                        <ScorePillar label="Context" score={scoreBreakdown.context} />
+                        {/* Model pillar only shown when a trained model is providing a delta */}
+                        {modelScore && <ScorePillar label="Model" score={Math.max(0, Math.min(100, 50 + (scoreBreakdown.model ?? 0) * 2.5))} />}
+                    </div>
+                )}
+
+                <div className="mt-4">
+                    <div className="flex justify-between text-[8px] font-bold text-slate-500 uppercase mb-1">
+                        <span>Entry Conviction</span>
+                        <span>{conviction.toFixed(0)}%</span>
+                    </div>
+                    <ProgressBar value={conviction} colorClass="bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.5)]" height="h-1.5" />
                 </div>
             </div>
+        </div>
+    );
+};
 
-            {/* Multi-Dimensional Confidence Pillars */}
-            {confidenceMetrics && (
-                <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-700">
-                    <h5 className={`font-bold ${smallText} text-slate-500 dark:text-slate-400 uppercase tracking-widest`}>Confidence</h5>
-                    
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                        <div>
-                            <div className={`flex justify-between ${smallText} mb-0.5`}>
-                                <span>Struct</span>
-                                <span className="font-bold">{confidenceMetrics.structure}%</span>
-                            </div>
-                            <ProgressBar value={confidenceMetrics.structure} colorClass="bg-sky-500" height="h-1" />
-                        </div>
+export const AnalysisPreview: React.FC<AnalysisPreviewProps> = ({ analysis, agent, compact = false }) => {
+    if (!analysis) {
+        return (
+            <div className="text-center py-6">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-500 mx-auto mb-2"></div>
+                <p className="text-[10px] text-slate-500">Synthesizing Singularity flow...</p>
+            </div>
+        );
+    }
 
-                        <div>
-                            <div className={`flex justify-between ${smallText} mb-0.5`}>
-                                <span>Vol</span>
-                                <span className="font-bold">{confidenceMetrics.volume}%</span>
-                            </div>
-                            <ProgressBar value={confidenceMetrics.volume} colorClass="bg-indigo-500" height="h-1" />
-                        </div>
-
-                        <div>
-                            <div className={`flex justify-between ${smallText} mb-0.5`}>
-                                <span>Tech</span>
-                                <span className="font-bold">{confidenceMetrics.technical}%</span>
-                            </div>
-                            <ProgressBar value={confidenceMetrics.technical} colorClass="bg-emerald-500" height="h-1" />
-                        </div>
-
-                        <div>
-                            <div className={`flex justify-between ${smallText} mb-0.5`}>
-                                <span>Momt</span>
-                                <span className="font-bold">{confidenceMetrics.momentum}%</span>
-                            </div>
-                            <ProgressBar value={confidenceMetrics.momentum} colorClass="bg-amber-500" height="h-1" />
-                        </div>
-                    </div>
+    return (
+        <div className="space-y-3">
+             <div className="flex items-center justify-between bg-slate-100 dark:bg-slate-700/50 rounded-lg p-2 border border-slate-200 dark:border-slate-700">
+                <div className="flex items-center gap-2">
+                    <ActivityIcon className="w-4 h-4 text-sky-500" />
+                    <span className="font-bold text-sm text-slate-900 dark:text-slate-100">{agent.name}</span>
+                </div>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${analysis.signal === 'BUY' ? 'bg-emerald-500 text-white' : analysis.signal === 'SELL' ? 'bg-rose-500 text-white' : 'bg-slate-500 text-white'}`}>
+                    {analysis.signal}
+                </span>
+            </div>
+            {agent.id === 25 && analysis.omegaAnalysis && (
+                <OmegaAnalysisDisplay
+                    analysis={analysis.omegaAnalysis}
+                    setupType={analysis.setupType}
+                    omegaMetadata={analysis.omegaMetadata}
+                    compact={compact}
+                />
+            )}
+            {!analysis.omegaAnalysis && (
+                <div className="space-y-2">
+                    <ul className="space-y-1">
+                        {analysis.reasons.map((r, i) => (
+                            <li key={i} className="text-[10px] text-slate-600 dark:text-slate-400 flex gap-2">
+                                <span>•</span> <span>{r}</span>
+                            </li>
+                        ))}
+                    </ul>
                 </div>
             )}
-        </div>
-    );
-};
-
-
-export const AnalysisPreview: React.FC<AnalysisPreviewProps> = ({ analysis, isLoading, agent, agentParams = {}, compact = false }) => {
-    const hasCustomParams = Object.keys(agentParams).length > 0;
-    const prevAnalysisRef = useRef(analysis);
-
-    useEffect(() => {
-        if (analysis) {
-            prevAnalysisRef.current = analysis;
-        }
-    }, [analysis]);
-    
-    const displayAnalysis = analysis || prevAnalysisRef.current;
-    const isSentinelAgent = agent.id === 14;
-    const isConductorAgent = agent.id === 18;
-    const isAstraXAgent = agent.id === 19;
-    const isOmegaAgent = agent.id === 25;
-    
-    const headerPadding = compact ? 'p-1.5 mb-2' : 'p-2 mb-3';
-    const bodyTextSize = compact ? 'text-[10px]' : 'text-xs';
-
-    return (
-        <div className="relative">
-            {/* Unified Header */}
-            <div className={`flex items-center justify-between bg-slate-100 dark:bg-slate-700/50 rounded-lg ${headerPadding} border border-slate-200 dark:border-slate-700`}>
-                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 overflow-hidden">
-                    <span className={`font-bold ${compact ? 'text-xs' : 'text-sm'} text-slate-900 dark:text-slate-100 truncate`}>
-                        {agent.name}
-                    </span>
-                    <span className={`text-[9px] uppercase tracking-wide ${hasCustomParams ? 'text-sky-600 dark:text-sky-400 font-bold' : 'text-slate-500 dark:text-slate-400'}`}>
-                        {hasCustomParams ? "Custom" : "Default"}
-                    </span>
-                </div>
-                
-                {displayAnalysis && (
-                    <div className="flex-shrink-0 ml-2">
-                        <SignalTag signal={displayAnalysis.signal} size="sm" />
-                    </div>
-                )}
-            </div>
-            
-            <div className={`transition-opacity duration-200 ${isLoading ? 'opacity-40 blur-sm pointer-events-none' : 'opacity-100'}`}>
-                {displayAnalysis ? (
-                     <div className="space-y-3">
-                        {isSentinelAgent && displayAnalysis.sentinelAnalysis && (
-                            <SentinelAnalysisDisplay analysis={displayAnalysis.sentinelAnalysis} compact={compact} />
-                        )}
-                        {isConductorAgent && displayAnalysis.conductorAnalysis && (
-                            <ConductorAnalysisDisplay analysis={displayAnalysis.conductorAnalysis} compact={compact} />
-                        )}
-                        {isAstraXAgent && displayAnalysis.astraXAnalysis && (
-                            <AstraXAnalysisDisplay analysis={displayAnalysis.astraXAnalysis} compact={compact} />
-                        )}
-                        {isOmegaAgent && displayAnalysis.omegaAnalysis && (
-                            <OmegaAnalysisDisplay analysis={displayAnalysis.omegaAnalysis} compact={compact} />
-                        )}
-
-                        {/* HIDE GENERIC REASONS FOR OMEGA to prevent duplication */}
-                        {(!isOmegaAgent && displayAnalysis.reasons.length > 0) && (
-                            <div className={`${bodyTextSize} flex-grow ${(isSentinelAgent) && (displayAnalysis.sentinelAnalysis) ? 'pt-2 border-t border-slate-200 dark:border-slate-700 mt-2' : ''}`}>
-                                <ul className="space-y-1">
-                                    {displayAnalysis.reasons.map((reason, index) => (
-                                        <ReasonItem key={index} reason={reason} />
-                                    ))}
-                                </ul>
-                            </div>
-                        )}
-                     </div>
-                ) : (
-                    <div className={`text-center ${compact ? 'text-xs' : 'text-sm'} text-slate-500 pt-4`}>
-                        Waiting for market data...
-                    </div>
-                )}
-            </div>
         </div>
     );
 };

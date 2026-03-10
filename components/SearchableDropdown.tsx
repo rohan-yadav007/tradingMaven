@@ -12,7 +12,8 @@ type GroupedOptionType = {
 };
 
 interface SearchableDropdownProps {
-    options: readonly string[] | readonly GroupedOptionType[];
+    // FIX: Added SelectOptionType[] to the allowed types for options to resolve "value does not exist in type GroupedOptionType" errors
+    options: readonly string[] | readonly SelectOptionType[] | readonly GroupedOptionType[];
     value: string | string[];
     onChange: (value: string | string[]) => void;
     disabled?: boolean;
@@ -85,10 +86,17 @@ const getCustomStyles = (isDark: boolean): StylesConfig<SelectOptionType, boolea
 export const SearchableDropdown: React.FC<SearchableDropdownProps> = ({ options, value, onChange, disabled, theme, isMulti = false }) => {
     
     const selectOptions = useMemo(() => {
-        if (options && options.length > 0 && typeof options[0] === 'string') {
+        if (!options || options.length === 0) return [];
+        
+        const firstOpt = options[0];
+        
+        // FIX: Handling string options by mapping them to SelectOptionType
+        if (typeof firstOpt === 'string') {
             return (options as string[]).map(opt => ({ value: opt, label: opt }));
         }
-        return options as readonly GroupedOptionType[];
+        
+        // FIX: For non-string arrays, we assume it's already structured for react-select (SelectOptionType[] or GroupedOptionType[])
+        return options;
     }, [options]);
 
     const handleChange = (selectedOption: OnChangeValue<SelectOptionType, boolean>) => {
@@ -113,10 +121,15 @@ export const SearchableDropdown: React.FC<SearchableDropdownProps> = ({ options,
 
         if (typeof firstOpt === 'string') {
             allOptionsFlat = (options as string[]).map(opt => ({ value: opt, label: opt }));
-        } else if (firstOpt && 'options' in firstOpt) {
-            (options as readonly GroupedOptionType[]).forEach(group => {
-                allOptionsFlat.push(...group.options);
-            });
+        } else if (firstOpt && typeof firstOpt === 'object') {
+            // FIX: Robust flattening logic for finding the current selection in the UI
+            if ('options' in firstOpt) {
+                (options as readonly GroupedOptionType[]).forEach(group => {
+                    allOptionsFlat.push(...group.options);
+                });
+            } else {
+                allOptionsFlat = options as unknown as SelectOptionType[];
+            }
         }
 
         if (isMulti) {
@@ -131,7 +144,7 @@ export const SearchableDropdown: React.FC<SearchableDropdownProps> = ({ options,
         <Select<SelectOptionType, boolean, GroupBase<SelectOptionType>>
             value={selectValue}
             onChange={handleChange}
-            options={selectOptions}
+            options={selectOptions as any} // Cast to any to handle complex union types of options
             styles={customStyles}
             isDisabled={disabled}
             isMulti={isMulti}

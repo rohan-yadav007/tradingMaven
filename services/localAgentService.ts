@@ -2,25 +2,28 @@
 // services/localAgentService.ts
 
 // Re-export core functionalities to maintain the public API for other services
-export { 
-    getInitialAgentTargets, 
-    getAgentExitSignal, 
-    getMultiStageProfitSecureSignal, 
-    validateTradeProfitability, 
-    getMandatoryBreakevenSignal, 
-    getProfitSpikeSignal, 
+export {
+    getInitialAgentTargets,
+    getAgentExitSignal,
+    getMultiStageProfitSecureSignal,
+    validateTradeProfitability,
+    getMandatoryBreakevenSignal,
+    getProfitSpikeSignal,
     getAggressiveRangeTrailSignal,
     getAdaptiveTakeProfit,
-    getTradeGuardianSignal
+    getTradeGuardianSignal,
+    getTPProportionalLockSignal
 } from './riskManagementService';
 
 export { captureMarketContext } from './agents/agentUtils';
 
 // Imports for getTradingSignal orchestration
-import { Agent, Kline, TradeSignal, BotConfig, MarketDataContext, TradingMode, OpenInterestKline } from '../types';
+import { Agent, Kline, TradeSignal, BotConfig, TradingMode, OpenInterestKline, LongShortRatio } from '../types';
 import { runLiveAnalysis } from './workerService';
 import { orderBookService } from './orderBookService';
+import { tapeReadingService } from './tapeReadingService'; // Import Tape Service
 import * as binanceService from './binanceService';
+import { pairProfileService } from './pairProfileService';
 
 
 /**
@@ -37,21 +40,34 @@ export async function getTradingSignal(
     ltfKlines?: Kline[],
     ethBtcKlines?: Kline[],
     livePrice?: number,
-    astraXKlinesMap?: Map<string, Kline[]>, // New parameter for AstraX data
-    btcKlines?: Kline[] // New parameter for Market Tide
+    astraXKlinesMap?: Map<string, Kline[]>,
+    btcKlines?: Kline[] 
 ): Promise<TradeSignal> {
     
     // Fetch live order book data if available.
     const obAnalysis = orderBookService.getAnalysis(config.pair, config.mode);
     
-    // V4.0: Fetch Open Interest History if Futures AND Agent is Omega (ID 25)
-    // Optimization: Don't fetch OI for agents that don't use it (e.g. Supertrend, Sentinel)
+    // V4.0: Fetch Intelligence Data (OI + L/S Ratio)
     let openInterestHistory: OpenInterestKline[] | undefined;
-    if (config.mode === TradingMode.USDSM_Futures && agent.id === 25) {
-        // Map generic timeframes to OI periods. 5m is usually granular enough.
-        // If we are on 1m, use 5m OI to see the bigger flow.
+    let lsRatioHistory: LongShortRatio[] | undefined;
+    let fundingRate: number | null = null;
+
+    const isApexOrOmega = agent.id === 25 || agent.id === 26;
+    if (config.mode === TradingMode.USDSM_Futures && isApexOrOmega) {
         const oiPeriod = ['1m', '3m', '5m'].includes(config.timeFrame) ? '5m' : config.timeFrame;
-        openInterestHistory = await binanceService.fetchOpenInterestHistory(config.pair, oiPeriod);
+        const formattedPair = config.pair.replace('/', '');
+        const fetchPromises: Promise<any>[] = [
+            binanceService.fetchOpenInterestHistory(config.pair, oiPeriod),
+            binanceService.fetchTopLongShortRatio(config.pair, oiPeriod),
+        ];
+        // Apex also fetches funding rate for flow intelligence
+        if (agent.id === 26) fetchPromises.push(binanceService.fetchFundingRate(formattedPair));
+        const results = await Promise.all(fetchPromises);
+        openInterestHistory = results[0];
+        lsRatioHistory = results[1];
+        if (agent.id === 26 && results[2]) {
+            fundingRate = parseFloat(results[2].fundingRate) / 100; // convert % string to decimal
+        }
     }
 
     // --- Offload ALL logic to Worker ---
@@ -67,9 +83,32 @@ export async function getTradingSignal(
             livePrice,
             astraXKlinesMap,
             btcKlines,
-            obAnalysis, // Pass OB Analysis to worker
-            openInterestHistory // Pass OI History to worker
+            obAnalysis,
+            openInterestHistory,
+            lsRatioHistory,
+            // Pass model from main thread — workers have no localStorage access
+            (agent.id === 25 || agent.id === 26) && config.isModelFilterEnabled !== false ? pairProfileService.getModel() : undefined,
+            agent.id === 26 ? fundingRate : undefined
         );
+
+        // --- LIVE TAPE VETO (The "Pro" Layer) ---
+        if (config.mode !== 'Spot' && (agent.id === 25 || agent.id === 26) && workerSignal.signal !== 'HOLD') {
+             const tape = tapeReadingService.getMetrics(config.pair, config.mode);
+
+             // 1. Ignition Veto (Don't short a rocket)
+             if (workerSignal.signal === 'SELL' && tape.isIgnition && tape.buyPressure > 0.6) {
+                 return { signal: 'HOLD', reasons: [...workerSignal.reasons, `🚫 VETO: Bullish Momentum Ignition Detected (Velocity: $${Math.round(tape.velocity)}/s)`] };
+             }
+             // 2. Dump Veto (Don't buy a falling knife)
+             if (workerSignal.signal === 'BUY' && tape.isIgnition && tape.buyPressure < 0.4) {
+                 return { signal: 'HOLD', reasons: [...workerSignal.reasons, `🚫 VETO: Bearish Momentum Ignition Detected (Velocity: $${Math.round(tape.velocity)}/s)`] };
+             }
+
+             // Append Tape Data to Analysis for UI
+             if (workerSignal.omegaAnalysis && workerSignal.omegaAnalysis.sentiment) {
+                 workerSignal.omegaAnalysis.sentiment.tape = `Vel: $${(tape.velocity/1000).toFixed(1)}k/s | ${tape.buyPressure > 0.55 ? 'Bullish' : tape.buyPressure < 0.45 ? 'Bearish' : 'Neutral'}`;
+             }
+        }
         
         return workerSignal;
 

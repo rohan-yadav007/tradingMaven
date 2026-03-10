@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc --noEmit)",
+      "Bash(grep -n \"position\\\\.direction === ''LONG''\\\\|isLong\\\\|peakPrice\\\\|troughPrice\" \"c:\\\\Users\\\\rohan\\\\Downloads\\\\projects\\\\bot1\\\\services\\\\botManagerService.ts\")",
+      "Bash(grep -o '\"\"id\"\":' \"trade_history with AI prediction modal.json\")",
+      "Bash(grep -o '\"\"id\"\":' \"trade_history without AI prediction modal.json\")",
+      "WebFetch(domain:binance-docs.github.io)",
+      "Bash(node -e \":*)"
+    ]
+  }
+}

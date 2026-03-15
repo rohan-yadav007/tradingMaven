@@ -742,40 +742,127 @@ export function calculateRsiSlope(rsiValues: number[], period: number = 3): numb
     return (current - prev) / period;
 }
 
-// Phase 4 Update: Liquidity Sweep Score based on RVOL Intensity
+export function getAtrAdjustedLookback(atr: number, currentPrice: number, baseLookback: number): number {
+    // High volatility (high ATR relative to price) -> shorter lookback
+    // Low volatility -> longer lookback
+    const volRatio = (atr / currentPrice) * 100;
+    const adjustment = Math.max(0.5, Math.min(2.0, 1 / (volRatio * 10))); // Simple scaling factor
+    return Math.round(baseLookback * adjustment);
+}
+
+export function calculateVROC(volumes: number[], period: number = 5): number {
+    if (volumes.length < period + 1) return 0;
+    const currentVol = volumes[volumes.length - 1];
+    const prevVol = volumes[volumes.length - 1 - period];
+    return (currentVol - prevVol) / prevVol;
+}
+
+/**
+ * Detects a confirmed Liquidity Sweep with two-candle validation.
+ *
+ * Architecture:
+ *   - sweepCandle  = klines[N-2]: the candle that swept the level and closed back inside
+ *   - confirmCandle = klines[N-1]: the NEXT closed candle — must hold the reversal
+ *
+ * Why two candles?
+ *   A single close-back-inside is necessary but not sufficient. Market can close fractionally
+ *   back inside, print a bearish/bullish confirmation candle, and continue the sweep direction
+ *   (this is the "trap" pattern that caused all 6 consecutive sweep losses in backtesting).
+ *   The confirmation candle proves institutional absorption is actually holding.
+ *
+ * Level Exhaustion:
+ *   A structural level that has been swept or closely approached 3+ times within the lookback
+ *   window is "stale" — stop liquidity has already been harvested. Subsequent sweeps of the
+ *   same level have dramatically lower reversal probability. Score is penalised accordingly.
+ *
+ * RVOL:
+ *   Measured specifically for the sweep candle vs the 20 candles before it — not the current
+ *   running candle whose volume is incomplete on live markets.
+ */
 export function detectLiquiditySweep(klines: Kline[], lookback: number = 50): { bullish: boolean, bearish: boolean, score: number } {
     if (klines.length < lookback + 5) return { bullish: false, bearish: false, score: 0 };
 
-    const current = klines[klines.length - 1];
-    const windowKlines = klines.slice(-lookback - 1, -1);
+    // sweepCandle: definitively closed candle that swept the level
+    // confirmCandle: the candle immediately after — its behaviour validates the reversal
+    const sweepCandle   = klines[klines.length - 2];
+    const confirmCandle = klines[klines.length - 1];
 
-    const lowestLow = Math.min(...windowKlines.map(k => k.low));
+    // Structural window: all candles BEFORE the sweep candle
+    const sweepIdx    = klines.length - 2;
+    const windowStart = Math.max(0, sweepIdx - lookback);
+    const windowKlines = klines.slice(windowStart, sweepIdx);
+
+    if (windowKlines.length < 10) return { bullish: false, bearish: false, score: 0 };
+
+    const lowestLow   = Math.min(...windowKlines.map(k => k.low));
     const highestHigh = Math.max(...windowKlines.map(k => k.high));
 
-    const rvol = calculateRVOL(klines, 20);
-    // Require real stop-hunt volume — weak candles at 1.5x are noise, true sweeps spike 2x+
-    const isSignificantVolume = rvol >= 2.0;
+    // Sweep-candle-specific RVOL: average the 20 candles immediately before the sweep candle
+    const preSweepVols = klines.slice(Math.max(0, sweepIdx - 20), sweepIdx).map(k => k.volume || 0);
+    const avgPreSweepVol = preSweepVols.length > 0
+        ? preSweepVols.reduce((a, b) => a + b, 0) / preSweepVols.length
+        : 1;
+    const sweepRvol = avgPreSweepVol > 0 ? (sweepCandle.volume || 0) / avgPreSweepVol : 0;
+    const isSignificantVolume = sweepRvol >= 2.0;
 
-    const candleRange = current.high - current.low;
-    // Wick quality: the reversal wick must be at least 40% of the full candle range.
-    // A tiny close-back-above doesn't confirm rejection; we need a dominant wick.
-    const lowerWickPct = candleRange > 0 ? (current.close - current.low) / candleRange : 0;
-    const upperWickPct = candleRange > 0 ? (current.high - current.close) / candleRange : 0;
+    // Wick quality on the SWEEP candle
+    const candleRange  = sweepCandle.high - sweepCandle.low;
+    const lowerWickPct = candleRange > 0 ? (sweepCandle.close - sweepCandle.low) / candleRange : 0;
+    const upperWickPct = candleRange > 0 ? (sweepCandle.high - sweepCandle.close) / candleRange : 0;
 
-    const bullishSweep = current.low < lowestLow     // wick pierced below structural low
-        && current.close > lowestLow                  // closed back inside (stop-hunt confirmed)
-        && lowerWickPct >= 0.40                        // lower wick dominates (strong rejection body)
-        && isSignificantVolume;                        // real volume spike confirms stop absorption
+    // Level exhaustion: how many window candles came within 0.15% of the key level?
+    // A level touched 3+ times is stale — institutional stops already absorbed, weak reversal potential.
+    const proximityBand = lowestLow * 0.0015; // 0.15% band around the level
+    const lowTouches  = windowKlines.filter(k => k.low  <= lowestLow   + proximityBand).length;
+    const highTouches = windowKlines.filter(k => k.high >= highestHigh - proximityBand).length;
 
-    const bearishSweep = current.high > highestHigh   // wick pierced above structural high
-        && current.close < highestHigh                 // closed back inside
-        && upperWickPct >= 0.40                        // upper wick dominates
+    // ── BULLISH SWEEP ──────────────────────────────────────────────────────────
+    const sweepCandleBullish = sweepCandle.low < lowestLow   // wick pierced below structural low
+        && sweepCandle.close > lowestLow                      // closed back inside (stop-hunt confirmed)
+        && lowerWickPct >= 0.40                               // lower wick dominates — strong rejection
+        && isSignificantVolume;                               // real volume spike confirms stop absorption
+
+    // Confirmation: next candle must NOT revisit swept level AND must close higher than sweep candle
+    const confirmBullish = sweepCandleBullish
+        && confirmCandle.low > lowestLow                      // held above swept level (no re-sweep)
+        && confirmCandle.close > sweepCandle.close;           // continued in reversal direction
+
+    // ── BEARISH SWEEP ──────────────────────────────────────────────────────────
+    const sweepCandleBearish = sweepCandle.high > highestHigh
+        && sweepCandle.close < highestHigh
+        && upperWickPct >= 0.40
         && isSignificantVolume;
 
-    // Score (0-100): baseline at RVOL 2.0, scales to 100 at RVOL 3.5
-    const score = isSignificantVolume ? Math.min(((rvol - 2.0) / 1.5) * 50 + 50, 100) : 0;
+    const confirmBearish = sweepCandleBearish
+        && confirmCandle.high < highestHigh                   // held below swept level
+        && confirmCandle.close < sweepCandle.close;           // continued in reversal direction
 
-    return { bullish: bullishSweep, bearish: bearishSweep, score };
+    // ── SCORE ──────────────────────────────────────────────────────────────────
+    // Components: RVOL intensity (0–80) + close strength (0–15) − level exhaustion penalty
+    const rvolScore = isSignificantVolume ? Math.min(((sweepRvol - 2.0) / 1.5) * 50 + 45, 80) : 0;
+
+    // Close strength: how far toward the opposite extreme did the sweep candle close?
+    // For bullish: close near the HIGH of the candle = strong absorption body
+    const bullishCloseStrength = candleRange > 0
+        ? ((sweepCandle.close - sweepCandle.low) / candleRange) * 15
+        : 0;
+    const bearishCloseStrength = candleRange > 0
+        ? ((sweepCandle.high - sweepCandle.close) / candleRange) * 15
+        : 0;
+
+    const relevantTouches = (confirmBullish ? lowTouches : highTouches);
+    // 0 prior touches → no penalty; 1 → -10; 2 → -20; 3+ → full -30 (level is exhausted)
+    const exhaustionPenalty = Math.min(relevantTouches * 10, 30);
+
+    const rawScore = confirmBullish
+        ? rvolScore + bullishCloseStrength - exhaustionPenalty
+        : confirmBearish
+            ? rvolScore + bearishCloseStrength - exhaustionPenalty
+            : 0;
+
+    const score = Math.max(0, Math.round(rawScore));
+
+    return { bullish: confirmBullish, bearish: confirmBearish, score };
 }
 
 // Phase 4 Update: Dynamic Volatility Scaling for Pump/Crash logic

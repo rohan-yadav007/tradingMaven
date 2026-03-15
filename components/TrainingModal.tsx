@@ -4,7 +4,7 @@
 // Trains on N pairs, aggregates into a universal cross-pair model,
 // saves it so Omega can use it as a real-time confidence modifier.
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { TradingMode } from '../types';
 import { TIME_FRAMES } from '../constants';
 import {
@@ -12,6 +12,7 @@ import {
 } from '../services/trainingService';
 import { pairProfileService } from '../services/pairProfileService';
 import { botManagerService } from '../services/botManagerService';
+import { fetchFuturesPairs, fetchSpotPairs } from '../services/binanceService';
 import { CloseIcon } from './icons';
 
 interface Props {
@@ -104,12 +105,31 @@ const CondCard: React.FC<{ cond: UniversalSignalModel['conditions'][0] }> = ({ c
 
 // ── Main Modal ─────────────────────────────────────────────────────────
 
-export const TrainingModal: React.FC<Props> = ({ onClose, availablePairs }) => {
+export const TrainingModal: React.FC<Props> = ({ onClose, availablePairs: _availablePairs }) => {
     const [selectedPairs, setSelectedPairs] = useState<string[]>([]);
     const [timeframe, setTimeframe] = useState('5m');
     const [duration, setDuration] = useState<TrainingDuration>('1m');
     const [mode, setMode] = useState<TradingMode>(TradingMode.USDSM_Futures);
     const [customPair, setCustomPair] = useState('');
+    const [pairSearch, setPairSearch] = useState('');
+    const [allAvailablePairs, setAllAvailablePairs] = useState<string[]>(QUICK_PAIRS);
+    const [pairsLoading, setPairsLoading] = useState(false);
+
+    useEffect(() => {
+        setPairsLoading(true);
+        const fetchFn = mode === TradingMode.USDSM_Futures ? fetchFuturesPairs : fetchSpotPairs;
+        fetchFn('USDT').then(rawPairs => {
+            // fetchFuturesPairs/fetchSpotPairs return "BTC/USDT" format — strip the slash
+            const pairs = rawPairs.map(p => p.replace('/', ''));
+            const quickSet = new Set(QUICK_PAIRS);
+            const rest = pairs.filter(p => !quickSet.has(p)).sort();
+            setAllAvailablePairs([...QUICK_PAIRS.filter(p => pairs.includes(p)), ...rest]);
+        }).catch(() => {
+            setAllAvailablePairs(QUICK_PAIRS);
+        }).finally(() => {
+            setPairsLoading(false);
+        });
+    }, [mode]);
 
     const [isRunning, setIsRunning] = useState(false);
     const [progress, setProgress] = useState<TrainingProgress | null>(null);
@@ -169,11 +189,9 @@ export const TrainingModal: React.FC<Props> = ({ onClose, availablePairs }) => {
     const currentPairResult = activePair ? pairResults.get(activePair) : null;
     const savedModel = pairProfileService.getModel();
 
-    // Pairs from allPairs + quick list
-    const displayPairs = Array.from(new Set([
-        ...QUICK_PAIRS,
-        ...availablePairs.map(p => p.replace('/', '')).slice(0, 20),
-    ])).slice(0, 30);
+    const displayPairs = pairSearch.trim()
+        ? allAvailablePairs.filter(p => p.toLowerCase().includes(pairSearch.toLowerCase().trim()))
+        : allAvailablePairs;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-3">
@@ -241,20 +259,37 @@ export const TrainingModal: React.FC<Props> = ({ onClose, availablePairs }) => {
                         {/* Pairs */}
                         <div>
                             <div className="flex items-center justify-between mb-1">
-                                <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Pairs <span className="text-violet-400">({selectedPairs.length})</span></p>
+                                <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
+                                    Pairs <span className="text-violet-400">({selectedPairs.length})</span>
+                                    {pairsLoading && <span className="text-slate-600 ml-1">loading…</span>}
+                                    {!pairsLoading && <span className="text-slate-600 ml-1">/ {allAvailablePairs.length}</span>}
+                                </p>
                                 <div className="flex gap-1">
                                     <button onClick={() => setSelectedPairs(Array.from(new Set([...selectedPairs, ...displayPairs])))} className="text-[9px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 hover:bg-slate-600 transition-colors">All</button>
                                     <button onClick={() => setSelectedPairs([])} className="text-[9px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 hover:bg-slate-600 transition-colors">Clear</button>
                                 </div>
                             </div>
+                            {/* Search filter */}
+                            <input
+                                value={pairSearch}
+                                onChange={e => setPairSearch(e.target.value)}
+                                placeholder="Search pairs…"
+                                className="w-full px-2 py-1.5 mb-1.5 bg-slate-800 border border-slate-600 rounded text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500 text-xs"
+                            />
+                            {/* Custom pair input */}
                             <div className="flex gap-1 mb-1.5">
-                                <input value={customPair} onChange={e => setCustomPair(e.target.value)} onKeyDown={e => e.key === 'Enter' && addCustom()} placeholder="SOLUSDT…" className="flex-1 px-2 py-2 bg-slate-800 border border-slate-600 rounded text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500" />
-                                <button onClick={addCustom} className="px-3 py-2 bg-sky-700 hover:bg-sky-600 text-white rounded font-bold">+</button>
+                                <input value={customPair} onChange={e => setCustomPair(e.target.value)} onKeyDown={e => e.key === 'Enter' && addCustom()} placeholder="Add custom…" className="flex-1 px-2 py-1.5 bg-slate-800 border border-slate-600 rounded text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-500 text-xs" />
+                                <button onClick={addCustom} className="px-3 py-1.5 bg-sky-700 hover:bg-sky-600 text-white rounded font-bold text-xs">+</button>
                             </div>
                             <div className="flex flex-col gap-1 h-64 overflow-y-auto pr-1">
-                                {displayPairs.map(p => (
-                                    <button key={p} onClick={() => togglePair(p)} className={`w-full px-3 py-3 min-h-[40px] rounded text-left text-sm font-medium leading-normal overflow-hidden whitespace-nowrap text-ellipsis transition-colors ${selectedPairs.includes(p) ? 'bg-violet-800/60 border border-violet-600 text-violet-200' : 'bg-slate-800 border border-transparent text-slate-300 hover:bg-slate-700 hover:border-slate-600'}`}>{p}</button>
-                                ))}
+                                {pairsLoading
+                                    ? <p className="text-[10px] text-slate-500 text-center py-4">Loading pairs…</p>
+                                    : displayPairs.length === 0
+                                        ? <p className="text-[10px] text-slate-500 text-center py-4">No pairs match</p>
+                                        : displayPairs.map(p => (
+                                            <button key={p} onClick={() => togglePair(p)} className={`w-full px-3 py-2 min-h-[36px] rounded text-left text-xs font-medium leading-normal overflow-hidden whitespace-nowrap text-ellipsis transition-colors ${selectedPairs.includes(p) ? 'bg-violet-800/60 border border-violet-600 text-violet-200' : 'bg-slate-800 border border-transparent text-slate-300 hover:bg-slate-700 hover:border-slate-600'}`}>{p}</button>
+                                        ))
+                                }
                             </div>
                         </div>
 

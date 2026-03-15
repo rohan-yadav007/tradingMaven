@@ -35,6 +35,7 @@ export interface Kline {
     volume?: number;
     takerBuyVolume?: number; 
     isFinal: boolean;
+    closeTime?: number;
 }
 
 export interface LiveTicker {
@@ -213,6 +214,7 @@ export interface TradeSignal {
     isOmegaSetupReady?: boolean;
     omegaSetupDirection?: 'LONG' | 'SHORT';
     omegaSetupZone?: { low: number, high: number };
+    btcContext?: BitcoinState;
 }
 
 export interface AstraXAnalysis {
@@ -266,6 +268,7 @@ export interface Position {
     profitSpikeTier: number;
     aggressiveTrailTier: number;
     tpLockStage: number;
+    liquidationPrice?: number;
     managementForecast?: { triggerPrice: number; targetStopLoss: number; label: string };
     botConfigSnapshot?: any;
     agentParamsSnapshot?: any;
@@ -297,7 +300,7 @@ export interface RunningBot {
     log: BotLogEntry[]; 
     analysis: TradeSignal | null;
     openPosition: Position | null;
-    openPositionId: string | null;
+    openPositionId: number | null;
     totalPnl: number;
     wins: number;
     losses: number;
@@ -328,6 +331,7 @@ export interface BotConfig {
     timeFrame: string;
     investmentAmount: number;
     maxMarginLossPercent: number;
+    minRrRatio?: number;
     agentParams: AgentParams;
     entryTiming: 'immediate' | 'onNextCandle';
     pricePrecision: number;

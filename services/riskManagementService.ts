@@ -12,6 +12,98 @@ const MIN_STOP_LOSS_PERCENT = 0.5;
 const { TIMEFRAME_ATR_CONFIG, MIN_PROFIT_BUFFER_MULTIPLIER } = constants;
 
 /**
+ * Calculates the liquidation price for an isolated margin futures position.
+ * Formula (Binance USD-M): LONG  = entry × (1 − 1/leverage + MMR)
+ *                          SHORT = entry × (1 + 1/leverage − MMR)
+ * @param mmr  Maintenance Margin Rate — defaults to 0.005 (0.5%), valid for most perpetuals.
+ */
+export function calculateLiquidationPrice(entry: number, leverage: number, direction: 'LONG' | 'SHORT', mmr = 0.005): number {
+    return direction === 'LONG'
+        ? entry * (1 - 1 / leverage + mmr)
+        : entry * (1 + 1 / leverage - mmr);
+}
+
+/**
+ * Computes a fee-aware SL hard cap and risk-based position size.
+ *
+ * Hard cap: the SL is pulled inside entry so that (price_move × notional + round-trip fees)
+ * equals exactly maxRiskPct% of the margin (investmentAmount).
+ *
+ * Risk-based sizing (isDynamicSizing=true): position is sized so the total loss at the
+ * (possibly capped) SL equals (maxRiskPct% × investmentAmount × convictionMultiplier).
+ * If that size would exceed the standard full position (investment × leverage / entry),
+ * the standard size is used instead — the SL is already within limits.
+ */
+export function calculateRiskBasedPosition(
+    entryPrice: number,
+    agentSL: number,
+    investmentAmount: number,
+    leverage: number,
+    maxRiskPct: number,
+    takerFeeRate: number,
+    isDynamicSizing: boolean,
+    convictionMultiplier: number = 1.0,
+): {
+    finalSL: number;
+    tradeSize: number;
+    effectiveInvestment: number;
+    slReason: 'Agent Logic' | 'Hard Cap';
+    sizingLog: string;
+} {
+    const isLong = agentSL < entryPrice;
+    const standardPositionValue = investmentAmount * leverage;              // notional $
+    const roundTripFeeDollars   = standardPositionValue * takerFeeRate * 2; // open + close fee
+    const maxDollarLoss         = (maxRiskPct / 100) * investmentAmount;
+    const slDollarBudget        = Math.max(0, maxDollarLoss - roundTripFeeDollars);
+    // max price distance the SL can be from entry before total loss exceeds the cap
+    const maxSlDist = standardPositionValue > 0
+        ? (slDollarBudget * entryPrice) / standardPositionValue
+        : 0;
+
+    // --- Hard cap: move SL inside entry if agent placed it too far ---
+    const agentSlDist = Math.abs(entryPrice - agentSL);
+    let finalSL  = agentSL;
+    let slReason: 'Agent Logic' | 'Hard Cap' = 'Agent Logic';
+
+    if (maxSlDist > 0 && agentSlDist > maxSlDist) {
+        finalSL  = isLong ? entryPrice - maxSlDist : entryPrice + maxSlDist;
+        slReason = 'Hard Cap';
+    }
+
+    const finalSlDist  = Math.abs(entryPrice - finalSL);
+    const standardSize = standardPositionValue / entryPrice;
+    let tradeSize           = standardSize;
+    let effectiveInvestment = investmentAmount;
+    let sizingLog           = '';
+
+    // --- Risk-based sizing ---
+    if (isDynamicSizing && finalSlDist > 0) {
+        const clampedConviction = Math.max(0.1, Math.min(1.0, convictionMultiplier));
+        const targetRiskDollars = maxDollarLoss * clampedConviction;
+        const feePerUnit        = entryPrice * takerFeeRate * 2;
+        const riskBasedSize     = targetRiskDollars / (finalSlDist + feePerUnit);
+        const riskBasedMargin   = (riskBasedSize * entryPrice) / leverage;
+
+        if (riskBasedMargin <= investmentAmount) {
+            tradeSize           = riskBasedSize;
+            effectiveInvestment = riskBasedMargin;
+            const pct = Math.round(clampedConviction * 100);
+            if (pct < 100) {
+                sizingLog = ` (Risk-Sized: ${pct}% conviction → $${effectiveInvestment.toFixed(2)} margin)`;
+            }
+        }
+        // else: SL is tight enough that full position risk is already ≤ cap — use standard
+    }
+
+    if (slReason === 'Hard Cap') {
+        const distPct = (finalSlDist / entryPrice * 100).toFixed(3);
+        sizingLog += ` [SL Hard Cap: ${distPct}% dist, max ${(maxRiskPct)}% risk]`;
+    }
+
+    return { finalSL, tradeSize, effectiveInvestment, slReason, sizingLog };
+}
+
+/**
  * Calculates initial stop-loss and take-profit levels.
  */
 export function getInitialAgentTargets(
@@ -28,9 +120,16 @@ export function getInitialAgentTargets(
     
     const isLong = direction === 'LONG';
     const maxMarginLoss = config.maxMarginLossPercent;
-    
-    // Hard Limit based on Margin (Sync with Leverage)
-    const maxPriceDistAllowed = (maxMarginLoss / 100) * (entryPrice / leverage);
+
+    // Hard Cap: fee-aware so total loss (price move + round-trip fees) = maxMarginLoss% of margin.
+    // totalFees = positionSize × takerFeeRate × 2  (open + close)
+    // priceLossBudget = maxMarginLoss% × investmentAmount − totalFees
+    // maxPriceDist = priceLossBudget / (positionSize / entryPrice)
+    const positionSize = config.investmentAmount * leverage;
+    const roundTripFee = positionSize * config.takerFeeRate * 2;
+    const maxTotalLoss = (maxMarginLoss / 100) * config.investmentAmount;
+    const priceLossBudget = Math.max(0, maxTotalLoss - roundTripFee);
+    const maxPriceDistAllowed = (priceLossBudget * entryPrice) / positionSize;
 
     const closes = klines.map(k => k.close);
     const highs = klines.map(k => k.high);
@@ -51,7 +150,7 @@ export function getInitialAgentTargets(
     if (agent.id === 25) {
          let finalSl = providedStopLoss || (isLong ? entryPrice * 0.99 : entryPrice * 1.01);
          let finalTp = providedTakeProfit || (isLong ? entryPrice * 1.03 : entryPrice * 0.97);
-         let slReason: 'Agent Logic' | 'Hard Cap' | 'Noise Floor' = 'Agent Logic';
+         let slReason: 'Agent Logic' | 'Hard Cap' | 'Noise Floor' | 'Rejected: Hard Cap < Noise Floor' = 'Agent Logic';
 
          // 1. Noise Floor Check
          const requestedDist = Math.abs(entryPrice - finalSl);
@@ -63,14 +162,18 @@ export function getInitialAgentTargets(
          // 2. Leverage Constraint Sync
          const afterFloorDist = Math.abs(entryPrice - finalSl);
          if (afterFloorDist > maxPriceDistAllowed) {
-             finalSl = isLong ? entryPrice - maxPriceDistAllowed : entryPrice + maxPriceDistAllowed;
-             slReason = 'Hard Cap';
+             if (maxPriceDistAllowed < noiseFloorDist) {
+                 slReason = 'Rejected: Hard Cap < Noise Floor';
+             } else {
+                 finalSl = isLong ? entryPrice - maxPriceDistAllowed : entryPrice + maxPriceDistAllowed;
+                 slReason = 'Hard Cap';
+             }
          }
 
          return { 
              stopLossPrice: finalSl, 
              takeProfitPrice: finalTp, 
-             slReason, 
+             slReason: slReason as any, 
              agentStopLoss: providedStopLoss || finalSl 
          };
     }
@@ -210,6 +313,7 @@ export function getTradeGuardianSignal(
     const lastKline = klines[klines.length - 1];
     
     if (position.agentId === 25 || position.agentId === 26) {
+        // Structural invalidation check
         if (position.invalidationPrice) {
             const buffer = position.entryPrice * 0.001;
             const isInvalid = isLong
@@ -219,6 +323,52 @@ export function getTradeGuardianSignal(
                 return { action: 'close', reason: 'Guardian: Structural Invalidation (Hard Level Breach).' };
             }
         }
+
+        // Liquidation proximity emergency close
+        // Uses the real Binance liq price stored at entry (live) or computed formula (backtest)
+        const liqPrice: number | undefined = position.liquidationPrice
+            ?? (position.leverage > 1 ? calculateLiquidationPrice(position.entryPrice, position.leverage, position.direction as 'LONG' | 'SHORT') : undefined);
+
+        if (liqPrice && liqPrice > 0) {
+            const highs = klines.map(k => k.high);
+            const lows  = klines.map(k => k.low);
+            const closes = klines.map(k => k.close);
+            const atrValues = ATR.calculate({ high: highs, low: lows, close: closes, period: 14 });
+            const atr = (getLast(atrValues) as number | undefined) || (position.entryPrice * 0.005);
+            const dangerZone = atr * 1.5;
+
+            const approachingLiq = isLong
+                ? currentPrice < liqPrice + dangerZone
+                : currentPrice > liqPrice - dangerZone;
+
+            if (approachingLiq) {
+                const distPct = (Math.abs(currentPrice - liqPrice) / position.entryPrice * 100).toFixed(2);
+                return { action: 'close', reason: `Guardian: Emergency Close — price within ${distPct}% of liquidation (${liqPrice.toFixed(position.pricePrecision ?? 4)}).` };
+            }
+        }
+
+        // Capital imprisonment prevention: after breakeven is locked, if price has not
+        // made meaningful progress toward TP in 40+ candles, free the capital.
+        // "Breakeven locked" = Ratchet set isBreakevenSet OR TP-lock Stage 1 fired.
+        const tpLockStage = (position as any).tpLockStage as number | undefined;
+        const beEngaged = position.isBreakevenSet || (tpLockStage !== undefined && tpLockStage >= 1);
+        if (beEngaged && position.takeProfitPrice) {
+            const totalRange = Math.abs(position.takeProfitPrice - position.entryPrice);
+            if (totalRange > 0) {
+                const progressToTp = isLong
+                    ? (currentPrice - position.entryPrice) / totalRange
+                    : (position.entryPrice - currentPrice) / totalRange;
+                const candles = position.candlesSinceEntry || 0;
+                // 40 candles (~3.3h on 5m) at breakeven with <15% TP progress → zombie, close.
+                if (candles > 40 && progressToTp < 0.15) {
+                    return {
+                        action: 'close',
+                        reason: `Guardian: Capital freed — ${candles} candles at breakeven, only ${(progressToTp * 100).toFixed(0)}% toward TP.`,
+                    };
+                }
+            }
+        }
+
         return { action: 'hold' };
     }
 
@@ -269,10 +419,30 @@ export function validateTradeProfitability(price: number, sl: number, tp: number
     const risk = Math.abs(price - sl);
     const reward = Math.abs(tp - price);
     const rr = risk > 0 ? reward / risk : 0;
-    if (config.isMinRrEnabled && rr < constants.MIN_RISK_REWARD_RATIO) return { isValid: false, reason: `❌ VETO: Poor R:R Ratio (${rr.toFixed(2)}:1).` };
+    const minRr = config.minRrRatio ?? constants.MIN_RISK_REWARD_RATIO;
+    if (config.isMinRrEnabled && rr < minRr) return { isValid: false, reason: `❌ VETO: Poor R:R Ratio (${rr.toFixed(2)}:1 < ${minRr.toFixed(1)}:1).` };
     const feeRate = config.takerFeeRate || 0.0005;
     const roundTripFee = price * feeRate * 2;
     if (reward < roundTripFee * constants.MIN_PROFIT_BUFFER_MULTIPLIER) return { isValid: false, reason: `❌ VETO: Profit target does not cover fees.` };
+
+    // Liquidation Safety Check (futures only)
+    const leverage = config.leverage ?? 1;
+    if (leverage > 1) {
+        const liqPrice = calculateLiquidationPrice(price, leverage, direction);
+        // SL must be at least 15% of the liq-to-entry distance away from liq price
+        const liqToEntry = Math.abs(price - liqPrice);
+        const safeBuffer = liqToEntry * 0.15;
+        const slBeyondLiq = isLong ? sl <= liqPrice : sl >= liqPrice;
+        const slTooClose  = isLong ? sl < liqPrice + safeBuffer : sl > liqPrice - safeBuffer;
+        if (slBeyondLiq) {
+            return { isValid: false, reason: `❌ VETO: SL (${sl.toFixed(4)}) is at or beyond liquidation price (${liqPrice.toFixed(4)}). Trade would liquidate before SL fires.` };
+        }
+        if (slTooClose) {
+            const slDistPct = (Math.abs(sl - liqPrice) / price * 100).toFixed(2);
+            return { isValid: false, reason: `❌ VETO: SL is only ${slDistPct}% from liquidation price at ${leverage}x leverage. Risk of gap liquidation too high.` };
+        }
+    }
+
     return { isValid: true, reason: '' };
 }
 

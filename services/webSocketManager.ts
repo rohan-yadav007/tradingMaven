@@ -28,7 +28,9 @@ export class WebSocketManager {
         }
 
         this.isConnecting = true;
-        const url = `${this.getUrl()}/stream`;
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = window.location.host;
+        const url = `${protocol}//${host}${this.getUrl()}/stream`;
         
         try {
             this.ws = new WebSocket(url);

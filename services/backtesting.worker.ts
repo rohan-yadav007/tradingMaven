@@ -2,7 +2,7 @@
 // services/backtesting.worker.ts
 
 import { Kline, BotConfig, BacktestResult, AgentParams, Position, Agent, TradeSignal, OrderBookAnalysis, BitcoinState, OpenInterestKline, LongShortRatio, Trade, SetupTypeStats } from '../types';
-import { getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getTradeGuardianSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, getTPProportionalLockSignal } from './riskManagementService';
+import { getInitialAgentTargets, getAgentExitSignal, getMultiStageProfitSecureSignal, validateTradeProfitability, getTradeGuardianSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, getTPProportionalLockSignal, calculateLiquidationPrice } from './riskManagementService';
 import { ATR } from 'technicalindicators';
 import { getQuantumScalperSignal } from './agents/quantumScalper';
 import { getHistoricExpertSignal } from './agents/historicExpert';
@@ -310,6 +310,10 @@ async function runBacktestInWorker(
             if (signal.signal === 'BUY' || signal.signal === 'SELL') {
                 const targets = getInitialAgentTargets(klinesSlice, currentPrice, signal.signal === 'BUY' ? 'LONG' : 'SHORT', config, signal.tradeType, signal.stopLossPrice, signal.takeProfitPrice);
                 
+                if (targets.slReason.startsWith('Rejected')) {
+                    continue; // Skip this trade
+                }
+
                 // Validate Trade
                 const validation = validateTradeProfitability(currentPrice, targets.stopLossPrice, targets.takeProfitPrice, signal.signal === 'BUY' ? 'LONG' : 'SHORT', config);
                 
@@ -348,6 +352,7 @@ async function runBacktestInWorker(
                         entryReason: signal.reasons.join(', '),
                         entryTime: new Date(currentTime).toISOString(),
                         setupType: signal.setupType,
+                        liquidationPrice: config.leverage > 1 ? calculateLiquidationPrice(currentPrice, config.leverage, signal.signal === 'BUY' ? 'LONG' : 'SHORT') : undefined,
                         invalidationPrice: signal.invalidationPrice,
                         conviction: signal.omegaAnalysis?.conviction,
                         // Store omegaMetadata in entryContext so ApexManagementEngine can read entryConviction

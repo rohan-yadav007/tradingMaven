@@ -11,6 +11,7 @@ import * as binanceService from './services/binanceService';
 import { historyService } from './services/historyService';
 import { botManagerService, BotHandlers } from './services/botManagerService';
 import * as localAgentService from './services/localAgentService';
+import { calculateRiskBasedPosition } from './services/riskManagementService';
 import { telegramBotService } from './services/telegramBotService';
 import { BacktestingPanel } from './components/BacktestingPanel';
 import { PreferencesPanel } from './components/PreferencesPanel';
@@ -49,7 +50,7 @@ const AppContent: React.FC = () => {
     const { 
         executionMode, tradingMode, selectedPairs, chartTimeFrame, 
         selectedAgent, investmentAmount, isApiConnected,
-        agentParams, maxMarginLossPercent,
+        agentParams, maxMarginLossPercent, minRrRatio,
         leverage, marginType, isHtfConfirmationEnabled, htfTimeFrame, isUniversalProfitTrailEnabled,
         isMinRrEnabled, invalidationSensitivity, htfAgentParams,
         entryTiming,
@@ -145,6 +146,7 @@ const AppContent: React.FC = () => {
                     timeFrame: chartTimeFrame,
                     investmentAmount,
                     maxMarginLossPercent,
+                    minRrRatio,
                     isInitialRiskVetoEnabled,
                     isHtfConfirmationEnabled: isOmega ? false : isHtfConfirmationEnabled,
                     htfTimeFrame,
@@ -195,7 +197,7 @@ const AppContent: React.FC = () => {
 
     }, [
         botsToCreate, tradingMode, executionMode, leverage, marginType,
-        selectedAgent, chartTimeFrame, investmentAmount, maxMarginLossPercent, isInitialRiskVetoEnabled,
+        selectedAgent, chartTimeFrame, investmentAmount, maxMarginLossPercent, minRrRatio, isInitialRiskVetoEnabled,
         isHtfConfirmationEnabled, htfTimeFrame, agentParams, htfAgentParams,
         isUniversalProfitTrailEnabled, isMinRrEnabled, invalidationSensitivity,
         entryTiming,
@@ -467,19 +469,33 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             return;
         }
         
-        // --- DYNAMIC SIZING LOGIC ---
-        let sizeMultiplier = 1.0;
-        let sizingLog = '';
-        
-        // Only apply scaling if globally enabled in config AND agent provided a multiplier
-        if (config.isDynamicSizingEnabled && executionDetails.convictionSizeMultiplier) {
-            sizeMultiplier = executionDetails.convictionSizeMultiplier;
-            if (sizeMultiplier < 1.0) {
-                sizingLog = ` (Dynamic Sizing: ${sizeMultiplier * 100}% based on conviction)`;
-            }
+        // --- RISK-BASED SIZING: fee-aware SL hard cap + conviction-scaled position ---
+        const isFuturesMode = config.mode === TradingMode.USDSM_Futures;
+        const convictionMultiplier = executionDetails.convictionSizeMultiplier ?? 1.0;
+
+        let finalStopLoss       = stopLossPrice;
+        let effectiveInvestmentAmount = config.investmentAmount;
+        let finalSlReason       = executionDetails.slReason;
+        let sizingLog           = '';
+        let riskSizedTradeSize: number | undefined;
+
+        if (isFuturesMode) {
+            const riskCalc = calculateRiskBasedPosition(
+                tempEntryPrice,
+                stopLossPrice,
+                config.investmentAmount,
+                config.leverage,
+                config.maxMarginLossPercent,
+                config.takerFeeRate,
+                config.isDynamicSizingEnabled ?? false,
+                convictionMultiplier,
+            );
+            finalStopLoss         = riskCalc.finalSL;
+            effectiveInvestmentAmount = riskCalc.effectiveInvestment;
+            finalSlReason         = riskCalc.slReason;
+            sizingLog             = riskCalc.sizingLog;
+            riskSizedTradeSize    = riskCalc.tradeSize;
         }
-        
-        const effectiveInvestmentAmount = config.investmentAmount * sizeMultiplier;
 
         if (config.executionMode === 'live') {
             if (!accountInfo) {
@@ -536,11 +552,14 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             }
         } else {
             finalEntryPrice = tempEntryPrice;
-            const positionValue = config.mode === TradingMode.USDSM_Futures ? effectiveInvestmentAmount * config.leverage : effectiveInvestmentAmount;
-            tradeSize = positionValue / tempEntryPrice;
+            if (isFuturesMode && riskSizedTradeSize !== undefined) {
+                tradeSize = riskSizedTradeSize;
+            } else {
+                tradeSize = effectiveInvestmentAmount / tempEntryPrice; // Spot
+            }
         }
-        
-        const risk = Math.abs(finalEntryPrice - executionDetails.agentStopLoss);
+
+        const risk = Math.abs(finalEntryPrice - finalStopLoss);
         const reward = Math.abs(takeProfitPrice - finalEntryPrice);
         const initialRiskRewardRatio = risk > 0 ? reward / risk : 0;
 
@@ -555,9 +574,9 @@ ${pnlEmoji} *${newTrade.direction} ${newTrade.pair}*
             leverage: config.mode === TradingMode.USDSM_Futures ? config.leverage : 1,
             entryTime: new Date(binanceService.getSyncedNow()).toISOString(), 
             entryReason: execSignal.reasons.join('\n'), agentName: config.agent.name,
-            takeProfitPrice, stopLossPrice, initialTakeProfitPrice: takeProfitPrice, initialStopLossPrice: executionDetails.agentStopLoss,
-            initialRiskInPrice: Math.abs(finalEntryPrice - executionDetails.agentStopLoss),
-            initialStopLossReason: executionDetails.slReason, activeStopLossReason: executionDetails.slReason,
+            takeProfitPrice, stopLossPrice: finalStopLoss, initialTakeProfitPrice: takeProfitPrice, initialStopLossPrice: finalStopLoss,
+            initialRiskInPrice: Math.abs(finalEntryPrice - finalStopLoss),
+            initialStopLossReason: finalSlReason, activeStopLossReason: finalSlReason,
             pricePrecision: config.pricePrecision, timeFrame: config.timeFrame,
             liquidationPrice: finalLiquidationPrice, isBreakevenSet: false, proactiveLossCheckTriggered: false,
             profitLockTier: 0, profitSpikeTier: 0, aggressiveTrailTier: 0, tpLockStage: 0,
@@ -627,7 +646,7 @@ ${directionEmoji} *${newPosition.direction} ${newPosition.pair}*
             status: BotStatus.PositionOpen, openPositionId: newPosition.id, openPosition: newPosition,
         });
         
-        botManagerService.addBotLog(botId, `Executing ${execSignal.signal} (${execSignal.tradeType || 'default'}) at ~${finalEntryPrice.toFixed(config.pricePrecision)}. SL: ${stopLossPrice.toFixed(config.pricePrecision)} (${executionDetails.slReason}), TP: ${takeProfitPrice.toFixed(config.pricePrecision)}${sizingLog}`, LogType.Action);
+        botManagerService.addBotLog(botId, `Executing ${execSignal.signal} (${execSignal.tradeType || 'default'}) at ~${finalEntryPrice.toFixed(config.pricePrecision)}. SL: ${finalStopLoss.toFixed(config.pricePrecision)} (${finalSlReason}), TP: ${takeProfitPrice.toFixed(config.pricePrecision)}${sizingLog}`, LogType.Action);
 
     }, [accountInfo]);
     

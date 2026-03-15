@@ -108,7 +108,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
     const { onStartBot, botsToCreateCount, theme } = props;
     const config = useTradingConfigState();
     const actions = useTradingConfigActions();
-    const { executionMode, availableBalance, tradingMode, allPairs, selectedPairs, isPairsLoading, leverage, chartTimeFrame: timeFrame, selectedAgent, investmentAmount, agentParams, tradingPairLists, isModelFilterEnabled } = config;
+    const { executionMode, availableBalance, tradingMode, allPairs, selectedPairs, isPairsLoading, leverage, chartTimeFrame: timeFrame, selectedAgent, investmentAmount, agentParams, tradingPairLists, isModelFilterEnabled, marginType, maxMarginLossPercent, minRrRatio, isMinRrEnabled, isInitialRiskVetoEnabled } = config;
 
     const [analysisSignal, setAnalysisSignal] = useState<TradeSignal | null>(null);
     const [isAnalysisLoading, setIsAnalysisLoading] = useState(false);
@@ -247,6 +247,38 @@ export const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 <label className={formLabelClass}>Leverage</label>
                 <input type="range" min="1" max="125" value={leverage} onChange={e => actions.setLeverage(Number(e.target.value))} className="w-full h-2 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer" />
                 <div className="text-right text-xs font-bold text-sky-500">{leverage}x</div>
+            </div>
+
+            <div className={formGroupClass}>
+                <label className={formLabelClass}>Margin Type</label>
+                <div className="flex items-center p-1 bg-slate-200 dark:bg-slate-900/70 rounded-md">
+                    {(['ISOLATED', 'CROSSED'] as const).map(mt => (
+                        <button key={mt} onClick={() => actions.setMarginType(mt)} className={`flex-1 text-center text-sm font-semibold p-1.5 rounded-md transition-colors ${marginType === mt ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}>
+                            {mt === 'ISOLATED' ? 'Isolated' : 'Cross'}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between mb-1">
+                    <label className={formLabelClass}>Max Risk per Trade</label>
+                    <span className="text-xs font-bold text-amber-500">{maxMarginLossPercent}%</span>
+                </div>
+                <input type="range" min="1" max="25" step="0.5" value={maxMarginLossPercent} onChange={e => actions.setMaxMarginLossPercent(Number(e.target.value))} className="w-full h-2 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer" />
+                <p className="text-[10px] text-slate-400 mt-1">Blocks any trade where stop-loss risk exceeds {maxMarginLossPercent}% of margin</p>
+            </div>
+
+            <div className={formGroupClass}>
+                <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                        <label className={formLabelClass}>Min Reward : Risk</label>
+                        <button onClick={() => actions.setIsMinRrEnabled(!isMinRrEnabled)} className={`text-[9px] px-1.5 py-0.5 rounded font-semibold transition-colors ${isMinRrEnabled ? 'bg-emerald-700/60 text-emerald-300' : 'bg-slate-700 text-slate-400'}`}>{isMinRrEnabled ? 'ON' : 'OFF'}</button>
+                    </div>
+                    <span className={`text-xs font-bold ${isMinRrEnabled ? 'text-emerald-500' : 'text-slate-500'}`}>{minRrRatio.toFixed(1)} R</span>
+                </div>
+                <input type="range" min="1.0" max="5.0" step="0.1" value={minRrRatio} onChange={e => actions.setMinRrRatio(Number(e.target.value))} disabled={!isMinRrEnabled} className="w-full h-2 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer disabled:opacity-40" />
+                <p className="text-[10px] text-slate-400 mt-1">Vetoes trades with reward less than {minRrRatio.toFixed(1)}× the risk</p>
             </div>
 
             <div className="border-t border-slate-200 dark:border-slate-700 -mx-4 my-2"></div>

@@ -115,6 +115,76 @@ class ApexPrimeEngine {
         }
     }
 
+    /**
+     * BOS Setup Quality Score (0–100).
+     * Replaces flat structScore = 70/50 for H1/M5 BOS setups.
+     * Five independent dimensions: structure quality, candle character,
+     * volume participation, trend alignment, RSI positioning.
+     * RVOL < 0.8 penalises via rvolDim rather than hard-vetoing,
+     * so strong structure + alignment can compensate weak volume.
+     */
+    private scoreBOS(
+        bosKlines: Kline[],
+        h4Klines: Kline[],
+        rvol: number,
+        isBuy: boolean,
+        entryRsi: number,
+        h1Bias: 'Bullish' | 'Bearish' | 'Neutral'
+    ): number {
+        // Dim 1: Prior Swing Structure (0–30)
+        // HL progression (for longs) / LH progression (for shorts) before the BOS.
+        const swings = findSwingPoints(bosKlines.slice(-40), 5);
+        const pivots = isBuy
+            ? swings.filter(s => s.type === 'low').slice(-3)
+            : swings.filter(s => s.type === 'high').slice(-3);
+        let trendingPivots = 0;
+        for (let i = 1; i < pivots.length; i++) {
+            if ( isBuy && pivots[i].price > pivots[i - 1].price) trendingPivots++;
+            if (!isBuy && pivots[i].price < pivots[i - 1].price) trendingPivots++;
+        }
+        const structDim = trendingPivots >= 2 ? 30 : trendingPivots === 1 ? 18 : 6;
+
+        // Dim 2: BOS Candle Character (0–25)
+        // Impulse candle = conviction; doji / wrong-direction close = uncertainty.
+        const bosCandle  = bosKlines[bosKlines.length - 1];
+        const range      = bosCandle.high - bosCandle.low;
+        const body       = Math.abs(bosCandle.close - bosCandle.open);
+        const bodyPct    = range > 0 ? body / range : 0;
+        const dirAligned = isBuy ? bosCandle.close > bosCandle.open : bosCandle.close < bosCandle.open;
+        const candleDim  = dirAligned && bodyPct > 0.65 ? 25
+                         : dirAligned && bodyPct > 0.45 ? 17
+                         : dirAligned && bodyPct > 0.25 ? 10
+                         : 3;
+
+        // Dim 3: Volume Participation (0–20)
+        // Continuous — low RVOL no longer hard-vetoes; strong structure/alignment can compensate.
+        const rvolDim = rvol >= 2.0 ? 20
+                      : rvol >= 1.5 ? 16
+                      : rvol >= 1.0 ? 11
+                      : rvol >= 0.8 ?  6
+                      : rvol >= 0.6 ?  3
+                      :                1;
+
+        // Dim 4: Trend Alignment (0–15)
+        // H1 same-TF bias + 4H confirmation. Counter-trend BOS scores 0.
+        let h4Bias: 'Bullish' | 'Bearish' | 'Neutral' = 'Neutral';
+        if (h4Klines.length >= 50) h4Bias = this.analyzeContext(h4Klines).bias;
+        const biasAligned = isBuy ? h1Bias === 'Bullish' : h1Bias === 'Bearish';
+        const h4Aligned   = isBuy ? h4Bias  === 'Bullish' : h4Bias  === 'Bearish';
+        const alignDim = biasAligned && h4Aligned  ? 15
+                       : biasAligned || h4Aligned  ?  9
+                       : h1Bias === 'Neutral'      ?  5
+                       :                              0; // H1 bias opposes trade
+
+        // Dim 5: RSI Positioning (0–10)
+        // Sweet spot: RSI < 55 for longs (room to run). Penalise overextended entries.
+        const rsiDim = isBuy
+            ? (entryRsi <= 50 ? 10 : entryRsi <= 57 ? 7 : entryRsi <= 63 ? 4 : 1)
+            : (entryRsi >= 50 ? 10 : entryRsi >= 43 ? 7 : entryRsi >= 37 ? 4 : 1);
+
+        return structDim + candleDim + rvolDim + alignDim + rsiDim; // max 100
+    }
+
     // ─── ENHANCED SWEEP CONFIRMATION ────────────────────────────────────────────
     // Fix for 25% win rate: sweeps now require wick rejection + close back inside.
     // A valid sweep must:
@@ -210,9 +280,11 @@ class ApexPrimeEngine {
         // ── GATE 2: VOLUME HARD BLOCK (Apex fix #2) ─────────────────────────
         // Omega reduced score 20% on low volume — Apex BLOCKS entirely below 0.3× SMA.
         // Prevents entries in illiquid conditions that have no institutional participation.
+        // Use last CLOSED candle — forming candles show near-zero volume on fresh opens.
         const volSma20Values = SMA.calculate({ period: 20, values: m5.map(k => k.volume ?? 0) });
         const lastVolSma = getLast(volSma20Values) || 0;
-        const lastVol = currentKline.volume ?? 0;
+        const volGateKline = (!currentKline.isFinal && m5.length > 1) ? m5[m5.length - 2] : currentKline;
+        const lastVol = volGateKline.volume ?? 0;
         if (lastVolSma > 0 && lastVol < lastVolSma * 0.3) {
             return {
                 signal: 'HOLD',
@@ -402,10 +474,13 @@ class ApexPrimeEngine {
                 if (!gate.allowed) context.reasons.push(gate.reason!);
                 else if (stTrend === 'Bullish' && detectH1BOS('LONG')) {
                     setupType = 'H1 Structure BOS';
-                    structScore = this.intent === 'Preserve' ? 50 : 70;
+                    const rawBos = this.scoreBOS(h1, klinesMap.get('4h') || [], rvol, true, lastRsi, context.bias);
+                    structScore = this.intent === 'Preserve' ? Math.round(rawBos * 0.85) : rawBos;
                 } else if (stTrend === 'Bullish' && detectM5BOS('LONG')) {
                     setupType = 'Structure BOS';
-                    structScore = this.intent === 'Preserve' ? 40 : 55;
+                    const rawBos = this.scoreBOS(m5, klinesMap.get('4h') || [], rvol, true, lastRsi, context.bias);
+                    // M5 is noisier — apply 15% quality discount; Preserve uses 0.72 (0.85²)
+                    structScore = Math.round(rawBos * (this.intent === 'Preserve' ? 0.72 : 0.85));
                 }
             }
         } else {
@@ -427,10 +502,12 @@ class ApexPrimeEngine {
                 if (!gate.allowed) context.reasons.push(gate.reason!);
                 else if (stTrend === 'Bearish' && detectH1BOS('SHORT')) {
                     setupType = 'H1 Structure BOS';
-                    structScore = this.intent === 'Preserve' ? 50 : 70;
+                    const rawBos = this.scoreBOS(h1, klinesMap.get('4h') || [], rvol, false, lastRsi, context.bias);
+                    structScore = this.intent === 'Preserve' ? Math.round(rawBos * 0.85) : rawBos;
                 } else if (stTrend === 'Bearish' && detectM5BOS('SHORT')) {
                     setupType = 'Structure BOS';
-                    structScore = this.intent === 'Preserve' ? 40 : 55;
+                    const rawBos = this.scoreBOS(m5, klinesMap.get('4h') || [], rvol, false, lastRsi, context.bias);
+                    structScore = Math.round(rawBos * (this.intent === 'Preserve' ? 0.72 : 0.85));
                 }
             }
         }
@@ -765,27 +842,41 @@ class ApexPrimeEngine {
             }
 
             const riskDist = Math.abs(currentPrice - stopLoss);
+            const stopDistPct = (riskDist / currentPrice) * 100;
 
             // ── STRUCTURAL TAKE PROFIT ────────────────────────────────────────
-            const liquidityPools = findLiquidityPools(m5);
-            const minTP = isBuy ? currentPrice + riskDist * 1.5 : currentPrice - riskDist * 1.5;
-            const maxTP = isBuy ? currentPrice + riskDist * 5   : currentPrice - riskDist * 5;
+            // For H1 Structure BOS: the signal comes from H1, so TP targets must also be H1-level
+            // swing highs/lows. M5 micro-swings are too close and too noisy for a structural H1 trade.
+            const tpKlines = setupType === 'H1 Structure BOS' ? h1.slice(-100) : m5;
+            const liquidityPools = findLiquidityPools(tpKlines);
+
+            // H1 BOS / Structure BOS: accept levels from 1.2R (closer structures are still valid R:R).
+            // Sweep / OB / FVG: keep 1.5R minimum.
+            const minRMultiple = (setupType === 'H1 Structure BOS' || setupType === 'Structure BOS') ? 1.2 : 1.5;
+            const minTP = isBuy ? currentPrice + riskDist * minRMultiple : currentPrice - riskDist * minRMultiple;
+            const maxTP = isBuy ? currentPrice + riskDist * 5            : currentPrice - riskDist * 5;
 
             const structuralTPLevel = isBuy
                 ? liquidityPools.bsl.find(l => l > minTP && l < maxTP)
                 : liquidityPools.ssl.find(l => l < minTP && l > maxTP);
 
+            // Also search H1 FVGs as TP magnets for H1 BOS setups
+            const h1fvgs = setupType === 'H1 Structure BOS' ? detectFairValueGaps(h1, 50) : [];
+            const allFvgs = setupType === 'H1 Structure BOS' ? [...fvgs, ...h1fvgs] : fvgs;
             const fvgTP = isBuy
-                ? fvgs.filter(f => f.type === 'FVG Bearish' && f.bottom > minTP && f.bottom < maxTP)
-                       .sort((a, b) => a.bottom - b.bottom)[0]?.bottom
-                : fvgs.filter(f => f.type === 'FVG Bullish' && f.top < minTP && f.top > maxTP)
-                       .sort((a, b) => b.top - a.top)[0]?.top;
+                ? allFvgs.filter(f => f.type === 'FVG Bearish' && f.bottom > minTP && f.bottom < maxTP)
+                         .sort((a, b) => a.bottom - b.bottom)[0]?.bottom
+                : allFvgs.filter(f => f.type === 'FVG Bullish' && f.top < minTP && f.top > maxTP)
+                         .sort((a, b) => b.top - a.top)[0]?.top;
 
-            const fallbackTP = isBuy ? currentPrice + riskDist * 2.5 : currentPrice - riskDist * 2.5;
+            // Fallback R scaled to stop distance — wide stops need conservative targets:
+            //   >5% stop: 1.5R  |  3–5% stop: 2.0R  |  <3% stop: 2.5R
+            const fallbackR = stopDistPct > 5 ? 1.5 : stopDistPct > 3 ? 2.0 : 2.5;
+            const fallbackTP = isBuy ? currentPrice + riskDist * fallbackR : currentPrice - riskDist * fallbackR;
+            const tpSource = structuralTPLevel ? 'Liquidity Pool' : (fvgTP ? 'FVG Magnet' : `Fallback ${fallbackR}R`);
+
             const rawTP = structuralTPLevel ?? fvgTP ?? fallbackTP;
             // Sanity check: ensure TP is inside the intended [minTP, maxTP] window.
-            // findLiquidityPools or fvgTP can occasionally return an out-of-range level
-            // (e.g., an ancient swing low far below current price) — fall back to 2.5R if so.
             const tpInBounds = isBuy
                 ? rawTP > minTP && rawTP <= maxTP
                 : rawTP < minTP && rawTP >= maxTP;
@@ -810,7 +901,7 @@ class ApexPrimeEngine {
                     rvol,
                     entryRsi: lastRsi,
                     stopDistancePercent: (riskDist / currentPrice) * 100,
-                    tpSource: structuralTPLevel ? 'Liquidity Pool' : (fvgTP ? 'FVG Magnet' : 'Fallback 2.5R'),
+                    tpSource,
                     slSource: setupType === 'Liquidity Sweep' ? 'Swept Level' : setupType === 'FVG Entry' ? 'FVG Zone' : 'BOS Level',
                     // Store conviction for conviction-based patience in management engine
                     entryConviction: adjustedConfidence,
@@ -908,14 +999,35 @@ export class ApexManagementEngine {
         }
 
         // ── 3. ELASTIC RATCHET (Dynamic Trailing) ────────────────────────────
+        // If TP-lock is engaged (stage ≥1), it owns SL progression for the rest of the trade.
+        // ATR-based trail would compete with TP-lock's TP-progress-based placements.
+        if (tpLockStage >= 1) return signal;
+
         const stdTrail  = volRegime === 'High' ? 2.0 : volRegime === 'Low' ? 0.8 : 1.5;
         const fastTrail = volRegime === 'High' ? 1.2 : volRegime === 'Low' ? 0.5 : 1.0;
         const tightTrail = volRegime === 'High' ? 0.8 : 0.5;
 
-        // R-multiples for ratchet (only activates for trades WITHOUT a fixed TP)
-        const tier1R = 2.2;
-        const tier2R = 4.0;
-        const tier3R = 6.0;
+        // TP-proportional R-tiers
+        // TP-lock stage 1 fires at 38% TP progress. The R-tiers are a safety net for the
+        // segment BEFORE stage 1 kicks in. They must not fire so early that they terminate
+        // a trade that is simply making normal progress toward its structural target.
+        //
+        // Tier base = half of where TP-lock stage 1 fires (R), minimum 2.2R.
+        // At 3R TP:  stage1=1.14R, base=max(0.57,2.2)=2.2 → tiers: 2.2/4.0/6.0 (same as before)
+        // At 7R TP:  stage1=2.66R, base=max(1.33,2.2)=2.2 → tiers: 2.2/4.0/6.0 (same)
+        // At 42R TP: stage1=16R,   base=max(8.0,2.2)=8.0 → tiers: 8.0/14.4/21.6
+        // → For wide TPs, tiers defer to the TP-lock system which handles them from stage 1 onward.
+        const apexTpRange = position.takeProfitPrice
+            ? Math.abs(position.takeProfitPrice - entryPrice)
+            : 0;
+        const apexTpInR = apexTpRange > 0 && position.initialRiskInPrice > 0
+            ? apexTpRange / position.initialRiskInPrice
+            : 5.0;
+        const tpStage1R  = apexTpInR * 0.38; // R-value where TP-lock stage 1 activates
+        const tierBase   = Math.max(tpStage1R * 0.5, 2.2);
+        const tier1R = tierBase;
+        const tier2R = tierBase * (4.0 / 2.2);  // preserve original tier ratios
+        const tier3R = tierBase * (6.0 / 2.2);
 
         if (pnlR >= tier3R) {
             const trail = isLong ? currentPrice - atr * tightTrail : currentPrice + atr * tightTrail;

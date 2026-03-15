@@ -497,7 +497,7 @@ function buildIndicatorContext(klines: Kline[]): IndicatorContext {
     // Ichimoku — needs at least 52 candles
     let ichimokuArr: any[] = [];
     try {
-        ichimokuArr = IchimokuCloud.calculate({ high: highs, low: lows, conversionPeriod: 9, basePeriod: 26, simpleMAHigh: false, simpleMALow: false, spanPeriod: 52, displacement: 26 });
+        ichimokuArr = IchimokuCloud.calculate({ high: highs, low: lows, conversionPeriod: 9, basePeriod: 26, spanPeriod: 52, displacement: 26 });
     } catch { /* not enough data */ }
 
     // SuperTrend
@@ -578,7 +578,7 @@ async function fetchKlinesBatch(symbol: string, interval: string, startTime: num
     if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
     const raw: any[][] = await resp.json();
     return raw.map(k => ({
-        openTime: k[0], open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]),
+        time: k[0], open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]),
         close: parseFloat(k[4]), volume: parseFloat(k[5]), closeTime: k[6],
         quoteVolume: parseFloat(k[7]), trades: k[8],
         takerBuyVolume: parseFloat(k[9]), takerBuyQuoteVolume: parseFloat(k[10]), isFinal: true,
@@ -606,7 +606,7 @@ async function fetchAllKlines(symbol: string, interval: string, duration: Traini
             const batch = await fetchKlinesBatch(symbol, interval, cursor, batchEnd, mode);
             if (batch.length === 0) break;
             all.push(...batch);
-            cursor = batch[batch.length - 1].closeTime + 1;
+            cursor = (batch[batch.length - 1].closeTime || batch[batch.length - 1].time) + 1;
             batchIdx++;
             onProgress(`${symbol}: ${all.length.toLocaleString()} candles`, Math.round((batchIdx / totalBatches) * 100));
             await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
@@ -732,7 +732,7 @@ export async function trainMultiPair(
         const hourlyWinRate: Record<number, { wins: number; losses: number; winRate: number }> = {};
         for (let h = 0; h < 24; h++) hourlyWinRate[h] = { wins: 0, losses: 0, winRate: 0 };
         for (let i = 220; i < klines.length - 5; i++) {
-            const h = new Date(klines[i].openTime).getUTCHours();
+            const h = new Date(klines[i].time).getUTCHours();
             const a = ctx.atr(i);
             if (a === 0) continue;
             const dir: 'LONG' | 'SHORT' = klines[i].close > ctx.ema50(i) ? 'LONG' : 'SHORT';
@@ -755,7 +755,7 @@ export async function trainMultiPair(
         const priceChangePct = parseFloat((((lastClose - firstClose) / firstClose) * 100).toFixed(2));
 
         const step = Math.max(1, Math.floor(klines.length / 400));
-        const chartData = klines.filter((_, i) => i % step === 0).map(k => ({ time: k.openTime, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume || 0 }));
+        const chartData = klines.filter((_, i) => i % step === 0).map(k => ({ time: k.time, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume || 0 }));
 
         const rvolArr = klines.slice(-100).map((_, idx, arr) => {
             const abs = klines.length - 100 + idx;
@@ -768,8 +768,8 @@ export async function trainMultiPair(
         pairResults.set(symbol, {
             symbol, timeframe,
             totalCandles: klines.length,
-            startDate: new Date(klines[0].openTime).toISOString().split('T')[0],
-            endDate:   new Date(klines[klines.length - 1].closeTime).toISOString().split('T')[0],
+            startDate: new Date(klines[0].time).toISOString().split('T')[0],
+            endDate:   new Date(klines[klines.length - 1].closeTime || klines[klines.length - 1].time).toISOString().split('T')[0],
             trendBias: priceChangePct > 5 ? 'Bullish' : priceChangePct < -5 ? 'Bearish' : 'Sideways',
             avgVolatilityRegime, avgRvol, priceChangePct,
             patterns, hourlyWinRate, chartData,

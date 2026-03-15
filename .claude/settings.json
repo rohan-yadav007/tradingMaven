@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(node -e \":*)"
+      "Bash(node -e \":*)",
+      "WebSearch",
+      "WebFetch(domain:www.binance.com)",
+      "Read(//c/Users/rohan/.claude/projects/c--Users-rohan-Downloads-projects-bot1/a1d19603-1c2a-4d8f-8451-d41b86662b26/tool-results/**)"
     ]
   }
 }

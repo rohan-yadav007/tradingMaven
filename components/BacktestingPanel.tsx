@@ -165,6 +165,9 @@ export type BacktestConfig = {
     investmentAmount: number;
     leverage: number;
     marginType: 'ISOLATED' | 'CROSSED';
+    maxMarginLossPercent: number;
+    minRrRatio: number;
+    isMinRrEnabled: boolean;
     agentParams: AgentParams;
 };
 
@@ -194,6 +197,9 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         investmentAmount: globalConfig.investmentAmount,
         leverage: globalConfig.leverage,
         marginType: globalConfig.marginType,
+        maxMarginLossPercent: globalConfig.maxMarginLossPercent,
+        minRrRatio: globalConfig.minRrRatio ?? constants.MIN_RISK_REWARD_RATIO,
+        isMinRrEnabled: true,
         agentParams: globalConfig.agentParams,
     });
 
@@ -298,15 +304,15 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                 leverage: config.leverage,
                 marginType: config.marginType,
                 agentParams: config.agentParams,
-                maxMarginLossPercent: 100,
+                maxMarginLossPercent: config.maxMarginLossPercent,
+                minRrRatio: config.minRrRatio,
                 pricePrecision: binanceService.getPricePrecision(symbolInfo),
                 quantityPrecision: binanceService.getQuantityPrecision(symbolInfo),
                 stepSize: binanceService.getStepSize(symbolInfo),
                 takerFeeRate: constants.TAKER_FEE_RATE,
                 finalEntryFailSafe: 'fail-open',
-                // Flags used inside agents (not dead filters)
                 isInitialRiskVetoEnabled: true,
-                isMinRrEnabled: true,
+                isMinRrEnabled: config.isMinRrEnabled,
                 entryTiming: 'immediate',
             };
 
@@ -338,6 +344,8 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
         globalActions.setInvestmentAmount(config.investmentAmount);
         globalActions.setLeverage(config.leverage);
         globalActions.setMarginType(config.marginType);
+        globalActions.setMaxMarginLossPercent(config.maxMarginLossPercent);
+        globalActions.setMinRrRatio(config.minRrRatio);
         globalActions.setAgentParams(config.agentParams);
         setActiveView('trading');
     };
@@ -445,6 +453,62 @@ export const BacktestingPanel: React.FC<BacktestingPanelProps> = (props) => {
                             valueDisplay={v => `${v}x`}
                         />
                     )}
+
+                    {/* Margin Type */}
+                    {config.tradingMode === TradingMode.USDSM_Futures && (
+                        <div className={formGroupClass}>
+                            <label className={formLabelClass}>Margin Type</label>
+                            <div className="flex items-center p-1 bg-slate-200 dark:bg-slate-900/70 rounded-md">
+                                {(['ISOLATED', 'CROSSED'] as const).map(mt => (
+                                    <button
+                                        key={mt}
+                                        onClick={() => updateConfig('marginType', mt)}
+                                        className={`flex-1 text-center text-sm font-semibold p-1.5 rounded-md transition-colors ${config.marginType === mt ? 'bg-white dark:bg-slate-700 shadow text-sky-600' : 'text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50'}`}
+                                    >
+                                        {mt === 'ISOLATED' ? 'Isolated' : 'Cross'}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Max Risk per Trade */}
+                    <div className={formGroupClass}>
+                        <div className="flex justify-between items-baseline">
+                            <label className={formLabelClass}>Max Risk per Trade</label>
+                            <span className="text-sm font-semibold text-sky-500">{config.maxMarginLossPercent}%</span>
+                        </div>
+                        <input
+                            type="range" min={1} max={25} step={0.5}
+                            value={config.maxMarginLossPercent}
+                            onChange={e => updateConfig('maxMarginLossPercent', Number(e.target.value))}
+                            className="w-full h-2 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer"
+                        />
+                        <p className="text-xs text-slate-400">Trades whose SL risk exceeds this % of capital are vetoed.</p>
+                    </div>
+
+                    {/* Min Reward:Risk */}
+                    <div className={formGroupClass}>
+                        <div className="flex justify-between items-baseline">
+                            <label className={formLabelClass}>Min Reward:Risk</label>
+                            <div className="flex items-center gap-2">
+                                <span className="text-sm font-semibold text-sky-500">{config.minRrRatio.toFixed(1)}:1</span>
+                                <button
+                                    onClick={() => updateConfig('isMinRrEnabled', !config.isMinRrEnabled)}
+                                    className={`text-xs font-bold px-2 py-0.5 rounded ${config.isMinRrEnabled ? 'bg-sky-500 text-white' : 'bg-slate-300 dark:bg-slate-600 text-slate-500'}`}
+                                >
+                                    {config.isMinRrEnabled ? 'ON' : 'OFF'}
+                                </button>
+                            </div>
+                        </div>
+                        <input
+                            type="range" min={1.0} max={5.0} step={0.1}
+                            value={config.minRrRatio}
+                            onChange={e => updateConfig('minRrRatio', Number(e.target.value))}
+                            disabled={!config.isMinRrEnabled}
+                            className="w-full h-2 bg-slate-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer disabled:opacity-40"
+                        />
+                    </div>
 
                     <div className="border-t border-slate-200 dark:border-slate-700 -mx-4" />
 

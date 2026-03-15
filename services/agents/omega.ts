@@ -3,7 +3,7 @@
 
 import { Kline, BotConfig, TradeSignal, AgentParams, OmegaAnalysis, BitcoinState, Position, TradeManagementSignal, OpenInterestKline, LongShortRatio, OmegaIntent, ADXOutput } from '../../types';
 import { EMA, ATR, RSI, SMA, ADX } from 'technicalindicators';
-import { getLast, detectOrderBlocks, findLiquidityPools, detectFairValueGaps, Supertrend, analyzeOIDynamics, calculateRVOL, detectLiquiditySweep, calculateRsiVelocity } from './agentUtils';
+import { getLast, detectOrderBlocks, findLiquidityPools, detectFairValueGaps, Supertrend, analyzeOIDynamics, calculateRVOL, detectLiquiditySweep, calculateRsiVelocity, getAtrAdjustedLookback, calculateVROC } from './agentUtils';
 import { calculateCVD, detectAbsorption, getVolatilityRegime } from '../indicators';
 import { findSwingPoints, analyzeMarketStructure } from '../chartAnalysisService';
 import { pairProfileService } from '../pairProfileService';
@@ -111,6 +111,14 @@ class OmegaPrimeEngine {
         return { bias, structure: structure.structure, lastSignal: structure.lastSignal, sentimentScore: score, reasons };
     }
 
+    private calculateSmoothedRejection(klines: Kline[], direction: 'LONG' | 'SHORT', period: number = 3): number {
+        const scores = [];
+        for (let i = Math.max(0, klines.length - period); i < klines.length; i++) {
+            scores.push(this.calculateRejectionScore(klines[i], direction));
+        }
+        return scores.reduce((a, b) => a + b, 0) / scores.length;
+    }
+
     private calculateRejectionScore(candle: Kline, direction: 'LONG' | 'SHORT'): number {
         const range = candle.high - candle.low;
         if (range === 0) return 0;
@@ -124,6 +132,76 @@ class OmegaPrimeEngine {
             if (candle.close < candle.open && body > range * 0.6) return 0.1;
             return (candle.close - candle.low) / range;
         }
+    }
+
+    /**
+     * BOS Setup Quality Score (0–100).
+     * Replaces flat structScore = 70/50 for H1/M5 BOS setups.
+     * Five independent dimensions: structure quality, candle character,
+     * volume participation, trend alignment, RSI positioning.
+     * RVOL < 0.8 penalises via rvolDim rather than hard-vetoing,
+     * so strong structure + alignment can compensate weak volume.
+     */
+    private scoreBOS(
+        bosKlines: Kline[],
+        h4Klines: Kline[],
+        rvol: number,
+        isBuy: boolean,
+        entryRsi: number,
+        h1Bias: 'Bullish' | 'Bearish' | 'Neutral'
+    ): number {
+        // Dim 1: Prior Swing Structure (0–30)
+        // HL progression (for longs) / LH progression (for shorts) before the BOS.
+        const swings = findSwingPoints(bosKlines.slice(-40), 5);
+        const pivots = isBuy
+            ? swings.filter(s => s.type === 'low').slice(-3)
+            : swings.filter(s => s.type === 'high').slice(-3);
+        let trendingPivots = 0;
+        for (let i = 1; i < pivots.length; i++) {
+            if ( isBuy && pivots[i].price > pivots[i - 1].price) trendingPivots++;
+            if (!isBuy && pivots[i].price < pivots[i - 1].price) trendingPivots++;
+        }
+        const structDim = trendingPivots >= 2 ? 30 : trendingPivots === 1 ? 18 : 6;
+
+        // Dim 2: BOS Candle Character (0–25)
+        // Impulse candle = conviction; doji / wrong-direction close = uncertainty.
+        const bosCandle  = bosKlines[bosKlines.length - 1];
+        const range      = bosCandle.high - bosCandle.low;
+        const body       = Math.abs(bosCandle.close - bosCandle.open);
+        const bodyPct    = range > 0 ? body / range : 0;
+        const dirAligned = isBuy ? bosCandle.close > bosCandle.open : bosCandle.close < bosCandle.open;
+        const candleDim  = dirAligned && bodyPct > 0.65 ? 25
+                         : dirAligned && bodyPct > 0.45 ? 17
+                         : dirAligned && bodyPct > 0.25 ? 10
+                         : 3;
+
+        // Dim 3: Volume Participation (0–20)
+        // Continuous — low RVOL no longer hard-vetoes; strong structure/alignment can compensate.
+        const rvolDim = rvol >= 2.0 ? 20
+                      : rvol >= 1.5 ? 16
+                      : rvol >= 1.0 ? 11
+                      : rvol >= 0.8 ?  6
+                      : rvol >= 0.6 ?  3
+                      :                1;
+
+        // Dim 4: Trend Alignment (0–15)
+        // H1 same-TF bias + 4H confirmation. Counter-trend BOS scores 0.
+        let h4Bias: 'Bullish' | 'Bearish' | 'Neutral' = 'Neutral';
+        if (h4Klines.length >= 50) h4Bias = this.analyzeContext(h4Klines).bias;
+        const biasAligned = isBuy ? h1Bias === 'Bullish' : h1Bias === 'Bearish';
+        const h4Aligned   = isBuy ? h4Bias  === 'Bullish' : h4Bias  === 'Bearish';
+        const alignDim = biasAligned && h4Aligned  ? 15
+                       : biasAligned || h4Aligned  ?  9
+                       : h1Bias === 'Neutral'      ?  5
+                       :                              0; // H1 bias opposes trade
+
+        // Dim 5: RSI Positioning (0–10)
+        // Sweet spot: RSI < 55 for longs (room to run). Penalise overextended entries.
+        const rsiDim = isBuy
+            ? (entryRsi <= 50 ? 10 : entryRsi <= 57 ? 7 : entryRsi <= 63 ? 4 : 1)
+            : (entryRsi >= 50 ? 10 : entryRsi >= 43 ? 7 : entryRsi >= 37 ? 4 : 1);
+
+        return structDim + candleDim + rvolDim + alignDim + rsiDim; // max 100
     }
 
     public async generateSignal(
@@ -172,9 +250,12 @@ class OmegaPrimeEngine {
 
         const sessionInfo = this.getSessionStatus(timestamp);
 
+        // --- VOLATILITY-ADJUSTED LOOKBACKS ---
+        const lookback = getAtrAdjustedLookback(currentAtr, currentPrice, 50);
+
         // Critical Fix: if the current kline is still forming (isFinal=false), use previous
         // closed candle for RVOL to prevent JIT mid-candle calls from always failing the veto.
-        const rvolKlines = (!currentKline.isFinal && m5.length > 1) ? m5.slice(0, -1) : m5;
+        const rvolKlines = (!currentKline.isFinal && m5.length > 1) ? m5.slice(-lookback) : m5.slice(-lookback);
         const rvol = calculateRVOL(rvolKlines, 20);
 
         // --- GATE 1: RVOL & CHURN CHECKS ---
@@ -249,6 +330,16 @@ class OmegaPrimeEngine {
             }
         }
 
+        // --- MULTI-TIMEFRAME CONFLUENCE ---
+        const h1Obs = detectOrderBlocks(h1, 50);
+        const h1Fvgs = detectFairValueGaps(h1, 50);
+        
+        const isAnchored = (price: number): boolean => {
+            const ob = h1Obs.find(ob => Math.abs(price - ob.top) < currentAtr * 1.5 || Math.abs(price - ob.bottom) < currentAtr * 1.5);
+            const fvg = h1Fvgs.find(fvg => Math.abs(price - fvg.top) < currentAtr * 1.5 || Math.abs(price - fvg.bottom) < currentAtr * 1.5);
+            return !!ob || !!fvg;
+        }
+
         // --- CVD DIVERGENCE (25-candle lookback) ---
         // Bullish: price falling but CVD rising → smart money absorption over meaningful swing
         // Bearish: price rising but CVD falling → smart money distribution over meaningful swing
@@ -260,8 +351,12 @@ class OmegaPrimeEngine {
             const pSlice25   = m5.slice(-25);
             const priceDelta = pSlice25[pSlice25.length - 1].close - pSlice25[0].close;
             const cvdDelta   = cvdSlice[cvdSlice.length - 1] - cvdSlice[0];
-            if (priceDelta < 0 && cvdDelta > 0) cvdDivBullish = true;
-            if (priceDelta > 0 && cvdDelta < 0) cvdDivBearish = true;
+            if (priceDelta < 0 && cvdDelta > 0) {
+                if (isAnchored(currentPrice)) cvdDivBullish = true;
+            }
+            if (priceDelta > 0 && cvdDelta < 0) {
+                if (isAnchored(currentPrice)) cvdDivBearish = true;
+            }
         }
 
         // Precompute swept extreme levels for structural stop placement (matches 50-candle detection lookback)
@@ -317,51 +412,62 @@ class OmegaPrimeEngine {
         const hasBullFVG = !!bullFVG;
         const hasBearFVG = !!bearFVG;
 
+        // --- DYNAMIC SETUP PRIORITY ---
+        const priority = {
+            Sweep: this.intent === 'Alpha' ? 3 : 1,
+            OB: this.intent === 'Growth' ? 3 : 2,
+            FVG: this.intent === 'Growth' ? 2 : 1
+        };
+
         let isBullTrigger = false;
         let isBearTrigger = false;
 
-        if (hasBullSweep && !hasBearSweep) {
-            isBullTrigger = true;
-        } else if (hasBearSweep && !hasBullSweep) {
-            isBearTrigger = true;
-        } else if (hasBullSweep && hasBearSweep) {
-            // Both sweeps (very rare) — prefer sweep with higher RVOL score
-            if (sweep.score >= 60) isBullTrigger = context.bias === 'Bullish'; // defer to H1 bias
-            // else: genuinely conflicted, no trigger
-        } else if (hasBullOB && hasBearOB) {
-            // Both OBs — prefer higher-scored one
-            if ((bullOB?.score ?? 0) >= (bearOB?.score ?? 0)) isBullTrigger = true;
-            else isBearTrigger = true;
-        } else if (hasBullOB) {
-            isBullTrigger = true;
-        } else if (hasBearOB) {
-            isBearTrigger = true;
-        } else if (hasBullFVG && !hasBearFVG) {
-            isBullTrigger = true;
-        } else if (hasBearFVG && !hasBullFVG) {
-            isBearTrigger = true;
-        } else if (hasBullFVG && hasBearFVG) {
-            if (bullFVGScore >= bearFVGScore) isBullTrigger = context.bias === 'Bullish';
-            else isBearTrigger = context.bias === 'Bearish';
+        const bullScore = (hasBullSweep ? priority.Sweep * 100 : 0) + (hasBullOB ? priority.OB * 50 : 0) + (hasBullFVG ? priority.FVG * 25 : 0);
+        const bearScore = (hasBearSweep ? priority.Sweep * 100 : 0) + (hasBearOB ? priority.OB * 50 : 0) + (hasBearFVG ? priority.FVG * 25 : 0);
+
+        if (bullScore > bearScore) isBullTrigger = true;
+        else if (bearScore > bullScore) isBearTrigger = true;
+        else if (bullScore === bearScore && bullScore > 0) {
+            // Tie-break with bias
+            if (context.bias === 'Bullish') isBullTrigger = true;
+            else if (context.bias === 'Bearish') isBearTrigger = true;
+        }
+
+        // Apply Confluence Veto
+        if (isBullTrigger && !isAnchored(currentPrice)) {
+             isBullTrigger = false;
+             context.reasons.push('⛔ VETO: M5 Bullish setup lacks H1 Confluence.');
+        }
+        if (isBearTrigger && !isAnchored(currentPrice)) {
+             isBearTrigger = false;
+             context.reasons.push('⛔ VETO: M5 Bearish setup lacks H1 Confluence.');
         }
 
         // --- GLOBAL SCORING LOGIC ---
-        const scoreDirection = isBullTrigger ? 'LONG' : (isBearTrigger ? 'SHORT' : (stTrend === 'Bullish' ? 'LONG' : 'SHORT'));
+        const scoreDirection: 'LONG' | 'SHORT' = isBullTrigger ? 'LONG' : (isBearTrigger ? 'SHORT' : (stTrend === 'Bullish' ? 'LONG' : 'SHORT'));
 
         // --- HARD GATES (applied to secondary setup types) ---
-        const checkHardGates = (direction: 'LONG' | 'SHORT'): { allowed: boolean, reason?: string } => {
-            // RSI Exhaustion — don't chase extended moves
-            if (direction === 'LONG' && lastRsi > 72) return { allowed: false, reason: `⛔ VETO: RSI Exhaustion (${lastRsi.toFixed(1)} > 72). Cannot chase Long.` };
-            if (direction === 'SHORT' && lastRsi < 28) return { allowed: false, reason: `⛔ VETO: RSI Exhaustion (${lastRsi.toFixed(1)} < 28). Cannot chase Short.` };
-            // HTF Gravity Lock
+        const checkHardGates = (direction: 'LONG' | 'SHORT'): { allowed: boolean, reason?: string, penalty?: number } => {
+            // RSI Exhaustion — Convert to dynamic penalty
+            let penalty = 0;
+            if (direction === 'LONG' && lastRsi > 72) {
+                penalty = Math.min((lastRsi - 72) * 2, 40);
+                context.reasons.push(`⚠️ RSI Penalty: ${penalty}`);
+            } else if (direction === 'SHORT' && lastRsi < 28) {
+                penalty = Math.min((28 - lastRsi) * 2, 40);
+                context.reasons.push(`⚠️ RSI Penalty: ${penalty}`);
+            }
+            
+            // HTF Gravity Lock (Keep as hard gate)
             if (direction === 'LONG' && context.structure === 'Downtrend' && this.intent !== 'Alpha') return { allowed: false, reason: `⛔ VETO: Hard Lock against 1H Downtrend.` };
             if (direction === 'SHORT' && context.structure === 'Uptrend' && this.intent !== 'Alpha') return { allowed: false, reason: `⛔ VETO: Hard Lock against 1H Uptrend.` };
-            // DI Alignment
+            
+            // DI Alignment (Keep as hard gate)
             if (adxOutput) {
                 if (direction === 'LONG' && adxOutput.mdi > adxOutput.pdi) return { allowed: false, reason: `⛔ VETO: Bearish DI Dominance.` };
                 if (direction === 'SHORT' && adxOutput.pdi > adxOutput.mdi) return { allowed: false, reason: `⛔ VETO: Bullish DI Dominance.` };
             }
-            return { allowed: true };
+            return { allowed: true, penalty };
         };
 
         // --- M5 BREAK OF STRUCTURE DETECTION ---
@@ -413,16 +519,19 @@ class OmegaPrimeEngine {
                         setupType = 'Liquidity Sweep';
                     }
                 } else {
-                    // OB and FVG must pass the same hard gates as BOS — RSI exhaustion, HTF lock, DI dominance
+                    // OB and FVG must pass the same hard gates as BOS — HTF lock, DI dominance
                     const gate = checkHardGates('LONG');
                     if (!gate.allowed) {
                         context.reasons.push(gate.reason!);
-                    } else if (hasBullOB && bullOB) {
-                        structScore = bullOB.score;
-                        setupType = 'Order Block Reclaim';
-                    } else if (hasBullFVG) {
-                        structScore = bullFVGScore;
-                        setupType = 'FVG Entry';
+                    } else {
+                        if (gate.penalty) structScore -= gate.penalty;
+                        if (hasBullOB && bullOB) {
+                            structScore = bullOB.score;
+                            setupType = 'Order Block Reclaim';
+                        } else if (hasBullFVG) {
+                            structScore = bullFVGScore;
+                            setupType = 'FVG Entry';
+                        }
                     }
                 }
             } else {
@@ -432,10 +541,13 @@ class OmegaPrimeEngine {
                     context.reasons.push(gate.reason!);
                 } else if (stTrend === 'Bullish' && detectH1BOS('LONG')) {
                     setupType = 'H1 Structure BOS';
-                    structScore = this.intent === 'Preserve' ? 50 : 70;
+                    const rawBos = this.scoreBOS(h1, klinesMap.get('4h') || [], rvol, true, lastRsi, context.bias);
+                    structScore = this.intent === 'Preserve' ? Math.round(rawBos * 0.85) : rawBos;
                 } else if (stTrend === 'Bullish' && detectM5BOS('LONG')) {
                     setupType = 'Structure BOS';
-                    structScore = this.intent === 'Preserve' ? 40 : 55;
+                    const rawBos = this.scoreBOS(m5, klinesMap.get('4h') || [], rvol, true, lastRsi, context.bias);
+                    // M5 is noisier — apply 15% quality discount; Preserve uses 0.72 (0.85²)
+                    structScore = Math.round(rawBos * (this.intent === 'Preserve' ? 0.72 : 0.85));
                 }
             }
         } else {
@@ -452,12 +564,15 @@ class OmegaPrimeEngine {
                     const gate = checkHardGates('SHORT');
                     if (!gate.allowed) {
                         context.reasons.push(gate.reason!);
-                    } else if (hasBearOB && bearOB) {
-                        structScore = bearOB.score;
-                        setupType = 'Order Block Reclaim';
-                    } else if (hasBearFVG) {
-                        structScore = bearFVGScore;
-                        setupType = 'FVG Entry';
+                    } else {
+                        if (gate.penalty) structScore -= gate.penalty;
+                        if (hasBearOB && bearOB) {
+                            structScore = bearOB.score;
+                            setupType = 'Order Block Reclaim';
+                        } else if (hasBearFVG) {
+                            structScore = bearFVGScore;
+                            setupType = 'FVG Entry';
+                        }
                     }
                 }
             } else {
@@ -465,40 +580,55 @@ class OmegaPrimeEngine {
                 const gate = checkHardGates('SHORT');
                 if (!gate.allowed) {
                     context.reasons.push(gate.reason!);
-                } else if (stTrend === 'Bearish' && detectH1BOS('SHORT')) {
-                    setupType = 'H1 Structure BOS';
-                    structScore = this.intent === 'Preserve' ? 50 : 70;
-                } else if (stTrend === 'Bearish' && detectM5BOS('SHORT')) {
-                    setupType = 'Structure BOS';
-                    structScore = this.intent === 'Preserve' ? 40 : 55;
+                } else {
+                    if (gate.penalty) structScore -= gate.penalty;
+                    if (stTrend === 'Bearish' && detectH1BOS('SHORT')) {
+                        setupType = 'H1 Structure BOS';
+                        const rawBos = this.scoreBOS(h1, klinesMap.get('4h') || [], rvol, false, lastRsi, context.bias);
+                        structScore = this.intent === 'Preserve' ? Math.round(rawBos * 0.85) : rawBos;
+                    } else if (stTrend === 'Bearish' && detectM5BOS('SHORT')) {
+                        setupType = 'Structure BOS';
+                        const rawBos = this.scoreBOS(m5, klinesMap.get('4h') || [], rvol, false, lastRsi, context.bias);
+                        structScore = Math.round(rawBos * (this.intent === 'Preserve' ? 0.72 : 0.85));
+                    }
                 }
             }
         }
 
         // --- VOLUME CONFIRMATION GATE (all setups) ---
         // Sweeps already require RVOL >= 2.0 internally, so this gate won't affect them in practice.
+        // Use last CLOSED candle for volume — forming candles accumulate volume mid-bar and show near-zero
+        // on fresh opens, producing misleading "0.00× SMA" readings.
         if (structScore > 0) {
             const volSma20 = SMA.calculate({ period: 20, values: m5.map(k => k.volume ?? 0) });
             const lastVolSma = getLast(volSma20) || 0;
-            const lastVol = currentKline.volume ?? 0;
+            const volGateKline = (!currentKline.isFinal && m5.length > 1) ? m5[m5.length - 2] : currentKline;
+            const lastVol = volGateKline.volume ?? 0;
             if (lastVolSma > 0 && lastVol < lastVolSma * 1.2) {
                 structScore = Math.round(structScore * 0.8);
                 context.reasons.push(`⚠️ Vol Gate: Low volume (${(lastVol / lastVolSma).toFixed(2)}× SMA) — structScore reduced 20%`);
             }
         }
 
-        // --- DEAD ZONE HARD GATE (02–06 UTC) ---
-        // During dead zone, liquidity is thin and spreads are wide. All setups (including sweeps)
-        // are hard-blocked — thin liquidity produces false wicks that look like sweeps but aren't.
+        // --- DEAD ZONE ADAPTATION ---
+        // If ATR is high enough during the "Dead Zone," allow trading.
         if (!sessionInfo.isOpen && structScore > 0) {
-            context.reasons.push(`⛔ Dead Zone (02–06 UTC): ${setupType} blocked — no entries in thin liquidity.`);
-            structScore = 0;
+            if (currentAtr < 5) { // Low volatility
+                context.reasons.push(`⛔ Dead Zone (02–06 UTC): ${setupType} blocked — no entries in thin liquidity.`);
+                structScore = 0;
+            } else {
+                context.reasons.push(`⚠️ Dead Zone (02–06 UTC): High volatility detected, allowing trade.`);
+            }
         }
 
         // 5. Momentum Score (Clamped)
         let momScore = 0;
-        const rejection = this.calculateRejectionScore(currentKline, scoreDirection);
+        const rejection = this.calculateSmoothedRejection(m5.slice(-3), scoreDirection);
         momScore += Math.min(rejection * 130, 60); 
+        
+        // Add VROC to momentum score
+        const vroc = calculateVROC(m5.map(k => k.volume ?? 0), 5);
+        momScore += Math.min(vroc * 50, 20);
         
         if (scoreDirection === 'LONG') {
             if (rsiVel > 0.5) momScore += Math.min(rsiVel * 10, 50);
@@ -868,13 +998,21 @@ class OmegaPrimeEngine {
             }
 
             const riskDist = Math.abs(currentPrice - stopLoss);
+            const stopDistPct = (riskDist / currentPrice) * 100;
 
             // --- STRUCTURAL TAKE PROFIT ---
-            // 1. Try nearest liquidity pool (BSL for longs, SSL for shorts) at least 1.5R away
-            const liquidityPools = findLiquidityPools(m5);
+            // For H1 Structure BOS: the signal comes from H1, so TP targets must also be H1-level
+            // swing highs/lows. M5 micro-swings are too close and too noisy for a structural H1 trade.
+            // For M5 BOS and other setups: M5 is appropriate.
+            const tpKlines = setupType === 'H1 Structure BOS' ? h1.slice(-100) : m5;
+            const liquidityPools = findLiquidityPools(tpKlines);
+
+            // H1 BOS / Structure BOS: allow levels from 1.2R (closer structures are still valid R:R).
+            // Sweep / OB / FVG: keep 1.5R minimum — these entries are counter-structural so need more room.
+            const minRMultiple = (setupType === 'H1 Structure BOS' || setupType === 'Structure BOS') ? 1.2 : 1.5;
             const minTP = isBuy
-                ? currentPrice + riskDist * 1.5
-                : currentPrice - riskDist * 1.5;
+                ? currentPrice + riskDist * minRMultiple
+                : currentPrice - riskDist * minRMultiple;
             const maxTP = isBuy
                 ? currentPrice + riskDist * 5
                 : currentPrice - riskDist * 5;
@@ -883,20 +1021,27 @@ class OmegaPrimeEngine {
                 ? liquidityPools.bsl.find(l => l > minTP && l < maxTP)
                 : liquidityPools.ssl.find(l => l < minTP && l > maxTP);
 
-            // 2. Try nearest unfilled FVG in direction as TP magnet
+            // 2. Try nearest unfilled FVG as TP magnet — search H1 FVGs too for H1 BOS setups
+            const h1fvgs = setupType === 'H1 Structure BOS' ? detectFairValueGaps(h1, 50) : [];
+            const allFvgs = setupType === 'H1 Structure BOS' ? [...fvgs, ...h1fvgs] : fvgs;
             const fvgTP = isBuy
-                ? fvgs.filter(f => f.type === 'FVG Bearish' && f.bottom > minTP && f.bottom < maxTP)
-                       .sort((a, b) => a.bottom - b.bottom)[0]?.bottom
-                : fvgs.filter(f => f.type === 'FVG Bullish' && f.top < minTP && f.top > maxTP)
-                       .sort((a, b) => b.top - a.top)[0]?.top;
+                ? allFvgs.filter(f => f.type === 'FVG Bearish' && f.bottom > minTP && f.bottom < maxTP)
+                         .sort((a, b) => a.bottom - b.bottom)[0]?.bottom
+                : allFvgs.filter(f => f.type === 'FVG Bullish' && f.top < minTP && f.top > maxTP)
+                         .sort((a, b) => b.top - a.top)[0]?.top;
 
-            // 3. Fallback: 2.5R (slightly tighter than old flat 3R to be realistic)
+            // 3. Fallback R — scaled to stop distance so the target stays achievable:
+            //    Wide stop (>5%): 1.5R — a 9% stop × 2.5R = 22.5% TP is unrealistic in most markets
+            //    Medium stop (3–5%): 2.0R — moderate stretch, still conservative
+            //    Normal stop (<3%): 2.5R — tight SL means tight position, full stretch is fine
+            const fallbackR = stopDistPct > 5 ? 1.5 : stopDistPct > 3 ? 2.0 : 2.5;
             const fallbackTP = isBuy
-                ? currentPrice + riskDist * 2.5
-                : currentPrice - riskDist * 2.5;
+                ? currentPrice + riskDist * fallbackR
+                : currentPrice - riskDist * fallbackR;
 
             // Pick the nearest valid structural level; prefer liquidity pool > FVG > fallback
             const takeProfit = structuralTPLevel ?? fvgTP ?? fallbackTP;
+            const tpSource = structuralTPLevel ? 'Liquidity Pool' : (fvgTP ? 'FVG Magnet' : `Fallback ${fallbackR}R`);
 
             const sizingMultiplier = this.intent === 'Alpha' ? 0.5 : (this.intent === 'Preserve' ? 0.75 : 1.0);
 
@@ -906,7 +1051,7 @@ class OmegaPrimeEngine {
                 rvol: rvol,
                 entryRsi: lastRsi,
                 stopDistancePercent: (riskDist / currentPrice) * 100,
-                tpSource: structuralTPLevel ? 'Liquidity Pool' : (fvgTP ? 'FVG Magnet' : 'Fallback 2.5R'),
+                tpSource,
                 slSource: setupType === 'Liquidity Sweep' ? 'Swept Level' : setupType === 'Order Block Reclaim' ? 'OB Zone' : setupType === 'FVG Entry' ? 'FVG Zone' : 'BOS Level'
             };
 
@@ -943,7 +1088,7 @@ export class SovereignManagementEngine {
 
         // 1. Time-Based Invalidation (The Rot Check)
         const isCounterTrend = position.setupType?.includes('Counter-Trend') || false;
-        const rotThreshold = isCounterTrend ? 8 : 12;
+        const rotThreshold = isCounterTrend ? 12 : 24;
 
         const entryPrice = position.entryPrice;
         const pnlR = (isLong ? currentPrice - entryPrice : entryPrice - currentPrice) / position.initialRiskInPrice;
@@ -982,7 +1127,31 @@ export class SovereignManagementEngine {
             if (tpLock.newStopLoss !== undefined) return tpLock;
         }
 
+        // 2.5 Fee-Based Profit Lock (Sovereign Fee Lock)
+        // Parallel to other ratchets. Locks profit based on multiples of the round-trip fee.
+        const roundTripFee = entryPrice * (position.takerFeeRate || 0.0005) * 2;
+        const pnlPrice = isLong ? currentPrice - entryPrice : entryPrice - currentPrice;
+        
+        if (roundTripFee > 0) {
+            const nFees = pnlPrice / roundTripFee;
+            if (nFees >= 3) {
+                const lockedFees = nFees < 5 ? 1 : Math.floor(nFees) - 3;
+                const feeBasedSl = entryPrice + (isLong ? 1 : -1) * (lockedFees * roundTripFee);
+                
+                if ((isLong && feeBasedSl > (signal.newStopLoss ?? position.stopLossPrice)) || 
+                    (!isLong && feeBasedSl < (signal.newStopLoss ?? position.stopLossPrice))) {
+                    signal.newStopLoss = feeBasedSl;
+                    signal.activeStopLossReason = 'Fee Lock';
+                    signal.reasons.push(`FeeLock: ${nFees.toFixed(1)}x fees → locked ${lockedFees}x fees`);
+                }
+            }
+        }
+
         // 3. Elastic Ratchet (Dynamic Trailing)
+        // If TP-lock is engaged (stage ≥1), it owns SL progression for the rest of the trade.
+        // ATR-based trail would compete with TP-lock's TP-progress-based placements.
+        if ((position.tpLockStage || 0) >= 1) return signal;
+
         const atr = atrEarly;
         // Guard: if ATR is zero (insufficient klines), all trail distances become 0 → SL would collapse to currentPrice.
         if (atr === 0) return signal;
@@ -997,23 +1166,59 @@ export class SovereignManagementEngine {
         const fastTrail = volRegime === 'High' ? 1.2 : volRegime === 'Low' ? 0.5 : 1.0;
         const tightTrail = volRegime === 'High' ? 0.8 : 0.5;
 
-        // Breakeven trigger: lower threshold in low-vol (moves are more precise)
-        const beThreshold = volRegime === 'Low' ? 0.75 : 1.0;
+        // ── TP-PROPORTIONAL RATCHET THRESHOLDS ──────────────────────────────────
+        // Root cause of zero TP hits: fixed R-multiple thresholds (0.5R / 1.1R / 1.5R) were
+        // calibrated for 3–5R TPs. At 50× leverage, TPs are routinely 7–42R away, so the Ratchet
+        // fired at <2% of TP progress and exited every position before structure could breathe.
+        //
+        // Fix: scale all thresholds as a fraction of TP distance (in R terms).
+        //   beThreshold   = 15% of TP in R  (min 0.5R, max 3.0R)
+        //   midThreshold  = 30% of TP in R  (min 1.1R, max 7.0R)
+        //   fullThreshold = 45% of TP in R  (min 1.5R, max 12.0R)
+        //
+        // Examples:
+        //   TP=3R  (tight): be=0.5R, mid=1.1R, full=1.5R  → same as before ✓
+        //   TP=7R  (mid):   be=1.05R, mid=2.1R, full=3.15R → gives trade room ✓
+        //   TP=42R (wide):  be=3.0R, mid=7.0R, full=12.0R  → TP-lock stage1 at 16R reachable ✓
+        const tpRange = position.takeProfitPrice
+            ? Math.abs(position.takeProfitPrice - entryPrice)
+            : 0;
+        const tpInR = tpRange > 0 && position.initialRiskInPrice > 0
+            ? tpRange / position.initialRiskInPrice
+            : 3.0; // sensible fallback when no TP set
+
+        const baseBeThreshold   = Math.min(Math.max(tpInR * 0.15, 0.5), 3.0);
+        const baseMidThreshold  = Math.min(Math.max(tpInR * 0.30, 1.1), 7.0);
+        const baseFullThreshold = Math.min(Math.max(tpInR * 0.45, 1.5), 12.0);
+
+        const beThreshold        = volRegime === 'Low' ? baseBeThreshold  * 0.75 : baseBeThreshold;
+        const midTrailThreshold  = volRegime === 'High' ? baseMidThreshold  * 1.2 : baseMidThreshold;
+        const fullTrailThreshold = volRegime === 'High' ? baseFullThreshold * 1.2 : baseFullThreshold;
 
         // Early Breakeven Defense — activates at beThreshold R
+        // SL is placed at the fee-adjusted true breakeven: the price at which profit = round-trip fee cost.
+        // Using entry + 0.1×ATR was wrong — at 50× leverage the tiny price move produces negligible
+        // dollar profit that is smaller than fees, turning every "breakeven" exit into a ~$4 net loss.
         if (pnlR > beThreshold && !position.isBreakevenSet) {
-            const bePrice = isLong ? entryPrice + (atr * 0.1) : entryPrice - (atr * 0.1);
-            signal.newStopLoss = bePrice;
-            signal.activeStopLossReason = 'Sovereign Ratchet';
-            signal.newState = { isBreakevenSet: true };
-            signal.reasons.push(`Ratchet: Breakeven Defense (${volRegime} vol, secured at ${beThreshold}R)`);
-            return signal;
-        }
+            const bePrice = isLong
+                ? entryPrice * (1 + position.takerFeeRate * 2)
+                : entryPrice * (1 - position.takerFeeRate * 2);
+            
+            // Ensure current price is actually beyond the breakeven price + a small buffer
+            // Otherwise, if R is very small, 0.5R might be less than the fee distance,
+            // causing the stop loss to be placed on the wrong side of the current price!
+            const isBeyondBe = isLong 
+                ? currentPrice > bePrice + (atr * 0.1)
+                : currentPrice < bePrice - (atr * 0.1);
 
-        // Smooth Intermediate Trail (fills the gap between breakeven and full trail)
-        // Activates at 1.1R in low/normal vol, 1.3R in high vol — trails at 1.2× std
-        const midTrailThreshold = volRegime === 'High' ? 1.3 : 1.1;
-        const fullTrailThreshold = volRegime === 'High' ? 2.0 : 1.5;
+            if (isBeyondBe) {
+                signal.newStopLoss = bePrice;
+                signal.activeStopLossReason = 'Sovereign Ratchet';
+                signal.newState = { isBreakevenSet: true };
+                signal.reasons.push(`Ratchet: Breakeven Defense (${volRegime} vol, secured at ${beThreshold.toFixed(2)}R of ${tpInR.toFixed(1)}R TP)`);
+                return signal;
+            }
+        }
 
         if (pnlR > midTrailThreshold && pnlR <= fullTrailThreshold) {
             // Mid-phase: gentle trail at stdTrail * 1.2 from entry side to prevent deep reversal
@@ -1021,7 +1226,7 @@ export class SovereignManagementEngine {
             const midSl = isLong ? currentPrice - midTrailDist : currentPrice + midTrailDist;
             // Only move stop if it's tighter than current AND still above entry (don't give back breakeven)
             const isAboveEntry = isLong ? midSl > entryPrice : midSl < entryPrice;
-            if (isAboveEntry && ((isLong && midSl > position.stopLossPrice) || (!isLong && midSl < position.stopLossPrice))) {
+            if (isAboveEntry && ((isLong && midSl > (signal.newStopLoss ?? position.stopLossPrice)) || (!isLong && midSl < (signal.newStopLoss ?? position.stopLossPrice)))) {
                 signal.newStopLoss = midSl;
                 signal.activeStopLossReason = 'Sovereign Ratchet';
                 signal.reasons.push(`Ratchet: Mid-Phase Trail (${(stdTrail * 1.2).toFixed(1)} ATR, ${volRegime} vol)`);
@@ -1059,7 +1264,7 @@ export class SovereignManagementEngine {
                 ? currentPrice - (atr * trailDist)
                 : currentPrice + (atr * trailDist);
 
-            if ((isLong && newSl > position.stopLossPrice) || (!isLong && newSl < position.stopLossPrice)) {
+            if ((isLong && newSl > (signal.newStopLoss ?? position.stopLossPrice)) || (!isLong && newSl < (signal.newStopLoss ?? position.stopLossPrice))) {
                 signal.newStopLoss = newSl;
                 signal.activeStopLossReason = 'Sovereign Ratchet';
                 signal.reasons.push(`Ratchet: ${trailType} Trail (${trailDist.toFixed(1)} ATR, ${volRegime} vol)`);

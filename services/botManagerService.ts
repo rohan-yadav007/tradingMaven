@@ -3,7 +3,7 @@
 
 import { RunningBot, BotConfig, BotStatus, TradeSignal, Kline, BotLogEntry, Position, LiveTicker, LogType, TradingMode, MarketDataContext, AgentParams, TradeManagementSignal } from '../types';
 import * as binanceService from './binanceService';
-import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getTradeGuardianSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, getTPProportionalLockSignal, captureMarketContext } from './localAgentService';
+import { getTradingSignal, getMultiStageProfitSecureSignal, getAgentExitSignal, getTradeGuardianSignal, getMandatoryBreakevenSignal, getProfitSpikeSignal, getAggressiveRangeTrailSignal, getTPProportionalLockSignal, captureMarketContext, getInitialAgentTargets, validateTradeProfitability } from './localAgentService';
 import { TIME_FRAMES } from '../constants';
 import * as constants from '../constants';
 import { getOmegaSignal, SovereignManagementEngine, logFailedOmegaSetup } from './agents/omega';
@@ -297,7 +297,33 @@ export class BotInstance {
             return;
         }
 
-        const slReason = 'Agent Logic'; 
+        const targets = getInitialAgentTargets(
+            klinesForContext,
+            signal.entryPrice,
+            signal.signal === 'BUY' ? 'LONG' : 'SHORT',
+            this.bot.config,
+            signal.tradeType,
+            signal.stopLossPrice,
+            signal.takeProfitPrice
+        );
+
+        if (targets.slReason.startsWith('Rejected')) {
+            this.addLog(`Trade rejected: ${targets.slReason}`, LogType.Info);
+            this.updateState({ status: BotStatus.Monitoring }, true);
+            return;
+        }
+
+        signal.stopLossPrice = targets.stopLossPrice;
+        signal.takeProfitPrice = targets.takeProfitPrice;
+        const slReason = targets.slReason;
+
+        const validation = validateTradeProfitability(signal.entryPrice, targets.stopLossPrice, targets.takeProfitPrice, signal.signal === 'BUY' ? 'LONG' : 'SHORT', this.bot.config);
+        if (!validation.isValid) {
+            this.addLog(`Trade rejected: ${validation.reason}`, LogType.Info);
+            this.updateState({ status: BotStatus.Monitoring }, true);
+            return;
+        }
+
         const entryContext = captureMarketContext(klinesForContext, this.htfKlines, this.bot.config.agentParams, this.bot.config.timeFrame);
         if (signal.omegaMetadata) entryContext.omega_metadata = signal.omegaMetadata;
 
@@ -309,7 +335,7 @@ export class BotInstance {
         }
 
         const executionDetails = {
-            agentStopLoss: signal.stopLossPrice,
+            agentStopLoss: targets.agentStopLoss,
             slReason: slReason as 'Agent Logic' | 'Hard Cap' | 'Noise Floor',
             entryContext: entryContext as MarketDataContext,
             convictionSizeMultiplier

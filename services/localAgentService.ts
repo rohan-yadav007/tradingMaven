@@ -12,7 +12,8 @@ export {
     getAggressiveRangeTrailSignal,
     getAdaptiveTakeProfit,
     getTradeGuardianSignal,
-    getTPProportionalLockSignal
+    getTPProportionalLockSignal,
+    calculateLiquidationPrice
 } from './riskManagementService';
 
 export { captureMarketContext } from './agents/agentUtils';

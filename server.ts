@@ -5,7 +5,16 @@ import path from "path";
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
+
+  // Health check for Cloud Run
+  app.get("/health", (req, res) => {
+    res.status(200).send("OK");
+  });
+
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok" });
+  });
 
   // Proxy for public endpoints and Spot/Margin/Wallet signed endpoints
   app.use(
